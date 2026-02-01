@@ -59,12 +59,15 @@ class EnergyPanel extends HTMLElement {
     this._render();
 
     try {
-      const [config, entities] = await Promise.all([
+      const [config, entities, areasResult] = await Promise.all([
         this._hass.callWS({ type: 'smart_dashboards/get_config' }),
         this._hass.callWS({ type: 'smart_dashboards/get_entities' }),
+        this._hass.callWS({ type: 'smart_dashboards/get_areas' }),
       ]);
       this._config = config.energy || {};
       this._entities = entities;
+      this._areas = areasResult.areas || [];
+      this._areaSensors = {};
       await this._loadPowerData();
       this._loading = false;
       this._render();
@@ -74,6 +77,22 @@ class EnergyPanel extends HTMLElement {
       this._loading = false;
       this._error = e.message || 'Failed to load configuration';
       this._render();
+    }
+  }
+
+  async _loadAreaSensors(areaId) {
+    if (!areaId || this._areaSensors[areaId]) return this._areaSensors[areaId];
+
+    try {
+      const result = await this._hass.callWS({
+        type: 'smart_dashboards/get_entities_by_area',
+        area_id: areaId,
+      });
+      this._areaSensors[areaId] = result.outlets || [];
+      return this._areaSensors[areaId];
+    } catch (e) {
+      console.error('Failed to load area sensors:', e);
+      return [];
     }
   }
 
@@ -187,11 +206,16 @@ class EnergyPanel extends HTMLElement {
         letter-spacing: 0.5px;
       }
 
+      .rooms-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+
       .room-card {
         background: var(--card-bg);
         border-radius: 10px;
         border: 1px solid var(--card-border);
-        margin-bottom: 10px;
         overflow: hidden;
       }
 
@@ -597,7 +621,9 @@ class EnergyPanel extends HTMLElement {
 
           ${rooms.length === 0 ? this._renderEmptyState() : ''}
           
-          ${rooms.map((room) => this._renderRoomCard(room)).join('')}
+          <div class="rooms-grid">
+            ${rooms.map((room) => this._renderRoomCard(room)).join('')}
+          </div>
         </div>
       </div>
     `;
@@ -764,10 +790,14 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderRoomSettings(room, index, mediaPlayers, powerSensors) {
+    const areas = this._areas || [];
+    const filteredSensors = room.area_id ? 
+      (this._areaSensors?.[room.area_id] || powerSensors) : powerSensors;
+
     return `
-      <div class="room-settings-card" data-room-index="${index}">
+      <div class="room-settings-card" data-room-index="${index}" data-area-id="${room.area_id || ''}">
         <div class="room-settings-header">
-          <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name">
+          <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name" style="max-width: 180px;">
           <div style="display: flex; gap: 8px;">
             <button class="btn btn-secondary toggle-room-btn" data-index="${index}">Edit</button>
             <button class="icon-btn danger remove-room-btn" data-index="${index}">
@@ -777,9 +807,21 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <div class="room-settings-body" id="room-body-${index}" style="display: none;">
+          <div class="form-group" style="margin-bottom: 12px; padding: 10px; background: var(--panel-accent-dim); border-radius: 8px;">
+            <label class="form-label" style="color: var(--panel-accent);">HA Area (filters outlet list)</label>
+            <select class="form-select room-area-select" data-room-index="${index}">
+              <option value="">All areas (no filter)</option>
+              ${areas.map(area => `
+                <option value="${area.id}" ${room.area_id === area.id ? 'selected' : ''}>
+                  ${area.name}
+                </option>
+              `).join('')}
+            </select>
+          </div>
+
           <div class="grid-2" style="margin-bottom: 12px;">
             <div class="form-group">
-              <label class="form-label">Media Player (for alerts)</label>
+              <label class="form-label">Media Player</label>
               <select class="form-select room-media-player">
                 <option value="">None</option>
                 ${mediaPlayers.map(mp => `
@@ -791,51 +833,45 @@ class EnergyPanel extends HTMLElement {
             </div>
             <div class="form-group">
               <label class="form-label">Room Threshold (W)</label>
-              <input type="number" class="form-input room-threshold" value="${room.threshold || ''}" placeholder="0 = disabled" min="0">
+              <input type="number" class="form-input room-threshold" value="${room.threshold || ''}" placeholder="0" min="0">
             </div>
           </div>
 
-          <div class="form-group" style="margin-bottom: 16px;">
-            <label class="form-label">TTS Alert Volume</label>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">TTS Volume</label>
             <div class="volume-control">
-              <input type="range" class="volume-slider room-volume" min="0" max="1" step="0.05" value="${room.volume || 0.7}" data-index="${index}">
+              <input type="range" class="volume-slider room-volume" min="0" max="1" step="0.05" value="${room.volume || 0.7}">
               <span class="volume-value room-volume-display">${Math.round((room.volume || 0.7) * 100)}%</span>
             </div>
           </div>
 
           <div class="divider"></div>
 
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <h4 style="margin: 0; font-size: 12px; color: var(--secondary-text-color);">Outlets</h4>
-            <div style="display: flex; gap: 8px;">
-              <button class="btn btn-secondary load-room-outlets-btn" data-room-index="${index}" data-room-name="${room.name}">
-                <svg class="btn-icon" viewBox="0 0 24 24">${icons.room}</svg>
-                Load from HA Room
-              </button>
-              <button class="btn btn-secondary add-outlet-btn" data-room-index="${index}">
-                <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
-                Add Outlet
-              </button>
-            </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+            <h4 style="margin: 0; font-size: 11px; color: var(--secondary-text-color);">Outlets</h4>
+            <button class="btn btn-secondary add-outlet-btn" data-room-index="${index}">
+              <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
+              Add
+            </button>
           </div>
 
           <div class="outlets-settings-list" id="outlets-list-${index}">
-            ${(room.outlets || []).map((outlet, oi) => this._renderOutletSettings(outlet, oi, powerSensors)).join('')}
+            ${(room.outlets || []).map((outlet, oi) => this._renderOutletSettings(outlet, oi, filteredSensors, index)).join('')}
           </div>
         </div>
       </div>
     `;
   }
 
-  _renderOutletSettings(outlet, outletIndex, powerSensors) {
+  _renderOutletSettings(outlet, outletIndex, powerSensors, roomIndex) {
     return `
-      <div class="outlet-settings-item" data-outlet-index="${outletIndex}">
+      <div class="outlet-settings-item" data-outlet-index="${outletIndex}" data-room-index="${roomIndex}">
         <div class="form-group">
-          <label class="form-label">Outlet Name</label>
-          <input type="text" class="form-input outlet-name" value="${outlet.name || ''}" placeholder="Name">
+          <label class="form-label">Name</label>
+          <input type="text" class="form-input outlet-name" value="${outlet.name || ''}" placeholder="Outlet">
         </div>
         <div class="form-group">
-          <label class="form-label">Plug 1 Entity</label>
+          <label class="form-label">Plug 1</label>
           <select class="form-select outlet-plug1">
             <option value="">None</option>
             ${powerSensors.map(s => `
@@ -846,7 +882,7 @@ class EnergyPanel extends HTMLElement {
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Plug 2 Entity</label>
+          <label class="form-label">Plug 2</label>
           <select class="form-select outlet-plug2">
             <option value="">None</option>
             ${powerSensors.map(s => `
@@ -857,8 +893,8 @@ class EnergyPanel extends HTMLElement {
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Threshold (W)</label>
-          <input type="number" class="form-input outlet-threshold" value="${outlet.threshold || ''}" placeholder="0" min="0">
+          <label class="form-label">Limit</label>
+          <input type="number" class="form-input outlet-threshold" value="${outlet.threshold || ''}" placeholder="W" min="0" style="width: 60px;">
         </div>
         <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${outletIndex}">
           <svg viewBox="0 0 24 24">${icons.delete}</svg>
@@ -967,12 +1003,12 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
-    // Load from HA Room buttons
-    this.shadowRoot.querySelectorAll('.load-room-outlets-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const roomIndex = btn.dataset.roomIndex;
-        const roomName = btn.dataset.roomName;
-        this._loadOutletsFromRoom(roomIndex, roomName);
+    // Area selectors - filter outlets when area changes
+    this.shadowRoot.querySelectorAll('.room-area-select').forEach(select => {
+      select.addEventListener('change', async (e) => {
+        const roomIndex = e.target.dataset.roomIndex;
+        const areaId = e.target.value;
+        await this._updateRoomOutletDropdowns(roomIndex, areaId);
       });
     });
 
@@ -995,130 +1031,51 @@ class EnergyPanel extends HTMLElement {
     });
   }
 
-  async _loadOutletsFromRoom(roomIndex, roomName) {
-    if (!this._hass) return;
+  async _updateRoomOutletDropdowns(roomIndex, areaId) {
+    const roomCard = this.shadowRoot.querySelector(`.room-settings-card[data-room-index="${roomIndex}"]`);
+    if (!roomCard) return;
 
-    const btn = this.shadowRoot.querySelector(`.load-room-outlets-btn[data-room-index="${roomIndex}"]`);
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = '<span>Loading...</span>';
+    // Update stored area_id
+    roomCard.dataset.areaId = areaId;
+
+    // Get sensors for this area
+    let sensors = this._entities?.power_sensors || [];
+    if (areaId) {
+      await this._loadAreaSensors(areaId);
+      sensors = this._areaSensors[areaId] || [];
     }
 
-    try {
-      const result = await this._hass.callWS({
-        type: 'smart_dashboards/get_entities_by_area',
-        area_id: roomName,
-      });
-
-      if (!result.area_found) {
-        showToast(this.shadowRoot, `Room "${roomName}" not found in Home Assistant`, 'error');
-        return;
-      }
-
-      const outlets = result.outlets || [];
-      if (outlets.length === 0) {
-        showToast(this.shadowRoot, `No power sensors found in "${result.area_name}"`, 'error');
-        return;
-      }
-
-      // Group sensors into outlet pairs (plug1/plug2)
-      const outletPairs = this._groupSensorsIntoOutlets(outlets);
+    // Update all outlet dropdowns in this room
+    const outletItems = roomCard.querySelectorAll('.outlet-settings-item');
+    outletItems.forEach(item => {
+      const plug1Select = item.querySelector('.outlet-plug1');
+      const plug2Select = item.querySelector('.outlet-plug2');
       
-      // Add outlets to the list
-      const list = this.shadowRoot.querySelector(`#outlets-list-${roomIndex}`);
-      const powerSensors = this._entities?.power_sensors || [];
+      const plug1Value = plug1Select?.value || '';
+      const plug2Value = plug2Select?.value || '';
 
-      outletPairs.forEach(pair => {
-        const outletIndex = list.querySelectorAll('.outlet-settings-item').length;
-        const html = this._renderOutletSettings(pair, outletIndex, powerSensors);
-        list.insertAdjacentHTML('beforeend', html);
-
-        // Attach remove listener
-        const newItem = list.querySelector(`.outlet-settings-item[data-outlet-index="${outletIndex}"]`);
-        const removeBtn = newItem.querySelector('.remove-outlet-btn');
-        removeBtn.addEventListener('click', () => newItem.remove());
-      });
-
-      showToast(this.shadowRoot, `Loaded ${outletPairs.length} outlets from "${result.area_name}"`, 'success');
-
-    } catch (e) {
-      console.error('Failed to load outlets:', e);
-      showToast(this.shadowRoot, 'Failed to load outlets from room', 'error');
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = `<svg class="btn-icon" viewBox="0 0 24 24">${icons.room}</svg> Load from HA Room`;
+      if (plug1Select) {
+        plug1Select.innerHTML = `<option value="">None</option>` + 
+          sensors.map(s => `<option value="${s.entity_id}" ${s.entity_id === plug1Value ? 'selected' : ''}>${s.friendly_name}</option>`).join('');
       }
-    }
+      if (plug2Select) {
+        plug2Select.innerHTML = `<option value="">None</option>` + 
+          sensors.map(s => `<option value="${s.entity_id}" ${s.entity_id === plug2Value ? 'selected' : ''}>${s.friendly_name}</option>`).join('');
+      }
+    });
+
+    const areaName = this._areas?.find(a => a.id === areaId)?.name || 'all areas';
+    showToast(this.shadowRoot, `Showing outlets from ${areaName}`, 'success');
   }
 
-  _groupSensorsIntoOutlets(sensors) {
-    // Try to group sensors by common name patterns (e.g., "Outlet 1 Plug 1", "Outlet 1 Plug 2")
-    const outlets = [];
-    const used = new Set();
-
-    for (const sensor of sensors) {
-      if (used.has(sensor.entity_id)) continue;
-
-      const name = sensor.friendly_name.toLowerCase();
-      
-      // Look for a matching pair
-      let plug1 = null;
-      let plug2 = null;
-      let outletName = sensor.friendly_name;
-
-      // Check if this is a "plug 1" or "plug 2" style sensor
-      if (name.includes('plug 1') || name.includes('plug1') || name.includes('outlet 1')) {
-        plug1 = sensor.entity_id;
-        outletName = sensor.friendly_name.replace(/plug\s*1/i, '').replace(/outlet\s*1/i, '').trim();
-        
-        // Find matching plug 2
-        for (const other of sensors) {
-          if (used.has(other.entity_id)) continue;
-          const otherName = other.friendly_name.toLowerCase();
-          if ((otherName.includes('plug 2') || otherName.includes('plug2') || otherName.includes('outlet 2')) &&
-              other.friendly_name.replace(/plug\s*2/i, '').replace(/outlet\s*2/i, '').trim().toLowerCase() === outletName.toLowerCase()) {
-            plug2 = other.entity_id;
-            used.add(other.entity_id);
-            break;
-          }
-        }
-      } else if (name.includes('plug 2') || name.includes('plug2') || name.includes('outlet 2')) {
-        plug2 = sensor.entity_id;
-        outletName = sensor.friendly_name.replace(/plug\s*2/i, '').replace(/outlet\s*2/i, '').trim();
-        
-        // Find matching plug 1
-        for (const other of sensors) {
-          if (used.has(other.entity_id)) continue;
-          const otherName = other.friendly_name.toLowerCase();
-          if ((otherName.includes('plug 1') || otherName.includes('plug1') || otherName.includes('outlet 1')) &&
-              other.friendly_name.replace(/plug\s*1/i, '').replace(/outlet\s*1/i, '').trim().toLowerCase() === outletName.toLowerCase()) {
-            plug1 = other.entity_id;
-            used.add(other.entity_id);
-            break;
-          }
-        }
-      } else {
-        // Single sensor, put in plug1
-        plug1 = sensor.entity_id;
-        outletName = sensor.friendly_name;
-      }
-
-      used.add(sensor.entity_id);
-      
-      // Clean up outlet name
-      outletName = outletName.replace(/current consumption/i, '').replace(/power/i, '').trim();
-      if (!outletName) outletName = 'Outlet';
-
-      outlets.push({
-        name: outletName,
-        plug1_entity: plug1,
-        plug2_entity: plug2,
-        threshold: 0,
-      });
+  _getFilteredSensors(roomIndex) {
+    const roomCard = this.shadowRoot.querySelector(`.room-settings-card[data-room-index="${roomIndex}"]`);
+    const areaId = roomCard?.dataset?.areaId;
+    
+    if (areaId && this._areaSensors[areaId]) {
+      return this._areaSensors[areaId];
     }
-
-    return outlets;
+    return this._entities?.power_sensors || [];
   }
 
   _addRoom() {
@@ -1161,10 +1118,12 @@ class EnergyPanel extends HTMLElement {
     const addOutletBtn = newCard.querySelector('.add-outlet-btn');
     addOutletBtn.addEventListener('click', () => this._addOutlet(index));
 
-    const loadOutletsBtn = newCard.querySelector('.load-room-outlets-btn');
-    loadOutletsBtn.addEventListener('click', () => {
-      this._loadOutletsFromRoom(index, newRoom.name);
-    });
+    const areaSelect = newCard.querySelector('.room-area-select');
+    if (areaSelect) {
+      areaSelect.addEventListener('change', async (e) => {
+        await this._updateRoomOutletDropdowns(index, e.target.value);
+      });
+    }
 
     const volumeSlider = newCard.querySelector('.room-volume');
     if (volumeSlider) {
@@ -1181,11 +1140,11 @@ class EnergyPanel extends HTMLElement {
   }
 
   _addOutlet(roomIndex) {
-    const powerSensors = this._entities?.power_sensors || [];
+    const sensors = this._getFilteredSensors(roomIndex);
     const list = this.shadowRoot.querySelector(`#outlets-list-${roomIndex}`);
     
     const outletIndex = list.querySelectorAll('.outlet-settings-item').length;
-    const html = this._renderOutletSettings({ name: '', plug1_entity: '', plug2_entity: '', threshold: 0 }, outletIndex, powerSensors);
+    const html = this._renderOutletSettings({ name: '', plug1_entity: '', plug2_entity: '', threshold: 0 }, outletIndex, sensors, roomIndex);
     
     list.insertAdjacentHTML('beforeend', html);
 
@@ -1200,6 +1159,7 @@ class EnergyPanel extends HTMLElement {
 
     roomCards.forEach((card) => {
       const nameInput = card.querySelector('.room-name-input');
+      const areaSelect = card.querySelector('.room-area-select');
       const mediaPlayerSelect = card.querySelector('.room-media-player');
       const thresholdInput = card.querySelector('.room-threshold');
       const volumeSlider = card.querySelector('.room-volume');
@@ -1227,6 +1187,7 @@ class EnergyPanel extends HTMLElement {
         rooms.push({
           id: roomName.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
           name: roomName,
+          area_id: areaSelect?.value || null,
           media_player: mediaPlayerSelect?.value || null,
           threshold: parseInt(thresholdInput?.value) || 0,
           volume: parseFloat(volumeSlider?.value) || 0.7,

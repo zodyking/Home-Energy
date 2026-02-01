@@ -148,6 +148,7 @@ class ConfigManager:
                 validated_room = {
                     "id": room.get("id", room["name"].lower().replace(" ", "_")),
                     "name": room["name"],
+                    "area_id": room.get("area_id"),
                     "media_player": room.get("media_player"),
                     "threshold": int(room.get("threshold", 0)),
                     "volume": float(room.get("volume", 0.7)),
