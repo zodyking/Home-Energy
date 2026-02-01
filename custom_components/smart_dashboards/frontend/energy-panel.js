@@ -220,8 +220,15 @@ class EnergyPanel extends HTMLElement {
 
       .rooms-grid {
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 10px;
+        grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+        grid-auto-flow: dense;
+        gap: 12px;
+      }
+
+      @media (max-width: 800px) {
+        .rooms-grid {
+          grid-template-columns: 1fr;
+        }
       }
 
       .room-card {
@@ -229,6 +236,18 @@ class EnergyPanel extends HTMLElement {
         border-radius: 10px;
         border: 1px solid var(--card-border);
         overflow: hidden;
+        height: fit-content;
+      }
+
+      /* Room cards with many outlets can span 2 columns */
+      .room-card.wide {
+        grid-column: span 2;
+      }
+
+      @media (max-width: 800px) {
+        .room-card.wide {
+          grid-column: span 1;
+        }
       }
 
       .room-header {
@@ -312,40 +331,35 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-content {
-        padding: 10px 14px;
+        padding: 10px 12px;
       }
 
       .outlets-grid {
-        display: grid;
-        grid-template-columns: repeat(6, 1fr);
+        display: flex;
+        flex-wrap: wrap;
         gap: 6px;
       }
 
-      /* Smart distribution for fewer outlets */
-      .outlets-grid.outlets-1 { grid-template-columns: 1fr; max-width: 120px; margin: 0 auto; }
-      .outlets-grid.outlets-2 { grid-template-columns: repeat(2, 1fr); max-width: 240px; margin: 0 auto; }
-      .outlets-grid.outlets-3 { grid-template-columns: repeat(3, 1fr); max-width: 360px; margin: 0 auto; }
-      .outlets-grid.outlets-4 { grid-template-columns: repeat(4, 1fr); }
-      .outlets-grid.outlets-5 { grid-template-columns: repeat(5, 1fr); }
-      .outlets-grid.outlets-6 { grid-template-columns: repeat(6, 1fr); }
-
-      @media (max-width: 800px) {
-        .outlets-grid { grid-template-columns: repeat(4, 1fr); }
-        .outlets-grid.outlets-1 { grid-template-columns: 1fr; }
-        .outlets-grid.outlets-2 { grid-template-columns: repeat(2, 1fr); }
-        .outlets-grid.outlets-3 { grid-template-columns: repeat(3, 1fr); }
+      .outlet-card {
+        width: 100px;
+        min-width: 100px;
+        flex-shrink: 0;
       }
 
       @media (max-width: 500px) {
-        .outlets-grid { grid-template-columns: repeat(3, 1fr); }
+        .outlet-card {
+          width: 90px;
+          min-width: 90px;
+        }
       }
 
       .outlet-card {
         background: rgba(0, 0, 0, 0.3);
         border-radius: 8px;
-        padding: 5px;
+        padding: 6px;
         border: 1px solid rgba(255, 255, 255, 0.08);
         position: relative;
+        box-sizing: border-box;
       }
 
       .outlet-header {
@@ -807,9 +821,11 @@ class EnergyPanel extends HTMLElement {
     };
 
     const isOverThreshold = room.threshold > 0 && roomData.total_watts > room.threshold;
+    const outletCount = (room.outlets || []).length;
+    const isWide = outletCount > 3; // Rooms with 4+ outlets span 2 columns
 
     return `
-      <div class="room-card" data-room-id="${room.id}">
+      <div class="room-card ${isWide ? 'wide' : ''}" data-room-id="${room.id}">
         <div class="room-header">
           <div class="room-info">
             <div class="room-icon">
@@ -835,7 +851,7 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <div class="room-content">
-          <div class="outlets-grid outlets-${Math.min((room.outlets || []).length, 6)}">
+          <div class="outlets-grid">
             ${(room.outlets || []).map((outlet, oi) => this._renderOutletCard(outlet, oi, roomData.outlets[oi])).join('')}
           </div>
         </div>
