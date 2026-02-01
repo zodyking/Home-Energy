@@ -14,6 +14,7 @@ class EnergyPanel extends HTMLElement {
     this._entities = null;
     this._powerData = null;
     this._showSettings = false;
+    this._settingsTab = 'rooms'; // 'rooms' or 'tts'
     this._refreshInterval = null;
     this._loading = true;
     this._error = null;
@@ -59,15 +60,18 @@ class EnergyPanel extends HTMLElement {
     this._render();
 
     try {
-      const [config, entities, areasResult] = await Promise.all([
+      const [config, entities, areasResult, switchesResult] = await Promise.all([
         this._hass.callWS({ type: 'smart_dashboards/get_config' }),
         this._hass.callWS({ type: 'smart_dashboards/get_entities' }),
         this._hass.callWS({ type: 'smart_dashboards/get_areas' }),
+        this._hass.callWS({ type: 'smart_dashboards/get_switches' }),
       ]);
       this._config = config.energy || {};
       this._entities = entities;
+      this._entities.switches = switchesResult.switches || [];
       this._areas = areasResult.areas || [];
       this._areaSensors = {};
+      this._areaSwitches = {};
       await this._loadPowerData();
       this._loading = false;
       this._render();
@@ -84,11 +88,18 @@ class EnergyPanel extends HTMLElement {
     if (!areaId || this._areaSensors[areaId]) return this._areaSensors[areaId];
 
     try {
-      const result = await this._hass.callWS({
-        type: 'smart_dashboards/get_entities_by_area',
-        area_id: areaId,
-      });
-      this._areaSensors[areaId] = result.outlets || [];
+      const [sensorsResult, switchesResult] = await Promise.all([
+        this._hass.callWS({
+          type: 'smart_dashboards/get_entities_by_area',
+          area_id: areaId,
+        }),
+        this._hass.callWS({
+          type: 'smart_dashboards/get_switches',
+          area_id: areaId,
+        }),
+      ]);
+      this._areaSensors[areaId] = sensorsResult.outlets || [];
+      this._areaSwitches[areaId] = switchesResult.switches || [];
       return this._areaSensors[areaId];
     } catch (e) {
       console.error('Failed to load area sensors:', e);
@@ -447,20 +458,61 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-settings-item {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr 100px auto;
-        gap: 12px;
-        align-items: end;
         padding: 12px;
         background: var(--input-bg);
         border-radius: 8px;
+        margin-bottom: 12px;
+        border: 1px solid var(--card-border);
+      }
+
+      .outlet-settings-header {
+        display: flex;
+        gap: 12px;
+        align-items: flex-end;
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--card-border);
+      }
+
+      .plugs-settings-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      @media (max-width: 700px) {
+        .plugs-settings-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .plug-settings-card {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+        padding: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .plug-settings-title {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--panel-accent);
+        margin-bottom: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .plug-settings-card .form-group {
         margin-bottom: 8px;
       }
 
-      @media (max-width: 900px) {
-        .outlet-settings-item {
-          grid-template-columns: 1fr 1fr;
-        }
+      .plug-settings-card .form-group:last-child {
+        margin-bottom: 0;
+      }
+
+      .plug-settings-card .form-label {
+        font-size: 9px;
+        margin-bottom: 3px;
       }
 
       .outlet-settings-item .form-group {
@@ -728,7 +780,86 @@ class EnergyPanel extends HTMLElement {
     const ttsSettings = this._config?.tts_settings || {};
 
     this.shadowRoot.innerHTML = `
-      <style>${styles}</style>
+      <style>
+        ${styles}
+        
+        .settings-tabs {
+          display: flex;
+          gap: 4px;
+          margin-bottom: 16px;
+          background: rgba(0, 0, 0, 0.2);
+          padding: 4px;
+          border-radius: 8px;
+        }
+        
+        .settings-tab {
+          flex: 1;
+          padding: 10px 16px;
+          border: none;
+          background: transparent;
+          color: var(--secondary-text-color);
+          cursor: pointer;
+          border-radius: 6px;
+          font-size: 12px;
+          font-weight: 500;
+          transition: all 0.2s;
+        }
+        
+        .settings-tab:hover {
+          background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .settings-tab.active {
+          background: var(--panel-accent);
+          color: white;
+        }
+        
+        .settings-tab-content {
+          display: none;
+        }
+        
+        .settings-tab-content.active {
+          display: block;
+        }
+        
+        .tts-msg-group {
+          margin-bottom: 16px;
+          padding: 14px;
+          background: var(--input-bg);
+          border-radius: 8px;
+          border: 1px solid var(--card-border);
+        }
+        
+        .tts-msg-title {
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--panel-accent);
+          margin-bottom: 6px;
+        }
+        
+        .tts-msg-desc {
+          font-size: 10px;
+          color: var(--secondary-text-color);
+          margin-bottom: 8px;
+        }
+        
+        .tts-var-help {
+          font-size: 9px;
+          color: var(--secondary-text-color);
+          margin-top: 6px;
+          padding: 6px 8px;
+          background: rgba(0, 0, 0, 0.2);
+          border-radius: 4px;
+        }
+        
+        .tts-var-help code {
+          color: var(--panel-accent);
+          background: rgba(3, 169, 244, 0.15);
+          padding: 1px 4px;
+          border-radius: 3px;
+          font-size: 9px;
+        }
+      </style>
       <div class="panel-container">
         <div class="panel-header">
           <button class="menu-btn" id="menu-btn" title="Menu">
@@ -748,38 +879,95 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <div class="content-area">
-          <div class="card">
-            <div class="card-header">
-              <h2 class="card-title">Rooms</h2>
-              <button class="btn btn-secondary" id="add-room-btn">
-                <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
-                Add Room
-              </button>
-            </div>
-            <div id="rooms-list">
-              ${rooms.length === 0 ? `
-                <p style="color: var(--secondary-text-color); text-align: center; padding: 20px;">
-                  No rooms configured. Add a room to start monitoring.
-                </p>
-              ` : rooms.map((room, i) => this._renderRoomSettings(room, i, mediaPlayers, powerSensors)).join('')}
+          <div class="settings-tabs">
+            <button class="settings-tab ${this._settingsTab === 'rooms' ? 'active' : ''}" data-tab="rooms">
+              Rooms & Outlets
+            </button>
+            <button class="settings-tab ${this._settingsTab === 'tts' ? 'active' : ''}" data-tab="tts">
+              TTS Settings
+            </button>
+          </div>
+          
+          <div class="settings-tab-content ${this._settingsTab === 'rooms' ? 'active' : ''}" id="tab-rooms">
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Rooms</h2>
+                <button class="btn btn-secondary" id="add-room-btn">
+                  <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
+                  Add Room
+                </button>
+              </div>
+              <div id="rooms-list">
+                ${rooms.length === 0 ? `
+                  <p style="color: var(--secondary-text-color); text-align: center; padding: 20px;">
+                    No rooms configured. Add a room to start monitoring.
+                  </p>
+                ` : rooms.map((room, i) => this._renderRoomSettings(room, i, mediaPlayers, powerSensors)).join('')}
+              </div>
             </div>
           </div>
-
-          <div class="card">
-            <div class="card-header">
-              <h2 class="card-title">TTS Alert Settings</h2>
-            </div>
-            <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
-              Alerts play automatically when thresholds are exceeded. Volume is set per room above.
-            </p>
-            <div class="form-group" style="max-width: 200px;">
-              <label class="form-label">Language</label>
-              <select class="form-select" id="tts-language">
-                <option value="en" ${ttsSettings.language === 'en' ? 'selected' : ''}>English</option>
-                <option value="es" ${ttsSettings.language === 'es' ? 'selected' : ''}>Spanish</option>
-                <option value="fr" ${ttsSettings.language === 'fr' ? 'selected' : ''}>French</option>
-                <option value="de" ${ttsSettings.language === 'de' ? 'selected' : ''}>German</option>
-              </select>
+          
+          <div class="settings-tab-content ${this._settingsTab === 'tts' ? 'active' : ''}" id="tab-tts">
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">TTS Alert Settings</h2>
+              </div>
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
+                Customize how alert messages are spoken. All messages are prefixed and can be customized below.
+              </p>
+              
+              <div class="grid-2" style="margin-bottom: 16px;">
+                <div class="form-group">
+                  <label class="form-label">Language</label>
+                  <select class="form-select" id="tts-language">
+                    <option value="en" ${ttsSettings.language === 'en' ? 'selected' : ''}>English</option>
+                    <option value="es" ${ttsSettings.language === 'es' ? 'selected' : ''}>Spanish</option>
+                    <option value="fr" ${ttsSettings.language === 'fr' ? 'selected' : ''}>French</option>
+                    <option value="de" ${ttsSettings.language === 'de' ? 'selected' : ''}>German</option>
+                  </select>
+                </div>
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Message Prefix</div>
+                <div class="tts-msg-desc">Added to the beginning of all alert messages</div>
+                <input type="text" class="form-input" id="tts-prefix" 
+                  value="${ttsSettings.prefix || 'Message from Home Energy.'}" 
+                  placeholder="Message from Home Energy.">
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Room Warning Message</div>
+                <div class="tts-msg-desc">Spoken when room total exceeds threshold</div>
+                <input type="text" class="form-input" id="tts-room-warn" 
+                  value="${ttsSettings.room_warn_msg || '{prefix} {room_name} is pulling {watts} watts'}" 
+                  placeholder="{prefix} {room_name} is pulling {watts} watts">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{watts}</code>
+                </div>
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Outlet Warning Message</div>
+                <div class="tts-msg-desc">Spoken when outlet total exceeds threshold</div>
+                <input type="text" class="form-input" id="tts-outlet-warn" 
+                  value="${ttsSettings.outlet_warn_msg || '{prefix} {room_name} {outlet_name} is pulling {watts} watts'}" 
+                  placeholder="{prefix} {room_name} {outlet_name} is pulling {watts} watts">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{watts}</code>
+                </div>
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Shutoff Reset Message</div>
+                <div class="tts-msg-desc">Spoken when a plug is shut off and reset due to overload</div>
+                <input type="text" class="form-input" id="tts-shutoff" 
+                  value="${ttsSettings.shutoff_msg || '{prefix} {room_name} {outlet_name} {plug} has been reset to protect circuit from overload'}" 
+                  placeholder="{prefix} {room_name} {outlet_name} {plug} has been reset to protect circuit from overload">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{plug}</code>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -864,41 +1052,85 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderOutletSettings(outlet, outletIndex, powerSensors, roomIndex) {
+    const switches = this._getFilteredSwitches(roomIndex);
+
     return `
       <div class="outlet-settings-item" data-outlet-index="${outletIndex}" data-room-index="${roomIndex}">
-        <div class="form-group">
-          <label class="form-label">Name</label>
-          <input type="text" class="form-input outlet-name" value="${outlet.name || ''}" placeholder="Outlet">
+        <div class="outlet-settings-header">
+          <div class="form-group" style="flex: 1;">
+            <label class="form-label">Outlet Name</label>
+            <input type="text" class="form-input outlet-name" value="${outlet.name || ''}" placeholder="Outlet">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Warn Limit</label>
+            <input type="number" class="form-input outlet-threshold" value="${outlet.threshold || ''}" placeholder="W" min="0" style="width: 70px;">
+          </div>
+          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${outletIndex}">
+            <svg viewBox="0 0 24 24">${icons.delete}</svg>
+          </button>
         </div>
-        <div class="form-group">
-          <label class="form-label">Plug 1</label>
-          <select class="form-select outlet-plug1">
-            <option value="">None</option>
-            ${powerSensors.map(s => `
-              <option value="${s.entity_id}" ${outlet.plug1_entity === s.entity_id ? 'selected' : ''}>
-                ${s.friendly_name}
-              </option>
-            `).join('')}
-          </select>
+        
+        <div class="plugs-settings-grid">
+          <div class="plug-settings-card">
+            <div class="plug-settings-title">Plug 1</div>
+            <div class="form-group">
+              <label class="form-label">Power Sensor</label>
+              <select class="form-select outlet-plug1">
+                <option value="">None</option>
+                ${powerSensors.map(s => `
+                  <option value="${s.entity_id}" ${outlet.plug1_entity === s.entity_id ? 'selected' : ''}>
+                    ${s.friendly_name}
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Switch (on/off)</label>
+              <select class="form-select outlet-plug1-switch">
+                <option value="">None</option>
+                ${switches.map(s => `
+                  <option value="${s.entity_id}" ${outlet.plug1_switch === s.entity_id ? 'selected' : ''}>
+                    ${s.friendly_name}
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Shutoff (W)</label>
+              <input type="number" class="form-input outlet-plug1-shutoff" value="${outlet.plug1_shutoff || ''}" placeholder="Off" min="0" style="width: 70px;">
+            </div>
+          </div>
+          
+          <div class="plug-settings-card">
+            <div class="plug-settings-title">Plug 2</div>
+            <div class="form-group">
+              <label class="form-label">Power Sensor</label>
+              <select class="form-select outlet-plug2">
+                <option value="">None</option>
+                ${powerSensors.map(s => `
+                  <option value="${s.entity_id}" ${outlet.plug2_entity === s.entity_id ? 'selected' : ''}>
+                    ${s.friendly_name}
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Switch (on/off)</label>
+              <select class="form-select outlet-plug2-switch">
+                <option value="">None</option>
+                ${switches.map(s => `
+                  <option value="${s.entity_id}" ${outlet.plug2_switch === s.entity_id ? 'selected' : ''}>
+                    ${s.friendly_name}
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Shutoff (W)</label>
+              <input type="number" class="form-input outlet-plug2-shutoff" value="${outlet.plug2_shutoff || ''}" placeholder="Off" min="0" style="width: 70px;">
+            </div>
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Plug 2</label>
-          <select class="form-select outlet-plug2">
-            <option value="">None</option>
-            ${powerSensors.map(s => `
-              <option value="${s.entity_id}" ${outlet.plug2_entity === s.entity_id ? 'selected' : ''}>
-                ${s.friendly_name}
-              </option>
-            `).join('')}
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Limit</label>
-          <input type="number" class="form-input outlet-threshold" value="${outlet.threshold || ''}" placeholder="W" min="0" style="width: 60px;">
-        </div>
-        <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${outletIndex}">
-          <svg viewBox="0 0 24 24">${icons.delete}</svg>
-        </button>
       </div>
     `;
   }
@@ -949,12 +1181,11 @@ class EnergyPanel extends HTMLElement {
     const backBtn = this.shadowRoot.querySelector('#back-btn');
     const saveBtn = this.shadowRoot.querySelector('#save-btn');
     const addRoomBtn = this.shadowRoot.querySelector('#add-room-btn');
-    const ttsVolume = this.shadowRoot.querySelector('#tts-volume');
-    const ttsVolumeDisplay = this.shadowRoot.querySelector('#tts-volume-display');
 
     if (backBtn) {
       backBtn.addEventListener('click', () => {
         this._showSettings = false;
+        this._settingsTab = 'rooms';
         this._render();
         this._startRefresh();
       });
@@ -968,11 +1199,23 @@ class EnergyPanel extends HTMLElement {
       addRoomBtn.addEventListener('click', () => this._addRoom());
     }
 
-    if (ttsVolume && ttsVolumeDisplay) {
-      ttsVolume.addEventListener('input', () => {
-        ttsVolumeDisplay.textContent = Math.round(parseFloat(ttsVolume.value) * 100) + '%';
+    // Tab switching
+    this.shadowRoot.querySelectorAll('.settings-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const tabId = tab.dataset.tab;
+        this._settingsTab = tabId;
+        
+        // Update tab active states
+        this.shadowRoot.querySelectorAll('.settings-tab').forEach(t => {
+          t.classList.toggle('active', t.dataset.tab === tabId);
+        });
+        
+        // Update content visibility
+        this.shadowRoot.querySelectorAll('.settings-tab-content').forEach(content => {
+          content.classList.toggle('active', content.id === `tab-${tabId}`);
+        });
       });
-    }
+    });
 
     // Toggle room details
     this.shadowRoot.querySelectorAll('.toggle-room-btn').forEach(btn => {
@@ -1038,11 +1281,13 @@ class EnergyPanel extends HTMLElement {
     // Update stored area_id
     roomCard.dataset.areaId = areaId;
 
-    // Get sensors for this area
+    // Get sensors and switches for this area
     let sensors = this._entities?.power_sensors || [];
+    let switches = this._entities?.switches || [];
     if (areaId) {
       await this._loadAreaSensors(areaId);
       sensors = this._areaSensors[areaId] || [];
+      switches = this._areaSwitches[areaId] || [];
     }
 
     // Update all outlet dropdowns in this room
@@ -1050,9 +1295,13 @@ class EnergyPanel extends HTMLElement {
     outletItems.forEach(item => {
       const plug1Select = item.querySelector('.outlet-plug1');
       const plug2Select = item.querySelector('.outlet-plug2');
+      const plug1SwitchSelect = item.querySelector('.outlet-plug1-switch');
+      const plug2SwitchSelect = item.querySelector('.outlet-plug2-switch');
       
       const plug1Value = plug1Select?.value || '';
       const plug2Value = plug2Select?.value || '';
+      const plug1SwitchValue = plug1SwitchSelect?.value || '';
+      const plug2SwitchValue = plug2SwitchSelect?.value || '';
 
       if (plug1Select) {
         plug1Select.innerHTML = `<option value="">None</option>` + 
@@ -1062,10 +1311,18 @@ class EnergyPanel extends HTMLElement {
         plug2Select.innerHTML = `<option value="">None</option>` + 
           sensors.map(s => `<option value="${s.entity_id}" ${s.entity_id === plug2Value ? 'selected' : ''}>${s.friendly_name}</option>`).join('');
       }
+      if (plug1SwitchSelect) {
+        plug1SwitchSelect.innerHTML = `<option value="">None</option>` + 
+          switches.map(s => `<option value="${s.entity_id}" ${s.entity_id === plug1SwitchValue ? 'selected' : ''}>${s.friendly_name}</option>`).join('');
+      }
+      if (plug2SwitchSelect) {
+        plug2SwitchSelect.innerHTML = `<option value="">None</option>` + 
+          switches.map(s => `<option value="${s.entity_id}" ${s.entity_id === plug2SwitchValue ? 'selected' : ''}>${s.friendly_name}</option>`).join('');
+      }
     });
 
     const areaName = this._areas?.find(a => a.id === areaId)?.name || 'all areas';
-    showToast(this.shadowRoot, `Showing outlets from ${areaName}`, 'success');
+    showToast(this.shadowRoot, `Showing entities from ${areaName}`, 'success');
   }
 
   _getFilteredSensors(roomIndex) {
@@ -1076,6 +1333,16 @@ class EnergyPanel extends HTMLElement {
       return this._areaSensors[areaId];
     }
     return this._entities?.power_sensors || [];
+  }
+
+  _getFilteredSwitches(roomIndex) {
+    const roomCard = this.shadowRoot.querySelector(`.room-settings-card[data-room-index="${roomIndex}"]`);
+    const areaId = roomCard?.dataset?.areaId;
+    
+    if (areaId && this._areaSwitches && this._areaSwitches[areaId]) {
+      return this._areaSwitches[areaId];
+    }
+    return this._entities?.switches || [];
   }
 
   _addRoom() {
@@ -1144,7 +1411,17 @@ class EnergyPanel extends HTMLElement {
     const list = this.shadowRoot.querySelector(`#outlets-list-${roomIndex}`);
     
     const outletIndex = list.querySelectorAll('.outlet-settings-item').length;
-    const html = this._renderOutletSettings({ name: '', plug1_entity: '', plug2_entity: '', threshold: 0 }, outletIndex, sensors, roomIndex);
+    const newOutlet = {
+      name: '',
+      plug1_entity: '',
+      plug2_entity: '',
+      plug1_switch: '',
+      plug2_switch: '',
+      threshold: 0,
+      plug1_shutoff: 0,
+      plug2_shutoff: 0,
+    };
+    const html = this._renderOutletSettings(newOutlet, outletIndex, sensors, roomIndex);
     
     list.insertAdjacentHTML('beforeend', html);
 
@@ -1170,14 +1447,22 @@ class EnergyPanel extends HTMLElement {
         const outletName = item.querySelector('.outlet-name')?.value;
         const plug1 = item.querySelector('.outlet-plug1')?.value;
         const plug2 = item.querySelector('.outlet-plug2')?.value;
+        const plug1Switch = item.querySelector('.outlet-plug1-switch')?.value;
+        const plug2Switch = item.querySelector('.outlet-plug2-switch')?.value;
         const outletThreshold = parseInt(item.querySelector('.outlet-threshold')?.value) || 0;
+        const plug1Shutoff = parseInt(item.querySelector('.outlet-plug1-shutoff')?.value) || 0;
+        const plug2Shutoff = parseInt(item.querySelector('.outlet-plug2-shutoff')?.value) || 0;
 
         if (outletName) {
           outlets.push({
             name: outletName,
             plug1_entity: plug1 || null,
             plug2_entity: plug2 || null,
+            plug1_switch: plug1Switch || null,
+            plug2_switch: plug2Switch || null,
             threshold: outletThreshold,
+            plug1_shutoff: plug1Shutoff,
+            plug2_shutoff: plug2Shutoff,
           });
         }
       });
@@ -1197,12 +1482,20 @@ class EnergyPanel extends HTMLElement {
     });
 
     const ttsLanguage = this.shadowRoot.querySelector('#tts-language')?.value || 'en';
+    const ttsPrefix = this.shadowRoot.querySelector('#tts-prefix')?.value || 'Message from Home Energy.';
+    const ttsRoomWarn = this.shadowRoot.querySelector('#tts-room-warn')?.value || '{prefix} {room_name} is pulling {watts} watts';
+    const ttsOutletWarn = this.shadowRoot.querySelector('#tts-outlet-warn')?.value || '{prefix} {room_name} {outlet_name} is pulling {watts} watts';
+    const ttsShutoff = this.shadowRoot.querySelector('#tts-shutoff')?.value || '{prefix} {room_name} {outlet_name} {plug} has been reset to protect circuit from overload';
 
     const config = {
       rooms: rooms,
       tts_settings: {
         language: ttsLanguage,
         speed: 1.0,
+        prefix: ttsPrefix,
+        room_warn_msg: ttsRoomWarn,
+        outlet_warn_msg: ttsOutletWarn,
+        shutoff_msg: ttsShutoff,
       },
     };
 

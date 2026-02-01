@@ -9,7 +9,16 @@ from typing import TYPE_CHECKING
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, ENERGY_CHECK_INTERVAL, ALERT_COOLDOWN
+from .const import (
+    DOMAIN,
+    ENERGY_CHECK_INTERVAL,
+    ALERT_COOLDOWN,
+    SHUTOFF_RESET_DELAY,
+    DEFAULT_TTS_PREFIX,
+    DEFAULT_ROOM_WARN_MSG,
+    DEFAULT_OUTLET_WARN_MSG,
+    DEFAULT_SHUTOFF_MSG,
+)
 from .tts_helper import async_send_tts
 
 if TYPE_CHECKING:
@@ -29,6 +38,8 @@ class EnergyMonitor:
         self._task: asyncio.Task | None = None
         self._last_room_alerts: dict[str, datetime] = {}
         self._last_outlet_alerts: dict[str, datetime] = {}
+        self._last_plug_alerts: dict[str, datetime] = {}
+        self._shutoff_pending: dict[str, bool] = {}  # Track plugs in shutoff cycle
         self._save_counter = 0
 
     async def async_start(self) -> None:
@@ -82,27 +93,57 @@ class EnergyMonitor:
                 outlet_threshold = outlet.get("threshold", 0)
                 outlet_total_watts = 0.0
 
-                # Get plug 1 power
+                # Get plug 1 power and check shutoff threshold
+                plug1_watts = 0.0
                 if outlet.get("plug1_entity"):
-                    watts = self._get_power_value(outlet["plug1_entity"])
-                    outlet_total_watts += watts
-                    # Track for day energy
+                    plug1_watts = self._get_power_value(outlet["plug1_entity"])
+                    outlet_total_watts += plug1_watts
                     await self.config_manager.async_add_energy_reading(
-                        outlet["plug1_entity"], watts
+                        outlet["plug1_entity"], plug1_watts
                     )
+                    
+                    # Check plug 1 shutoff threshold
+                    plug1_shutoff = outlet.get("plug1_shutoff", 0)
+                    plug1_switch = outlet.get("plug1_switch")
+                    if plug1_shutoff > 0 and plug1_watts > plug1_shutoff and plug1_switch:
+                        await self._handle_plug_shutoff(
+                            room_id=room_id,
+                            room_name=room_name,
+                            outlet_name=outlet_name,
+                            plug_name="Plug 1",
+                            switch_entity=plug1_switch,
+                            media_player=media_player,
+                            volume=room_volume,
+                            tts_settings=tts_settings,
+                        )
 
-                # Get plug 2 power
+                # Get plug 2 power and check shutoff threshold
+                plug2_watts = 0.0
                 if outlet.get("plug2_entity"):
-                    watts = self._get_power_value(outlet["plug2_entity"])
-                    outlet_total_watts += watts
-                    # Track for day energy
+                    plug2_watts = self._get_power_value(outlet["plug2_entity"])
+                    outlet_total_watts += plug2_watts
                     await self.config_manager.async_add_energy_reading(
-                        outlet["plug2_entity"], watts
+                        outlet["plug2_entity"], plug2_watts
                     )
+                    
+                    # Check plug 2 shutoff threshold
+                    plug2_shutoff = outlet.get("plug2_shutoff", 0)
+                    plug2_switch = outlet.get("plug2_switch")
+                    if plug2_shutoff > 0 and plug2_watts > plug2_shutoff and plug2_switch:
+                        await self._handle_plug_shutoff(
+                            room_id=room_id,
+                            room_name=room_name,
+                            outlet_name=outlet_name,
+                            plug_name="Plug 2",
+                            switch_entity=plug2_switch,
+                            media_player=media_player,
+                            volume=room_volume,
+                            tts_settings=tts_settings,
+                        )
 
                 room_total_watts += outlet_total_watts
 
-                # Check outlet threshold
+                # Check outlet warning threshold (combined plugs)
                 if outlet_threshold > 0 and outlet_total_watts > outlet_threshold:
                     await self._send_outlet_alert(
                         room_id=room_id,
@@ -156,6 +197,75 @@ class EnergyMonitor:
 
         return 0.0
 
+    async def _handle_plug_shutoff(
+        self,
+        room_id: str,
+        room_name: str,
+        outlet_name: str,
+        plug_name: str,
+        switch_entity: str,
+        media_player: str | None,
+        volume: float,
+        tts_settings: dict,
+    ) -> None:
+        """Handle plug shutoff when threshold exceeded - turn off, wait 5s, turn back on."""
+        shutoff_key = f"{room_id}_{outlet_name}_{plug_name}"
+        
+        # Don't re-trigger if already in shutoff cycle
+        if self._shutoff_pending.get(shutoff_key):
+            return
+        
+        self._shutoff_pending[shutoff_key] = True
+        
+        try:
+            # Turn off the switch
+            await self.hass.services.async_call(
+                "switch", "turn_off",
+                {"entity_id": switch_entity},
+                blocking=True,
+            )
+            _LOGGER.warning(
+                "Plug shutoff triggered: %s %s %s",
+                room_name, outlet_name, plug_name,
+            )
+            
+            # Send TTS message
+            if media_player:
+                prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                msg_template = tts_settings.get("shutoff_msg", DEFAULT_SHUTOFF_MSG)
+                message = msg_template.format(
+                    prefix=prefix,
+                    room_name=room_name,
+                    outlet_name=outlet_name,
+                    plug=plug_name,
+                )
+                
+                await async_send_tts(
+                    self.hass,
+                    media_player=media_player,
+                    message=message,
+                    language=tts_settings.get("language"),
+                    volume=volume,
+                )
+            
+            # Wait 5 seconds
+            await asyncio.sleep(SHUTOFF_RESET_DELAY)
+            
+            # Turn back on
+            await self.hass.services.async_call(
+                "switch", "turn_on",
+                {"entity_id": switch_entity},
+                blocking=True,
+            )
+            _LOGGER.info(
+                "Plug reset after shutoff: %s %s %s",
+                room_name, outlet_name, plug_name,
+            )
+        except Exception as e:
+            _LOGGER.error("Plug shutoff error: %s", e)
+        finally:
+            self._shutoff_pending[shutoff_key] = False
+
     async def _send_room_alert(
         self,
         room_id: str,
@@ -178,8 +288,14 @@ class EnergyMonitor:
         # Update last alert time
         self._last_room_alerts[room_id] = now
 
-        # Format message: "(Room Name) is pulling (room electricity total) watts"
-        message = f"{room_name} is pulling {int(current_watts)} watts"
+        # Format message with prefix
+        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        msg_template = tts_settings.get("room_warn_msg", DEFAULT_ROOM_WARN_MSG)
+        message = msg_template.format(
+            prefix=prefix,
+            room_name=room_name,
+            watts=int(current_watts),
+        )
 
         try:
             await async_send_tts(
@@ -221,8 +337,15 @@ class EnergyMonitor:
         # Update last alert time
         self._last_outlet_alerts[alert_key] = now
 
-        # Format message: "(Room Name) (Outlet Name) is pulling (Outlet total) watts"
-        message = f"{room_name} {outlet_name} is pulling {int(current_watts)} watts"
+        # Format message with prefix
+        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        msg_template = tts_settings.get("outlet_warn_msg", DEFAULT_OUTLET_WARN_MSG)
+        message = msg_template.format(
+            prefix=prefix,
+            room_name=room_name,
+            outlet_name=outlet_name,
+            watts=int(current_watts),
+        )
 
         try:
             await async_send_tts(

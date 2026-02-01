@@ -24,6 +24,13 @@ DEFAULT_TTS_VOLUME = 0.7
 # Energy monitor settings
 ENERGY_CHECK_INTERVAL = 1  # seconds
 ALERT_COOLDOWN = 60  # seconds between repeated alerts for same room
+SHUTOFF_RESET_DELAY = 5  # seconds to wait before turning plug back on
+
+# TTS message templates (user customizable)
+DEFAULT_TTS_PREFIX = "Message from Home Energy."
+DEFAULT_ROOM_WARN_MSG = "{prefix} {room_name} is pulling {watts} watts"
+DEFAULT_OUTLET_WARN_MSG = "{prefix} {room_name} {outlet_name} is pulling {watts} watts"
+DEFAULT_SHUTOFF_MSG = "{prefix} {room_name} {outlet_name} {plug} has been reset to protect circuit from overload"
 
 # Default config structure
 DEFAULT_CONFIG = {
@@ -42,6 +49,10 @@ DEFAULT_CONFIG = {
             "language": DEFAULT_TTS_LANGUAGE,
             "speed": DEFAULT_TTS_SPEED,
             "volume": DEFAULT_TTS_VOLUME,
+            "prefix": DEFAULT_TTS_PREFIX,
+            "room_warn_msg": DEFAULT_ROOM_WARN_MSG,
+            "outlet_warn_msg": DEFAULT_OUTLET_WARN_MSG,
+            "shutoff_msg": DEFAULT_SHUTOFF_MSG,
         },
     },
 }

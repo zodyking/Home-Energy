@@ -27,6 +27,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_camera_stream_url)
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
     websocket_api.async_register_command(hass, websocket_get_areas)
+    websocket_api.async_register_command(hass, websocket_get_switches)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -387,6 +388,71 @@ async def websocket_get_camera_stream_url(
         "stream_url": f"/api/camera_proxy_stream/{entity_id}",
         "snapshot_url": f"/api/camera_proxy/{entity_id}",
     })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_switches",
+        vol.Optional("area_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_switches(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get all switch entities, optionally filtered by area."""
+    from homeassistant.helpers import entity_registry, device_registry, area_registry
+
+    area_id = msg.get("area_id")
+    
+    switches = []
+    
+    if area_id:
+        # Filter by area
+        ent_reg = entity_registry.async_get(hass)
+        dev_reg = device_registry.async_get(hass)
+        area_reg = area_registry.async_get(hass)
+
+        # Find matching area
+        target_area = None
+        for area in area_reg.async_list_areas():
+            area_normalized = area.name.lower().replace(" ", "_").replace("'", "")
+            if area_normalized == area_id or area.id == area_id:
+                target_area = area
+                break
+
+        if target_area:
+            for entity in ent_reg.entities.values():
+                entity_area = None
+                
+                if entity.area_id == target_area.id:
+                    entity_area = target_area.id
+                elif entity.device_id:
+                    device = dev_reg.async_get(entity.device_id)
+                    if device and device.area_id == target_area.id:
+                        entity_area = target_area.id
+
+                if entity_area and entity.entity_id.startswith("switch."):
+                    state = hass.states.get(entity.entity_id)
+                    if state:
+                        friendly_name = state.attributes.get("friendly_name", entity.entity_id)
+                        switches.append({
+                            "entity_id": entity.entity_id,
+                            "friendly_name": friendly_name,
+                        })
+    else:
+        # Get all switches
+        for state in hass.states.async_all():
+            if state.entity_id.startswith("switch."):
+                friendly_name = state.attributes.get("friendly_name", state.entity_id)
+                switches.append({
+                    "entity_id": state.entity_id,
+                    "friendly_name": friendly_name,
+                })
+
+    connection.send_result(msg["id"], {"switches": switches})
 
 
 def _get_power_value(hass: HomeAssistant, entity_id: str) -> float:

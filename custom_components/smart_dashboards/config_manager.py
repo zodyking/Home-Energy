@@ -160,16 +160,25 @@ class ConfigManager:
                             "name": outlet["name"],
                             "plug1_entity": outlet.get("plug1_entity"),
                             "plug2_entity": outlet.get("plug2_entity"),
+                            "plug1_switch": outlet.get("plug1_switch"),
+                            "plug2_switch": outlet.get("plug2_switch"),
                             "threshold": int(outlet.get("threshold", 0)),
+                            "plug1_shutoff": int(outlet.get("plug1_shutoff", 0)),
+                            "plug2_shutoff": int(outlet.get("plug2_shutoff", 0)),
                         })
                 validated["rooms"].append(validated_room)
 
         # Validate TTS settings
         tts = config.get("tts_settings", {})
+        default_tts = DEFAULT_CONFIG["energy"]["tts_settings"]
         validated["tts_settings"] = {
-            "language": tts.get("language", DEFAULT_CONFIG["energy"]["tts_settings"]["language"]),
-            "speed": float(tts.get("speed", DEFAULT_CONFIG["energy"]["tts_settings"]["speed"])),
-            "volume": float(tts.get("volume", DEFAULT_CONFIG["energy"]["tts_settings"]["volume"])),
+            "language": tts.get("language", default_tts["language"]),
+            "speed": float(tts.get("speed", default_tts["speed"])),
+            "volume": float(tts.get("volume", default_tts["volume"])),
+            "prefix": tts.get("prefix", default_tts["prefix"]),
+            "room_warn_msg": tts.get("room_warn_msg", default_tts["room_warn_msg"]),
+            "outlet_warn_msg": tts.get("outlet_warn_msg", default_tts["outlet_warn_msg"]),
+            "shutoff_msg": tts.get("shutoff_msg", default_tts["shutoff_msg"]),
         }
 
         return validated
