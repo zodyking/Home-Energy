@@ -1,6 +1,7 @@
 """The Smart Dashboards integration."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 
@@ -92,6 +93,14 @@ async def async_register_panels(hass: HomeAssistant, entry: ConfigEntry) -> None
     frontend_path = os.path.join(os.path.dirname(__file__), "frontend")
     panel_url = f"/{DOMAIN}_panel"
 
+    # Read version from manifest for cache-busting so browsers load new JS after update
+    try:
+        manifest_path = os.path.join(os.path.dirname(__file__), "manifest.json")
+        with open(manifest_path, encoding="utf-8") as f:
+            version = json.load(f).get("version", "1.0.0")
+    except Exception:
+        version = "1.0.0"
+
     # Register static path for the panel files
     await hass.http.async_register_static_paths([
         StaticPathConfig(panel_url, frontend_path, cache_headers=False)
@@ -106,7 +115,7 @@ async def async_register_panels(hass: HomeAssistant, entry: ConfigEntry) -> None
                 frontend_url_path=CAMERAS_PANEL_URL,
                 sidebar_title=CAMERAS_PANEL_TITLE,
                 sidebar_icon=CAMERAS_PANEL_ICON,
-                module_url=f"{panel_url}/cameras-panel.js",
+                module_url=f"{panel_url}/cameras-panel.js?v={version}",
                 embed_iframe=False,
                 require_admin=False,
             )
@@ -128,7 +137,7 @@ async def async_register_panels(hass: HomeAssistant, entry: ConfigEntry) -> None
                 frontend_url_path=ENERGY_PANEL_URL,
                 sidebar_title=ENERGY_PANEL_TITLE,
                 sidebar_icon=ENERGY_PANEL_ICON,
-                module_url=f"{panel_url}/energy-panel.js",
+                module_url=f"{panel_url}/energy-panel.js?v={version}",
                 embed_iframe=False,
                 require_admin=False,
             )
