@@ -1002,29 +1002,29 @@ class EnergyPanel extends HTMLElement {
         gap: 12px;
       }
 
-      .breaker-drop-zone {
-        min-height: 80px;
-        padding: 12px;
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: 6px;
-        border: 2px dashed var(--card-border);
-        transition: all 0.2s;
-      }
-
-      .breaker-drop-zone.drag-over {
-        border-color: var(--panel-accent);
-        background: rgba(3, 169, 244, 0.1);
+      .breaker-outlets-section {
+        margin-top: 8px;
       }
 
       .breaker-drop-label {
         font-size: 10px;
         color: var(--secondary-text-color);
-        margin-bottom: 8px;
         text-transform: uppercase;
         letter-spacing: 0.5px;
       }
 
-      .outlet-drag-card,
+      .btn-small {
+        padding: 6px 12px;
+        font-size: 11px;
+      }
+
+      .breaker-assigned-outlets-list {
+        margin-top: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
       .outlet-assigned-card {
         display: flex;
         align-items: center;
@@ -1033,37 +1033,25 @@ class EnergyPanel extends HTMLElement {
         background: var(--input-bg);
         border-radius: 6px;
         border: 1px solid var(--card-border);
-        margin-bottom: 6px;
-        cursor: grab;
         transition: all 0.2s;
       }
 
-      .outlet-drag-card:hover,
       .outlet-assigned-card:hover {
         background: rgba(255, 255, 255, 0.05);
         border-color: var(--panel-accent);
       }
 
-      .outlet-drag-card:active,
-      .outlet-assigned-card:active {
-        cursor: grabbing;
-        opacity: 0.7;
-      }
-
-      .outlet-drag-info,
       .outlet-assigned-info {
         display: flex;
         flex-direction: column;
         gap: 2px;
       }
 
-      .outlet-drag-room,
       .outlet-assigned-room {
         font-size: 9px;
         color: var(--secondary-text-color);
       }
 
-      .outlet-drag-name,
       .outlet-assigned-name {
         font-size: 11px;
         font-weight: 500;
@@ -1080,10 +1068,6 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-remove-icon:hover {
         fill: var(--panel-danger);
-      }
-
-      .outlets-drag-source {
-        padding: 12px;
       }
 
       .divider {
@@ -1724,7 +1708,6 @@ class EnergyPanel extends HTMLElement {
 
   _renderBreakerSettings() {
     const breakerLines = this._config?.breaker_lines || [];
-    const allOutlets = this._getAllOutletsForDragDrop();
 
     return `
       <div class="card">
@@ -1740,36 +1723,13 @@ class EnergyPanel extends HTMLElement {
             <p style="color: var(--secondary-text-color); text-align: center; padding: 20px;">
               No breaker lines configured. Add a breaker line to start monitoring circuit loads.
             </p>
-          ` : breakerLines.map((breaker, i) => this._renderBreakerSettingsCard(breaker, i, allOutlets)).join('')}
-        </div>
-      </div>
-      
-      <div class="card" style="margin-top: 16px;">
-        <div class="card-header">
-          <h2 class="card-title">Available Outlets</h2>
-        </div>
-        <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px; padding: 0 12px;">
-          Drag outlets from below into breaker cards above to assign them to breaker lines.
-        </p>
-        <div class="outlets-drag-source" id="outlets-drag-source">
-          ${allOutlets.length === 0 ? `
-            <p style="color: var(--secondary-text-color); text-align: center; padding: 20px;">
-              No outlets configured. Add outlets in Rooms & Outlets tab first.
-            </p>
-          ` : allOutlets.map(outlet => `
-            <div class="outlet-drag-card" draggable="true" data-outlet-id="${outlet.id}">
-              <div class="outlet-drag-info">
-                <span class="outlet-drag-room">${outlet.room_name}</span>
-                <span class="outlet-drag-name">${outlet.outlet_name}</span>
-              </div>
-            </div>
-          `).join('')}
+          ` : breakerLines.map((breaker, i) => this._renderBreakerSettingsCard(breaker, i)).join('')}
         </div>
       </div>
     `;
   }
 
-  _getAllOutletsForDragDrop() {
+  _getAllOutlets() {
     const rooms = this._config?.rooms || [];
     const outlets = [];
     rooms.forEach(room => {
@@ -1787,9 +1747,25 @@ class EnergyPanel extends HTMLElement {
     return outlets;
   }
 
-  _renderBreakerSettingsCard(breaker, index, allOutlets) {
+  _getAvailableOutletsForBreaker(breakerId) {
+    const allOutlets = this._getAllOutlets();
+    const breakerLines = this._config?.breaker_lines || [];
+    
+    // Get all outlet IDs already assigned to any breaker
+    const assignedOutletIds = new Set();
+    breakerLines.forEach(breaker => {
+      if (breaker.outlet_ids) {
+        breaker.outlet_ids.forEach(id => assignedOutletIds.add(id));
+      }
+    });
+    
+    // Filter out already assigned outlets
+    return allOutlets.filter(outlet => !assignedOutletIds.has(outlet.id));
+  }
+
+  _renderBreakerSettingsCard(breaker, index) {
+    const allOutlets = this._getAllOutlets();
     const assignedOutlets = allOutlets.filter(o => breaker.outlet_ids?.includes(o.id));
-    const availableOutlets = allOutlets.filter(o => !breaker.outlet_ids?.includes(o.id));
 
     return `
       <div class="breaker-settings-card" data-breaker-index="${index}">
@@ -1818,21 +1794,29 @@ class EnergyPanel extends HTMLElement {
               <input type="number" class="form-input breaker-threshold" value="${breaker.threshold || 0}" min="0" step="100">
             </div>
           </div>
-          <div class="breaker-drop-zone" data-breaker-id="${breaker.id}">
-            <div class="breaker-drop-label">Assigned Outlets (drag to remove)</div>
-            ${assignedOutlets.length === 0 ? `
-              <p style="color: var(--secondary-text-color); text-align: center; padding: 20px; font-size: 11px;">
-                Drag outlets here to assign them to this breaker line
-              </p>
-            ` : assignedOutlets.map(outlet => `
-              <div class="outlet-assigned-card" draggable="true" data-outlet-id="${outlet.id}">
-                <div class="outlet-assigned-info">
-                  <span class="outlet-assigned-room">${outlet.room_name}</span>
-                  <span class="outlet-assigned-name">${outlet.outlet_name}</span>
+          <div class="breaker-outlets-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <div class="breaker-drop-label">Assigned Outlets</div>
+              <button class="btn btn-secondary btn-small add-outlet-to-breaker-btn" data-breaker-id="${breaker.id}">
+                <svg class="btn-icon" viewBox="0 0 24 24" style="width: 14px; height: 14px;">${icons.add}</svg>
+                Add Outlet
+              </button>
+            </div>
+            <div class="breaker-assigned-outlets-list">
+              ${assignedOutlets.length === 0 ? `
+                <p style="color: var(--secondary-text-color); text-align: center; padding: 12px; font-size: 11px;">
+                  No outlets assigned. Click "Add Outlet" to assign outlets to this breaker line.
+                </p>
+              ` : assignedOutlets.map(outlet => `
+                <div class="outlet-assigned-card" data-outlet-id="${outlet.id}">
+                  <div class="outlet-assigned-info">
+                    <span class="outlet-assigned-room">${outlet.room_name}</span>
+                    <span class="outlet-assigned-name">${outlet.outlet_name}</span>
+                  </div>
+                  <svg class="outlet-remove-icon" viewBox="0 0 24 24">${icons.close}</svg>
                 </div>
-                <svg class="outlet-remove-icon" viewBox="0 0 24 24">${icons.close}</svg>
-              </div>
-            `).join('')}
+              `).join('')}
+            </div>
           </div>
         </div>
       </div>
@@ -2653,66 +2637,166 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
-    // Drag and drop for outlets
-    const dragSource = this.shadowRoot.querySelector('#outlets-drag-source');
-    if (dragSource) {
-      dragSource.querySelectorAll('.outlet-drag-card').forEach(card => {
-        card.addEventListener('dragstart', (e) => {
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', card.dataset.outletId);
-          card.style.opacity = '0.5';
-        });
-
-        card.addEventListener('dragend', () => {
-          card.style.opacity = '1';
-        });
-      });
-    }
-
-    // Breaker drop zones
-    this.shadowRoot.querySelectorAll('.breaker-drop-zone').forEach(zone => {
-      zone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        zone.classList.add('drag-over');
-      });
-
-      zone.addEventListener('dragleave', () => {
-        zone.classList.remove('drag-over');
-      });
-
-      zone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        zone.classList.remove('drag-over');
-        
-        const outletId = e.dataTransfer.getData('text/plain');
-        if (outletId) {
-          this._assignOutletToBreaker(zone.dataset.breakerId, outletId);
+    // Add outlet to breaker buttons
+    this.shadowRoot.querySelectorAll('.add-outlet-to-breaker-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const breakerId = btn.dataset.breakerId;
+        if (breakerId) {
+          this._showOutletSelector(breakerId);
         }
       });
     });
 
-    // Remove outlet from breaker (click X icon or drag out)
+    // Remove outlet from breaker (click X icon)
     this.shadowRoot.querySelectorAll('.outlet-assigned-card').forEach(card => {
       const removeIcon = card.querySelector('.outlet-remove-icon');
       if (removeIcon) {
         removeIcon.addEventListener('click', () => {
-          const breakerZone = card.closest('.breaker-drop-zone');
-          if (breakerZone) {
+          const breakerCard = card.closest('.breaker-settings-card');
+          if (breakerCard) {
             card.remove();
           }
         });
       }
+    });
+  }
 
-      card.addEventListener('dragstart', (e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', card.dataset.outletId);
-        card.style.opacity = '0.5';
-      });
+  _showOutletSelector(breakerId) {
+    const availableOutlets = this._getAvailableOutletsForBreaker(breakerId);
+    
+    if (availableOutlets.length === 0) {
+      showToast(this.shadowRoot, 'No available outlets to add', 'info');
+      return;
+    }
 
-      card.addEventListener('dragend', () => {
-        card.style.opacity = '1';
+    // Create dropdown/modal
+    const modal = document.createElement('div');
+    modal.className = 'outlet-selector-modal';
+    modal.innerHTML = `
+      <div class="outlet-selector-overlay"></div>
+      <div class="outlet-selector-content">
+        <div class="outlet-selector-header">
+          <h3>Select Outlet to Add</h3>
+          <button class="outlet-selector-close">×</button>
+        </div>
+        <div class="outlet-selector-list">
+          ${availableOutlets.map(outlet => `
+            <div class="outlet-selector-item" data-outlet-id="${outlet.id}">
+              <div class="outlet-selector-info">
+                <span class="outlet-selector-room">${outlet.room_name}</span>
+                <span class="outlet-selector-name">${outlet.outlet_name}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    // Add styles
+    const style = document.createElement('style');
+    style.textContent = `
+      .outlet-selector-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 2000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .outlet-selector-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(4px);
+      }
+      .outlet-selector-content {
+        position: relative;
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--card-border);
+        width: 90%;
+        max-width: 400px;
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+      }
+      .outlet-selector-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px;
+        border-bottom: 1px solid var(--card-border);
+      }
+      .outlet-selector-header h3 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+      .outlet-selector-close {
+        background: transparent;
+        border: none;
+        color: var(--secondary-text-color);
+        font-size: 24px;
+        cursor: pointer;
+        padding: 0;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        transition: background 0.2s;
+      }
+      .outlet-selector-close:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+      .outlet-selector-list {
+        padding: 8px;
+        overflow-y: auto;
+        max-height: calc(80vh - 70px);
+      }
+      .outlet-selector-item {
+        padding: 10px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.2s;
+        margin-bottom: 4px;
+      }
+      .outlet-selector-item:hover {
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .outlet-selector-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .outlet-selector-room {
+        font-size: 10px;
+        color: var(--secondary-text-color);
+      }
+      .outlet-selector-name {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--primary-text-color);
+      }
+    `;
+    modal.appendChild(style);
+
+    // Add event listeners
+    modal.querySelector('.outlet-selector-overlay').addEventListener('click', () => modal.remove());
+    modal.querySelector('.outlet-selector-close').addEventListener('click', () => modal.remove());
+    
+    modal.querySelectorAll('.outlet-selector-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const outletId = item.dataset.outletId;
+        this._assignOutletToBreaker(breakerId, outletId);
+        modal.remove();
       });
     });
+
+    document.body.appendChild(modal);
   }
 
   _addBreaker() {
@@ -2730,25 +2814,40 @@ class EnergyPanel extends HTMLElement {
       outlet_ids: [],
     };
 
-    const allOutlets = this._getAllOutletsForDragDrop();
-    const html = this._renderBreakerSettingsCard(newBreaker, index, allOutlets);
+    const html = this._renderBreakerSettingsCard(newBreaker, index);
     list.insertAdjacentHTML('beforeend', html);
     this._attachBreakerEventListeners();
   }
 
   _assignOutletToBreaker(breakerId, outletId) {
-    const breakerZone = this.shadowRoot.querySelector(`.breaker-drop-zone[data-breaker-id="${breakerId}"]`);
-    if (!breakerZone) return;
+    // Find breaker card by finding the breaker in config and using its index
+    const breakerLines = this._config?.breaker_lines || [];
+    const breaker = breakerLines.find(b => b.id === breakerId);
+    if (!breaker) return;
+    
+    const index = breakerLines.indexOf(breaker);
+    const breakerCard = this.shadowRoot.querySelector(`.breaker-settings-card[data-breaker-index="${index}"]`);
+    if (!breakerCard) return;
+
+    const outletsList = breakerCard.querySelector('.breaker-assigned-outlets-list');
+    if (!outletsList) return;
 
     // Check if already assigned
-    if (breakerZone.querySelector(`[data-outlet-id="${outletId}"]`)) return;
+    if (outletsList.querySelector(`[data-outlet-id="${outletId}"]`)) {
+      showToast(this.shadowRoot, 'Outlet already assigned to this breaker', 'info');
+      return;
+    }
 
-    const allOutlets = this._getAllOutletsForDragDrop();
+    // Remove empty message if present
+    const emptyMsg = outletsList.querySelector('p');
+    if (emptyMsg) emptyMsg.remove();
+
+    const allOutlets = this._getAllOutlets();
     const outlet = allOutlets.find(o => o.id === outletId);
     if (!outlet) return;
 
     const html = `
-      <div class="outlet-assigned-card" draggable="true" data-outlet-id="${outletId}">
+      <div class="outlet-assigned-card" data-outlet-id="${outletId}">
         <div class="outlet-assigned-info">
           <span class="outlet-assigned-room">${outlet.room_name}</span>
           <span class="outlet-assigned-name">${outlet.outlet_name}</span>
@@ -2756,7 +2855,7 @@ class EnergyPanel extends HTMLElement {
         <svg class="outlet-remove-icon" viewBox="0 0 24 24">${icons.close}</svg>
       </div>
     `;
-    breakerZone.insertAdjacentHTML('beforeend', html);
+    outletsList.insertAdjacentHTML('beforeend', html);
     this._attachBreakerEventListeners();
   }
 
