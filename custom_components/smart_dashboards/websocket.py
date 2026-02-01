@@ -1,0 +1,324 @@
+"""WebSocket API for Smart Dashboards."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import voluptuous as vol
+
+from homeassistant.components import websocket_api
+from homeassistant.core import HomeAssistant, callback
+
+from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
+
+
+@callback
+def async_setup(hass: HomeAssistant) -> None:
+    """Set up WebSocket API."""
+    websocket_api.async_register_command(hass, websocket_get_config)
+    websocket_api.async_register_command(hass, websocket_save_cameras)
+    websocket_api.async_register_command(hass, websocket_save_energy)
+    websocket_api.async_register_command(hass, websocket_get_entities)
+    websocket_api.async_register_command(hass, websocket_send_tts)
+    websocket_api.async_register_command(hass, websocket_set_volume)
+    websocket_api.async_register_command(hass, websocket_get_power_data)
+    websocket_api.async_register_command(hass, websocket_get_camera_stream_url)
+    _LOGGER.info("Smart Dashboards WebSocket API registered")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_config",
+    }
+)
+@websocket_api.async_response
+async def websocket_get_config(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get the full configuration."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if config_manager:
+        connection.send_result(msg["id"], config_manager.config)
+    else:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/save_cameras",
+        vol.Required("config"): dict,
+    }
+)
+@websocket_api.async_response
+async def websocket_save_cameras(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Save cameras configuration."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if config_manager:
+        await config_manager.async_update_cameras(msg["config"])
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/save_energy",
+        vol.Required("config"): dict,
+    }
+)
+@websocket_api.async_response
+async def websocket_save_energy(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Save energy configuration."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if config_manager:
+        await config_manager.async_update_energy(msg["config"])
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_entities",
+        vol.Optional("entity_type"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_entities(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get available entities (cameras, media players, power sensors)."""
+    entity_type = msg.get("entity_type")
+    result: dict[str, list[dict[str, str]]] = {
+        "cameras": [],
+        "media_players": [],
+        "power_sensors": [],
+    }
+
+    for state in hass.states.async_all():
+        entity_id = state.entity_id
+        friendly_name = state.attributes.get("friendly_name", entity_id)
+
+        if entity_type is None or entity_type == "camera":
+            if entity_id.startswith("camera."):
+                result["cameras"].append({
+                    "entity_id": entity_id,
+                    "friendly_name": friendly_name,
+                })
+
+        if entity_type is None or entity_type == "media_player":
+            if entity_id.startswith("media_player."):
+                result["media_players"].append({
+                    "entity_id": entity_id,
+                    "friendly_name": friendly_name,
+                })
+
+        if entity_type is None or entity_type == "power_sensor":
+            # Include sensors with power in name or unit
+            if entity_id.startswith("sensor."):
+                unit = state.attributes.get("unit_of_measurement", "")
+                if "power" in entity_id.lower() or unit in ("W", "kW", "mW"):
+                    result["power_sensors"].append({
+                        "entity_id": entity_id,
+                        "friendly_name": friendly_name,
+                        "unit": unit,
+                    })
+            # Include switches with power attribute
+            elif entity_id.startswith("switch."):
+                if "current_power_w" in state.attributes:
+                    result["power_sensors"].append({
+                        "entity_id": entity_id,
+                        "friendly_name": friendly_name,
+                        "unit": "W",
+                        "type": "switch_attribute",
+                    })
+
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/send_tts",
+        vol.Required("media_player"): str,
+        vol.Required("message"): str,
+        vol.Optional("language"): str,
+        vol.Optional("volume"): vol.Coerce(float),
+    }
+)
+@websocket_api.async_response
+async def websocket_send_tts(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Send TTS to a media player."""
+    from .tts_helper import async_send_tts
+
+    try:
+        await async_send_tts(
+            hass,
+            media_player=msg["media_player"],
+            message=msg["message"],
+            language=msg.get("language"),
+            volume=msg.get("volume"),
+        )
+        connection.send_result(msg["id"], {"success": True})
+    except Exception as e:
+        _LOGGER.error("TTS failed: %s", e)
+        connection.send_error(msg["id"], "tts_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/set_volume",
+        vol.Required("media_player"): str,
+        vol.Required("volume"): vol.Coerce(float),
+    }
+)
+@websocket_api.async_response
+async def websocket_set_volume(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Set volume on a media player."""
+    from .tts_helper import async_set_volume
+
+    try:
+        await async_set_volume(
+            hass,
+            media_player=msg["media_player"],
+            volume=msg["volume"],
+        )
+        connection.send_result(msg["id"], {"success": True})
+    except Exception as e:
+        _LOGGER.error("Set volume failed: %s", e)
+        connection.send_error(msg["id"], "volume_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_power_data",
+    }
+)
+@websocket_api.async_response
+async def websocket_get_power_data(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get current power readings for all configured outlets."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    result: dict[str, Any] = {"rooms": []}
+
+    for room in config_manager.energy_config.get("rooms", []):
+        room_data = {
+            "id": room.get("id", room["name"].lower().replace(" ", "_")),
+            "name": room["name"],
+            "total_watts": 0,
+            "total_day_wh": 0,
+            "outlets": [],
+        }
+
+        for outlet in room.get("outlets", []):
+            outlet_data = {
+                "name": outlet["name"],
+                "plug1": {"watts": 0, "day_wh": 0},
+                "plug2": {"watts": 0, "day_wh": 0},
+            }
+
+            # Get plug 1 data
+            if outlet.get("plug1_entity"):
+                watts = _get_power_value(hass, outlet["plug1_entity"])
+                day_wh = config_manager.get_day_energy(outlet["plug1_entity"])
+                outlet_data["plug1"] = {"watts": watts, "day_wh": round(day_wh, 2)}
+                room_data["total_watts"] += watts
+                room_data["total_day_wh"] += day_wh
+
+            # Get plug 2 data
+            if outlet.get("plug2_entity"):
+                watts = _get_power_value(hass, outlet["plug2_entity"])
+                day_wh = config_manager.get_day_energy(outlet["plug2_entity"])
+                outlet_data["plug2"] = {"watts": watts, "day_wh": round(day_wh, 2)}
+                room_data["total_watts"] += watts
+                room_data["total_day_wh"] += day_wh
+
+            room_data["outlets"].append(outlet_data)
+
+        room_data["total_watts"] = round(room_data["total_watts"], 1)
+        room_data["total_day_wh"] = round(room_data["total_day_wh"], 2)
+        result["rooms"].append(room_data)
+
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_camera_stream_url",
+        vol.Required("entity_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_camera_stream_url(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get camera stream URL."""
+    entity_id = msg["entity_id"]
+    
+    # Check if entity exists
+    state = hass.states.get(entity_id)
+    if state is None:
+        connection.send_error(msg["id"], "entity_not_found", f"Camera {entity_id} not found")
+        return
+
+    # Return the stream proxy URL
+    connection.send_result(msg["id"], {
+        "stream_url": f"/api/camera_proxy_stream/{entity_id}",
+        "snapshot_url": f"/api/camera_proxy/{entity_id}",
+    })
+
+
+def _get_power_value(hass: HomeAssistant, entity_id: str) -> float:
+    """Get power value from an entity."""
+    state = hass.states.get(entity_id)
+    if state is None:
+        return 0.0
+
+    # Sensor entity - power is the state value
+    if entity_id.startswith("sensor."):
+        try:
+            if state.state not in ("unknown", "unavailable", ""):
+                return float(state.state)
+        except (ValueError, TypeError):
+            pass
+        return 0.0
+
+    # Switch entity - power is an attribute
+    if entity_id.startswith("switch."):
+        power = state.attributes.get("current_power_w", 0)
+        try:
+            return float(power)
+        except (ValueError, TypeError):
+            return 0.0
+
+    return 0.0

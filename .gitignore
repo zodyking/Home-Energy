@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Home Assistant
+*.db
+*.log
+home-assistant.log*
+home-assistant_v2.db*
+.storage/
+deps/
+tts/
+.cloud/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Config files that may contain secrets
+secrets.yaml
+.HA_VERSION
+
+# Runtime data
+smart_dashboards.json
+smart_dashboards_energy_tracking.json

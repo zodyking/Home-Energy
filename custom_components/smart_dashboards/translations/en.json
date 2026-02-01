@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smart Dashboards",
+        "description": "Set up Smart Dashboards to add camera and energy monitoring panels to your sidebar."
+      }
+    },
+    "abort": {
+      "already_configured": "Smart Dashboards is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Smart Dashboards Options",
+        "description": "Configure Smart Dashboards settings."
+      }
+    }
+  }
+}
