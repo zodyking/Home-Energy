@@ -3,7 +3,7 @@
  * Live camera feeds with TTS integration
  */
 
-import { sharedStyles, icons, showToast } from './shared-utils.js';
+import { sharedStyles, icons, showToast, passcodeModalStyles, showPasscodeModal } from './shared-utils.js';
 
 class CamerasPanel extends HTMLElement {
   constructor() {
@@ -108,6 +108,7 @@ class CamerasPanel extends HTMLElement {
   _render() {
     const styles = `
       ${sharedStyles}
+      ${passcodeModalStyles}
       
       .cameras-grid {
         display: grid;
@@ -685,18 +686,24 @@ class CamerasPanel extends HTMLElement {
     const emptySettingsBtn = this.shadowRoot.querySelector('#empty-settings-btn');
 
     if (settingsBtn) {
-      settingsBtn.addEventListener('click', () => {
-        this._showSettings = true;
-        this._cleanup();
-        this._render();
+      settingsBtn.addEventListener('click', async () => {
+        const verified = await showPasscodeModal(this.shadowRoot, this._hass);
+        if (verified) {
+          this._showSettings = true;
+          this._cleanup();
+          this._render();
+        }
       });
     }
 
     if (emptySettingsBtn) {
-      emptySettingsBtn.addEventListener('click', () => {
-        this._showSettings = true;
-        this._cleanup();
-        this._render();
+      emptySettingsBtn.addEventListener('click', async () => {
+        const verified = await showPasscodeModal(this.shadowRoot, this._hass);
+        if (verified) {
+          this._showSettings = true;
+          this._cleanup();
+          this._render();
+        }
       });
     }
 

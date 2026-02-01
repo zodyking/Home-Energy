@@ -28,6 +28,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
     websocket_api.async_register_command(hass, websocket_get_areas)
     websocket_api.async_register_command(hass, websocket_get_switches)
+    websocket_api.async_register_command(hass, websocket_verify_passcode)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -388,6 +389,29 @@ async def websocket_get_camera_stream_url(
         "stream_url": f"/api/camera_proxy_stream/{entity_id}",
         "snapshot_url": f"/api/camera_proxy/{entity_id}",
     })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/verify_passcode",
+        vol.Required("passcode"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_verify_passcode(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Verify the settings passcode."""
+    # Get stored passcode from integration options
+    stored_passcode = hass.data[DOMAIN].get("options", {}).get("settings_passcode", "0000")
+    entered_passcode = msg["passcode"]
+    
+    if entered_passcode == stored_passcode:
+        connection.send_result(msg["id"], {"valid": True})
+    else:
+        connection.send_result(msg["id"], {"valid": False})
 
 
 @websocket_api.websocket_command(
