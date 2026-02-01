@@ -7,8 +7,11 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow, ConfigEntry
 from homeassistant.core import callback
+import logging
 
 from .const import DOMAIN, NAME
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class SmartDashboardsConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -79,13 +82,23 @@ class SmartDashboardsOptionsFlow(OptionsFlow):
                 errors["settings_passcode"] = "invalid_passcode"
             else:
                 # Return options - in OptionsFlow, data parameter contains the options
-                return self.async_create_entry(
-                    title=self.config_entry.title,
-                    data=user_input
-                )
+                try:
+                    return self.async_create_entry(
+                        title=self.config_entry.title or NAME,
+                        data=user_input
+                    )
+                except Exception as e:
+                    # Log error and show form with error
+                    errors["base"] = "unknown"
+                    import logging
+                    _LOGGER = logging.getLogger(__name__)
+                    _LOGGER.error("Error creating options entry: %s", e)
 
         # Get current options (handle case where options might not exist)
-        current = self.config_entry.options or {}
+        try:
+            current = self.config_entry.options or {}
+        except AttributeError:
+            current = {}
 
         return self.async_show_form(
             step_id="init",
