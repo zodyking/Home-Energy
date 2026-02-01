@@ -15,7 +15,7 @@ class EnergyPanel extends HTMLElement {
     this._powerData = null;
     this._showSettings = false;
     this._settingsTab = 'rooms'; // 'rooms', 'tts', 'breakers', or 'stove'
-    this._dashboardView = 'outlets'; // 'outlets', 'breakers', or 'stove'
+    this._dashboardView = 'outlets'; // 'outlets' or 'breakers'
     this._breakerData = null;
     this._stoveData = null;
     this._refreshInterval = null;
@@ -48,7 +48,6 @@ class EnergyPanel extends HTMLElement {
     this._refreshInterval = setInterval(() => {
       this._loadPowerData();
       this._loadBreakerData();
-      this._loadStoveData();
     }, 1000);
   }
 
@@ -83,7 +82,6 @@ class EnergyPanel extends HTMLElement {
       await Promise.all([
         this._loadPowerData(),
         this._loadBreakerData(),
-        this._loadStoveData(),
       ]);
       this._loading = false;
       this._render();
@@ -1466,16 +1464,13 @@ class EnergyPanel extends HTMLElement {
             <button class="view-tab ${this._dashboardView === 'breakers' ? 'active' : ''}" data-view="breakers">
               Breakers
             </button>
-            <button class="view-tab ${this._dashboardView === 'stove' ? 'active' : ''}" data-view="stove">
-              Stove Safety
-            </button>
           </div>
 
           ${this._dashboardView === 'outlets' ? `
             <div class="rooms-grid">
               ${rooms.map((room) => this._renderRoomCard(room)).join('')}
             </div>
-          ` : this._dashboardView === 'breakers' ? this._renderBreakerPanel() : this._renderStoveSafetyPanel()}
+          ` : this._renderBreakerPanel()}
         </div>
       </div>
     `;
@@ -2490,7 +2485,7 @@ class EnergyPanel extends HTMLElement {
     viewTabs.forEach(tab => {
       tab.addEventListener('click', () => {
         const view = tab.dataset.view;
-        if (view && (view === 'outlets' || view === 'breakers' || view === 'stove')) {
+        if (view && (view === 'outlets' || view === 'breakers')) {
           this._dashboardView = view;
           this._render();
         }

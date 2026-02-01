@@ -9,10 +9,23 @@
           "enable_energy": "Enable Home Energy Dashboard",
           "settings_passcode": "Settings Passcode (4 digits)"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Smart Dashboards",
+        "description": "Update dashboard panels and settings passcode.",
+        "data": {
+          "enable_cameras": "Enable Cameras Dashboard",
+          "enable_energy": "Enable Home Energy Dashboard",
+          "settings_passcode": "Settings Passcode (4 digits)"
+        }
       }
     },
     "error": {
       "invalid_passcode": "Passcode must be exactly 4 digits"
+    },
+    "abort": {
+      "reconfigure_successful": "Reconfiguration completed successfully",
+      "entry_not_found": "Config entry not found"
     }
   },
   "options": {

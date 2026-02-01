@@ -25,6 +25,46 @@ class SmartDashboardsConfigFlow(ConfigFlow, domain=DOMAIN):
         """Get the options flow for this handler."""
         return SmartDashboardsOptionsFlow(config_entry)
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle reconfigure step (same as options: panels + passcode)."""
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        if entry is None:
+            return self.async_abort(reason="entry_not_found")
+
+        errors = {}
+
+        if user_input is not None:
+            passcode = user_input.get("settings_passcode", "")
+            if not passcode.isdigit() or len(passcode) != 4:
+                errors["settings_passcode"] = "invalid_passcode"
+            else:
+                self.hass.config_entries.async_update_entry(
+                    entry, data={}, options=user_input
+                )
+                return self.async_abort(reason="reconfigure_successful")
+
+        current = entry.options or {}
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema({
+                vol.Required(
+                    "enable_cameras",
+                    default=current.get("enable_cameras", True),
+                ): bool,
+                vol.Required(
+                    "enable_energy",
+                    default=current.get("enable_energy", True),
+                ): bool,
+                vol.Required(
+                    "settings_passcode",
+                    default=current.get("settings_passcode", "0000"),
+                ): str,
+            }),
+            errors=errors,
+        )
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -81,24 +121,11 @@ class SmartDashboardsOptionsFlow(OptionsFlow):
             if not passcode.isdigit() or len(passcode) != 4:
                 errors["settings_passcode"] = "invalid_passcode"
             else:
-                # Return options - in OptionsFlow, data parameter contains the options
-                try:
-                    return self.async_create_entry(
-                        title=self.config_entry.title or NAME,
-                        data=user_input
-                    )
-                except Exception as e:
-                    # Log error and show form with error
-                    errors["base"] = "unknown"
-                    import logging
-                    _LOGGER = logging.getLogger(__name__)
-                    _LOGGER.error("Error creating options entry: %s", e)
+                # OptionsFlow: async_create_entry accepts data only (no title)
+                return self.async_create_entry(data=user_input)
 
         # Get current options (handle case where options might not exist)
-        try:
-            current = self.config_entry.options or {}
-        except AttributeError:
-            current = {}
+        current = self.config_entry.options or {}
 
         return self.async_show_form(
             step_id="init",
