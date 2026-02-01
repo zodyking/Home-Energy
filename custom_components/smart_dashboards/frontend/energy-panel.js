@@ -1361,12 +1361,12 @@ class EnergyPanel extends HTMLElement {
                 </div>
                 <div class="breaker-progress-bar">
                   <div class="breaker-progress-fill" style="width: ${percentage}%; background: ${breaker.color || '#03a9f4'}"></div>
+                  ${breaker.threshold > 0 && data.max_load > 0 && (breaker.threshold / data.max_load) * 100 > 0 ? `
+                    <div class="breaker-threshold-indicator" style="left: ${(breaker.threshold / data.max_load) * 100}%">
+                      <span class="threshold-label">Warning: ${breaker.threshold}W</span>
+                    </div>
+                  ` : ''}
                 </div>
-                ${breaker.threshold > 0 ? `
-                  <div class="breaker-threshold-indicator" style="left: ${(breaker.threshold / data.max_load) * 100}%">
-                    <span class="threshold-label">Warning: ${breaker.threshold}W</span>
-                  </div>
-                ` : ''}
               </div>
             </div>
           `;
