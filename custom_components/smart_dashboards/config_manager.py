@@ -25,6 +25,12 @@ class ConfigManager:
         self._config_path = hass.config.path(CONFIG_FILE)
         self._day_energy_data: dict[str, dict[str, float]] = {}
         self._last_reset_date: str | None = None
+        self._event_counts: dict[str, Any] = {
+            "total_warnings": 0,
+            "total_shutoffs": 0,
+            "room_warnings": {},  # room_id -> count
+            "room_shutoffs": {},  # room_id -> count
+        }
 
     @property
     def config(self) -> dict[str, Any]:
@@ -58,6 +64,8 @@ class ConfigManager:
 
         # Load day energy tracking data
         await self._async_load_energy_tracking()
+        # Load event counts
+        await self._async_load_event_counts()
 
     async def async_save(self) -> None:
         """Save configuration to file."""
@@ -236,3 +244,49 @@ class ConfigManager:
 
         # Save periodically (every 60 seconds to reduce disk writes)
         # This is handled by the energy monitor
+
+    # Event count tracking (warnings and shutoffs)
+    async def _async_load_event_counts(self) -> None:
+        """Load event counts (warnings and shutoffs)."""
+        counts_path = self.hass.config.path("smart_dashboards_event_counts.json")
+        try:
+            if os.path.exists(counts_path):
+                with open(counts_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self._event_counts = {
+                        "total_warnings": data.get("total_warnings", 0),
+                        "total_shutoffs": data.get("total_shutoffs", 0),
+                        "room_warnings": data.get("room_warnings", {}),
+                        "room_shutoffs": data.get("room_shutoffs", {}),
+                    }
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    async def _async_save_event_counts(self) -> None:
+        """Save event counts."""
+        counts_path = self.hass.config.path("smart_dashboards_event_counts.json")
+        try:
+            with open(counts_path, "w", encoding="utf-8") as f:
+                json.dump(self._event_counts, f, indent=2)
+        except IOError as err:
+            _LOGGER.error("Error saving event counts: %s", err)
+
+    async def async_increment_warning(self, room_id: str) -> None:
+        """Increment warning count for a room and total."""
+        self._event_counts["total_warnings"] = self._event_counts.get("total_warnings", 0) + 1
+        if room_id not in self._event_counts["room_warnings"]:
+            self._event_counts["room_warnings"][room_id] = 0
+        self._event_counts["room_warnings"][room_id] += 1
+        await self._async_save_event_counts()
+
+    async def async_increment_shutoff(self, room_id: str) -> None:
+        """Increment shutoff count for a room and total."""
+        self._event_counts["total_shutoffs"] = self._event_counts.get("total_shutoffs", 0) + 1
+        if room_id not in self._event_counts["room_shutoffs"]:
+            self._event_counts["room_shutoffs"][room_id] = 0
+        self._event_counts["room_shutoffs"][room_id] += 1
+        await self._async_save_event_counts()
+
+    def get_event_counts(self) -> dict[str, Any]:
+        """Get all event counts."""
+        return self._event_counts.copy()
