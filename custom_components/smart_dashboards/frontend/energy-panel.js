@@ -494,6 +494,50 @@ class EnergyPanel extends HTMLElement {
         white-space: nowrap;
       }
 
+      .breaker-outlets-list {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--card-border);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .breaker-outlet-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 4px 6px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 4px;
+        font-size: 10px;
+      }
+
+      .breaker-outlet-name {
+        flex: 1;
+        color: var(--primary-text-color);
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .breaker-outlet-percentage {
+        color: var(--panel-accent);
+        font-weight: 600;
+        margin: 0 8px;
+        min-width: 40px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .breaker-outlet-watts {
+        color: var(--secondary-text-color);
+        font-variant-numeric: tabular-nums;
+        min-width: 50px;
+        text-align: right;
+      }
+
       .room-stats {
         text-align: right;
       }
@@ -1335,10 +1379,12 @@ class EnergyPanel extends HTMLElement {
             total_watts: 0,
             total_day_wh: 0,
             max_load: breaker.max_load || 2400,
+            outlets: [],
           };
           const percentage = data.max_load > 0 ? Math.min((data.total_watts / data.max_load) * 100, 100) : 0;
           const isNearThreshold = breaker.threshold > 0 && data.total_watts >= breaker.threshold;
           const isAtMax = data.max_load > 0 && data.total_watts >= data.max_load;
+          const outlets = data.outlets || [];
 
           return `
             <div class="breaker-card" data-breaker-id="${breaker.id}" style="border-left: 4px solid ${breaker.color || '#03a9f4'}">
@@ -1367,6 +1413,17 @@ class EnergyPanel extends HTMLElement {
                     </div>
                   ` : ''}
                 </div>
+                ${outlets.length > 0 ? `
+                  <div class="breaker-outlets-list">
+                    ${outlets.map(outlet => `
+                      <div class="breaker-outlet-item">
+                        <span class="breaker-outlet-name">${outlet.name}</span>
+                        <span class="breaker-outlet-percentage">${outlet.percentage.toFixed(1)}%</span>
+                        <span class="breaker-outlet-watts">${outlet.total_watts.toFixed(1)}W</span>
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
               </div>
             </div>
           `;
@@ -1407,6 +1464,24 @@ class EnergyPanel extends HTMLElement {
       if (progressPercentage) {
         const percentage = data.max_load > 0 ? Math.min((data.total_watts / data.max_load) * 100, 100) : 0;
         progressPercentage.textContent = `${percentage.toFixed(1)}%`;
+      }
+
+      // Update outlet list
+      const outletsList = breakerCard.querySelector('.breaker-outlets-list');
+      if (outletsList && data.outlets) {
+        const outletItems = outletsList.querySelectorAll('.breaker-outlet-item');
+        data.outlets.forEach((outlet, index) => {
+          const item = outletItems[index];
+          if (item) {
+            const nameEl = item.querySelector('.breaker-outlet-name');
+            const percentageEl = item.querySelector('.breaker-outlet-percentage');
+            const wattsEl = item.querySelector('.breaker-outlet-watts');
+            
+            if (nameEl) nameEl.textContent = outlet.name;
+            if (percentageEl) percentageEl.textContent = `${outlet.percentage.toFixed(1)}%`;
+            if (wattsEl) wattsEl.textContent = `${outlet.total_watts.toFixed(1)}W`;
+          }
+        });
       }
     });
   }
@@ -2700,29 +2775,11 @@ class EnergyPanel extends HTMLElement {
         breaker_id: breakerId,
       });
       
-      // Update button visual state based on new state
-      if (btn) {
-        const isOn = result.state === 'on';
-        btn.classList.toggle('on', isOn);
-        
-        // Update button text to show state
-        if (isOn) {
-          btn.textContent = 'Test Trip (ON)';
-        } else {
-          btn.textContent = 'Test Trip (OFF)';
-        }
-      }
-      
       // Show feedback
-      const stateText = result.state === 'on' ? 'ON' : 'OFF';
-      showToast(this.shadowRoot, `Test trip: ${result.total_switches} switches turned ${stateText}`, 'success');
+      showToast(this.shadowRoot, result.message || `Test trip: ${result.total_switches} switches tested`, 'success');
     } catch (e) {
       console.error('Test trip failed:', e);
       showToast(this.shadowRoot, 'Test trip failed', 'error');
-      if (btn) {
-        btn.classList.remove('on');
-        btn.textContent = 'Test Trip';
-      }
     } finally {
       if (btn) {
         btn.disabled = false;
