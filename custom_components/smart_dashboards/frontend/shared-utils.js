@@ -495,3 +495,262 @@ export function showToast(shadowRoot, message, type = 'default') {
 
   setTimeout(() => toast.remove(), 3000);
 }
+
+// Passcode modal styles
+export const passcodeModalStyles = `
+  .passcode-modal {
+    background: var(--card-bg);
+    border-radius: 16px;
+    border: 1px solid var(--card-border);
+    width: 90%;
+    max-width: 320px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    animation: modalSlideIn 0.2s ease;
+  }
+
+  @keyframes modalSlideIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95) translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  .passcode-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--card-border);
+  }
+
+  .passcode-title {
+    font-size: 16px;
+    font-weight: 500;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .passcode-title svg {
+    width: 20px;
+    height: 20px;
+    fill: var(--panel-accent);
+  }
+
+  .passcode-body {
+    padding: 24px 20px;
+    text-align: center;
+  }
+
+  .passcode-desc {
+    font-size: 13px;
+    color: var(--secondary-text-color);
+    margin: 0 0 20px;
+  }
+
+  .passcode-input-wrapper {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .passcode-digit {
+    width: 48px;
+    height: 56px;
+    border-radius: 10px;
+    border: 2px solid var(--input-border);
+    background: var(--input-bg);
+    color: var(--primary-text-color);
+    font-size: 24px;
+    font-weight: 600;
+    text-align: center;
+    font-family: 'Roboto Mono', monospace;
+    transition: border-color 0.2s, background 0.2s;
+  }
+
+  .passcode-digit:focus {
+    outline: none;
+    border-color: var(--panel-accent);
+    background: rgba(3, 169, 244, 0.05);
+  }
+
+  .passcode-digit.error {
+    border-color: var(--panel-danger);
+    animation: shake 0.3s ease;
+  }
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+  }
+
+  .passcode-error {
+    font-size: 12px;
+    color: var(--panel-danger);
+    margin: 0 0 12px;
+    min-height: 18px;
+  }
+
+  .passcode-footer {
+    display: flex;
+    gap: 10px;
+    padding: 0 20px 20px;
+  }
+
+  .passcode-footer .btn {
+    flex: 1;
+  }
+`;
+
+// Lock icon for passcode
+export const lockIcon = `<svg viewBox="0 0 24 24"><path d="M18,8h-1V6c0-2.76-2.24-5-5-5S7,3.24,7,6v2H6c-1.1,0-2,0.9-2,2v10c0,1.1,0.9,2,2,2h12c1.1,0,2-0.9,2-2V10 C20,8.9,19.1,8,18,8z M12,17c-1.1,0-2-0.9-2-2s0.9-2,2-2s2,0.9,2,2S13.1,17,12,17z M15.1,8H8.9V6c0-1.71,1.39-3.1,3.1-3.1 s3.1,1.39,3.1,3.1V8z"/></svg>`;
+
+/**
+ * Show passcode modal and verify with backend
+ * @param {ShadowRoot} shadowRoot - The shadow root to attach modal to
+ * @param {object} hass - Home Assistant object for WS calls
+ * @returns {Promise<boolean>} - True if passcode verified, false if cancelled
+ */
+export function showPasscodeModal(shadowRoot, hass) {
+  return new Promise((resolve) => {
+    // Create modal HTML
+    const modalOverlay = document.createElement('div');
+    modalOverlay.className = 'modal-overlay';
+    modalOverlay.innerHTML = `
+      <div class="passcode-modal">
+        <div class="passcode-header">
+          <h3 class="passcode-title">
+            ${lockIcon}
+            Settings Locked
+          </h3>
+        </div>
+        <div class="passcode-body">
+          <p class="passcode-desc">Enter your 4-digit passcode to access settings</p>
+          <div class="passcode-input-wrapper">
+            <input type="tel" class="passcode-digit" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
+            <input type="tel" class="passcode-digit" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
+            <input type="tel" class="passcode-digit" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
+            <input type="tel" class="passcode-digit" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
+          </div>
+          <p class="passcode-error"></p>
+        </div>
+        <div class="passcode-footer">
+          <button class="btn btn-secondary passcode-cancel">Cancel</button>
+          <button class="btn btn-primary passcode-submit">Unlock</button>
+        </div>
+      </div>
+    `;
+
+    shadowRoot.appendChild(modalOverlay);
+
+    const digits = modalOverlay.querySelectorAll('.passcode-digit');
+    const errorEl = modalOverlay.querySelector('.passcode-error');
+    const cancelBtn = modalOverlay.querySelector('.passcode-cancel');
+    const submitBtn = modalOverlay.querySelector('.passcode-submit');
+
+    // Focus first digit
+    setTimeout(() => digits[0].focus(), 100);
+
+    // Handle digit input - auto-advance to next
+    digits.forEach((digit, idx) => {
+      digit.addEventListener('input', (e) => {
+        // Only allow numbers
+        e.target.value = e.target.value.replace(/[^0-9]/g, '');
+        
+        if (e.target.value && idx < 3) {
+          digits[idx + 1].focus();
+        }
+        
+        // Clear error state
+        digits.forEach(d => d.classList.remove('error'));
+        errorEl.textContent = '';
+      });
+
+      digit.addEventListener('keydown', (e) => {
+        // Handle backspace - go to previous
+        if (e.key === 'Backspace' && !e.target.value && idx > 0) {
+          digits[idx - 1].focus();
+        }
+        // Handle Enter - submit
+        if (e.key === 'Enter') {
+          submitBtn.click();
+        }
+      });
+
+      // Select all on focus for easy replace
+      digit.addEventListener('focus', () => digit.select());
+    });
+
+    // Cancel button
+    cancelBtn.addEventListener('click', () => {
+      modalOverlay.remove();
+      resolve(false);
+    });
+
+    // Click outside to cancel
+    modalOverlay.addEventListener('click', (e) => {
+      if (e.target === modalOverlay) {
+        modalOverlay.remove();
+        resolve(false);
+      }
+    });
+
+    // Escape key to cancel
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        modalOverlay.remove();
+        document.removeEventListener('keydown', escHandler);
+        resolve(false);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+
+    // Submit button
+    submitBtn.addEventListener('click', async () => {
+      const passcode = Array.from(digits).map(d => d.value).join('');
+      
+      if (passcode.length !== 4) {
+        errorEl.textContent = 'Please enter all 4 digits';
+        digits.forEach(d => d.classList.add('error'));
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Checking...';
+
+      try {
+        const result = await hass.callWS({
+          type: 'smart_dashboards/verify_passcode',
+          passcode: passcode,
+        });
+
+        if (result.valid) {
+          modalOverlay.remove();
+          document.removeEventListener('keydown', escHandler);
+          resolve(true);
+        } else {
+          errorEl.textContent = 'Incorrect passcode';
+          digits.forEach(d => {
+            d.value = '';
+            d.classList.add('error');
+          });
+          digits[0].focus();
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Unlock';
+        }
+      } catch (e) {
+        console.error('Passcode verification failed:', e);
+        errorEl.textContent = 'Verification failed';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Unlock';
+      }
+    });
+  });
+}

@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+import voluptuous as vol
+
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow, ConfigEntry
+from homeassistant.core import callback
 
 from .const import DOMAIN, NAME
 
@@ -13,6 +16,12 @@ class SmartDashboardsConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Get the options flow for this handler."""
+        return SmartDashboardsOptionsFlow(config_entry)
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -21,7 +30,74 @@ class SmartDashboardsConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(DOMAIN)
         self._abort_if_unique_id_configured()
 
-        if user_input is not None:
-            return self.async_create_entry(title=NAME, data={})
+        errors = {}
 
-        return self.async_show_form(step_id="user")
+        if user_input is not None:
+            # Validate passcode is 4 digits
+            passcode = user_input.get("settings_passcode", "")
+            if not passcode.isdigit() or len(passcode) != 4:
+                errors["settings_passcode"] = "invalid_passcode"
+            else:
+                return self.async_create_entry(
+                    title=NAME,
+                    data={},
+                    options={
+                        "enable_cameras": user_input.get("enable_cameras", True),
+                        "enable_energy": user_input.get("enable_energy", True),
+                        "settings_passcode": passcode,
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema({
+                vol.Required("enable_cameras", default=True): bool,
+                vol.Required("enable_energy", default=True): bool,
+                vol.Required("settings_passcode"): str,
+            }),
+            errors=errors,
+        )
+
+
+class SmartDashboardsOptionsFlow(OptionsFlow):
+    """Handle options flow for Smart Dashboards."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the options."""
+        errors = {}
+
+        if user_input is not None:
+            # Validate passcode is 4 digits
+            passcode = user_input.get("settings_passcode", "")
+            if not passcode.isdigit() or len(passcode) != 4:
+                errors["settings_passcode"] = "invalid_passcode"
+            else:
+                return self.async_create_entry(title="", data=user_input)
+
+        # Get current options
+        current = self.config_entry.options
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Required(
+                    "enable_cameras",
+                    default=current.get("enable_cameras", True)
+                ): bool,
+                vol.Required(
+                    "enable_energy",
+                    default=current.get("enable_energy", True)
+                ): bool,
+                vol.Required(
+                    "settings_passcode",
+                    default=current.get("settings_passcode", "0000")
+                ): str,
+            }),
+            errors=errors,
+        )

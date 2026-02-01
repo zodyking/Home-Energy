@@ -2,13 +2,33 @@
   "config": {
     "step": {
       "user": {
-        "title": "Smart Dashboards",
-        "description": "Set up Smart Dashboards to add camera and energy monitoring panels to your sidebar.",
-        "data": {}
+        "title": "Smart Dashboards Setup",
+        "description": "Select which dashboard panels you want to enable and set a 4-digit passcode for settings access.",
+        "data": {
+          "enable_cameras": "Enable Cameras Dashboard",
+          "enable_energy": "Enable Home Energy Dashboard",
+          "settings_passcode": "Settings Passcode (4 digits)"
+        }
       }
     },
-    "abort": {
-      "already_configured": "Smart Dashboards is already configured."
+    "error": {
+      "invalid_passcode": "Passcode must be exactly 4 digits"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dashboard Panels",
+        "description": "Enable or disable dashboard panels and update your settings passcode. Your configuration data is preserved when a panel is disabled.",
+        "data": {
+          "enable_cameras": "Enable Cameras Dashboard",
+          "enable_energy": "Enable Home Energy Dashboard",
+          "settings_passcode": "Settings Passcode (4 digits)"
+        }
+      }
+    },
+    "error": {
+      "invalid_passcode": "Passcode must be exactly 4 digits"
     }
   }
 }
