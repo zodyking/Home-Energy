@@ -29,7 +29,13 @@ class SmartDashboardsConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle reconfigure step (same as options: panels + passcode)."""
-        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        try:
+            entry_id = self.context.get("entry_id")
+        except Exception:
+            entry_id = None
+        if not entry_id:
+            return self.async_abort(reason="entry_not_found")
+        entry = self.hass.config_entries.async_get_entry(entry_id)
         if entry is None:
             return self.async_abort(reason="entry_not_found")
 
@@ -115,33 +121,48 @@ class SmartDashboardsOptionsFlow(OptionsFlow):
         """Manage the options."""
         errors = {}
 
-        if user_input is not None:
-            # Validate passcode is 4 digits
-            passcode = user_input.get("settings_passcode", "")
-            if not passcode.isdigit() or len(passcode) != 4:
-                errors["settings_passcode"] = "invalid_passcode"
-            else:
-                # OptionsFlow: async_create_entry accepts data only (no title)
-                return self.async_create_entry(data=user_input)
+        try:
+            if user_input is not None:
+                passcode = str(user_input.get("settings_passcode", ""))
+                if not passcode.isdigit() or len(passcode) != 4:
+                    errors["settings_passcode"] = "invalid_passcode"
+                else:
+                    return self.async_create_entry(data=dict(user_input))
 
-        # Get current options (handle case where options might not exist)
-        current = self.config_entry.options or {}
+            current = getattr(self.config_entry, "options", None) or {}
+            if not isinstance(current, dict):
+                current = {}
 
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema({
-                vol.Required(
-                    "enable_cameras",
-                    default=current.get("enable_cameras", True)
-                ): bool,
-                vol.Required(
-                    "enable_energy",
-                    default=current.get("enable_energy", True)
-                ): bool,
-                vol.Required(
-                    "settings_passcode",
-                    default=current.get("settings_passcode", "0000")
-                ): str,
-            }),
-            errors=errors,
-        )
+            return self.async_show_form(
+                step_id="init",
+                data_schema=vol.Schema({
+                    vol.Required(
+                        "enable_cameras",
+                        default=current.get("enable_cameras", True),
+                    ): bool,
+                    vol.Required(
+                        "enable_energy",
+                        default=current.get("enable_energy", True),
+                    ): bool,
+                    vol.Required(
+                        "settings_passcode",
+                        default=current.get("settings_passcode", "0000"),
+                    ): str,
+                }),
+                errors=errors,
+            )
+        except Exception as e:
+            _LOGGER.exception("Options flow error: %s", e)
+            errors["base"] = "unknown"
+            current = getattr(self.config_entry, "options", None) or {}
+            if not isinstance(current, dict):
+                current = {}
+            return self.async_show_form(
+                step_id="init",
+                data_schema=vol.Schema({
+                    vol.Required("enable_cameras", default=True): bool,
+                    vol.Required("enable_energy", default=True): bool,
+                    vol.Required("settings_passcode", default="0000"): str,
+                }),
+                errors=errors,
+            )
