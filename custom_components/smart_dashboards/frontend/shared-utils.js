@@ -45,6 +45,37 @@ export const sharedStyles = `
     backdrop-filter: blur(12px);
   }
 
+  .menu-btn {
+    display: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    margin-right: 8px;
+    flex-shrink: 0;
+  }
+
+  .menu-btn svg {
+    width: 24px;
+    height: 24px;
+    fill: currentColor;
+  }
+
+  .menu-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  @media (max-width: 870px) {
+    .menu-btn {
+      display: flex;
+    }
+  }
+
   .panel-title {
     display: flex;
     align-items: center;
@@ -448,6 +479,7 @@ export const icons = {
   check: `<svg viewBox="0 0 24 24"><path d="M9,16.17L4.83,12l-1.42,1.41L9,19L21,7l-1.41-1.41L9,16.17z"/></svg>`,
   warning: `<svg viewBox="0 0 24 24"><path d="M1,21h22L12,2L1,21z M13,18h-2v-2h2V18z M13,14h-2v-4h2V14z"/></svg>`,
   outlet: `<svg viewBox="0 0 24 24"><path d="M12,2A10,10,0,1,0,22,12,10,10,0,0,0,12,2Zm0,18a8,8,0,1,1,8-8A8,8,0,0,1,12,20ZM9,9H11V13H9ZM13,9h2v4H13Z"/></svg>`,
+  menu: `<svg viewBox="0 0 24 24"><path d="M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z"/></svg>`,
 };
 
 // Helper function to show toast

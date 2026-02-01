@@ -18,7 +18,7 @@ async def async_send_tts(
     message: str,
     language: str | None = None,
     volume: float | None = None,
-    restore_volume: bool = True,
+    tts_entity: str | None = None,
 ) -> None:
     """Send TTS message to a media player.
 
@@ -28,7 +28,7 @@ async def async_send_tts(
         message: Text to speak
         language: TTS language (default: en)
         volume: Volume level 0-1 (optional, will set before TTS)
-        restore_volume: Whether to restore original volume after TTS
+        tts_entity: TTS engine entity (e.g., tts.google_translate_en_com)
     """
     if not message or not message.strip():
         _LOGGER.warning("Empty TTS message, skipping")
@@ -44,57 +44,58 @@ async def async_send_tts(
         _LOGGER.error("Media player %s not found", media_player)
         return
 
-    original_volume = None
-
     # Set volume if specified
     if volume is not None:
-        original_volume = state.attributes.get("volume_level")
         await async_set_volume(hass, media_player, volume)
 
-    # Send TTS
+    # Find a TTS entity if not specified
+    if not tts_entity:
+        tts_entity = await _find_tts_entity(hass, language)
+
+    if not tts_entity:
+        _LOGGER.error("No TTS entity found")
+        return
+
+    # Send TTS using the correct service call format
     try:
-        tts_data: dict[str, Any] = {
-            ATTR_ENTITY_ID: media_player,
-            "message": message.strip(),
-        }
-
-        if language:
-            tts_data["language"] = language
-        else:
-            tts_data["language"] = DEFAULT_TTS_LANGUAGE
-
-        # Use tts.speak service
         await hass.services.async_call(
             "tts",
             "speak",
             {
-                ATTR_ENTITY_ID: media_player,
                 "media_player_entity_id": media_player,
                 "message": message.strip(),
-                "language": language or DEFAULT_TTS_LANGUAGE,
             },
+            target={"entity_id": tts_entity},
             blocking=True,
         )
-
-        _LOGGER.debug("TTS sent to %s: %s", media_player, message[:50])
+        _LOGGER.debug("TTS sent to %s via %s: %s", media_player, tts_entity, message[:50])
 
     except Exception as e:
         _LOGGER.error("Failed to send TTS: %s", e)
-        # Try alternative TTS method (google_translate_say or cloud_say)
-        try:
-            await hass.services.async_call(
-                "tts",
-                "google_translate_say",
-                {
-                    ATTR_ENTITY_ID: media_player,
-                    "message": message.strip(),
-                    "language": language or DEFAULT_TTS_LANGUAGE,
-                },
-                blocking=True,
-            )
-        except Exception as e2:
-            _LOGGER.error("Fallback TTS also failed: %s", e2)
-            raise
+        raise
+
+
+async def _find_tts_entity(hass: HomeAssistant, language: str | None = None) -> str | None:
+    """Find an available TTS entity."""
+    lang = language or DEFAULT_TTS_LANGUAGE
+    
+    # Look for TTS entities
+    tts_entities = []
+    for state in hass.states.async_all():
+        if state.entity_id.startswith("tts."):
+            tts_entities.append(state.entity_id)
+    
+    if not tts_entities:
+        _LOGGER.warning("No TTS entities found in Home Assistant")
+        return None
+
+    # Try to find one matching the language
+    for entity_id in tts_entities:
+        if lang in entity_id.lower():
+            return entity_id
+    
+    # Return first available
+    return tts_entities[0] if tts_entities else None
 
 
 async def async_set_volume(
