@@ -15,6 +15,20 @@ from .const import CONFIG_FILE, DEFAULT_CONFIG, DOMAIN, DEFAULT_TTS_VOLUME
 _LOGGER = logging.getLogger(__name__)
 
 
+def _load_json_file(path: str) -> dict | None:
+    """Load JSON file (run in executor to avoid blocking event loop)."""
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_json_file(path: str, data: Any) -> None:
+    """Write JSON file (run in executor to avoid blocking event loop)."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
 class ConfigManager:
     """Manage Smart Dashboards configuration stored in JSON file."""
 
@@ -50,11 +64,12 @@ class ConfigManager:
     async def async_load(self) -> None:
         """Load configuration from file."""
         try:
-            if os.path.exists(self._config_path):
-                with open(self._config_path, "r", encoding="utf-8") as f:
-                    loaded_config = json.load(f)
-                    self._config = self._merge_with_defaults(loaded_config)
-                    _LOGGER.info("Loaded Smart Dashboards configuration")
+            loaded_config = await self.hass.async_add_executor_job(
+                _load_json_file, self._config_path
+            )
+            if loaded_config is not None:
+                self._config = self._merge_with_defaults(loaded_config)
+                _LOGGER.info("Loaded Smart Dashboards configuration")
             else:
                 _LOGGER.info("No config file found, using defaults")
                 await self.async_save()
@@ -70,8 +85,9 @@ class ConfigManager:
     async def async_save(self) -> None:
         """Save configuration to file."""
         try:
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2)
+            await self.hass.async_add_executor_job(
+                _write_json_file, self._config_path, self._config
+            )
             _LOGGER.debug("Saved Smart Dashboards configuration")
         except IOError as err:
             _LOGGER.error("Error saving config: %s", err)
@@ -233,11 +249,12 @@ class ConfigManager:
         """Load day energy tracking data."""
         tracking_path = self.hass.config.path("smart_dashboards_energy_tracking.json")
         try:
-            if os.path.exists(tracking_path):
-                with open(tracking_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self._day_energy_data = data.get("outlets", {})
-                    self._last_reset_date = data.get("last_reset_date")
+            data = await self.hass.async_add_executor_job(
+                _load_json_file, tracking_path
+            )
+            if data is not None:
+                self._day_energy_data = data.get("outlets", {})
+                self._last_reset_date = data.get("last_reset_date")
         except (json.JSONDecodeError, IOError):
             pass
 
@@ -251,12 +268,14 @@ class ConfigManager:
     async def _async_save_energy_tracking(self) -> None:
         """Save day energy tracking data."""
         tracking_path = self.hass.config.path("smart_dashboards_energy_tracking.json")
+        payload = {
+            "last_reset_date": self._last_reset_date,
+            "outlets": self._day_energy_data,
+        }
         try:
-            with open(tracking_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "last_reset_date": self._last_reset_date,
-                    "outlets": self._day_energy_data,
-                }, f, indent=2)
+            await self.hass.async_add_executor_job(
+                _write_json_file, tracking_path, payload
+            )
         except IOError as err:
             _LOGGER.error("Error saving energy tracking: %s", err)
 
@@ -287,15 +306,16 @@ class ConfigManager:
         """Load event counts (warnings and shutoffs)."""
         counts_path = self.hass.config.path("smart_dashboards_event_counts.json")
         try:
-            if os.path.exists(counts_path):
-                with open(counts_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self._event_counts = {
-                        "total_warnings": data.get("total_warnings", 0),
-                        "total_shutoffs": data.get("total_shutoffs", 0),
-                        "room_warnings": data.get("room_warnings", {}),
-                        "room_shutoffs": data.get("room_shutoffs", {}),
-                    }
+            data = await self.hass.async_add_executor_job(
+                _load_json_file, counts_path
+            )
+            if data is not None:
+                self._event_counts = {
+                    "total_warnings": data.get("total_warnings", 0),
+                    "total_shutoffs": data.get("total_shutoffs", 0),
+                    "room_warnings": data.get("room_warnings", {}),
+                    "room_shutoffs": data.get("room_shutoffs", {}),
+                }
         except (json.JSONDecodeError, IOError):
             pass
 
@@ -303,8 +323,9 @@ class ConfigManager:
         """Save event counts."""
         counts_path = self.hass.config.path("smart_dashboards_event_counts.json")
         try:
-            with open(counts_path, "w", encoding="utf-8") as f:
-                json.dump(self._event_counts, f, indent=2)
+            await self.hass.async_add_executor_job(
+                _write_json_file, counts_path, self._event_counts
+            )
         except IOError as err:
             _LOGGER.error("Error saving event counts: %s", err)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -93,13 +94,16 @@ async def async_register_panels(hass: HomeAssistant, entry: ConfigEntry) -> None
     frontend_path = os.path.join(os.path.dirname(__file__), "frontend")
     panel_url = f"/{DOMAIN}_panel"
 
-    # Read version from manifest for cache-busting so browsers load new JS after update
-    try:
+    # Read version from manifest for cache-busting (run in executor to avoid blocking event loop)
+    def _read_manifest_version() -> str:
         manifest_path = os.path.join(os.path.dirname(__file__), "manifest.json")
-        with open(manifest_path, encoding="utf-8") as f:
-            version = json.load(f).get("version", "1.0.0")
-    except Exception:
-        version = "1.0.0"
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                return json.load(f).get("version", "1.0.0")
+        except Exception:
+            return "1.0.0"
+
+    version = await hass.async_add_executor_job(_read_manifest_version)
 
     # Register static path for the panel files
     await hass.http.async_register_static_paths([
@@ -115,7 +119,7 @@ async def async_register_panels(hass: HomeAssistant, entry: ConfigEntry) -> None
                 frontend_url_path=CAMERAS_PANEL_URL,
                 sidebar_title=CAMERAS_PANEL_TITLE,
                 sidebar_icon=CAMERAS_PANEL_ICON,
-                module_url=f"{panel_url}/cameras-panel.js?v={version}",
+                module_url=f"{panel_url}/cameras-panel.js?v={version}&_={load_id}",
                 embed_iframe=False,
                 require_admin=False,
             )
@@ -137,7 +141,7 @@ async def async_register_panels(hass: HomeAssistant, entry: ConfigEntry) -> None
                 frontend_url_path=ENERGY_PANEL_URL,
                 sidebar_title=ENERGY_PANEL_TITLE,
                 sidebar_icon=ENERGY_PANEL_ICON,
-                module_url=f"{panel_url}/energy-panel.js?v={version}",
+                module_url=f"{panel_url}/energy-panel.js?v={version}&_={load_id}",
                 embed_iframe=False,
                 require_admin=False,
             )
