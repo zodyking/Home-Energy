@@ -467,12 +467,13 @@ class EnergyMonitor:
                     # Turn off ALL switches for all outlets on this breaker
                     switch_entities = []
                     for outlet in outlets:
-                        if outlet.get("plug1_switch"):
+                        if outlet.get("plug1_switch") and outlet["plug1_switch"].startswith("switch."):
                             switch_entities.append(outlet["plug1_switch"])
-                        if outlet.get("plug2_switch"):
+                        if outlet.get("plug2_switch") and outlet["plug2_switch"].startswith("switch."):
                             switch_entities.append(outlet["plug2_switch"])
                     
                     if switch_entities:
+                        # Turn off all switches
                         await self.hass.services.async_call(
                             "switch", "turn_off",
                             {"entity_id": switch_entities},
@@ -481,6 +482,20 @@ class EnergyMonitor:
                         _LOGGER.warning(
                             "Breaker shutoff triggered: %s - %dW, turned off %d switches",
                             breaker_name, int(breaker_total_watts), len(switch_entities)
+                        )
+                        
+                        # Wait 5 seconds
+                        await asyncio.sleep(SHUTOFF_RESET_DELAY)
+                        
+                        # Turn all switches back on
+                        await self.hass.services.async_call(
+                            "switch", "turn_on",
+                            {"entity_id": switch_entities},
+                            blocking=True,
+                        )
+                        _LOGGER.info(
+                            "Breaker reset after shutoff: %s - %d switches turned back on",
+                            breaker_name, len(switch_entities)
                         )
                 except Exception as e:
                     _LOGGER.error("Breaker shutoff error: %s", e)

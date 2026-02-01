@@ -563,20 +563,39 @@ async def websocket_get_breaker_data(
             "threshold": breaker.get("threshold", 0),
             "total_watts": 0,
             "total_day_wh": 0,
+            "outlets": [],
         }
 
-        # Calculate total power for this breaker
+        max_load = breaker.get("max_load", 2400)
+
+        # Calculate total power for this breaker and get outlet details
         for outlet in outlets:
+            outlet_data = {
+                "name": outlet.get("outlet_name", "Outlet"),
+                "room_name": outlet.get("room_name", ""),
+                "plug1_watts": 0,
+                "plug2_watts": 0,
+                "total_watts": 0,
+                "percentage": 0,
+            }
+            
             if outlet.get("plug1_entity"):
                 watts = _get_power_value(hass, outlet["plug1_entity"])
                 day_wh = config_manager.get_day_energy(outlet["plug1_entity"])
+                outlet_data["plug1_watts"] = watts
                 breaker_data["total_watts"] += watts
                 breaker_data["total_day_wh"] += day_wh
+                
             if outlet.get("plug2_entity"):
                 watts = _get_power_value(hass, outlet["plug2_entity"])
                 day_wh = config_manager.get_day_energy(outlet["plug2_entity"])
+                outlet_data["plug2_watts"] = watts
                 breaker_data["total_watts"] += watts
                 breaker_data["total_day_wh"] += day_wh
+            
+            outlet_data["total_watts"] = outlet_data["plug1_watts"] + outlet_data["plug2_watts"]
+            outlet_data["percentage"] = round((outlet_data["total_watts"] / max_load * 100) if max_load > 0 else 0, 1)
+            breaker_data["outlets"].append(outlet_data)
 
         breaker_data["total_watts"] = round(breaker_data["total_watts"], 1)
         breaker_data["total_day_wh"] = round(breaker_data["total_day_wh"], 2)
@@ -618,28 +637,22 @@ async def websocket_test_trip_breaker(
         connection.send_error(msg["id"], "no_switches", "No switches found for this breaker")
         return
     
-    # Check current state of switches to determine toggle action
-    # If any switch is on, turn all off. If all are off, turn all on.
-    any_on = False
-    for entity_id in switch_entities:
-        state = hass.states.get(entity_id)
-        if state and state.state == "on":
-            any_on = True
-            break
-    
-    # Determine service and new state
-    if any_on:
-        service = "turn_off"
-        new_state = "off"
-    else:
-        service = "turn_on"
-        new_state = "on"
-    
     try:
-        # Single service call with all entity IDs in a list
+        # Turn off all switches
         await hass.services.async_call(
             "switch",
-            service,
+            "turn_off",
+            {"entity_id": switch_entities},
+            blocking=True,
+        )
+        
+        # Wait 5 seconds
+        await asyncio.sleep(5)
+        
+        # Turn all switches back on
+        await hass.services.async_call(
+            "switch",
+            "turn_on",
             {"entity_id": switch_entities},
             blocking=True,
         )
@@ -647,8 +660,7 @@ async def websocket_test_trip_breaker(
         connection.send_result(msg["id"], {
             "success": True,
             "total_switches": len(switch_entities),
-            "state": new_state,
-            "action": service,
+            "message": "Test trip completed: switches turned off, waited 5 seconds, turned back on",
         })
     except Exception as e:
         _LOGGER.error("Test trip breaker failed: %s", e)
