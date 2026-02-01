@@ -105,6 +105,9 @@ async def async_register_panels(hass: HomeAssistant, entry: ConfigEntry) -> None
 
     version = await hass.async_add_executor_job(_read_manifest_version)
 
+    # Unique cache-bust per load so browser never serves cached dashboard JS
+    load_id = str(int(time.time() * 1000))
+
     # Register static path for the panel files
     await hass.http.async_register_static_paths([
         StaticPathConfig(panel_url, frontend_path, cache_headers=False)
