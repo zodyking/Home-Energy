@@ -14,9 +14,10 @@ class EnergyPanel extends HTMLElement {
     this._entities = null;
     this._powerData = null;
     this._showSettings = false;
-    this._settingsTab = 'rooms'; // 'rooms', 'tts', or 'breakers'
-    this._dashboardView = 'outlets'; // 'outlets' or 'breakers'
+    this._settingsTab = 'rooms'; // 'rooms', 'tts', 'breakers', or 'stove'
+    this._dashboardView = 'outlets'; // 'outlets', 'breakers', or 'stove'
     this._breakerData = null;
+    this._stoveData = null;
     this._refreshInterval = null;
     this._loading = true;
     this._error = null;
@@ -47,6 +48,7 @@ class EnergyPanel extends HTMLElement {
     this._refreshInterval = setInterval(() => {
       this._loadPowerData();
       this._loadBreakerData();
+      this._loadStoveData();
     }, 1000);
   }
 
@@ -74,12 +76,14 @@ class EnergyPanel extends HTMLElement {
       this._config = config.energy || {};
       this._entities = entities;
       this._entities.switches = switchesResult.switches || [];
+      this._entities.binary_sensors = entities.binary_sensors || [];
       this._areas = areasResult.areas || [];
       this._areaSensors = {};
       this._areaSwitches = {};
       await Promise.all([
         this._loadPowerData(),
         this._loadBreakerData(),
+        this._loadStoveData(),
       ]);
       this._loading = false;
       this._render();
@@ -138,6 +142,22 @@ class EnergyPanel extends HTMLElement {
       }
     } catch (e) {
       console.error('Failed to load breaker data:', e);
+    }
+  }
+
+  async _loadStoveData() {
+    if (!this._hass || this._showSettings) return;
+
+    try {
+      this._stoveData = await this._hass.callWS({ type: 'smart_dashboards/get_stove_data' });
+      if (this._dashboardView === 'stove') {
+        this._updateStoveDisplay();
+      } else if (this._dashboardView === 'stove' && !this._showSettings) {
+        // Re-render if we're on stove view but data changed significantly
+        this._render();
+      }
+    } catch (e) {
+      console.error('Failed to load stove data:', e);
     }
   }
 
@@ -540,6 +560,218 @@ class EnergyPanel extends HTMLElement {
 
       .room-stats {
         text-align: right;
+      }
+
+      .stove-safety-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .stove-status-card {
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--card-border);
+        padding: 20px;
+      }
+
+      .stove-status-header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .stove-status-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.3);
+        transition: all 0.3s;
+      }
+
+      .stove-status-icon.on {
+        background: rgba(244, 67, 54, 0.2);
+        border: 2px solid var(--panel-danger);
+      }
+
+      .stove-status-icon.off {
+        background: rgba(76, 175, 80, 0.2);
+        border: 2px solid var(--panel-success);
+      }
+
+      .stove-status-icon svg {
+        width: 32px;
+        height: 32px;
+        fill: currentColor;
+      }
+
+      .stove-status-icon.on svg {
+        fill: var(--panel-danger);
+      }
+
+      .stove-status-icon.off svg {
+        fill: var(--panel-success);
+      }
+
+      .stove-status-info {
+        flex: 1;
+      }
+
+      .stove-status-title {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--secondary-text-color);
+        margin: 0 0 4px 0;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .stove-status-state {
+        font-size: 32px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .stove-status-state.on {
+        color: var(--panel-danger);
+      }
+
+      .stove-status-state.off {
+        color: var(--panel-success);
+      }
+
+      .stove-status-details {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--card-border);
+      }
+
+      .stove-detail-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .stove-detail-label {
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .stove-detail-value {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .stove-detail-value.present {
+        color: var(--panel-success);
+      }
+
+      .stove-detail-value.absent {
+        color: var(--panel-warning);
+      }
+
+      .stove-timer-card {
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--card-border);
+        padding: 20px;
+        transition: all 0.3s;
+      }
+
+      .stove-timer-card.warning {
+        border-color: var(--panel-warning);
+        background: rgba(255, 152, 0, 0.1);
+        animation: pulse-warning 2s infinite;
+      }
+
+      @keyframes pulse-warning {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(255, 152, 0, 0.4); }
+        50% { box-shadow: 0 0 0 8px rgba(255, 152, 0, 0); }
+      }
+
+      .stove-timer-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .stove-timer-icon {
+        width: 24px;
+        height: 24px;
+        fill: var(--panel-warning);
+      }
+
+      .stove-timer-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        margin: 0;
+      }
+
+      .stove-timer-display {
+        text-align: center;
+        padding: 20px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+      }
+
+      .stove-timer-time {
+        font-size: 48px;
+        font-weight: 700;
+        color: var(--panel-accent);
+        font-variant-numeric: tabular-nums;
+        font-family: monospace;
+        margin-bottom: 8px;
+      }
+
+      .stove-timer-label {
+        font-size: 12px;
+        color: var(--secondary-text-color);
+      }
+
+      .stove-timer-warning {
+        margin-top: 16px;
+        padding: 12px;
+        background: rgba(255, 152, 0, 0.2);
+        border-radius: 8px;
+        border-left: 4px solid var(--panel-warning);
+        font-size: 13px;
+        color: var(--primary-text-color);
+        text-align: center;
+      }
+
+      .stove-info-card {
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--card-border);
+        padding: 20px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .stove-info-icon {
+        width: 24px;
+        height: 24px;
+        fill: var(--panel-accent);
+        flex-shrink: 0;
+      }
+
+      .stove-info-text {
+        font-size: 14px;
+        color: var(--secondary-text-color);
+        margin: 0;
       }
 
       .room-total-watts {
@@ -1234,13 +1466,16 @@ class EnergyPanel extends HTMLElement {
             <button class="view-tab ${this._dashboardView === 'breakers' ? 'active' : ''}" data-view="breakers">
               Breakers
             </button>
+            <button class="view-tab ${this._dashboardView === 'stove' ? 'active' : ''}" data-view="stove">
+              Stove Safety
+            </button>
           </div>
 
           ${this._dashboardView === 'outlets' ? `
             <div class="rooms-grid">
               ${rooms.map((room) => this._renderRoomCard(room)).join('')}
             </div>
-          ` : this._renderBreakerPanel()}
+          ` : this._dashboardView === 'breakers' ? this._renderBreakerPanel() : this._renderStoveSafetyPanel()}
         </div>
       </div>
     `;
@@ -1416,6 +1651,52 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _updateStoveDisplay() {
+    if (!this._stoveData || this._showSettings || this._dashboardView !== 'stove') return;
+
+    const panel = this.shadowRoot.querySelector('.stove-safety-panel');
+    if (!panel) return;
+
+    // Update timer display if present
+    const timerTime = panel.querySelector('.stove-timer-time');
+    if (timerTime && this._stoveData.timer_phase !== 'none') {
+      const timeRemaining = this._stoveData.time_remaining || 0;
+      const timerPhase = this._stoveData.timer_phase;
+      
+      if (timerPhase === '15min') {
+        const mins = Math.floor(timeRemaining / 60);
+        const secs = timeRemaining % 60;
+        timerTime.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+      } else {
+        timerTime.textContent = `${timeRemaining}s`;
+      }
+    }
+
+    // Update status indicators
+    const statusState = panel.querySelector('.stove-status-state');
+    if (statusState) {
+      statusState.textContent = this._stoveData.stove_state === 'on' ? 'ON' : 'OFF';
+      statusState.className = `stove-status-state ${this._stoveData.stove_state}`;
+    }
+
+    const statusIcon = panel.querySelector('.stove-status-icon');
+    if (statusIcon) {
+      statusIcon.className = `stove-status-icon ${this._stoveData.stove_state}`;
+    }
+
+    const powerValue = panel.querySelector('.stove-detail-value');
+    if (powerValue && panel.querySelector('.stove-detail-label')?.textContent === 'Current Power') {
+      powerValue.textContent = `${this._stoveData.current_power.toFixed(1)} W`;
+    }
+
+    const presenceValue = panel.querySelector('.stove-detail-value.present, .stove-detail-value.absent');
+    if (presenceValue) {
+      const isPresent = this._stoveData.presence_detected;
+      presenceValue.textContent = isPresent ? 'Detected' : 'Not Detected';
+      presenceValue.className = `stove-detail-value ${isPresent ? 'present' : 'absent'}`;
+    }
+  }
+
   _updateBreakerDisplay() {
     if (!this._breakerData || this._showSettings || this._dashboardView !== 'breakers') return;
 
@@ -1586,6 +1867,9 @@ class EnergyPanel extends HTMLElement {
             <button class="settings-tab ${this._settingsTab === 'breakers' ? 'active' : ''}" data-tab="breakers">
               Breaker Settings
             </button>
+            <button class="settings-tab ${this._settingsTab === 'stove' ? 'active' : ''}" data-tab="stove">
+              Stove Safety
+            </button>
           </div>
           
           <div class="settings-tab-content ${this._settingsTab === 'rooms' ? 'active' : ''}" id="tab-rooms">
@@ -1690,11 +1974,70 @@ class EnergyPanel extends HTMLElement {
                   Variables: <code>{prefix}</code> <code>{breaker_name}</code>
                 </div>
               </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Stove Turned On Message</div>
+                <div class="tts-msg-desc">Spoken when stove is detected as turned on</div>
+                <input type="text" class="form-input" id="tts-stove-on" 
+                  value="${ttsSettings.stove_on_msg || '{prefix} Stove has been turned on'}" 
+                  placeholder="{prefix} Stove has been turned on">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code>
+                </div>
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Stove Turned Off Message</div>
+                <div class="tts-msg-desc">Spoken when stove is detected as turned off</div>
+                <input type="text" class="form-input" id="tts-stove-off" 
+                  value="${ttsSettings.stove_off_msg || '{prefix} Stove has been turned off'}" 
+                  placeholder="{prefix} Stove has been turned off">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code>
+                </div>
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Stove 15-Minute Warning</div>
+                <div class="tts-msg-desc">Spoken when stove has been on for 15 minutes with no presence detected</div>
+                <input type="text" class="form-input" id="tts-stove-15min" 
+                  value="${ttsSettings.stove_15min_warn_msg || '{prefix} Stove has been on for 15 minutes with no one in the kitchen. Stove will automatically turn off in 30 seconds if no one returns'}" 
+                  placeholder="{prefix} Stove has been on for 15 minutes with no one in the kitchen. Stove will automatically turn off in 30 seconds if no one returns">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code>
+                </div>
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Stove 30-Second Warning</div>
+                <div class="tts-msg-desc">Spoken when 30-second countdown begins before auto-shutoff</div>
+                <input type="text" class="form-input" id="tts-stove-30sec" 
+                  value="${ttsSettings.stove_30sec_warn_msg || '{prefix} Stove will automatically turn off in 30 seconds if no one returns to the kitchen'}" 
+                  placeholder="{prefix} Stove will automatically turn off in 30 seconds if no one returns to the kitchen">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code>
+                </div>
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Stove Auto-Shutoff Message</div>
+                <div class="tts-msg-desc">Spoken when stove is automatically turned off for safety</div>
+                <input type="text" class="form-input" id="tts-stove-auto-off" 
+                  value="${ttsSettings.stove_auto_off_msg || '{prefix} Stove has been automatically turned off for safety'}" 
+                  placeholder="{prefix} Stove has been automatically turned off for safety">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code>
+                </div>
+              </div>
             </div>
           </div>
           
           <div class="settings-tab-content ${this._settingsTab === 'breakers' ? 'active' : ''}" id="tab-breakers">
             ${this._renderBreakerSettings()}
+          </div>
+          
+          <div class="settings-tab-content ${this._settingsTab === 'stove' ? 'active' : ''}" id="tab-stove">
+            ${this._renderStoveSafetySettings()}
           </div>
         </div>
       </div>
@@ -1704,6 +2047,107 @@ class EnergyPanel extends HTMLElement {
     if (this._settingsTab === 'breakers') {
       this._attachBreakerEventListeners();
     }
+  }
+
+  _renderStoveSafetySettings() {
+    const stoveConfig = this._config?.stove_safety || {};
+    const powerSensors = this._entities?.power_sensors || [];
+    const switches = this._entities?.switches || [];
+    const binarySensors = this._entities?.binary_sensors || [];
+    const mediaPlayers = this._entities?.media_players || [];
+
+    // Get binary sensors (presence/motion sensors)
+    if (!binarySensors || binarySensors.length === 0) {
+      // Try to get from entities if not already loaded
+      const allEntities = this._entities || {};
+      binarySensors = Object.values(allEntities).filter(e => 
+        e.entity_id && e.entity_id.startsWith('binary_sensor.')
+      ) || [];
+    }
+
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Stove Safety Configuration</h2>
+        </div>
+        <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px; padding: 0 12px;">
+          Configure stove monitoring to automatically turn off the stove if left unattended.
+        </p>
+        
+        <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
+          <label class="form-label">Stove Plug Power Sensor</label>
+          <select class="form-select" id="stove-plug-entity">
+            <option value="">None</option>
+            ${powerSensors.map(s => `
+              <option value="${s.entity_id}" ${stoveConfig.stove_plug_entity === s.entity_id ? 'selected' : ''}>
+                ${s.friendly_name}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+
+        <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
+          <label class="form-label">Stove Plug Switch</label>
+          <select class="form-select" id="stove-plug-switch">
+            <option value="">None</option>
+            ${switches.map(s => `
+              <option value="${s.entity_id}" ${stoveConfig.stove_plug_switch === s.entity_id ? 'selected' : ''}>
+                ${s.friendly_name}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+
+        <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
+          <label class="form-label">Power Threshold (W)</label>
+          <input type="number" class="form-input" id="stove-power-threshold" 
+            value="${stoveConfig.stove_power_threshold || 100}" 
+            placeholder="100" min="0" step="10">
+          <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">
+            Stove is considered "on" when power exceeds this threshold
+          </div>
+        </div>
+
+        <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
+          <label class="form-label">Kitchen Presence Sensor</label>
+          <select class="form-select" id="stove-presence-sensor">
+            <option value="">None</option>
+            ${binarySensors.map(s => `
+              <option value="${s.entity_id}" ${stoveConfig.presence_sensor === s.entity_id ? 'selected' : ''}>
+                ${s.friendly_name || s.entity_id}
+              </option>
+            `).join('')}
+          </select>
+          <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">
+            Binary sensor that detects presence in the kitchen (on = present, off = not present)
+          </div>
+        </div>
+
+        <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
+          <label class="form-label">Media Player for Alerts</label>
+          <select class="form-select" id="stove-media-player">
+            <option value="">None</option>
+            ${mediaPlayers.map(mp => `
+              <option value="${mp.entity_id}" ${stoveConfig.media_player === mp.entity_id ? 'selected' : ''}>
+                ${mp.friendly_name}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+
+        <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
+          <label class="form-label">TTS Volume</label>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <input type="range" class="form-range" id="stove-volume" 
+              min="0" max="1" step="0.1" 
+              value="${stoveConfig.volume || 0.7}">
+            <span class="stove-volume-display" style="min-width: 40px; text-align: right;">
+              ${Math.round((stoveConfig.volume || 0.7) * 100)}%
+            </span>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   _renderBreakerSettings() {
@@ -2046,7 +2490,7 @@ class EnergyPanel extends HTMLElement {
     viewTabs.forEach(tab => {
       tab.addEventListener('click', () => {
         const view = tab.dataset.view;
-        if (view && (view === 'outlets' || view === 'breakers')) {
+        if (view && (view === 'outlets' || view === 'breakers' || view === 'stove')) {
           this._dashboardView = view;
           this._render();
         }
@@ -2178,6 +2622,17 @@ class EnergyPanel extends HTMLElement {
         this._testToggleSwitch(btn);
       });
     });
+
+    // Stove safety volume slider
+    const stoveVolumeSlider = this.shadowRoot.querySelector('#stove-volume');
+    if (stoveVolumeSlider) {
+      stoveVolumeSlider.addEventListener('input', (e) => {
+        const display = e.target.closest('.form-group').querySelector('.stove-volume-display');
+        if (display) {
+          display.textContent = Math.round(parseFloat(e.target.value) * 100) + '%';
+        }
+      });
+    }
   }
 
   async _testToggleSwitch(btn) {
@@ -2944,6 +3399,11 @@ class EnergyPanel extends HTMLElement {
     const ttsShutoff = this.shadowRoot.querySelector('#tts-shutoff')?.value || '{prefix} {room_name} {outlet_name} {plug} has been reset to protect circuit from overload';
     const ttsBreakerWarn = this.shadowRoot.querySelector('#tts-breaker-warn')?.value || '{prefix} {breaker_name} is near its max load, reduce electric use to prevent safety shutoff';
     const ttsBreakerShutoff = this.shadowRoot.querySelector('#tts-breaker-shutoff')?.value || '{prefix} {breaker_name} is currently at its max limit, safety shutoff enabled';
+    const ttsStoveOn = this.shadowRoot.querySelector('#tts-stove-on')?.value || '{prefix} Stove has been turned on';
+    const ttsStoveOff = this.shadowRoot.querySelector('#tts-stove-off')?.value || '{prefix} Stove has been turned off';
+    const ttsStove15Min = this.shadowRoot.querySelector('#tts-stove-15min')?.value || '{prefix} Stove has been on for 15 minutes with no one in the kitchen. Stove will automatically turn off in 30 seconds if no one returns';
+    const ttsStove30Sec = this.shadowRoot.querySelector('#tts-stove-30sec')?.value || '{prefix} Stove will automatically turn off in 30 seconds if no one returns to the kitchen';
+    const ttsStoveAutoOff = this.shadowRoot.querySelector('#tts-stove-auto-off')?.value || '{prefix} Stove has been automatically turned off for safety';
 
     // Collect breaker lines
     const breakerCards = this.shadowRoot.querySelectorAll('.breaker-settings-card');
@@ -2969,9 +3429,25 @@ class EnergyPanel extends HTMLElement {
       }
     });
 
+    // Collect stove safety config
+    const stovePlugEntity = this.shadowRoot.querySelector('#stove-plug-entity')?.value || null;
+    const stovePlugSwitch = this.shadowRoot.querySelector('#stove-plug-switch')?.value || null;
+    const stovePowerThreshold = parseInt(this.shadowRoot.querySelector('#stove-power-threshold')?.value) || 100;
+    const stovePresenceSensor = this.shadowRoot.querySelector('#stove-presence-sensor')?.value || null;
+    const stoveMediaPlayer = this.shadowRoot.querySelector('#stove-media-player')?.value || null;
+    const stoveVolume = parseFloat(this.shadowRoot.querySelector('#stove-volume')?.value) || 0.7;
+
     const config = {
       rooms: rooms,
       breaker_lines: breakerLines,
+      stove_safety: {
+        stove_plug_entity: stovePlugEntity,
+        stove_plug_switch: stovePlugSwitch,
+        stove_power_threshold: stovePowerThreshold,
+        presence_sensor: stovePresenceSensor,
+        media_player: stoveMediaPlayer,
+        volume: stoveVolume,
+      },
       tts_settings: {
         language: ttsLanguage,
         speed: 1.0,
@@ -2981,6 +3457,11 @@ class EnergyPanel extends HTMLElement {
         shutoff_msg: ttsShutoff,
         breaker_warn_msg: ttsBreakerWarn,
         breaker_shutoff_msg: ttsBreakerShutoff,
+        stove_on_msg: ttsStoveOn,
+        stove_off_msg: ttsStoveOff,
+        stove_15min_warn_msg: ttsStove15Min,
+        stove_30sec_warn_msg: ttsStove30Sec,
+        stove_auto_off_msg: ttsStoveAutoOff,
       },
     };
 

@@ -10,7 +10,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import CONFIG_FILE, DEFAULT_CONFIG, DOMAIN
+from .const import CONFIG_FILE, DEFAULT_CONFIG, DOMAIN, DEFAULT_TTS_VOLUME
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,6 +93,8 @@ class ConfigManager:
             energy = loaded["energy"]
             result["energy"]["rooms"] = energy.get("rooms", [])
             result["energy"]["breaker_lines"] = energy.get("breaker_lines", [])
+            if "stove_safety" in energy:
+                result["energy"]["stove_safety"].update(energy["stove_safety"])
             if "tts_settings" in energy:
                 result["energy"]["tts_settings"].update(energy["tts_settings"])
 
@@ -192,6 +194,18 @@ class ConfigManager:
                 }
                 validated["breaker_lines"].append(validated_breaker)
 
+        # Validate stove safety
+        stove_safety = config.get("stove_safety", {})
+        default_stove = DEFAULT_CONFIG["energy"]["stove_safety"]
+        validated["stove_safety"] = {
+            "stove_plug_entity": stove_safety.get("stove_plug_entity"),
+            "stove_plug_switch": stove_safety.get("stove_plug_switch"),
+            "stove_power_threshold": int(stove_safety.get("stove_power_threshold", default_stove["stove_power_threshold"])),
+            "presence_sensor": stove_safety.get("presence_sensor"),
+            "media_player": stove_safety.get("media_player"),
+            "volume": float(stove_safety.get("volume", default_stove["volume"])),
+        }
+
         # Validate TTS settings
         tts = config.get("tts_settings", {})
         default_tts = DEFAULT_CONFIG["energy"]["tts_settings"]
@@ -205,6 +219,11 @@ class ConfigManager:
             "shutoff_msg": tts.get("shutoff_msg", default_tts["shutoff_msg"]),
             "breaker_warn_msg": tts.get("breaker_warn_msg", default_tts["breaker_warn_msg"]),
             "breaker_shutoff_msg": tts.get("breaker_shutoff_msg", default_tts["breaker_shutoff_msg"]),
+            "stove_on_msg": tts.get("stove_on_msg", default_tts["stove_on_msg"]),
+            "stove_off_msg": tts.get("stove_off_msg", default_tts["stove_off_msg"]),
+            "stove_15min_warn_msg": tts.get("stove_15min_warn_msg", default_tts["stove_15min_warn_msg"]),
+            "stove_30sec_warn_msg": tts.get("stove_30sec_warn_msg", default_tts["stove_30sec_warn_msg"]),
+            "stove_auto_off_msg": tts.get("stove_auto_off_msg", default_tts["stove_auto_off_msg"]),
         }
 
         return validated
