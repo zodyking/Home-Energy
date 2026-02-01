@@ -25,6 +25,8 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_set_volume)
     websocket_api.async_register_command(hass, websocket_get_power_data)
     websocket_api.async_register_command(hass, websocket_get_camera_stream_url)
+    websocket_api.async_register_command(hass, websocket_get_entities_by_area)
+    websocket_api.async_register_command(hass, websocket_get_areas)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -268,6 +270,95 @@ async def websocket_get_power_data(
         result["rooms"].append(room_data)
 
     connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_entities_by_area",
+        vol.Required("area_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_entities_by_area(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get power sensor entities for a specific area/room."""
+    from homeassistant.helpers import entity_registry, device_registry, area_registry
+
+    area_id = msg["area_id"].lower().replace(" ", "_").replace("'", "")
+    
+    ent_reg = entity_registry.async_get(hass)
+    dev_reg = device_registry.async_get(hass)
+    area_reg = area_registry.async_get(hass)
+
+    # Find matching area
+    target_area = None
+    for area in area_reg.async_list_areas():
+        area_normalized = area.name.lower().replace(" ", "_").replace("'", "")
+        if area_normalized == area_id or area.id == area_id:
+            target_area = area
+            break
+
+    if not target_area:
+        connection.send_result(msg["id"], {"outlets": [], "area_found": False})
+        return
+
+    # Find all power sensors in this area
+    outlets = []
+    for entity in ent_reg.entities.values():
+        entity_area = None
+        
+        # Check entity's direct area assignment
+        if entity.area_id == target_area.id:
+            entity_area = target_area.id
+        # Check device's area assignment
+        elif entity.device_id:
+            device = dev_reg.async_get(entity.device_id)
+            if device and device.area_id == target_area.id:
+                entity_area = target_area.id
+
+        if entity_area and entity.entity_id.startswith("sensor."):
+            state = hass.states.get(entity.entity_id)
+            if state:
+                unit = state.attributes.get("unit_of_measurement", "")
+                # Check if it's a power sensor
+                if "power" in entity.entity_id.lower() or unit in ("W", "kW", "mW"):
+                    friendly_name = state.attributes.get("friendly_name", entity.entity_id)
+                    outlets.append({
+                        "entity_id": entity.entity_id,
+                        "friendly_name": friendly_name,
+                        "unit": unit,
+                    })
+
+    connection.send_result(msg["id"], {"outlets": outlets, "area_found": True, "area_name": target_area.name})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_areas",
+    }
+)
+@websocket_api.async_response
+async def websocket_get_areas(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get all areas/rooms in Home Assistant."""
+    from homeassistant.helpers import area_registry
+
+    area_reg = area_registry.async_get(hass)
+    areas = []
+    
+    for area in area_reg.async_list_areas():
+        areas.append({
+            "id": area.id,
+            "name": area.name,
+        })
+
+    connection.send_result(msg["id"], {"areas": areas})
 
 
 @websocket_api.websocket_command(

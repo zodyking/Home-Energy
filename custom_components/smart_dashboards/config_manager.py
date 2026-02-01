@@ -149,7 +149,8 @@ class ConfigManager:
                     "id": room.get("id", room["name"].lower().replace(" ", "_")),
                     "name": room["name"],
                     "media_player": room.get("media_player"),
-                    "threshold": int(room.get("threshold", 1000)),
+                    "threshold": int(room.get("threshold", 0)),
+                    "volume": float(room.get("volume", 0.7)),
                     "outlets": [],
                 }
                 for outlet in room.get("outlets", []):

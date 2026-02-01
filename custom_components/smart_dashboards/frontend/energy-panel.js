@@ -743,26 +743,17 @@ class EnergyPanel extends HTMLElement {
             <div class="card-header">
               <h2 class="card-title">TTS Alert Settings</h2>
             </div>
-            <p style="color: var(--secondary-text-color); font-size: 13px; margin-bottom: 16px;">
-              Alerts are played automatically when thresholds are exceeded. Set thresholds on rooms and outlets above.
+            <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
+              Alerts play automatically when thresholds are exceeded. Volume is set per room above.
             </p>
-            <div class="grid-2">
-              <div class="form-group">
-                <label class="form-label">Language</label>
-                <select class="form-select" id="tts-language">
-                  <option value="en" ${ttsSettings.language === 'en' ? 'selected' : ''}>English</option>
-                  <option value="es" ${ttsSettings.language === 'es' ? 'selected' : ''}>Spanish</option>
-                  <option value="fr" ${ttsSettings.language === 'fr' ? 'selected' : ''}>French</option>
-                  <option value="de" ${ttsSettings.language === 'de' ? 'selected' : ''}>German</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Alert Volume</label>
-                <div class="volume-control">
-                  <input type="range" class="volume-slider" id="tts-volume" min="0" max="1" step="0.05" value="${ttsSettings.volume || 0.7}">
-                  <span class="volume-value" id="tts-volume-display">${Math.round((ttsSettings.volume || 0.7) * 100)}%</span>
-                </div>
-              </div>
+            <div class="form-group" style="max-width: 200px;">
+              <label class="form-label">Language</label>
+              <select class="form-select" id="tts-language">
+                <option value="en" ${ttsSettings.language === 'en' ? 'selected' : ''}>English</option>
+                <option value="es" ${ttsSettings.language === 'es' ? 'selected' : ''}>Spanish</option>
+                <option value="fr" ${ttsSettings.language === 'fr' ? 'selected' : ''}>French</option>
+                <option value="de" ${ttsSettings.language === 'de' ? 'selected' : ''}>German</option>
+              </select>
             </div>
           </div>
         </div>
@@ -786,7 +777,7 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <div class="room-settings-body" id="room-body-${index}" style="display: none;">
-          <div class="grid-2" style="margin-bottom: 16px;">
+          <div class="grid-2" style="margin-bottom: 12px;">
             <div class="form-group">
               <label class="form-label">Media Player (for alerts)</label>
               <select class="form-select room-media-player">
@@ -804,14 +795,28 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
 
+          <div class="form-group" style="margin-bottom: 16px;">
+            <label class="form-label">TTS Alert Volume</label>
+            <div class="volume-control">
+              <input type="range" class="volume-slider room-volume" min="0" max="1" step="0.05" value="${room.volume || 0.7}" data-index="${index}">
+              <span class="volume-value room-volume-display">${Math.round((room.volume || 0.7) * 100)}%</span>
+            </div>
+          </div>
+
           <div class="divider"></div>
 
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <h4 style="margin: 0; font-size: 14px; color: var(--secondary-text-color);">Outlets</h4>
-            <button class="btn btn-secondary add-outlet-btn" data-room-index="${index}">
-              <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
-              Add Outlet
-            </button>
+            <h4 style="margin: 0; font-size: 12px; color: var(--secondary-text-color);">Outlets</h4>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary load-room-outlets-btn" data-room-index="${index}" data-room-name="${room.name}">
+                <svg class="btn-icon" viewBox="0 0 24 24">${icons.room}</svg>
+                Load from HA Room
+              </button>
+              <button class="btn btn-secondary add-outlet-btn" data-room-index="${index}">
+                <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
+                Add Outlet
+              </button>
+            </div>
           </div>
 
           <div class="outlets-settings-list" id="outlets-list-${index}">
@@ -962,6 +967,25 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
+    // Load from HA Room buttons
+    this.shadowRoot.querySelectorAll('.load-room-outlets-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const roomIndex = btn.dataset.roomIndex;
+        const roomName = btn.dataset.roomName;
+        this._loadOutletsFromRoom(roomIndex, roomName);
+      });
+    });
+
+    // Room volume sliders
+    this.shadowRoot.querySelectorAll('.room-volume').forEach(slider => {
+      slider.addEventListener('input', (e) => {
+        const display = e.target.closest('.form-group').querySelector('.room-volume-display');
+        if (display) {
+          display.textContent = Math.round(parseFloat(e.target.value) * 100) + '%';
+        }
+      });
+    });
+
     // Remove outlet buttons
     this.shadowRoot.querySelectorAll('.remove-outlet-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -969,6 +993,132 @@ class EnergyPanel extends HTMLElement {
         if (item) item.remove();
       });
     });
+  }
+
+  async _loadOutletsFromRoom(roomIndex, roomName) {
+    if (!this._hass) return;
+
+    const btn = this.shadowRoot.querySelector(`.load-room-outlets-btn[data-room-index="${roomIndex}"]`);
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span>Loading...</span>';
+    }
+
+    try {
+      const result = await this._hass.callWS({
+        type: 'smart_dashboards/get_entities_by_area',
+        area_id: roomName,
+      });
+
+      if (!result.area_found) {
+        showToast(this.shadowRoot, `Room "${roomName}" not found in Home Assistant`, 'error');
+        return;
+      }
+
+      const outlets = result.outlets || [];
+      if (outlets.length === 0) {
+        showToast(this.shadowRoot, `No power sensors found in "${result.area_name}"`, 'error');
+        return;
+      }
+
+      // Group sensors into outlet pairs (plug1/plug2)
+      const outletPairs = this._groupSensorsIntoOutlets(outlets);
+      
+      // Add outlets to the list
+      const list = this.shadowRoot.querySelector(`#outlets-list-${roomIndex}`);
+      const powerSensors = this._entities?.power_sensors || [];
+
+      outletPairs.forEach(pair => {
+        const outletIndex = list.querySelectorAll('.outlet-settings-item').length;
+        const html = this._renderOutletSettings(pair, outletIndex, powerSensors);
+        list.insertAdjacentHTML('beforeend', html);
+
+        // Attach remove listener
+        const newItem = list.querySelector(`.outlet-settings-item[data-outlet-index="${outletIndex}"]`);
+        const removeBtn = newItem.querySelector('.remove-outlet-btn');
+        removeBtn.addEventListener('click', () => newItem.remove());
+      });
+
+      showToast(this.shadowRoot, `Loaded ${outletPairs.length} outlets from "${result.area_name}"`, 'success');
+
+    } catch (e) {
+      console.error('Failed to load outlets:', e);
+      showToast(this.shadowRoot, 'Failed to load outlets from room', 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<svg class="btn-icon" viewBox="0 0 24 24">${icons.room}</svg> Load from HA Room`;
+      }
+    }
+  }
+
+  _groupSensorsIntoOutlets(sensors) {
+    // Try to group sensors by common name patterns (e.g., "Outlet 1 Plug 1", "Outlet 1 Plug 2")
+    const outlets = [];
+    const used = new Set();
+
+    for (const sensor of sensors) {
+      if (used.has(sensor.entity_id)) continue;
+
+      const name = sensor.friendly_name.toLowerCase();
+      
+      // Look for a matching pair
+      let plug1 = null;
+      let plug2 = null;
+      let outletName = sensor.friendly_name;
+
+      // Check if this is a "plug 1" or "plug 2" style sensor
+      if (name.includes('plug 1') || name.includes('plug1') || name.includes('outlet 1')) {
+        plug1 = sensor.entity_id;
+        outletName = sensor.friendly_name.replace(/plug\s*1/i, '').replace(/outlet\s*1/i, '').trim();
+        
+        // Find matching plug 2
+        for (const other of sensors) {
+          if (used.has(other.entity_id)) continue;
+          const otherName = other.friendly_name.toLowerCase();
+          if ((otherName.includes('plug 2') || otherName.includes('plug2') || otherName.includes('outlet 2')) &&
+              other.friendly_name.replace(/plug\s*2/i, '').replace(/outlet\s*2/i, '').trim().toLowerCase() === outletName.toLowerCase()) {
+            plug2 = other.entity_id;
+            used.add(other.entity_id);
+            break;
+          }
+        }
+      } else if (name.includes('plug 2') || name.includes('plug2') || name.includes('outlet 2')) {
+        plug2 = sensor.entity_id;
+        outletName = sensor.friendly_name.replace(/plug\s*2/i, '').replace(/outlet\s*2/i, '').trim();
+        
+        // Find matching plug 1
+        for (const other of sensors) {
+          if (used.has(other.entity_id)) continue;
+          const otherName = other.friendly_name.toLowerCase();
+          if ((otherName.includes('plug 1') || otherName.includes('plug1') || otherName.includes('outlet 1')) &&
+              other.friendly_name.replace(/plug\s*1/i, '').replace(/outlet\s*1/i, '').trim().toLowerCase() === outletName.toLowerCase()) {
+            plug1 = other.entity_id;
+            used.add(other.entity_id);
+            break;
+          }
+        }
+      } else {
+        // Single sensor, put in plug1
+        plug1 = sensor.entity_id;
+        outletName = sensor.friendly_name;
+      }
+
+      used.add(sensor.entity_id);
+      
+      // Clean up outlet name
+      outletName = outletName.replace(/current consumption/i, '').replace(/power/i, '').trim();
+      if (!outletName) outletName = 'Outlet';
+
+      outlets.push({
+        name: outletName,
+        plug1_entity: plug1,
+        plug2_entity: plug2,
+        threshold: 0,
+      });
+    }
+
+    return outlets;
   }
 
   _addRoom() {
@@ -985,6 +1135,7 @@ class EnergyPanel extends HTMLElement {
       name: `Room ${index + 1}`,
       media_player: '',
       threshold: 0,
+      volume: 0.7,
       outlets: [],
     };
     
@@ -1009,6 +1160,21 @@ class EnergyPanel extends HTMLElement {
 
     const addOutletBtn = newCard.querySelector('.add-outlet-btn');
     addOutletBtn.addEventListener('click', () => this._addOutlet(index));
+
+    const loadOutletsBtn = newCard.querySelector('.load-room-outlets-btn');
+    loadOutletsBtn.addEventListener('click', () => {
+      this._loadOutletsFromRoom(index, newRoom.name);
+    });
+
+    const volumeSlider = newCard.querySelector('.room-volume');
+    if (volumeSlider) {
+      volumeSlider.addEventListener('input', (e) => {
+        const display = e.target.closest('.form-group').querySelector('.room-volume-display');
+        if (display) {
+          display.textContent = Math.round(parseFloat(e.target.value) * 100) + '%';
+        }
+      });
+    }
 
     // Auto-expand
     toggleBtn.click();
@@ -1036,6 +1202,7 @@ class EnergyPanel extends HTMLElement {
       const nameInput = card.querySelector('.room-name-input');
       const mediaPlayerSelect = card.querySelector('.room-media-player');
       const thresholdInput = card.querySelector('.room-threshold');
+      const volumeSlider = card.querySelector('.room-volume');
       const outletItems = card.querySelectorAll('.outlet-settings-item');
 
       const outlets = [];
@@ -1058,24 +1225,23 @@ class EnergyPanel extends HTMLElement {
       const roomName = nameInput?.value?.trim();
       if (roomName) {
         rooms.push({
-          id: roomName.toLowerCase().replace(/\s+/g, '_'),
+          id: roomName.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
           name: roomName,
           media_player: mediaPlayerSelect?.value || null,
           threshold: parseInt(thresholdInput?.value) || 0,
+          volume: parseFloat(volumeSlider?.value) || 0.7,
           outlets: outlets,
         });
       }
     });
 
     const ttsLanguage = this.shadowRoot.querySelector('#tts-language')?.value || 'en';
-    const ttsVolume = parseFloat(this.shadowRoot.querySelector('#tts-volume')?.value || 0.7);
 
     const config = {
       rooms: rooms,
       tts_settings: {
         language: ttsLanguage,
         speed: 1.0,
-        volume: ttsVolume,
       },
     };
 

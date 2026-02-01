@@ -72,6 +72,7 @@ class EnergyMonitor:
             room_name = room["name"]
             room_threshold = room.get("threshold", 0)
             media_player = room.get("media_player")
+            room_volume = room.get("volume", tts_settings.get("volume", 0.7))
 
             # Calculate total room watts and track energy
             room_total_watts = 0.0
@@ -109,6 +110,7 @@ class EnergyMonitor:
                         outlet_name=outlet_name,
                         current_watts=outlet_total_watts,
                         media_player=media_player,
+                        volume=room_volume,
                         tts_settings=tts_settings,
                     )
 
@@ -119,6 +121,7 @@ class EnergyMonitor:
                     room_name=room_name,
                     current_watts=room_total_watts,
                     media_player=media_player,
+                    volume=room_volume,
                     tts_settings=tts_settings,
                 )
 
@@ -159,6 +162,7 @@ class EnergyMonitor:
         room_name: str,
         current_watts: float,
         media_player: str | None,
+        volume: float,
         tts_settings: dict,
     ) -> None:
         """Send TTS alert for room threshold exceeded."""
@@ -183,7 +187,7 @@ class EnergyMonitor:
                 media_player=media_player,
                 message=message,
                 language=tts_settings.get("language"),
-                volume=tts_settings.get("volume"),
+                volume=volume,
             )
             _LOGGER.warning(
                 "Room threshold alert: %s - %dW",
@@ -200,6 +204,7 @@ class EnergyMonitor:
         outlet_name: str,
         current_watts: float,
         media_player: str | None,
+        volume: float,
         tts_settings: dict,
     ) -> None:
         """Send TTS alert for outlet threshold exceeded."""
@@ -225,7 +230,7 @@ class EnergyMonitor:
                 media_player=media_player,
                 message=message,
                 language=tts_settings.get("language"),
-                volume=tts_settings.get("volume"),
+                volume=volume,
             )
             _LOGGER.warning(
                 "Outlet threshold alert: %s %s - %dW",
