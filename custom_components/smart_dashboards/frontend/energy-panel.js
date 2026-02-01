@@ -914,6 +914,12 @@ class EnergyPanel extends HTMLElement {
         fill: currentColor;
       }
 
+      .test-trip-breaker-btn.on {
+        background: var(--panel-accent-dim);
+        border-color: var(--panel-accent);
+        color: var(--panel-accent);
+      }
+
       .breaker-settings-card {
         background: var(--card-bg);
         border-radius: 8px;
@@ -2567,7 +2573,7 @@ class EnergyPanel extends HTMLElement {
       btn.addEventListener('click', async () => {
         const breakerId = btn.dataset.breakerId;
         if (breakerId) {
-          await this._testTripBreaker(breakerId);
+          await this._testTripBreaker(breakerId, btn);
         }
       });
     });
@@ -2679,16 +2685,60 @@ class EnergyPanel extends HTMLElement {
     this._attachBreakerEventListeners();
   }
 
-  async _testTripBreaker(breakerId) {
+  async _testTripBreaker(breakerId, btn) {
+    if (!btn) {
+      btn = this.shadowRoot.querySelector(`.test-trip-breaker-btn[data-breaker-id="${breakerId}"]`);
+    }
+    
+    if (btn) {
+      btn.disabled = true;
+    }
+    
     try {
       const result = await this._hass.callWS({
         type: 'smart_dashboards/test_trip_breaker',
         breaker_id: breakerId,
       });
-      showToast(this.shadowRoot, `Test trip: ${result.switches_turned_off} switches turned off`, 'success');
+      
+      // Toggle button visual state (on if switches were turned on, off if turned off)
+      if (btn) {
+        const isOn = result.turned_on > 0;
+        btn.classList.toggle('on', isOn);
+        
+        // Update button text to show state
+        if (isOn) {
+          btn.textContent = 'Test Trip (ON)';
+        } else {
+          btn.textContent = 'Test Trip (OFF)';
+        }
+      }
+      
+      // Show detailed feedback
+      let message = '';
+      if (result.errors && result.errors > 0) {
+        message = `Test trip: ${result.turned_on} ON, ${result.turned_off} OFF, ${result.errors} errors`;
+      } else if (result.turned_on > 0 && result.turned_off > 0) {
+        message = `Test trip: ${result.turned_on} switches ON, ${result.turned_off} switches OFF`;
+      } else if (result.turned_on > 0) {
+        message = `Test trip: ${result.turned_on} switches turned ON`;
+      } else if (result.turned_off > 0) {
+        message = `Test trip: ${result.turned_off} switches turned OFF`;
+      } else {
+        message = `Test trip: ${result.total_switches} switches processed`;
+      }
+      
+      showToast(this.shadowRoot, message, 'success');
     } catch (e) {
       console.error('Test trip failed:', e);
       showToast(this.shadowRoot, 'Test trip failed', 'error');
+      if (btn) {
+        btn.classList.remove('on');
+        btn.textContent = 'Test Trip';
+      }
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+      }
     }
   }
 
