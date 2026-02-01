@@ -232,14 +232,22 @@ async def websocket_get_power_data(
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
         return
 
-    result: dict[str, Any] = {"rooms": []}
+    event_counts = config_manager.get_event_counts()
+    result: dict[str, Any] = {
+        "rooms": [],
+        "total_warnings": event_counts.get("total_warnings", 0),
+        "total_shutoffs": event_counts.get("total_shutoffs", 0),
+    }
 
     for room in config_manager.energy_config.get("rooms", []):
+        room_id = room.get("id", room["name"].lower().replace(" ", "_"))
         room_data = {
-            "id": room.get("id", room["name"].lower().replace(" ", "_")),
+            "id": room_id,
             "name": room["name"],
             "total_watts": 0,
             "total_day_wh": 0,
+            "warnings": event_counts.get("room_warnings", {}).get(room_id, 0),
+            "shutoffs": event_counts.get("room_shutoffs", {}).get(room_id, 0),
             "outlets": [],
         }
 

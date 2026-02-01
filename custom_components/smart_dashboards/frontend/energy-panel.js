@@ -133,8 +133,13 @@ class EnergyPanel extends HTMLElement {
 
     const totalWattsEl = this.shadowRoot.querySelector('#summary-total-watts');
     const totalDayEl = this.shadowRoot.querySelector('#summary-total-day');
+    const totalWarningsEl = this.shadowRoot.querySelector('#summary-warnings');
+    const totalShutoffsEl = this.shadowRoot.querySelector('#summary-shutoffs');
+    
     if (totalWattsEl) totalWattsEl.textContent = `${totalWatts.toFixed(1)} W`;
     if (totalDayEl) totalDayEl.textContent = `${(totalDayWh / 1000).toFixed(2)} kWh`;
+    if (totalWarningsEl) totalWarningsEl.textContent = `${this._powerData.total_warnings || 0}`;
+    if (totalShutoffsEl) totalShutoffsEl.textContent = `${this._powerData.total_shutoffs || 0}`;
     
     rooms.forEach(room => {
       const roomCard = this.shadowRoot.querySelector(`.room-card[data-room-id="${room.id}"]`);
@@ -153,6 +158,15 @@ class EnergyPanel extends HTMLElement {
       }
       if (totalDaySpan) {
         totalDaySpan.textContent = `${(room.total_day_wh / 1000).toFixed(2)} kWh today`;
+      }
+
+      // Update per-room event counts
+      const eventCounts = roomCard.querySelectorAll('.event-count');
+      if (eventCounts.length >= 2) {
+        const warnings = room.warnings || 0;
+        const shutoffs = room.shutoffs || 0;
+        eventCounts[0].textContent = `⚠ ${warnings}`;
+        eventCounts[1].textContent = `⚡ ${shutoffs}`;
       }
 
       // Update individual outlets
@@ -287,6 +301,18 @@ class EnergyPanel extends HTMLElement {
         height: 10px;
         fill: currentColor;
         margin-right: 2px;
+      }
+
+      .event-count {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        font-size: 9px;
+        color: var(--secondary-text-color);
+        padding: 2px 4px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 3px;
+        white-space: nowrap;
       }
 
       .room-stats {
@@ -819,6 +845,10 @@ class EnergyPanel extends HTMLElement {
       totalDayWh += r.total_day_wh;
     });
 
+    // Get event counts
+    const totalWarnings = this._powerData?.total_warnings || 0;
+    const totalShutoffs = this._powerData?.total_shutoffs || 0;
+
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
       <div class="panel-container">
@@ -850,8 +880,12 @@ class EnergyPanel extends HTMLElement {
                 <div class="stat-label">Today's Usage</div>
               </div>
               <div class="stat-card">
-                <div class="stat-value">${rooms.length}</div>
-                <div class="stat-label">Monitored Rooms</div>
+                <div class="stat-value" id="summary-warnings">${totalWarnings}</div>
+                <div class="stat-label">Threshold Warnings</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="summary-shutoffs">${totalShutoffs}</div>
+                <div class="stat-label">Safety Shutoffs</div>
               </div>
             </div>
           ` : ''}
@@ -886,10 +920,14 @@ class EnergyPanel extends HTMLElement {
     const roomData = this._powerData?.rooms?.find(r => r.id === room.id) || {
       total_watts: 0,
       total_day_wh: 0,
+      warnings: 0,
+      shutoffs: 0,
       outlets: [],
     };
 
     const isOverThreshold = room.threshold > 0 && roomData.total_watts > room.threshold;
+    const warnings = roomData.warnings || 0;
+    const shutoffs = roomData.shutoffs || 0;
 
     return `
       <div class="room-card" data-room-id="${room.id}">
@@ -908,6 +946,8 @@ class EnergyPanel extends HTMLElement {
                     ${room.threshold}W limit
                   </span>
                 ` : ''}
+                <span class="event-count" title="Threshold Warnings">⚠ ${warnings}</span>
+                <span class="event-count" title="Safety Shutoffs">⚡ ${shutoffs}</span>
               </div>
             </div>
           </div>

@@ -145,6 +145,7 @@ class EnergyMonitor:
 
                 # Check outlet warning threshold (combined plugs)
                 if outlet_threshold > 0 and outlet_total_watts > outlet_threshold:
+                    await self.config_manager.async_increment_warning(room_id)
                     await self._send_outlet_alert(
                         room_id=room_id,
                         room_name=room_name,
@@ -157,6 +158,7 @@ class EnergyMonitor:
 
             # Check room threshold
             if room_threshold > 0 and room_total_watts > room_threshold:
+                await self.config_manager.async_increment_warning(room_id)
                 await self._send_room_alert(
                     room_id=room_id,
                     room_name=room_name,
@@ -218,6 +220,9 @@ class EnergyMonitor:
         self._shutoff_pending[shutoff_key] = True
         
         try:
+            # Increment shutoff count
+            await self.config_manager.async_increment_shutoff(room_id)
+            
             # Turn off the switch
             await self.hass.services.async_call(
                 "switch", "turn_off",
