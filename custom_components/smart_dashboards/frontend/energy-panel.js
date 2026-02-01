@@ -220,9 +220,10 @@ class EnergyPanel extends HTMLElement {
 
       .rooms-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+        grid-template-columns: repeat(auto-fill, 240px);
         grid-auto-flow: dense;
         gap: 12px;
+        justify-content: start;
       }
 
       @media (max-width: 800px) {
@@ -239,14 +240,29 @@ class EnergyPanel extends HTMLElement {
         height: fit-content;
       }
 
-      /* Room cards with many outlets can span 2 columns */
-      .room-card.wide {
-        grid-column: span 2;
+      /* Room cards span columns based on outlet count */
+      /* Formula: Math.ceil(outletCount / 2) - roughly 2 outlets per column */
+      .room-card.outlets-1 { grid-column: span 1; }
+      .room-card.outlets-2 { grid-column: span 1; }
+      .room-card.outlets-3 { grid-column: span 2; }
+      .room-card.outlets-4 { grid-column: span 2; }
+      .room-card.outlets-5 { grid-column: span 3; }
+      .room-card.outlets-6 { grid-column: span 3; }
+      .room-card.outlets-7 { grid-column: span 4; }
+      .room-card.outlets-8 { grid-column: span 4; }
+      .room-card.outlets-9 { grid-column: span 5; }
+      .room-card.outlets-10 { grid-column: span 5; }
+
+      /* For rooms with more than 10 outlets, use 5 columns max */
+      .room-card[class*="outlets-"] {
+        max-width: calc(240px * 5 + 12px * 4);
       }
 
       @media (max-width: 800px) {
-        .room-card.wide {
-          grid-column: span 1;
+        .room-card[class*="outlets-"] {
+          grid-column: span 1 !important;
+          max-width: 100%;
+          min-width: 100%;
         }
       }
 
@@ -891,11 +907,10 @@ class EnergyPanel extends HTMLElement {
     };
 
     const isOverThreshold = room.threshold > 0 && roomData.total_watts > room.threshold;
-    const outletCount = (room.outlets || []).length;
-    const isWide = outletCount > 3; // Rooms with 4+ outlets span 2 columns
+    const outletCount = Math.min((room.outlets || []).length, 10); // Cap at 10 for class name
 
     return `
-      <div class="room-card ${isWide ? 'wide' : ''}" data-room-id="${room.id}">
+      <div class="room-card outlets-${outletCount}" data-room-id="${room.id}">
         <div class="room-header">
           <div class="room-info">
             <div class="room-icon">
