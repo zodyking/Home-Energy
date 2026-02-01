@@ -2700,9 +2700,9 @@ class EnergyPanel extends HTMLElement {
         breaker_id: breakerId,
       });
       
-      // Toggle button visual state (on if switches were turned on, off if turned off)
+      // Update button visual state based on new state
       if (btn) {
-        const isOn = result.turned_on > 0;
+        const isOn = result.state === 'on';
         btn.classList.toggle('on', isOn);
         
         // Update button text to show state
@@ -2713,21 +2713,9 @@ class EnergyPanel extends HTMLElement {
         }
       }
       
-      // Show detailed feedback
-      let message = '';
-      if (result.errors && result.errors > 0) {
-        message = `Test trip: ${result.turned_on} ON, ${result.turned_off} OFF, ${result.errors} errors`;
-      } else if (result.turned_on > 0 && result.turned_off > 0) {
-        message = `Test trip: ${result.turned_on} switches ON, ${result.turned_off} switches OFF`;
-      } else if (result.turned_on > 0) {
-        message = `Test trip: ${result.turned_on} switches turned ON`;
-      } else if (result.turned_off > 0) {
-        message = `Test trip: ${result.turned_off} switches turned OFF`;
-      } else {
-        message = `Test trip: ${result.total_switches} switches processed`;
-      }
-      
-      showToast(this.shadowRoot, message, 'success');
+      // Show feedback
+      const stateText = result.state === 'on' ? 'ON' : 'OFF';
+      showToast(this.shadowRoot, `Test trip: ${result.total_switches} switches turned ${stateText}`, 'success');
     } catch (e) {
       console.error('Test trip failed:', e);
       showToast(this.shadowRoot, 'Test trip failed', 'error');
