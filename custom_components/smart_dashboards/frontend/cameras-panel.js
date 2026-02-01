@@ -45,19 +45,18 @@ class CamerasPanel extends HTMLElement {
 
   /**
    * Get auth token for API requests (camera_proxy, camera_proxy_stream).
-   * Tries hass.auth.data.access_token and hass.connection.getAuth().
+   * Tries multiple sources used by HA frontend / custom panels.
    * @returns {string|null}
    */
   _getAuthToken() {
     if (!this._hass) return null;
-    if (this._hass.auth?.data?.access_token) {
-      return this._hass.auth.data.access_token;
-    }
     try {
-      const getAuth = this._hass.connection?.getAuth;
-      if (typeof getAuth === 'function') {
-        const auth = getAuth();
-        if (auth && auth.access_token) return auth.access_token;
+      if (this._hass.auth?.data?.access_token) return this._hass.auth.data.access_token;
+      if (this._hass.auth?.accessToken) return this._hass.auth.accessToken;
+      const conn = this._hass.connection;
+      if (conn?.getAuth) {
+        const auth = typeof conn.getAuth === 'function' ? conn.getAuth() : conn.getAuth;
+        if (auth && (auth.access_token || auth.accessToken)) return auth.access_token || auth.accessToken;
       }
     } catch (_) {
       // ignore
@@ -95,25 +94,30 @@ class CamerasPanel extends HTMLElement {
 
     const token = this._getAuthToken();
     if (!token) {
+      const mainId = this._getMainCameraEntityId();
+      if (mainId) this._startStreamOrSnapshot('main-camera-img', mainId, null);
+      (this._config?.sub_cameras || []).forEach((cam, i) => {
+        if (cam?.entity_id) this._startStreamOrSnapshot(`sub-camera-img-${i}`, cam.entity_id, null);
+      });
       this._showNoAuthInPlaceholders();
       return;
     }
 
-    // Try live stream first; fall back to snapshot refresh on error or timeout
     const mainCamera = this._config?.main_camera;
     if (mainCamera) {
       const entityId = typeof mainCamera === 'string' ? mainCamera : mainCamera?.entity_id;
-      if (entityId) {
-        this._startStreamOrSnapshot('main-camera-img', entityId, token);
-      }
+      if (entityId) this._startStreamOrSnapshot('main-camera-img', entityId, token);
     }
-
     const subCameras = this._config?.sub_cameras || [];
     subCameras.forEach((cam, i) => {
-      if (cam?.entity_id) {
-        this._startStreamOrSnapshot(`sub-camera-img-${i}`, cam.entity_id, token);
-      }
+      if (cam?.entity_id) this._startStreamOrSnapshot(`sub-camera-img-${i}`, cam.entity_id, token);
     });
+  }
+
+  _getMainCameraEntityId() {
+    const main = this._config?.main_camera;
+    if (!main) return null;
+    return typeof main === 'string' ? main : main?.entity_id || null;
   }
 
   _showNoAuthInPlaceholders() {
@@ -130,6 +134,7 @@ class CamerasPanel extends HTMLElement {
    * @param {string} token - auth token
    */
   _startStreamOrSnapshot(imgId, entityId, token) {
+    if (!entityId) return;
     const card = this.shadowRoot.querySelector(`#${imgId}`)?.closest('.camera-card');
     if (!card) return;
 
@@ -139,8 +144,9 @@ class CamerasPanel extends HTMLElement {
 
     if (!placeholder || !img) return;
 
-    const streamUrl = `/api/camera_proxy_stream/${entityId}?token=${token}`;
-    const snapshotUrl = () => `/api/camera_proxy/${entityId}?token=${token}&t=${Date.now()}`;
+    const tokenPart = token ? `token=${token}&` : '';
+    const streamUrl = token ? `/api/camera_proxy_stream/${entityId}?token=${token}` : null;
+    const snapshotUrl = () => `/api/camera_proxy/${entityId}?${tokenPart}t=${Date.now()}`;
 
     const showVideo = () => {
       placeholder.style.display = 'none';
@@ -158,31 +164,30 @@ class CamerasPanel extends HTMLElement {
     };
 
     const fallbackToSnapshot = () => {
-      if (this._refreshIntervals.has(imgId)) return; // already fell back
+      if (this._refreshIntervals.has(imgId)) return;
       if (video) video.src = '';
       showSnapshot();
       const updateImage = () => {
-        if (img && this._hass) {
-          img.src = snapshotUrl();
-        }
+        if (img && this._hass) img.src = snapshotUrl();
       };
       updateImage();
-      const interval = setInterval(updateImage, 500);
-      this._refreshIntervals.set(imgId, interval);
+      this._refreshIntervals.set(imgId, setInterval(updateImage, 500));
     };
 
-    if (video) {
+    // Snapshot-first: start snapshot refresh immediately so feed shows quickly
+    fallbackToSnapshot();
+
+    // If we have token and video element, try stream; if it loads, switch to video and stop snapshot
+    if (token && video && streamUrl) {
       video.src = streamUrl;
-      video.addEventListener('loadeddata', () => showVideo(), { once: true });
-      video.addEventListener('error', () => fallbackToSnapshot(), { once: true });
-      // If stream does not load within 5s, fall back to snapshot
-      setTimeout(() => {
-        if (placeholder && placeholder.style.display !== 'none') {
-          fallbackToSnapshot();
+      video.addEventListener('loadeddata', () => {
+        if (this._refreshIntervals.has(imgId)) {
+          clearInterval(this._refreshIntervals.get(imgId));
+          this._refreshIntervals.delete(imgId);
         }
-      }, 5000);
-    } else {
-      fallbackToSnapshot();
+        showVideo();
+      }, { once: true });
+      video.addEventListener('error', () => { /* keep snapshot */ }, { once: true });
     }
 
     // Snapshot fallback: when img loads, hide placeholder (and video if present)

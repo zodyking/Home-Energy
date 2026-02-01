@@ -41,7 +41,8 @@
       }
     },
     "error": {
-      "invalid_passcode": "Passcode must be exactly 4 digits"
+      "invalid_passcode": "Passcode must be exactly 4 digits",
+      "unknown": "An unexpected error occurred"
     }
   }
 }
