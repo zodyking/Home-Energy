@@ -2,22 +2,25 @@
  * Shared utilities for Smart Dashboards panels
  */
 
-// Common CSS styles for both panels
+// Common CSS styles for both panels - Home Assistant blue theme
 export const sharedStyles = `
   :host {
     display: block;
     height: 100%;
-    background: var(--primary-background-color, #111);
+    background: var(--primary-background-color, #111318);
     color: var(--primary-text-color, #e1e1e1);
     font-family: var(--paper-font-body1_-_font-family, 'Roboto', 'Segoe UI', sans-serif);
-    --panel-accent: #00d4aa;
-    --panel-accent-dim: rgba(0, 212, 170, 0.15);
-    --panel-danger: #ff5c5c;
-    --panel-warning: #ffb74d;
-    --card-bg: rgba(30, 30, 30, 0.85);
-    --card-border: rgba(255, 255, 255, 0.06);
-    --input-bg: rgba(255, 255, 255, 0.05);
-    --input-border: rgba(255, 255, 255, 0.1);
+    --panel-accent: #03a9f4;
+    --panel-accent-rgb: 3, 169, 244;
+    --panel-accent-dim: rgba(3, 169, 244, 0.15);
+    --panel-accent-hover: #29b6f6;
+    --panel-danger: #f44336;
+    --panel-warning: #ff9800;
+    --panel-success: #4caf50;
+    --card-bg: var(--card-background-color, rgba(32, 33, 39, 0.95));
+    --card-border: rgba(255, 255, 255, 0.08);
+    --input-bg: rgba(255, 255, 255, 0.04);
+    --input-border: rgba(255, 255, 255, 0.12);
   }
 
   * {
@@ -33,13 +36,13 @@ export const sharedStyles = `
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 20px 24px;
-    background: linear-gradient(135deg, rgba(0, 212, 170, 0.12) 0%, rgba(0, 150, 136, 0.08) 100%);
+    padding: 16px 24px;
+    background: linear-gradient(135deg, rgba(3, 169, 244, 0.1) 0%, rgba(3, 169, 244, 0.02) 100%);
     border-bottom: 1px solid var(--card-border);
     position: sticky;
     top: 0;
     z-index: 100;
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(12px);
   }
 
   .panel-title {
@@ -47,14 +50,14 @@ export const sharedStyles = `
     align-items: center;
     gap: 12px;
     margin: 0;
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 500;
     letter-spacing: 0.3px;
   }
 
   .panel-title-icon {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     fill: var(--panel-accent);
   }
 
@@ -80,12 +83,13 @@ export const sharedStyles = `
 
   .btn-primary {
     background: var(--panel-accent);
-    color: #000;
+    color: #fff;
   }
 
   .btn-primary:hover {
-    background: #00eabb;
+    background: var(--panel-accent-hover);
     transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(3, 169, 244, 0.3);
   }
 
   .btn-secondary {
@@ -95,7 +99,7 @@ export const sharedStyles = `
   }
 
   .btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.08);
     border-color: rgba(255, 255, 255, 0.2);
   }
 
@@ -106,28 +110,27 @@ export const sharedStyles = `
   }
 
   .btn-danger {
-    background: rgba(255, 92, 92, 0.15);
+    background: rgba(244, 67, 54, 0.15);
     color: var(--panel-danger);
-    border: 1px solid rgba(255, 92, 92, 0.3);
+    border: 1px solid rgba(244, 67, 54, 0.3);
   }
 
   .btn-danger:hover {
-    background: rgba(255, 92, 92, 0.25);
+    background: rgba(244, 67, 54, 0.25);
   }
 
   .content-area {
-    padding: 24px;
-    max-width: 1400px;
+    padding: 20px 24px;
+    max-width: 1600px;
     margin: 0 auto;
   }
 
   .card {
     background: var(--card-bg);
-    border-radius: 16px;
+    border-radius: 12px;
     border: 1px solid var(--card-border);
     padding: 20px;
-    margin-bottom: 20px;
-    backdrop-filter: blur(8px);
+    margin-bottom: 16px;
   }
 
   .card-header {
@@ -154,8 +157,8 @@ export const sharedStyles = `
   .form-label {
     display: block;
     margin-bottom: 6px;
-    font-size: 13px;
-    color: var(--secondary-text-color, #999);
+    font-size: 12px;
+    color: var(--secondary-text-color, #9e9e9e);
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -176,13 +179,13 @@ export const sharedStyles = `
   .form-input:focus, .form-select:focus {
     outline: none;
     border-color: var(--panel-accent);
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(3, 169, 244, 0.05);
   }
 
   .form-select {
     cursor: pointer;
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239e9e9e' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
     padding-right: 36px;
@@ -214,18 +217,18 @@ export const sharedStyles = `
 
   .volume-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
     background: var(--panel-accent);
     cursor: pointer;
     border: none;
-    box-shadow: 0 2px 6px rgba(0, 212, 170, 0.4);
+    box-shadow: 0 2px 6px rgba(3, 169, 244, 0.4);
   }
 
   .volume-slider::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
     background: var(--panel-accent);
     cursor: pointer;
@@ -238,54 +241,6 @@ export const sharedStyles = `
     font-size: 13px;
     color: var(--secondary-text-color);
     font-variant-numeric: tabular-nums;
-  }
-
-  /* TTS Input */
-  .tts-control {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-  }
-
-  .tts-input {
-    flex: 1;
-    padding: 12px 16px;
-    border-radius: 24px;
-    border: 1px solid var(--input-border);
-    background: var(--input-bg);
-    color: var(--primary-text-color);
-    font-size: 14px;
-    font-family: inherit;
-  }
-
-  .tts-input:focus {
-    outline: none;
-    border-color: var(--panel-accent);
-  }
-
-  .tts-btn {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    background: var(--panel-accent);
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: transform 0.2s, background 0.2s;
-    flex-shrink: 0;
-  }
-
-  .tts-btn:hover {
-    transform: scale(1.05);
-    background: #00eabb;
-  }
-
-  .tts-btn svg {
-    width: 20px;
-    height: 20px;
-    fill: #000;
   }
 
   /* Grid Layouts */
@@ -301,14 +256,26 @@ export const sharedStyles = `
     gap: 16px;
   }
 
+  .grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+
+  @media (max-width: 1200px) {
+    .grid-4 {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
   @media (max-width: 900px) {
-    .grid-3 {
+    .grid-3, .grid-4 {
       grid-template-columns: repeat(2, 1fr);
     }
   }
 
   @media (max-width: 600px) {
-    .grid-2, .grid-3 {
+    .grid-2, .grid-3, .grid-4 {
       grid-template-columns: 1fr;
     }
   }
@@ -324,8 +291,8 @@ export const sharedStyles = `
   }
 
   .loading-spinner {
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
     border: 3px solid var(--input-border);
     border-top-color: var(--panel-accent);
     border-radius: 50%;
@@ -345,9 +312,9 @@ export const sharedStyles = `
   }
 
   .empty-state-icon {
-    width: 64px;
-    height: 64px;
-    fill: var(--input-border);
+    width: 56px;
+    height: 56px;
+    fill: rgba(255, 255, 255, 0.1);
     margin-bottom: 16px;
   }
 
@@ -367,7 +334,7 @@ export const sharedStyles = `
   .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(0, 0, 0, 0.75);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -449,6 +416,10 @@ export const sharedStyles = `
     border-left-color: var(--panel-danger);
   }
 
+  .toast.success {
+    border-left-color: var(--panel-success);
+  }
+
   @keyframes slideIn {
     from {
       opacity: 0;
@@ -476,45 +447,19 @@ export const icons = {
   room: `<svg viewBox="0 0 24 24"><path d="M12,3L2,12h3v8h14v-8h3L12,3z M12,16c-1.1,0-2-0.9-2-2c0-1.1,0.9-2,2-2s2,0.9,2,2C14,15.1,13.1,16,12,16z"/></svg>`,
   check: `<svg viewBox="0 0 24 24"><path d="M9,16.17L4.83,12l-1.42,1.41L9,19L21,7l-1.41-1.41L9,16.17z"/></svg>`,
   warning: `<svg viewBox="0 0 24 24"><path d="M1,21h22L12,2L1,21z M13,18h-2v-2h2V18z M13,14h-2v-4h2V14z"/></svg>`,
+  outlet: `<svg viewBox="0 0 24 24"><path d="M12,2A10,10,0,1,0,22,12,10,10,0,0,0,12,2Zm0,18a8,8,0,1,1,8-8A8,8,0,0,1,12,20ZM9,9H11V13H9ZM13,9h2v4H13Z"/></svg>`,
 };
 
 // Helper function to show toast
-export function showToast(shadowRoot, message, isError = false) {
+export function showToast(shadowRoot, message, type = 'default') {
   // Remove existing toast
   const existing = shadowRoot.querySelector('.toast');
   if (existing) existing.remove();
 
   const toast = document.createElement('div');
-  toast.className = `toast ${isError ? 'error' : ''}`;
+  toast.className = `toast ${type}`;
   toast.textContent = message;
   shadowRoot.appendChild(toast);
 
   setTimeout(() => toast.remove(), 3000);
-}
-
-// Helper to create volume control HTML
-export function createVolumeControl(currentVolume = 0.7) {
-  return `
-    <div class="volume-control">
-      <svg class="volume-icon" viewBox="0 0 24 24">
-        <path d="M3,9v6h4l5,5V4L7,9H3z M16.5,12c0-1.77-1.02-3.29-2.5-4.03v8.05C15.48,15.29,16.5,13.77,16.5,12z"/>
-      </svg>
-      <input type="range" class="volume-slider" min="0" max="1" step="0.05" value="${currentVolume}">
-      <span class="volume-value">${Math.round(currentVolume * 100)}%</span>
-    </div>
-  `;
-}
-
-// Helper to create TTS input HTML
-export function createTTSInput() {
-  return `
-    <div class="tts-control">
-      <input type="text" class="tts-input" placeholder="Type a message to speak...">
-      <button class="tts-btn" title="Speak">
-        <svg viewBox="0 0 24 24">
-          <path d="M3,9v6h4l5,5V4L7,9H3z M16.5,12c0-1.77-1.02-3.29-2.5-4.03v8.05C15.48,15.29,16.5,13.77,16.5,12z M14,3.23v2.06c2.89,0.86,5,3.54,5,6.71s-2.11,5.85-5,6.71v2.06c4.01-0.91,7-4.49,7-8.77S18.01,4.14,14,3.23z"/>
-        </svg>
-      </button>
-    </div>
-  `;
 }

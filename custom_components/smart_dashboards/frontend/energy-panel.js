@@ -1,6 +1,6 @@
 /**
  * Energy Panel for Smart Dashboards
- * Room-based power monitoring with TTS threshold alerts
+ * Room-based power monitoring with automatic TTS threshold alerts
  */
 
 import { sharedStyles, icons, showToast } from './shared-utils.js';
@@ -14,7 +14,6 @@ class EnergyPanel extends HTMLElement {
     this._entities = null;
     this._powerData = null;
     this._showSettings = false;
-    this._editingRoom = null;
     this._refreshInterval = null;
     this._loading = true;
     this._error = null;
@@ -94,22 +93,36 @@ class EnergyPanel extends HTMLElement {
 
     const rooms = this._powerData.rooms || [];
     
+    // Update summary stats
+    let totalWatts = 0;
+    let totalDayWh = 0;
+    rooms.forEach(r => {
+      totalWatts += r.total_watts;
+      totalDayWh += r.total_day_wh;
+    });
+
+    const totalWattsEl = this.shadowRoot.querySelector('#summary-total-watts');
+    const totalDayEl = this.shadowRoot.querySelector('#summary-total-day');
+    if (totalWattsEl) totalWattsEl.textContent = `${totalWatts.toFixed(1)} W`;
+    if (totalDayEl) totalDayEl.textContent = `${(totalDayWh / 1000).toFixed(2)} kWh`;
+    
     rooms.forEach(room => {
       const roomCard = this.shadowRoot.querySelector(`.room-card[data-room-id="${room.id}"]`);
       if (!roomCard) return;
 
+      const roomConfig = this._getRoomConfig(room.id);
+      const threshold = roomConfig?.threshold || 0;
+
       // Update room totals
-      const totalWatts = roomCard.querySelector('.room-total-watts');
-      const totalDay = roomCard.querySelector('.room-total-day');
-      const threshold = this._getRoomThreshold(room.id);
+      const totalWattsSpan = roomCard.querySelector('.room-total-watts');
+      const totalDaySpan = roomCard.querySelector('.room-total-day');
       
-      if (totalWatts) {
-        totalWatts.textContent = `${room.total_watts.toFixed(1)} W`;
-        totalWatts.classList.toggle('over-threshold', room.total_watts > threshold);
+      if (totalWattsSpan) {
+        totalWattsSpan.textContent = `${room.total_watts.toFixed(1)} W`;
+        totalWattsSpan.classList.toggle('over-threshold', threshold > 0 && room.total_watts > threshold);
       }
-      if (totalDay) {
-        const kwh = (room.total_day_wh / 1000).toFixed(2);
-        totalDay.textContent = `${kwh} kWh today`;
+      if (totalDaySpan) {
+        totalDaySpan.textContent = `${(room.total_day_wh / 1000).toFixed(2)} kWh today`;
       }
 
       // Update individual outlets
@@ -117,34 +130,74 @@ class EnergyPanel extends HTMLElement {
         const outletCard = roomCard.querySelector(`.outlet-card[data-outlet-index="${i}"]`);
         if (!outletCard) return;
 
+        const outletConfig = roomConfig?.outlets?.[i];
+        const outletThreshold = outletConfig?.threshold || 0;
+        const outletTotal = outlet.plug1.watts + outlet.plug2.watts;
+
         const plug1Watts = outletCard.querySelector('.plug1-watts');
-        const plug1Day = outletCard.querySelector('.plug1-day');
         const plug2Watts = outletCard.querySelector('.plug2-watts');
-        const plug2Day = outletCard.querySelector('.plug2-day');
+        const outletTotalEl = outletCard.querySelector('.outlet-total');
 
         if (plug1Watts) plug1Watts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
-        if (plug1Day) plug1Day.textContent = `${outlet.plug1.day_wh.toFixed(2)} Wh`;
         if (plug2Watts) plug2Watts.textContent = `${outlet.plug2.watts.toFixed(1)} W`;
-        if (plug2Day) plug2Day.textContent = `${outlet.plug2.day_wh.toFixed(2)} Wh`;
+        if (outletTotalEl) {
+          outletTotalEl.textContent = `${outletTotal.toFixed(1)} W`;
+          outletTotalEl.classList.toggle('over-threshold', outletThreshold > 0 && outletTotal > outletThreshold);
+        }
       });
     });
   }
 
-  _getRoomThreshold(roomId) {
+  _getRoomConfig(roomId) {
     const rooms = this._config?.rooms || [];
-    const room = rooms.find(r => r.id === roomId);
-    return room?.threshold || 1000;
+    return rooms.find(r => r.id === roomId);
   }
 
   _render() {
     const styles = `
       ${sharedStyles}
       
+      .summary-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+
+      @media (max-width: 600px) {
+        .summary-stats {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .stat-card {
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--card-border);
+        padding: 20px;
+        text-align: center;
+      }
+
+      .stat-value {
+        font-size: 28px;
+        font-weight: 600;
+        color: var(--panel-accent);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .stat-label {
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        margin-top: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
       .room-card {
         background: var(--card-bg);
-        border-radius: 16px;
+        border-radius: 12px;
         border: 1px solid var(--card-border);
-        margin-bottom: 20px;
+        margin-bottom: 16px;
         overflow: hidden;
       }
 
@@ -153,19 +206,14 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
         justify-content: space-between;
         padding: 16px 20px;
-        background: linear-gradient(135deg, rgba(0, 212, 170, 0.08) 0%, transparent 100%);
+        background: linear-gradient(135deg, rgba(3, 169, 244, 0.08) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
-        cursor: pointer;
-      }
-
-      .room-header:hover {
-        background: linear-gradient(135deg, rgba(0, 212, 170, 0.12) 0%, transparent 100%);
       }
 
       .room-info {
         display: flex;
         align-items: center;
-        gap: 16px;
+        gap: 14px;
       }
 
       .room-icon {
@@ -191,11 +239,18 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-meta {
-        font-size: 13px;
+        font-size: 12px;
         color: var(--secondary-text-color);
         display: flex;
         align-items: center;
         gap: 12px;
+      }
+
+      .room-meta svg {
+        width: 12px;
+        height: 12px;
+        fill: currentColor;
+        margin-right: 4px;
       }
 
       .room-stats {
@@ -220,187 +275,104 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-total-day {
-        font-size: 13px;
+        font-size: 12px;
         color: var(--secondary-text-color);
         margin-top: 4px;
         font-variant-numeric: tabular-nums;
       }
 
       .room-content {
-        padding: 20px;
+        padding: 16px 20px;
       }
 
       .outlets-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-        gap: 16px;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 12px;
       }
 
       .outlet-card {
-        background: var(--input-bg);
-        border-radius: 12px;
-        padding: 16px;
-        border: 1px solid var(--input-border);
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 10px;
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
       }
 
       .outlet-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 16px;
+        margin-bottom: 12px;
       }
 
       .outlet-name {
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 500;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
       }
 
       .outlet-name svg {
-        width: 18px;
-        height: 18px;
+        width: 16px;
+        height: 16px;
         fill: var(--panel-accent);
+      }
+
+      .outlet-total {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--panel-accent);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .outlet-total.over-threshold {
+        color: var(--panel-danger);
       }
 
       .plugs-container {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 12px;
+        gap: 10px;
       }
 
       .plug-card {
-        background: rgba(0, 0, 0, 0.2);
+        background: rgba(0, 0, 0, 0.25);
         border-radius: 8px;
-        padding: 12px;
+        padding: 10px;
         text-align: center;
       }
 
       .plug-label {
-        font-size: 11px;
+        font-size: 10px;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         color: var(--secondary-text-color);
-        margin-bottom: 8px;
+        margin-bottom: 4px;
       }
 
       .plug-watts {
-        font-size: 20px;
+        font-size: 18px;
         font-weight: 600;
         color: var(--primary-text-color);
         font-variant-numeric: tabular-nums;
       }
 
-      .plug-day {
+      .threshold-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
         font-size: 11px;
         color: var(--secondary-text-color);
-        margin-top: 4px;
-        font-variant-numeric: tabular-nums;
+        padding: 2px 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 4px;
       }
 
-      .threshold-indicator {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        color: var(--secondary-text-color);
-      }
-
-      .threshold-indicator svg {
-        width: 14px;
-        height: 14px;
+      .threshold-badge svg {
+        width: 12px;
+        height: 12px;
         fill: currentColor;
-      }
-
-      .threshold-indicator.warning {
-        color: var(--panel-warning);
-      }
-
-      .room-tts-bar {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 16px 20px;
-        background: rgba(0, 0, 0, 0.2);
-        border-top: 1px solid var(--card-border);
-      }
-
-      .room-tts-label {
-        font-size: 12px;
-        color: var(--secondary-text-color);
-        flex-shrink: 0;
-      }
-
-      .room-tts-input {
-        flex: 1;
-        padding: 10px 16px;
-        border-radius: 24px;
-        border: 1px solid var(--input-border);
-        background: var(--input-bg);
-        color: var(--primary-text-color);
-        font-size: 14px;
-        font-family: inherit;
-      }
-
-      .room-tts-input:focus {
-        outline: none;
-        border-color: var(--panel-accent);
-      }
-
-      .room-tts-btn {
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        background: var(--panel-accent);
-        border: none;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        transition: transform 0.2s;
-      }
-
-      .room-tts-btn:hover {
-        transform: scale(1.08);
-      }
-
-      .room-tts-btn svg {
-        width: 18px;
-        height: 18px;
-        fill: #000;
-      }
-
-      .room-volume {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 100px;
-      }
-
-      .room-volume input {
-        width: 70px;
-        height: 4px;
-        -webkit-appearance: none;
-        appearance: none;
-        background: rgba(255,255,255,0.15);
-        border-radius: 2px;
-      }
-
-      .room-volume input::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        background: var(--panel-accent);
-        cursor: pointer;
-      }
-
-      .room-volume svg {
-        width: 16px;
-        height: 16px;
-        fill: var(--secondary-text-color);
       }
 
       /* Settings Styles */
@@ -408,39 +380,52 @@ class EnergyPanel extends HTMLElement {
         background: var(--card-bg);
         border-radius: 12px;
         border: 1px solid var(--card-border);
-        padding: 16px;
-        margin-bottom: 12px;
+        margin-bottom: 16px;
+        overflow: hidden;
       }
 
       .room-settings-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 16px;
+        padding: 16px 20px;
+        background: linear-gradient(135deg, rgba(3, 169, 244, 0.05) 0%, transparent 100%);
+        border-bottom: 1px solid var(--card-border);
       }
 
-      .room-settings-name {
+      .room-settings-header input {
         font-size: 16px;
         font-weight: 500;
+        max-width: 200px;
+      }
+
+      .room-settings-body {
+        padding: 20px;
       }
 
       .outlet-settings-item {
-        display: flex;
-        align-items: center;
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr 100px auto;
         gap: 12px;
+        align-items: end;
         padding: 12px;
         background: var(--input-bg);
         border-radius: 8px;
         margin-bottom: 8px;
       }
 
+      @media (max-width: 900px) {
+        .outlet-settings-item {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
       .outlet-settings-item .form-group {
-        flex: 1;
         margin: 0;
       }
 
       .outlet-settings-item .form-label {
-        font-size: 11px;
+        font-size: 10px;
         margin-bottom: 4px;
       }
 
@@ -450,32 +435,34 @@ class EnergyPanel extends HTMLElement {
         margin: 16px 0;
       }
 
-      .summary-stats {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 16px;
-        margin-bottom: 24px;
-      }
-
-      .stat-card {
-        background: var(--card-bg);
-        border-radius: 12px;
-        border: 1px solid var(--card-border);
-        padding: 20px;
-        text-align: center;
-      }
-
-      .stat-value {
-        font-size: 32px;
-        font-weight: 600;
-        color: var(--panel-accent);
-        font-variant-numeric: tabular-nums;
-      }
-
-      .stat-label {
-        font-size: 13px;
+      .icon-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        border: none;
+        background: transparent;
         color: var(--secondary-text-color);
-        margin-top: 4px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s, color 0.2s;
+      }
+
+      .icon-btn:hover {
+        background: rgba(255,255,255,0.08);
+        color: var(--primary-text-color);
+      }
+
+      .icon-btn svg {
+        width: 18px;
+        height: 18px;
+        fill: currentColor;
+      }
+
+      .icon-btn.danger:hover {
+        background: rgba(244, 67, 54, 0.15);
+        color: var(--panel-danger);
       }
     `;
 
@@ -485,9 +472,7 @@ class EnergyPanel extends HTMLElement {
         <div class="panel-container">
           <div class="panel-header">
             <h1 class="panel-title">
-              <svg class="panel-title-icon" viewBox="0 0 24 24">
-                <path d="M7,2v11h3v9l7-12h-4l4-8z"/>
-              </svg>
+              <svg class="panel-title-icon" viewBox="0 0 24 24">${icons.flash}</svg>
               Home Energy
             </h1>
           </div>
@@ -508,16 +493,14 @@ class EnergyPanel extends HTMLElement {
         <div class="panel-container">
           <div class="panel-header">
             <h1 class="panel-title">
-              <svg class="panel-title-icon" viewBox="0 0 24 24">
-                <path d="M7,2v11h3v9l7-12h-4l4-8z"/>
-              </svg>
+              <svg class="panel-title-icon" viewBox="0 0 24 24">${icons.flash}</svg>
               Home Energy
             </h1>
           </div>
           <div class="content-area">
             <div class="empty-state">
               <svg class="empty-state-icon" viewBox="0 0 24 24" style="fill: var(--panel-danger);">
-                <path d="M1,21h22L12,2L1,21z M13,18h-2v-2h2V18z M13,14h-2v-4h2V14z"/>
+                ${icons.warning}
               </svg>
               <h3 class="empty-state-title">Error Loading Data</h3>
               <p class="empty-state-desc">${this._error}</p>
@@ -555,9 +538,7 @@ class EnergyPanel extends HTMLElement {
       <div class="panel-container">
         <div class="panel-header">
           <h1 class="panel-title">
-            <svg class="panel-title-icon" viewBox="0 0 24 24">
-              <path d="M7,2v11h3v9l7-12h-4l4-8z"/>
-            </svg>
+            <svg class="panel-title-icon" viewBox="0 0 24 24">${icons.flash}</svg>
             Home Energy
           </h1>
           <div class="header-actions">
@@ -572,11 +553,11 @@ class EnergyPanel extends HTMLElement {
           ${rooms.length > 0 ? `
             <div class="summary-stats">
               <div class="stat-card">
-                <div class="stat-value">${totalWatts.toFixed(1)} W</div>
+                <div class="stat-value" id="summary-total-watts">${totalWatts.toFixed(1)} W</div>
                 <div class="stat-label">Current Power</div>
               </div>
               <div class="stat-card">
-                <div class="stat-value">${(totalDayWh / 1000).toFixed(2)} kWh</div>
+                <div class="stat-value" id="summary-total-day">${(totalDayWh / 1000).toFixed(2)} kWh</div>
                 <div class="stat-label">Today's Usage</div>
               </div>
               <div class="stat-card">
@@ -588,7 +569,7 @@ class EnergyPanel extends HTMLElement {
 
           ${rooms.length === 0 ? this._renderEmptyState() : ''}
           
-          ${rooms.map((room, i) => this._renderRoomCard(room, i)).join('')}
+          ${rooms.map((room) => this._renderRoomCard(room)).join('')}
         </div>
       </div>
     `;
@@ -599,11 +580,9 @@ class EnergyPanel extends HTMLElement {
   _renderEmptyState() {
     return `
       <div class="empty-state">
-        <svg class="empty-state-icon" viewBox="0 0 24 24">
-          <path d="M7,2v11h3v9l7-12h-4l4-8z"/>
-        </svg>
+        <svg class="empty-state-icon" viewBox="0 0 24 24">${icons.flash}</svg>
         <h3 class="empty-state-title">No Rooms Configured</h3>
-        <p class="empty-state-desc">Set up rooms and outlets to monitor power usage.</p>
+        <p class="empty-state-desc">Set up rooms and outlets to monitor power usage with automatic alerts.</p>
         <button class="btn btn-primary" id="empty-settings-btn">
           <svg class="btn-icon" viewBox="0 0 24 24">${icons.settings}</svg>
           Open Settings
@@ -612,30 +591,32 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
-  _renderRoomCard(room, index) {
+  _renderRoomCard(room) {
     const roomData = this._powerData?.rooms?.find(r => r.id === room.id) || {
       total_watts: 0,
       total_day_wh: 0,
       outlets: [],
     };
 
-    const isOverThreshold = roomData.total_watts > room.threshold;
+    const isOverThreshold = room.threshold > 0 && roomData.total_watts > room.threshold;
 
     return `
       <div class="room-card" data-room-id="${room.id}">
         <div class="room-header">
           <div class="room-info">
             <div class="room-icon">
-              <svg viewBox="0 0 24 24"><path d="M12,3L2,12h3v8h14v-8h3L12,3z M12,16c-1.1,0-2-0.9-2-2c0-1.1,0.9-2,2-2s2,0.9,2,2C14,15.1,13.1,16,12,16z"/></svg>
+              <svg viewBox="0 0 24 24">${icons.room}</svg>
             </div>
             <div>
               <h3 class="room-name">${room.name}</h3>
               <div class="room-meta">
                 <span>${room.outlets?.length || 0} outlets</span>
-                <span class="threshold-indicator ${isOverThreshold ? 'warning' : ''}">
-                  <svg viewBox="0 0 24 24"><path d="M1,21h22L12,2L1,21z M13,18h-2v-2h2V18z M13,14h-2v-4h2V14z"/></svg>
-                  Threshold: ${room.threshold}W
-                </span>
+                ${room.threshold > 0 ? `
+                  <span class="threshold-badge">
+                    <svg viewBox="0 0 24 24">${icons.warning}</svg>
+                    ${room.threshold}W limit
+                  </span>
+                ` : ''}
               </div>
             </div>
           </div>
@@ -650,47 +631,42 @@ class EnergyPanel extends HTMLElement {
             ${(room.outlets || []).map((outlet, oi) => this._renderOutletCard(outlet, oi, roomData.outlets[oi])).join('')}
           </div>
         </div>
-
-        ${room.media_player ? `
-          <div class="room-tts-bar">
-            <span class="room-tts-label">TTS:</span>
-            <input type="text" class="room-tts-input" placeholder="Type a message..." data-media-player="${room.media_player}">
-            <button class="room-tts-btn" data-media-player="${room.media_player}">
-              <svg viewBox="0 0 24 24"><path d="M3,9v6h4l5,5V4L7,9H3z M16.5,12c0-1.77-1.02-3.29-2.5-4.03v8.05C15.48,15.29,16.5,13.77,16.5,12z M14,3.23v2.06c2.89,0.86,5,3.54,5,6.71s-2.11,5.85-5,6.71v2.06c4.01-0.91,7-4.49,7-8.77S18.01,4.14,14,3.23z"/></svg>
-            </button>
-            <div class="room-volume">
-              <svg viewBox="0 0 24 24"><path d="M3,9v6h4l5,5V4L7,9H3z M16.5,12c0-1.77-1.02-3.29-2.5-4.03v8.05C15.48,15.29,16.5,13.77,16.5,12z"/></svg>
-              <input type="range" min="0" max="1" step="0.05" value="0.7" data-media-player="${room.media_player}">
-            </div>
-          </div>
-        ` : ''}
       </div>
     `;
   }
 
   _renderOutletCard(outlet, index, outletData) {
-    const data = outletData || { plug1: { watts: 0, day_wh: 0 }, plug2: { watts: 0, day_wh: 0 } };
+    const data = outletData || { plug1: { watts: 0 }, plug2: { watts: 0 } };
+    const outletTotal = data.plug1.watts + data.plug2.watts;
+    const isOverThreshold = outlet.threshold > 0 && outletTotal > outlet.threshold;
 
     return `
       <div class="outlet-card" data-outlet-index="${index}">
         <div class="outlet-header">
           <div class="outlet-name">
-            <svg viewBox="0 0 24 24"><path d="M12,2C6.48,2,2,6.48,2,12s4.48,10,10,10s10-4.48,10-10S17.52,2,12,2z M12,20c-4.41,0-8-3.59-8-8s3.59-8,8-8s8,3.59,8,8 S16.41,20,12,20z M11,7h2v6h-2V7z M11,15h2v2h-2V15z"/></svg>
+            <svg viewBox="0 0 24 24">${icons.outlet}</svg>
             ${outlet.name}
           </div>
+          <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${outletTotal.toFixed(1)} W</div>
         </div>
         <div class="plugs-container">
           <div class="plug-card">
             <div class="plug-label">Plug 1</div>
             <div class="plug-watts plug1-watts">${data.plug1.watts.toFixed(1)} W</div>
-            <div class="plug-day plug1-day">${data.plug1.day_wh.toFixed(2)} Wh</div>
           </div>
           <div class="plug-card">
             <div class="plug-label">Plug 2</div>
             <div class="plug-watts plug2-watts">${data.plug2.watts.toFixed(1)} W</div>
-            <div class="plug-day plug2-day">${data.plug2.day_wh.toFixed(2)} Wh</div>
           </div>
         </div>
+        ${outlet.threshold > 0 ? `
+          <div style="margin-top: 8px; text-align: center;">
+            <span class="threshold-badge">
+              <svg viewBox="0 0 24 24">${icons.warning}</svg>
+              ${outlet.threshold}W limit
+            </span>
+          </div>
+        ` : ''}
       </div>
     `;
   }
@@ -710,9 +686,7 @@ class EnergyPanel extends HTMLElement {
             Energy Settings
           </h1>
           <div class="header-actions">
-            <button class="btn btn-secondary" id="back-btn">
-              Back to Dashboard
-            </button>
+            <button class="btn btn-secondary" id="back-btn">Back to Dashboard</button>
             <button class="btn btn-primary" id="save-btn">
               <svg class="btn-icon" viewBox="0 0 24 24">${icons.check}</svg>
               Save Changes
@@ -732,7 +706,7 @@ class EnergyPanel extends HTMLElement {
             <div id="rooms-list">
               ${rooms.length === 0 ? `
                 <p style="color: var(--secondary-text-color); text-align: center; padding: 20px;">
-                  No rooms configured yet. Add a room to start monitoring power usage.
+                  No rooms configured. Add a room to start monitoring.
                 </p>
               ` : rooms.map((room, i) => this._renderRoomSettings(room, i, mediaPlayers, powerSensors)).join('')}
             </div>
@@ -742,6 +716,9 @@ class EnergyPanel extends HTMLElement {
             <div class="card-header">
               <h2 class="card-title">TTS Alert Settings</h2>
             </div>
+            <p style="color: var(--secondary-text-color); font-size: 13px; margin-bottom: 16px;">
+              Alerts are played automatically when thresholds are exceeded. Set thresholds on rooms and outlets above.
+            </p>
             <div class="grid-2">
               <div class="form-group">
                 <label class="form-label">Language</label>
@@ -750,7 +727,6 @@ class EnergyPanel extends HTMLElement {
                   <option value="es" ${ttsSettings.language === 'es' ? 'selected' : ''}>Spanish</option>
                   <option value="fr" ${ttsSettings.language === 'fr' ? 'selected' : ''}>French</option>
                   <option value="de" ${ttsSettings.language === 'de' ? 'selected' : ''}>German</option>
-                  <option value="it" ${ttsSettings.language === 'it' ? 'selected' : ''}>Italian</option>
                 </select>
               </div>
               <div class="form-group">
@@ -773,22 +749,20 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="room-settings-card" data-room-index="${index}">
         <div class="room-settings-header">
-          <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name" style="max-width: 200px;">
+          <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name">
           <div style="display: flex; gap: 8px;">
-            <button class="btn btn-secondary btn-sm toggle-room-details" data-index="${index}">
-              Edit
-            </button>
-            <button class="btn btn-danger btn-sm remove-room-btn" data-index="${index}">
-              <svg class="btn-icon" viewBox="0 0 24 24">${icons.delete}</svg>
+            <button class="btn btn-secondary toggle-room-btn" data-index="${index}">Edit</button>
+            <button class="icon-btn danger remove-room-btn" data-index="${index}">
+              <svg viewBox="0 0 24 24">${icons.delete}</svg>
             </button>
           </div>
         </div>
 
-        <div class="room-details" id="room-details-${index}" style="display: none;">
+        <div class="room-settings-body" id="room-body-${index}" style="display: none;">
           <div class="grid-2" style="margin-bottom: 16px;">
             <div class="form-group">
               <label class="form-label">Media Player (for alerts)</label>
-              <select class="form-select room-media-player" data-index="${index}">
+              <select class="form-select room-media-player">
                 <option value="">None</option>
                 ${mediaPlayers.map(mp => `
                   <option value="${mp.entity_id}" ${room.media_player === mp.entity_id ? 'selected' : ''}>
@@ -798,8 +772,8 @@ class EnergyPanel extends HTMLElement {
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label">Power Threshold (Watts)</label>
-              <input type="number" class="form-input room-threshold" value="${room.threshold || 1000}" min="0" data-index="${index}">
+              <label class="form-label">Room Threshold (W)</label>
+              <input type="number" class="form-input room-threshold" value="${room.threshold || ''}" placeholder="0 = disabled" min="0">
             </div>
           </div>
 
@@ -807,24 +781,24 @@ class EnergyPanel extends HTMLElement {
 
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
             <h4 style="margin: 0; font-size: 14px; color: var(--secondary-text-color);">Outlets</h4>
-            <button class="btn btn-secondary btn-sm add-outlet-btn" data-room-index="${index}">
+            <button class="btn btn-secondary add-outlet-btn" data-room-index="${index}">
               <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
               Add Outlet
             </button>
           </div>
 
           <div class="outlets-settings-list" id="outlets-list-${index}">
-            ${(room.outlets || []).map((outlet, oi) => this._renderOutletSettings(outlet, oi, index, powerSensors)).join('')}
+            ${(room.outlets || []).map((outlet, oi) => this._renderOutletSettings(outlet, oi, powerSensors)).join('')}
           </div>
         </div>
       </div>
     `;
   }
 
-  _renderOutletSettings(outlet, outletIndex, roomIndex, powerSensors) {
+  _renderOutletSettings(outlet, outletIndex, powerSensors) {
     return `
       <div class="outlet-settings-item" data-outlet-index="${outletIndex}">
-        <div class="form-group" style="flex: 0.8;">
+        <div class="form-group">
           <label class="form-label">Outlet Name</label>
           <input type="text" class="form-input outlet-name" value="${outlet.name || ''}" placeholder="Name">
         </div>
@@ -850,7 +824,11 @@ class EnergyPanel extends HTMLElement {
             `).join('')}
           </select>
         </div>
-        <button class="icon-btn danger remove-outlet-btn" data-room-index="${roomIndex}" data-outlet-index="${outletIndex}" style="margin-top: 18px;">
+        <div class="form-group">
+          <label class="form-label">Threshold (W)</label>
+          <input type="number" class="form-input outlet-threshold" value="${outlet.threshold || ''}" placeholder="0" min="0">
+        </div>
+        <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${outletIndex}">
           <svg viewBox="0 0 24 24">${icons.delete}</svg>
         </button>
       </div>
@@ -876,32 +854,6 @@ class EnergyPanel extends HTMLElement {
         this._render();
       });
     }
-
-    // TTS buttons in room cards
-    this.shadowRoot.querySelectorAll('.room-tts-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const mediaPlayer = btn.dataset.mediaPlayer;
-        const input = btn.previousElementSibling;
-        this._sendTTS(input, mediaPlayer);
-      });
-    });
-
-    // TTS input enter key
-    this.shadowRoot.querySelectorAll('.room-tts-input').forEach(input => {
-      input.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          const mediaPlayer = input.dataset.mediaPlayer;
-          this._sendTTS(input, mediaPlayer);
-        }
-      });
-    });
-
-    // Volume sliders
-    this.shadowRoot.querySelectorAll('.room-volume input').forEach(slider => {
-      slider.addEventListener('input', (e) => {
-        this._setVolume(e.target.dataset.mediaPlayer, parseFloat(e.target.value));
-      });
-    });
   }
 
   _attachSettingsEventListeners() {
@@ -934,13 +886,13 @@ class EnergyPanel extends HTMLElement {
     }
 
     // Toggle room details
-    this.shadowRoot.querySelectorAll('.toggle-room-details').forEach(btn => {
+    this.shadowRoot.querySelectorAll('.toggle-room-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const index = btn.dataset.index;
-        const details = this.shadowRoot.querySelector(`#room-details-${index}`);
-        if (details) {
-          const isVisible = details.style.display !== 'none';
-          details.style.display = isVisible ? 'none' : 'block';
+        const body = this.shadowRoot.querySelector(`#room-body-${index}`);
+        if (body) {
+          const isVisible = body.style.display !== 'none';
+          body.style.display = isVisible ? 'none' : 'block';
           btn.textContent = isVisible ? 'Edit' : 'Collapse';
         }
       });
@@ -984,7 +936,7 @@ class EnergyPanel extends HTMLElement {
       id: `room_${Date.now()}`,
       name: `Room ${index + 1}`,
       media_player: '',
-      threshold: 1000,
+      threshold: 0,
       outlets: [],
     };
     
@@ -994,12 +946,12 @@ class EnergyPanel extends HTMLElement {
     // Attach event listeners for the new room
     const newCard = list.querySelector(`.room-settings-card[data-room-index="${index}"]`);
     
-    const toggleBtn = newCard.querySelector('.toggle-room-details');
+    const toggleBtn = newCard.querySelector('.toggle-room-btn');
     toggleBtn.addEventListener('click', () => {
-      const details = newCard.querySelector(`#room-details-${index}`);
-      if (details) {
-        const isVisible = details.style.display !== 'none';
-        details.style.display = isVisible ? 'none' : 'block';
+      const body = newCard.querySelector(`#room-body-${index}`);
+      if (body) {
+        const isVisible = body.style.display !== 'none';
+        body.style.display = isVisible ? 'none' : 'block';
         toggleBtn.textContent = isVisible ? 'Edit' : 'Collapse';
       }
     });
@@ -1010,7 +962,7 @@ class EnergyPanel extends HTMLElement {
     const addOutletBtn = newCard.querySelector('.add-outlet-btn');
     addOutletBtn.addEventListener('click', () => this._addOutlet(index));
 
-    // Auto-expand the new room
+    // Auto-expand
     toggleBtn.click();
   }
 
@@ -1019,57 +971,20 @@ class EnergyPanel extends HTMLElement {
     const list = this.shadowRoot.querySelector(`#outlets-list-${roomIndex}`);
     
     const outletIndex = list.querySelectorAll('.outlet-settings-item').length;
-    const html = this._renderOutletSettings({ name: '', plug1_entity: '', plug2_entity: '' }, outletIndex, roomIndex, powerSensors);
+    const html = this._renderOutletSettings({ name: '', plug1_entity: '', plug2_entity: '', threshold: 0 }, outletIndex, powerSensors);
     
     list.insertAdjacentHTML('beforeend', html);
 
-    // Attach remove listener
     const newItem = list.querySelector(`.outlet-settings-item[data-outlet-index="${outletIndex}"]`);
     const removeBtn = newItem.querySelector('.remove-outlet-btn');
     removeBtn.addEventListener('click', () => newItem.remove());
-  }
-
-  async _sendTTS(input, mediaPlayer) {
-    if (!input || !mediaPlayer || !this._hass) return;
-
-    const message = input.value.trim();
-    if (!message) return;
-
-    try {
-      await this._hass.callWS({
-        type: 'smart_dashboards/send_tts',
-        media_player: mediaPlayer,
-        message: message,
-        language: this._config?.tts_settings?.language || 'en',
-      });
-      
-      input.value = '';
-      showToast(this.shadowRoot, 'Message sent!');
-    } catch (e) {
-      console.error('TTS failed:', e);
-      showToast(this.shadowRoot, 'Failed to send message', true);
-    }
-  }
-
-  async _setVolume(mediaPlayer, volume) {
-    if (!mediaPlayer || !this._hass) return;
-
-    try {
-      await this._hass.callWS({
-        type: 'smart_dashboards/set_volume',
-        media_player: mediaPlayer,
-        volume: volume,
-      });
-    } catch (e) {
-      console.error('Failed to set volume:', e);
-    }
   }
 
   async _saveSettings() {
     const roomCards = this.shadowRoot.querySelectorAll('.room-settings-card');
     const rooms = [];
 
-    roomCards.forEach((card, index) => {
+    roomCards.forEach((card) => {
       const nameInput = card.querySelector('.room-name-input');
       const mediaPlayerSelect = card.querySelector('.room-media-player');
       const thresholdInput = card.querySelector('.room-threshold');
@@ -1080,12 +995,14 @@ class EnergyPanel extends HTMLElement {
         const outletName = item.querySelector('.outlet-name')?.value;
         const plug1 = item.querySelector('.outlet-plug1')?.value;
         const plug2 = item.querySelector('.outlet-plug2')?.value;
+        const outletThreshold = parseInt(item.querySelector('.outlet-threshold')?.value) || 0;
 
         if (outletName) {
           outlets.push({
             name: outletName,
             plug1_entity: plug1 || null,
             plug2_entity: plug2 || null,
+            threshold: outletThreshold,
           });
         }
       });
@@ -1096,7 +1013,7 @@ class EnergyPanel extends HTMLElement {
           id: roomName.toLowerCase().replace(/\s+/g, '_'),
           name: roomName,
           media_player: mediaPlayerSelect?.value || null,
-          threshold: parseInt(thresholdInput?.value) || 1000,
+          threshold: parseInt(thresholdInput?.value) || 0,
           outlets: outlets,
         });
       }
@@ -1121,9 +1038,8 @@ class EnergyPanel extends HTMLElement {
       });
 
       this._config = config;
-      showToast(this.shadowRoot, 'Settings saved!');
+      showToast(this.shadowRoot, 'Settings saved!', 'success');
       
-      // Go back to main view
       setTimeout(() => {
         this._showSettings = false;
         this._render();
@@ -1131,7 +1047,7 @@ class EnergyPanel extends HTMLElement {
       }, 500);
     } catch (e) {
       console.error('Failed to save settings:', e);
-      showToast(this.shadowRoot, 'Failed to save settings', true);
+      showToast(this.shadowRoot, 'Failed to save settings', 'error');
     }
   }
 }

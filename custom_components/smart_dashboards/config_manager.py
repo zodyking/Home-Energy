@@ -158,6 +158,7 @@ class ConfigManager:
                             "name": outlet["name"],
                             "plug1_entity": outlet.get("plug1_entity"),
                             "plug2_entity": outlet.get("plug2_entity"),
+                            "threshold": int(outlet.get("threshold", 0)),
                         })
                 validated["rooms"].append(validated_room)
 
