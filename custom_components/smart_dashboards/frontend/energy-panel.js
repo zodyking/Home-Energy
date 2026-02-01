@@ -1290,7 +1290,7 @@ class EnergyPanel extends HTMLElement {
       switches = this._areaSwitches[areaId] || [];
     }
 
-    // Update all outlet dropdowns in this room
+    // Update all outlet dropdowns in this room - PRESERVE existing selections
     const outletItems = roomCard.querySelectorAll('.outlet-settings-item');
     outletItems.forEach(item => {
       const plug1Select = item.querySelector('.outlet-plug1');
@@ -1298,31 +1298,47 @@ class EnergyPanel extends HTMLElement {
       const plug1SwitchSelect = item.querySelector('.outlet-plug1-switch');
       const plug2SwitchSelect = item.querySelector('.outlet-plug2-switch');
       
+      // Save current values BEFORE rebuilding options
       const plug1Value = plug1Select?.value || '';
       const plug2Value = plug2Select?.value || '';
       const plug1SwitchValue = plug1SwitchSelect?.value || '';
       const plug2SwitchValue = plug2SwitchSelect?.value || '';
 
+      // Helper to build options while preserving current selection
+      const buildOptions = (entities, currentValue, type = 'sensor') => {
+        let options = '<option value="">None</option>';
+        
+        // If there's a current value that's NOT in the filtered list, add it first (marked)
+        const currentInList = entities.some(e => e.entity_id === currentValue);
+        if (currentValue && !currentInList) {
+          const label = currentValue.split('.').pop().replace(/_/g, ' ');
+          options += `<option value="${currentValue}" selected style="color: var(--warning-color);">${label} (other area)</option>`;
+        }
+        
+        // Add all entities from the filtered list
+        options += entities.map(e => 
+          `<option value="${e.entity_id}" ${e.entity_id === currentValue ? 'selected' : ''}>${e.friendly_name}</option>`
+        ).join('');
+        
+        return options;
+      };
+
       if (plug1Select) {
-        plug1Select.innerHTML = `<option value="">None</option>` + 
-          sensors.map(s => `<option value="${s.entity_id}" ${s.entity_id === plug1Value ? 'selected' : ''}>${s.friendly_name}</option>`).join('');
+        plug1Select.innerHTML = buildOptions(sensors, plug1Value, 'sensor');
       }
       if (plug2Select) {
-        plug2Select.innerHTML = `<option value="">None</option>` + 
-          sensors.map(s => `<option value="${s.entity_id}" ${s.entity_id === plug2Value ? 'selected' : ''}>${s.friendly_name}</option>`).join('');
+        plug2Select.innerHTML = buildOptions(sensors, plug2Value, 'sensor');
       }
       if (plug1SwitchSelect) {
-        plug1SwitchSelect.innerHTML = `<option value="">None</option>` + 
-          switches.map(s => `<option value="${s.entity_id}" ${s.entity_id === plug1SwitchValue ? 'selected' : ''}>${s.friendly_name}</option>`).join('');
+        plug1SwitchSelect.innerHTML = buildOptions(switches, plug1SwitchValue, 'switch');
       }
       if (plug2SwitchSelect) {
-        plug2SwitchSelect.innerHTML = `<option value="">None</option>` + 
-          switches.map(s => `<option value="${s.entity_id}" ${s.entity_id === plug2SwitchValue ? 'selected' : ''}>${s.friendly_name}</option>`).join('');
+        plug2SwitchSelect.innerHTML = buildOptions(switches, plug2SwitchValue, 'switch');
       }
     });
 
     const areaName = this._areas?.find(a => a.id === areaId)?.name || 'all areas';
-    showToast(this.shadowRoot, `Showing entities from ${areaName}`, 'success');
+    showToast(this.shadowRoot, `Filtering to ${areaName} (existing selections preserved)`, 'success');
   }
 
   _getFilteredSensors(roomIndex) {
