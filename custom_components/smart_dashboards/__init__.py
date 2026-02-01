@@ -54,6 +54,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_options_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update - re-register panels."""
+    # Update stored options
+    if DOMAIN in hass.data:
+        hass.data[DOMAIN]["options"] = dict(entry.options or {})
     await hass.config_entries.async_reload(entry.entry_id)
 
 
