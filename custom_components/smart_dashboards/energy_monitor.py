@@ -14,12 +14,19 @@ from .const import (
     ENERGY_CHECK_INTERVAL,
     ALERT_COOLDOWN,
     SHUTOFF_RESET_DELAY,
+    STOVE_WARNING_TIMER,
+    STOVE_SHUTOFF_TIMER,
     DEFAULT_TTS_PREFIX,
     DEFAULT_ROOM_WARN_MSG,
     DEFAULT_OUTLET_WARN_MSG,
     DEFAULT_SHUTOFF_MSG,
     DEFAULT_BREAKER_WARN_MSG,
     DEFAULT_BREAKER_SHUTOFF_MSG,
+    DEFAULT_STOVE_ON_MSG,
+    DEFAULT_STOVE_OFF_MSG,
+    DEFAULT_STOVE_15MIN_WARN_MSG,
+    DEFAULT_STOVE_30SEC_WARN_MSG,
+    DEFAULT_STOVE_AUTO_OFF_MSG,
 )
 from .tts_helper import async_send_tts
 
@@ -46,6 +53,14 @@ class EnergyMonitor:
         self._breaker_shutoff_pending: dict[str, bool] = {}  # Track breakers in shutoff cycle
         self._shutoff_pending: dict[str, bool] = {}  # Track plugs in shutoff cycle
         self._save_counter = 0
+        
+        # Stove safety state
+        self._stove_state = "off"  # "on" or "off"
+        self._stove_timer_start: datetime | None = None
+        self._stove_timer_phase = "none"  # "none", "15min", "30sec"
+        self._stove_last_presence: str | None = None
+        self._stove_15min_warn_sent = False
+        self._stove_30sec_warn_sent = False
 
     async def async_start(self) -> None:
         """Start the energy monitoring loop."""
@@ -175,6 +190,9 @@ class EnergyMonitor:
 
         # Check breaker lines
         await self._check_breaker_lines(tts_settings)
+
+        # Check stove safety
+        await self._check_stove_safety(tts_settings)
 
         # Periodically save energy tracking data (every 60 seconds)
         self._save_counter += 1
@@ -501,6 +519,177 @@ class EnergyMonitor:
                     _LOGGER.error("Breaker shutoff error: %s", e)
                 finally:
                     self._breaker_shutoff_pending[breaker_id] = False
+
+    async def _check_stove_safety(self, tts_settings: dict) -> None:
+        """Check stove safety - monitor stove state, presence, and manage timers."""
+        energy_config = self.config_manager.energy_config
+        stove_config = energy_config.get("stove_safety", {})
+        
+        stove_plug_entity = stove_config.get("stove_plug_entity")
+        stove_plug_switch = stove_config.get("stove_plug_switch")
+        stove_power_threshold = stove_config.get("stove_power_threshold", 100)
+        presence_sensor = stove_config.get("presence_sensor")
+        media_player = stove_config.get("media_player")
+        volume = stove_config.get("volume", 0.7)
+        
+        # Skip if not configured
+        if not stove_plug_entity or not presence_sensor:
+            return
+        
+        # Get current stove power
+        current_power = self._get_power_value(stove_plug_entity)
+        stove_is_on = current_power > stove_power_threshold
+        
+        # Get current presence state
+        presence_state = self.hass.states.get(presence_sensor)
+        presence_detected = presence_state and presence_state.state == "on"
+        
+        # Detect stove state changes
+        if stove_is_on and self._stove_state != "on":
+            # Stove just turned on
+            self._stove_state = "on"
+            self._stove_15min_warn_sent = False
+            self._stove_30sec_warn_sent = False
+            
+            if media_player:
+                prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                msg_template = tts_settings.get("stove_on_msg", DEFAULT_STOVE_ON_MSG)
+                message = msg_template.format(prefix=prefix)
+                await async_send_tts(
+                    self.hass,
+                    media_player=media_player,
+                    message=message,
+                    language=tts_settings.get("language"),
+                    volume=volume,
+                )
+            _LOGGER.info("Stove turned on")
+        
+        elif not stove_is_on and self._stove_state == "on":
+            # Stove just turned off
+            self._stove_state = "off"
+            self._stove_timer_start = None
+            self._stove_timer_phase = "none"
+            self._stove_15min_warn_sent = False
+            self._stove_30sec_warn_sent = False
+            
+            if media_player:
+                prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                msg_template = tts_settings.get("stove_off_msg", DEFAULT_STOVE_OFF_MSG)
+                message = msg_template.format(prefix=prefix)
+                await async_send_tts(
+                    self.hass,
+                    media_player=media_player,
+                    message=message,
+                    language=tts_settings.get("language"),
+                    volume=volume,
+                )
+            _LOGGER.info("Stove turned off")
+        
+        # Only process timers if stove is on
+        if not stove_is_on:
+            return
+        
+        # Check presence state changes
+        if presence_detected:
+            # Presence detected - stop/reset timer
+            if self._stove_timer_phase != "none":
+                self._stove_timer_start = None
+                self._stove_timer_phase = "none"
+                self._stove_15min_warn_sent = False
+                self._stove_30sec_warn_sent = False
+                _LOGGER.info("Presence detected - timer reset")
+            
+            self._stove_last_presence = "on"
+        
+        elif not presence_detected:
+            # No presence - manage timer
+            if self._stove_last_presence == "on":
+                # Just left - start 15min timer
+                self._stove_timer_start = dt_util.now()
+                self._stove_timer_phase = "15min"
+                self._stove_15min_warn_sent = False
+                self._stove_30sec_warn_sent = False
+                _LOGGER.info("Presence left - starting 15min timer")
+            
+            self._stove_last_presence = "off"
+            
+            # Process timer if running
+            if self._stove_timer_start:
+                now = dt_util.now()
+                elapsed = (now - self._stove_timer_start).total_seconds()
+                
+                if self._stove_timer_phase == "15min":
+                    if elapsed >= STOVE_WARNING_TIMER:
+                        # 15 minutes expired - send warning and start 30sec countdown
+                        if not self._stove_15min_warn_sent:
+                            if media_player:
+                                prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                                msg_template = tts_settings.get("stove_15min_warn_msg", DEFAULT_STOVE_15MIN_WARN_MSG)
+                                message = msg_template.format(prefix=prefix)
+                                await async_send_tts(
+                                    self.hass,
+                                    media_player=media_player,
+                                    message=message,
+                                    language=tts_settings.get("language"),
+                                    volume=volume,
+                                )
+                            self._stove_15min_warn_sent = True
+                            _LOGGER.warning("Stove 15min warning - starting 30sec countdown")
+                        
+                        # Start 30sec countdown
+                        self._stove_timer_start = now
+                        self._stove_timer_phase = "30sec"
+                        self._stove_30sec_warn_sent = False
+                
+                elif self._stove_timer_phase == "30sec":
+                    if elapsed >= STOVE_SHUTOFF_TIMER:
+                        # 30 seconds expired - turn off stove
+                        if not self._stove_30sec_warn_sent:
+                            # Send final warning
+                            if media_player:
+                                prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                                msg_template = tts_settings.get("stove_30sec_warn_msg", DEFAULT_STOVE_30SEC_WARN_MSG)
+                                message = msg_template.format(prefix=prefix)
+                                await async_send_tts(
+                                    self.hass,
+                                    media_player=media_player,
+                                    message=message,
+                                    language=tts_settings.get("language"),
+                                    volume=volume,
+                                )
+                            self._stove_30sec_warn_sent = True
+                        
+                        # Turn off stove switch
+                        if stove_plug_switch:
+                            try:
+                                await self.hass.services.async_call(
+                                    "switch", "turn_off",
+                                    {"entity_id": stove_plug_switch},
+                                    blocking=True,
+                                )
+                                
+                                # Send shutoff TTS
+                                if media_player:
+                                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                                    msg_template = tts_settings.get("stove_auto_off_msg", DEFAULT_STOVE_AUTO_OFF_MSG)
+                                    message = msg_template.format(prefix=prefix)
+                                    await async_send_tts(
+                                        self.hass,
+                                        media_player=media_player,
+                                        message=message,
+                                        language=tts_settings.get("language"),
+                                        volume=volume,
+                                    )
+                                
+                                # Reset timer state
+                                self._stove_timer_start = None
+                                self._stove_timer_phase = "none"
+                                self._stove_15min_warn_sent = False
+                                self._stove_30sec_warn_sent = False
+                                
+                                _LOGGER.warning("Stove automatically turned off for safety")
+                            except Exception as e:
+                                _LOGGER.error("Failed to turn off stove: %s", e)
 
 
 async def async_start_energy_monitor(

@@ -33,6 +33,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_toggle_switch)
     websocket_api.async_register_command(hass, websocket_get_breaker_data)
     websocket_api.async_register_command(hass, websocket_test_trip_breaker)
+    websocket_api.async_register_command(hass, websocket_get_stove_data)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -115,6 +116,7 @@ async def websocket_get_entities(
         "cameras": [],
         "media_players": [],
         "power_sensors": [],
+        "binary_sensors": [],
     }
 
     for state in hass.states.async_all():
@@ -154,6 +156,13 @@ async def websocket_get_entities(
                         "unit": "W",
                         "type": "switch_attribute",
                     })
+
+        if entity_type is None or entity_type == "binary_sensor":
+            if entity_id.startswith("binary_sensor."):
+                result["binary_sensors"].append({
+                    "entity_id": entity_id,
+                    "friendly_name": friendly_name,
+                })
 
     connection.send_result(msg["id"], result)
 
@@ -665,6 +674,80 @@ async def websocket_test_trip_breaker(
     except Exception as e:
         _LOGGER.error("Test trip breaker failed: %s", e)
         connection.send_error(msg["id"], "trip_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_stove_data",
+    }
+)
+@websocket_api.async_response
+async def websocket_get_stove_data(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get current stove safety status and timer information."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    energy_monitor = hass.data[DOMAIN].get("energy_monitor")
+    if not energy_monitor:
+        connection.send_error(msg["id"], "not_ready", "Energy monitor not initialized")
+        return
+
+    stove_config = config_manager.energy_config.get("stove_safety", {})
+    stove_plug_entity = stove_config.get("stove_plug_entity")
+    presence_sensor = stove_config.get("presence_sensor")
+    stove_power_threshold = stove_config.get("stove_power_threshold", 100)
+
+    result: dict[str, Any] = {
+        "configured": bool(stove_plug_entity and presence_sensor),
+        "stove_state": "off",
+        "presence_detected": False,
+        "current_power": 0.0,
+        "timer_phase": "none",
+        "time_remaining": 0,
+    }
+
+    if not result["configured"]:
+        connection.send_result(msg["id"], result)
+        return
+
+    # Get current power
+    if stove_plug_entity:
+        current_power = _get_power_value(hass, stove_plug_entity)
+        result["current_power"] = round(current_power, 1)
+        result["stove_state"] = "on" if current_power > stove_power_threshold else "off"
+
+    # Get presence state
+    if presence_sensor:
+        presence_state = hass.states.get(presence_sensor)
+        result["presence_detected"] = presence_state and presence_state.state == "on"
+
+    # Get timer information from energy monitor
+    if hasattr(energy_monitor, "_stove_timer_phase"):
+        result["timer_phase"] = energy_monitor._stove_timer_phase
+        
+        if energy_monitor._stove_timer_start and energy_monitor._stove_timer_phase != "none":
+            from datetime import datetime
+            from homeassistant.util import dt as dt_util
+            
+            now = dt_util.now()
+            elapsed = (now - energy_monitor._stove_timer_start).total_seconds()
+            
+            if energy_monitor._stove_timer_phase == "15min":
+                from .const import STOVE_WARNING_TIMER
+                remaining = max(0, STOVE_WARNING_TIMER - elapsed)
+                result["time_remaining"] = int(remaining)
+            elif energy_monitor._stove_timer_phase == "30sec":
+                from .const import STOVE_SHUTOFF_TIMER
+                remaining = max(0, STOVE_SHUTOFF_TIMER - elapsed)
+                result["time_remaining"] = int(remaining)
+
+    connection.send_result(msg["id"], result)
 
 
 def _get_power_value(hass: HomeAssistant, entity_id: str) -> float:
