@@ -30,6 +30,8 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_switches)
     websocket_api.async_register_command(hass, websocket_verify_passcode)
     websocket_api.async_register_command(hass, websocket_toggle_switch)
+    websocket_api.async_register_command(hass, websocket_get_breaker_data)
+    websocket_api.async_register_command(hass, websocket_test_trip_breaker)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -527,6 +529,103 @@ async def websocket_get_switches(
                 })
 
     connection.send_result(msg["id"], {"switches": switches})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_breaker_data",
+    }
+)
+@websocket_api.async_response
+async def websocket_get_breaker_data(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get current power readings for all breaker lines."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    result: dict[str, Any] = {"breaker_lines": []}
+
+    for breaker in config_manager.energy_config.get("breaker_lines", []):
+        breaker_id = breaker.get("id")
+        outlets = config_manager.get_outlets_for_breaker(breaker_id)
+        
+        breaker_data = {
+            "id": breaker_id,
+            "name": breaker.get("name", "Breaker"),
+            "color": breaker.get("color", "#03a9f4"),
+            "max_load": breaker.get("max_load", 2400),
+            "threshold": breaker.get("threshold", 0),
+            "total_watts": 0,
+            "total_day_wh": 0,
+        }
+
+        # Calculate total power for this breaker
+        for outlet in outlets:
+            if outlet.get("plug1_entity"):
+                watts = _get_power_value(hass, outlet["plug1_entity"])
+                day_wh = config_manager.get_day_energy(outlet["plug1_entity"])
+                breaker_data["total_watts"] += watts
+                breaker_data["total_day_wh"] += day_wh
+            if outlet.get("plug2_entity"):
+                watts = _get_power_value(hass, outlet["plug2_entity"])
+                day_wh = config_manager.get_day_energy(outlet["plug2_entity"])
+                breaker_data["total_watts"] += watts
+                breaker_data["total_day_wh"] += day_wh
+
+        breaker_data["total_watts"] = round(breaker_data["total_watts"], 1)
+        breaker_data["total_day_wh"] = round(breaker_data["total_day_wh"], 2)
+        result["breaker_lines"].append(breaker_data)
+
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/test_trip_breaker",
+        vol.Required("breaker_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_test_trip_breaker(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Test trip a breaker line - turn off all switches."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    breaker_id = msg["breaker_id"]
+    outlets = config_manager.get_outlets_for_breaker(breaker_id)
+    
+    switch_entities = []
+    for outlet in outlets:
+        if outlet.get("plug1_switch"):
+            switch_entities.append(outlet["plug1_switch"])
+        if outlet.get("plug2_switch"):
+            switch_entities.append(outlet["plug2_switch"])
+    
+    if not switch_entities:
+        connection.send_error(msg["id"], "no_switches", "No switches found for this breaker")
+        return
+    
+    try:
+        await hass.services.async_call(
+            "switch", "turn_off",
+            {"entity_id": switch_entities},
+            blocking=True,
+        )
+        connection.send_result(msg["id"], {"success": True, "switches_turned_off": len(switch_entities)})
+    except Exception as e:
+        _LOGGER.error("Test trip breaker failed: %s", e)
+        connection.send_error(msg["id"], "trip_failed", str(e))
 
 
 def _get_power_value(hass: HomeAssistant, entity_id: str) -> float:
