@@ -371,6 +371,9 @@ class CamerasPanel extends HTMLElement {
         <style>${styles}</style>
         <div class="panel-container">
           <div class="panel-header">
+            <button class="menu-btn" id="menu-btn" title="Menu">
+              <svg viewBox="0 0 24 24">${icons.menu}</svg>
+            </button>
             <h1 class="panel-title">
               <svg class="panel-title-icon" viewBox="0 0 24 24">${icons.camera}</svg>
               Cameras
@@ -392,6 +395,9 @@ class CamerasPanel extends HTMLElement {
         <style>${styles}</style>
         <div class="panel-container">
           <div class="panel-header">
+            <button class="menu-btn" id="menu-btn" title="Menu">
+              <svg viewBox="0 0 24 24">${icons.menu}</svg>
+            </button>
             <h1 class="panel-title">
               <svg class="panel-title-icon" viewBox="0 0 24 24">${icons.camera}</svg>
               Cameras
@@ -429,6 +435,9 @@ class CamerasPanel extends HTMLElement {
       <style>${styles}</style>
       <div class="panel-container">
         <div class="panel-header">
+          <button class="menu-btn" id="menu-btn" title="Menu">
+            <svg viewBox="0 0 24 24">${icons.menu}</svg>
+          </button>
           <h1 class="panel-title">
             <svg class="panel-title-icon" viewBox="0 0 24 24">${icons.camera}</svg>
             Cameras
@@ -524,6 +533,9 @@ class CamerasPanel extends HTMLElement {
       <style>${styles}</style>
       <div class="panel-container">
         <div class="panel-header">
+          <button class="menu-btn" id="menu-btn" title="Menu">
+            <svg viewBox="0 0 24 24">${icons.menu}</svg>
+          </button>
           <h1 class="panel-title">
             <svg class="panel-title-icon" viewBox="0 0 24 24">${icons.settings}</svg>
             Camera Settings
@@ -666,6 +678,9 @@ class CamerasPanel extends HTMLElement {
   }
 
   _attachEventListeners() {
+    // Menu button to toggle HA sidebar
+    this._attachMenuButton();
+
     const settingsBtn = this.shadowRoot.querySelector('#settings-btn');
     const emptySettingsBtn = this.shadowRoot.querySelector('#empty-settings-btn');
 
@@ -710,7 +725,25 @@ class CamerasPanel extends HTMLElement {
     });
   }
 
+  _attachMenuButton() {
+    const menuBtn = this.shadowRoot.querySelector('#menu-btn');
+    if (menuBtn) {
+      menuBtn.addEventListener('click', () => {
+        this._toggleSidebar();
+      });
+    }
+  }
+
+  _toggleSidebar() {
+    // Fire event to toggle HA sidebar
+    const event = new Event('hass-toggle-menu', { bubbles: true, composed: true });
+    this.dispatchEvent(event);
+  }
+
   _attachSettingsEventListeners() {
+    // Menu button
+    this._attachMenuButton();
+
     const backBtn = this.shadowRoot.querySelector('#back-btn');
     const saveBtn = this.shadowRoot.querySelector('#save-btn');
     const addSubCameraBtn = this.shadowRoot.querySelector('#add-sub-camera-btn');
