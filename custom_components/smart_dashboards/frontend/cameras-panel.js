@@ -13,8 +13,7 @@ class CamerasPanel extends HTMLElement {
     this._config = null;
     this._entities = null;
     this._showSettings = false;
-    this._hlsInstances = new Map();
-    this._refreshInterval = null;
+    this._refreshIntervals = new Map();
     this._loading = true;
     this._error = null;
   }
@@ -40,18 +39,8 @@ class CamerasPanel extends HTMLElement {
   }
 
   _cleanup() {
-    // Clean up HLS instances
-    this._hlsInstances.forEach((hls) => {
-      if (hls && hls.destroy) {
-        hls.destroy();
-      }
-    });
-    this._hlsInstances.clear();
-
-    // Clear refresh interval
-    if (this._refreshInterval) {
-      clearInterval(this._refreshInterval);
-    }
+    this._refreshIntervals.forEach((interval) => clearInterval(interval));
+    this._refreshIntervals.clear();
   }
 
   async _loadConfig() {
@@ -70,7 +59,7 @@ class CamerasPanel extends HTMLElement {
       this._entities = entities;
       this._loading = false;
       this._render();
-      this._setupStreams();
+      this._startCameraRefresh();
     } catch (e) {
       console.error('Failed to load cameras config:', e);
       this._loading = false;
@@ -79,50 +68,81 @@ class CamerasPanel extends HTMLElement {
     }
   }
 
-  _renderLoading() {
-    return `
-      <div class="loading">
-        <div class="loading-spinner"></div>
-        <span>Loading cameras...</span>
-      </div>
-    `;
+  _startCameraRefresh() {
+    this._cleanup();
+    
+    // Refresh all camera images every 500ms for smooth live feed
+    const mainCamera = this._config?.main_camera;
+    if (mainCamera) {
+      const entityId = typeof mainCamera === 'string' ? mainCamera : mainCamera?.entity_id;
+      if (entityId) {
+        this._startImageRefresh('main-camera-img', entityId);
+      }
+    }
+
+    const subCameras = this._config?.sub_cameras || [];
+    subCameras.forEach((cam, i) => {
+      if (cam?.entity_id) {
+        this._startImageRefresh(`sub-camera-img-${i}`, cam.entity_id);
+      }
+    });
   }
 
-  _renderError(message) {
-    return `
-      <div class="empty-state">
-        <svg class="empty-state-icon" viewBox="0 0 24 24" style="fill: var(--panel-danger);">
-          <path d="M1,21h22L12,2L1,21z M13,18h-2v-2h2V18z M13,14h-2v-4h2V14z"/>
-        </svg>
-        <h3 class="empty-state-title">Error Loading Cameras</h3>
-        <p class="empty-state-desc">${message}</p>
-        <button class="btn btn-primary" id="retry-btn">
-          Retry
-        </button>
-      </div>
-    `;
+  _startImageRefresh(imgId, entityId) {
+    const updateImage = () => {
+      const img = this.shadowRoot.querySelector(`#${imgId}`);
+      if (img && this._hass) {
+        const timestamp = Date.now();
+        img.src = `/api/camera_proxy/${entityId}?token=${this._hass.auth.data.access_token}&t=${timestamp}`;
+      }
+    };
+    
+    // Initial load
+    updateImage();
+    
+    // Refresh every 500ms
+    const interval = setInterval(updateImage, 500);
+    this._refreshIntervals.set(imgId, interval);
   }
 
   _render() {
     const styles = `
       ${sharedStyles}
       
-      .main-camera-container {
+      .cameras-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+
+      .main-camera-section {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+
+      @media (max-width: 1000px) {
+        .main-camera-section {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .camera-card {
         position: relative;
-        width: 100%;
-        max-width: 1200px;
-        margin: 0 auto 24px;
-        border-radius: 16px;
+        border-radius: 12px;
         overflow: hidden;
         background: #000;
         aspect-ratio: 16/9;
       }
 
-      .main-camera-container video,
-      .main-camera-container img {
+      .camera-card.main {
+        aspect-ratio: 16/9;
+      }
+
+      .camera-card img {
         width: 100%;
         height: 100%;
-        object-fit: contain;
+        object-fit: cover;
         display: block;
       }
 
@@ -131,28 +151,61 @@ class CamerasPanel extends HTMLElement {
         bottom: 0;
         left: 0;
         right: 0;
-        padding: 16px 20px;
-        background: linear-gradient(transparent, rgba(0,0,0,0.85));
-        display: flex;
-        align-items: center;
-        gap: 12px;
+        padding: 12px 16px;
+        background: linear-gradient(transparent, rgba(0,0,0,0.9));
       }
 
       .camera-name {
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 500;
         color: #fff;
-        flex-shrink: 0;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .live-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        background: rgba(244, 67, 54, 0.9);
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .live-badge::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #fff;
+        animation: pulse 1.5s infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+
+      .camera-tts-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
 
       .camera-tts-input {
         flex: 1;
-        padding: 10px 16px;
-        border-radius: 24px;
+        padding: 8px 12px;
+        border-radius: 20px;
         border: 1px solid rgba(255,255,255,0.2);
         background: rgba(255,255,255,0.1);
         color: #fff;
-        font-size: 14px;
+        font-size: 13px;
         font-family: inherit;
         backdrop-filter: blur(8px);
       }
@@ -168,8 +221,8 @@ class CamerasPanel extends HTMLElement {
       }
 
       .camera-tts-btn {
-        width: 40px;
-        height: 40px;
+        width: 36px;
+        height: 36px;
         border-radius: 50%;
         background: var(--panel-accent);
         border: none;
@@ -178,28 +231,34 @@ class CamerasPanel extends HTMLElement {
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
-        transition: transform 0.2s;
+        transition: transform 0.2s, background 0.2s;
       }
 
       .camera-tts-btn:hover {
         transform: scale(1.08);
+        background: var(--panel-accent-hover);
       }
 
       .camera-tts-btn svg {
-        width: 18px;
-        height: 18px;
-        fill: #000;
+        width: 16px;
+        height: 16px;
+        fill: #fff;
       }
 
-      .camera-volume {
+      .camera-volume-mini {
         display: flex;
         align-items: center;
-        gap: 8px;
-        min-width: 120px;
+        gap: 6px;
       }
 
-      .camera-volume input {
-        width: 80px;
+      .camera-volume-mini svg {
+        width: 16px;
+        height: 16px;
+        fill: rgba(255,255,255,0.6);
+      }
+
+      .camera-volume-mini input {
+        width: 60px;
         height: 4px;
         -webkit-appearance: none;
         appearance: none;
@@ -207,89 +266,60 @@ class CamerasPanel extends HTMLElement {
         border-radius: 2px;
       }
 
-      .camera-volume input::-webkit-slider-thumb {
+      .camera-volume-mini input::-webkit-slider-thumb {
         -webkit-appearance: none;
-        width: 14px;
-        height: 14px;
+        width: 12px;
+        height: 12px;
         border-radius: 50%;
         background: var(--panel-accent);
         cursor: pointer;
       }
 
-      .camera-volume svg {
-        width: 18px;
-        height: 18px;
-        fill: rgba(255,255,255,0.7);
-      }
-
       .sub-cameras-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 16px;
+        gap: 12px;
       }
 
-      .sub-camera-card {
-        position: relative;
-        border-radius: 12px;
-        overflow: hidden;
-        background: #000;
-        aspect-ratio: 16/9;
+      .camera-card.sub {
         cursor: pointer;
         transition: transform 0.2s, box-shadow 0.2s;
       }
 
-      .sub-camera-card:hover {
+      .camera-card.sub:hover {
         transform: scale(1.02);
-        box-shadow: 0 8px 24px rgba(0, 212, 170, 0.2);
+        box-shadow: 0 8px 24px rgba(3, 169, 244, 0.2);
       }
 
-      .sub-camera-card video,
-      .sub-camera-card img {
+      .no-tts-indicator {
+        font-size: 11px;
+        color: rgba(255,255,255,0.4);
+        font-style: italic;
+      }
+
+      .camera-placeholder {
         width: 100%;
         height: 100%;
-        object-fit: cover;
-        display: block;
-      }
-
-      .sub-camera-label {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        padding: 8px 12px;
-        background: linear-gradient(transparent, rgba(0,0,0,0.8));
-        font-size: 13px;
-        color: #fff;
         display: flex;
+        flex-direction: column;
         align-items: center;
-        justify-content: space-between;
+        justify-content: center;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        color: rgba(255,255,255,0.4);
       }
 
-      .sub-camera-tts-icon {
-        width: 16px;
-        height: 16px;
-        fill: var(--panel-accent);
-        opacity: 0.8;
+      .camera-placeholder svg {
+        width: 40px;
+        height: 40px;
+        fill: currentColor;
+        margin-bottom: 8px;
       }
 
-      .no-media-player {
-        opacity: 0.4;
+      .camera-placeholder span {
+        font-size: 12px;
       }
 
       /* Settings Styles */
-      .settings-section {
-        margin-bottom: 24px;
-      }
-
-      .settings-section-title {
-        font-size: 14px;
-        font-weight: 500;
-        color: var(--panel-accent);
-        margin: 0 0 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-
       .camera-item {
         display: flex;
         align-items: center;
@@ -300,31 +330,9 @@ class CamerasPanel extends HTMLElement {
         margin-bottom: 8px;
       }
 
-      .camera-item-info {
+      .camera-item .form-group {
         flex: 1;
-        min-width: 0;
-      }
-
-      .camera-item-name {
-        font-size: 14px;
-        font-weight: 500;
-        margin: 0 0 4px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .camera-item-entity {
-        font-size: 12px;
-        color: var(--secondary-text-color);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .camera-item-actions {
-        display: flex;
-        gap: 8px;
+        margin: 0;
       }
 
       .icon-btn {
@@ -353,55 +361,8 @@ class CamerasPanel extends HTMLElement {
       }
 
       .icon-btn.danger:hover {
-        background: rgba(255, 92, 92, 0.15);
+        background: rgba(244, 67, 54, 0.15);
         color: var(--panel-danger);
-      }
-
-      .live-indicator {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 4px 10px;
-        background: rgba(255, 0, 0, 0.2);
-        border-radius: 4px;
-        font-size: 11px;
-        font-weight: 600;
-        color: #ff4444;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-
-      .live-indicator::before {
-        content: '';
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: #ff4444;
-        animation: pulse 1.5s infinite;
-      }
-
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.4; }
-      }
-
-      .placeholder-stream {
-        width: 100%;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
-        color: var(--secondary-text-color);
-      }
-
-      .placeholder-stream svg {
-        width: 48px;
-        height: 48px;
-        fill: currentColor;
-        margin-bottom: 12px;
-        opacity: 0.4;
       }
     `;
 
@@ -411,14 +372,15 @@ class CamerasPanel extends HTMLElement {
         <div class="panel-container">
           <div class="panel-header">
             <h1 class="panel-title">
-              <svg class="panel-title-icon" viewBox="0 0 24 24">
-                <path d="M17,10.5V7c0-0.55-0.45-1-1-1H4C3.45,6,3,6.45,3,7v10c0,0.55,0.45,1,1,1h12c0.55,0,1-0.45,1-1v-3.5l4,4v-11L17,10.5z"/>
-              </svg>
+              <svg class="panel-title-icon" viewBox="0 0 24 24">${icons.camera}</svg>
               Cameras
             </h1>
           </div>
           <div class="content-area">
-            ${this._renderLoading()}
+            <div class="loading">
+              <div class="loading-spinner"></div>
+              <span>Loading cameras...</span>
+            </div>
           </div>
         </div>
       `;
@@ -431,14 +393,19 @@ class CamerasPanel extends HTMLElement {
         <div class="panel-container">
           <div class="panel-header">
             <h1 class="panel-title">
-              <svg class="panel-title-icon" viewBox="0 0 24 24">
-                <path d="M17,10.5V7c0-0.55-0.45-1-1-1H4C3.45,6,3,6.45,3,7v10c0,0.55,0.45,1,1,1h12c0.55,0,1-0.45,1-1v-3.5l4,4v-11L17,10.5z"/>
-              </svg>
+              <svg class="panel-title-icon" viewBox="0 0 24 24">${icons.camera}</svg>
               Cameras
             </h1>
           </div>
           <div class="content-area">
-            ${this._renderError(this._error)}
+            <div class="empty-state">
+              <svg class="empty-state-icon" viewBox="0 0 24 24" style="fill: var(--panel-danger);">
+                ${icons.warning}
+              </svg>
+              <h3 class="empty-state-title">Error Loading Cameras</h3>
+              <p class="empty-state-desc">${this._error}</p>
+              <button class="btn btn-primary" id="retry-btn">Retry</button>
+            </div>
           </div>
         </div>
       `;
@@ -463,9 +430,7 @@ class CamerasPanel extends HTMLElement {
       <div class="panel-container">
         <div class="panel-header">
           <h1 class="panel-title">
-            <svg class="panel-title-icon" viewBox="0 0 24 24">
-              <path d="M17,10.5V7c0-0.55-0.45-1-1-1H4C3.45,6,3,6.45,3,7v10c0,0.55,0.45,1,1,1h12c0.55,0,1-0.45,1-1v-3.5l4,4v-11L17,10.5z"/>
-            </svg>
+            <svg class="panel-title-icon" viewBox="0 0 24 24">${icons.camera}</svg>
             Cameras
           </h1>
           <div class="header-actions">
@@ -479,12 +444,17 @@ class CamerasPanel extends HTMLElement {
         <div class="content-area">
           ${!mainCamera && subCameras.length === 0 ? this._renderEmptyState() : ''}
           
-          ${mainCamera ? this._renderMainCamera(mainCamera) : ''}
-          
-          ${subCameras.length > 0 ? `
-            <div class="sub-cameras-grid">
-              ${subCameras.map((cam, i) => this._renderSubCamera(cam, i)).join('')}
+          ${mainCamera || subCameras.length > 0 ? `
+            <div class="main-camera-section">
+              ${mainCamera ? this._renderCameraCard(mainCamera, 'main', 'main-camera-img') : ''}
+              ${subCameras.slice(0, 1).map((cam, i) => this._renderCameraCard(cam, 'main', `sub-camera-img-${i}`)).join('')}
             </div>
+            
+            ${subCameras.length > 1 ? `
+              <div class="sub-cameras-grid" style="margin-top: 16px;">
+                ${subCameras.slice(1).map((cam, i) => this._renderCameraCard(cam, 'sub', `sub-camera-img-${i + 1}`, i + 1)).join('')}
+              </div>
+            ` : ''}
           ` : ''}
         </div>
       </div>
@@ -493,71 +463,52 @@ class CamerasPanel extends HTMLElement {
     this._attachEventListeners();
   }
 
+  _renderCameraCard(camera, type, imgId, index = 0) {
+    const entityId = typeof camera === 'string' ? camera : camera?.entity_id;
+    const mediaPlayer = typeof camera === 'object' ? camera?.media_player : null;
+    const friendlyName = this._getEntityName(entityId);
+
+    return `
+      <div class="camera-card ${type}" data-entity="${entityId}" data-index="${index}">
+        <div class="camera-placeholder">
+          <svg viewBox="0 0 24 24">${icons.camera}</svg>
+          <span>Loading feed...</span>
+        </div>
+        <img id="${imgId}" alt="${friendlyName}" style="position: absolute; top: 0; left: 0;" onerror="this.style.display='none'" onload="this.style.display='block'; this.previousElementSibling.style.display='none';">
+        <div class="camera-overlay">
+          <div class="camera-name">
+            ${friendlyName}
+            <span class="live-badge">Live</span>
+          </div>
+          ${mediaPlayer ? `
+            <div class="camera-tts-row">
+              <input type="text" class="camera-tts-input" placeholder="Type message to speak..." data-media-player="${mediaPlayer}">
+              <button class="camera-tts-btn" data-media-player="${mediaPlayer}" title="Speak">
+                <svg viewBox="0 0 24 24">${icons.speaker}</svg>
+              </button>
+              <div class="camera-volume-mini">
+                <svg viewBox="0 0 24 24">${icons.volume}</svg>
+                <input type="range" min="0" max="1" step="0.05" value="0.7" data-media-player="${mediaPlayer}">
+              </div>
+            </div>
+          ` : `
+            <div class="no-tts-indicator">No media player linked</div>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
   _renderEmptyState() {
     return `
       <div class="empty-state">
-        <svg class="empty-state-icon" viewBox="0 0 24 24">
-          <path d="M17,10.5V7c0-0.55-0.45-1-1-1H4C3.45,6,3,6.45,3,7v10c0,0.55,0.45,1,1,1h12c0.55,0,1-0.45,1-1v-3.5l4,4v-11L17,10.5z"/>
-        </svg>
+        <svg class="empty-state-icon" viewBox="0 0 24 24">${icons.camera}</svg>
         <h3 class="empty-state-title">No Cameras Configured</h3>
         <p class="empty-state-desc">Add cameras in settings to view live feeds here.</p>
         <button class="btn btn-primary" id="empty-settings-btn">
           <svg class="btn-icon" viewBox="0 0 24 24">${icons.settings}</svg>
           Open Settings
         </button>
-      </div>
-    `;
-  }
-
-  _renderMainCamera(camera) {
-    const entityId = typeof camera === 'string' ? camera : camera?.entity_id;
-    const mediaPlayer = typeof camera === 'object' ? camera?.media_player : null;
-    const friendlyName = this._getEntityName(entityId);
-
-    return `
-      <div class="main-camera-container" data-camera="${entityId}">
-        <div class="placeholder-stream" id="main-stream-placeholder">
-          <svg viewBox="0 0 24 24"><path d="M17,10.5V7c0-0.55-0.45-1-1-1H4C3.45,6,3,6.45,3,7v10c0,0.55,0.45,1,1,1h12c0.55,0,1-0.45,1-1v-3.5l4,4v-11L17,10.5z"/></svg>
-          <span>Loading stream...</span>
-        </div>
-        <video id="main-video" autoplay muted playsinline style="display: none;"></video>
-        <div class="camera-overlay">
-          <span class="camera-name">${friendlyName}</span>
-          <span class="live-indicator">Live</span>
-          ${mediaPlayer ? `
-            <input type="text" class="camera-tts-input" placeholder="Type message to speak..." data-media-player="${mediaPlayer}" id="main-tts-input">
-            <button class="camera-tts-btn" id="main-tts-btn" data-media-player="${mediaPlayer}">
-              <svg viewBox="0 0 24 24"><path d="M3,9v6h4l5,5V4L7,9H3z M16.5,12c0-1.77-1.02-3.29-2.5-4.03v8.05C15.48,15.29,16.5,13.77,16.5,12z M14,3.23v2.06c2.89,0.86,5,3.54,5,6.71s-2.11,5.85-5,6.71v2.06c4.01-0.91,7-4.49,7-8.77S18.01,4.14,14,3.23z"/></svg>
-            </button>
-            <div class="camera-volume">
-              <svg viewBox="0 0 24 24"><path d="M3,9v6h4l5,5V4L7,9H3z M16.5,12c0-1.77-1.02-3.29-2.5-4.03v8.05C15.48,15.29,16.5,13.77,16.5,12z"/></svg>
-              <input type="range" min="0" max="1" step="0.05" value="0.7" id="main-volume" data-media-player="${mediaPlayer}">
-            </div>
-          ` : ''}
-        </div>
-      </div>
-    `;
-  }
-
-  _renderSubCamera(camera, index) {
-    const entityId = camera?.entity_id;
-    const mediaPlayer = camera?.media_player;
-    const friendlyName = this._getEntityName(entityId);
-
-    return `
-      <div class="sub-camera-card" data-camera="${entityId}" data-index="${index}">
-        <div class="placeholder-stream" id="sub-stream-placeholder-${index}">
-          <svg viewBox="0 0 24 24"><path d="M17,10.5V7c0-0.55-0.45-1-1-1H4C3.45,6,3,6.45,3,7v10c0,0.55,0.45,1,1,1h12c0.55,0,1-0.45,1-1v-3.5l4,4v-11L17,10.5z"/></svg>
-        </div>
-        <video id="sub-video-${index}" autoplay muted playsinline style="display: none;"></video>
-        <div class="sub-camera-label">
-          <span>${friendlyName}</span>
-          ${mediaPlayer ? `
-            <svg class="sub-camera-tts-icon" viewBox="0 0 24 24" title="TTS enabled">
-              <path d="M3,9v6h4l5,5V4L7,9H3z M16.5,12c0-1.77-1.02-3.29-2.5-4.03v8.05C15.48,15.29,16.5,13.77,16.5,12z"/>
-            </svg>
-          ` : ''}
-        </div>
       </div>
     `;
   }
@@ -578,9 +529,7 @@ class CamerasPanel extends HTMLElement {
             Camera Settings
           </h1>
           <div class="header-actions">
-            <button class="btn btn-secondary" id="back-btn">
-              Back to Cameras
-            </button>
+            <button class="btn btn-secondary" id="back-btn">Back to Cameras</button>
             <button class="btn btn-primary" id="save-btn">
               <svg class="btn-icon" viewBox="0 0 24 24">${icons.check}</svg>
               Save Changes
@@ -621,7 +570,7 @@ class CamerasPanel extends HTMLElement {
 
           <div class="card">
             <div class="card-header">
-              <h2 class="card-title">Sub Cameras</h2>
+              <h2 class="card-title">Additional Cameras</h2>
               <button class="btn btn-secondary" id="add-sub-camera-btn">
                 <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
                 Add Camera
@@ -630,7 +579,7 @@ class CamerasPanel extends HTMLElement {
             <div id="sub-cameras-list">
               ${subCameras.length === 0 ? `
                 <p style="color: var(--secondary-text-color); text-align: center; padding: 20px;">
-                  No sub cameras added yet.
+                  No additional cameras added yet.
                 </p>
               ` : subCameras.map((cam, i) => this._renderSubCameraSettingsItem(cam, i, cameras, mediaPlayers)).join('')}
             </div>
@@ -648,7 +597,6 @@ class CamerasPanel extends HTMLElement {
                   <option value="es" ${ttsSettings.language === 'es' ? 'selected' : ''}>Spanish</option>
                   <option value="fr" ${ttsSettings.language === 'fr' ? 'selected' : ''}>French</option>
                   <option value="de" ${ttsSettings.language === 'de' ? 'selected' : ''}>German</option>
-                  <option value="it" ${ttsSettings.language === 'it' ? 'selected' : ''}>Italian</option>
                 </select>
               </div>
               <div class="form-group">
@@ -670,7 +618,8 @@ class CamerasPanel extends HTMLElement {
   _renderSubCameraSettingsItem(cam, index, cameras, mediaPlayers) {
     return `
       <div class="camera-item" data-index="${index}">
-        <div class="camera-item-info" style="flex: 2;">
+        <div class="form-group">
+          <label class="form-label">Camera</label>
           <select class="form-select sub-camera-entity" data-index="${index}">
             <option value="">Select camera...</option>
             ${cameras.map(c => `
@@ -680,9 +629,10 @@ class CamerasPanel extends HTMLElement {
             `).join('')}
           </select>
         </div>
-        <div class="camera-item-info" style="flex: 2;">
+        <div class="form-group">
+          <label class="form-label">Media Player</label>
           <select class="form-select sub-camera-media-player" data-index="${index}">
-            <option value="">No TTS</option>
+            <option value="">None</option>
             ${mediaPlayers.map(mp => `
               <option value="${mp.entity_id}" ${cam.media_player === mp.entity_id ? 'selected' : ''}>
                 ${mp.friendly_name}
@@ -690,11 +640,9 @@ class CamerasPanel extends HTMLElement {
             `).join('')}
           </select>
         </div>
-        <div class="camera-item-actions">
-          <button class="icon-btn danger remove-sub-camera" data-index="${index}">
-            <svg viewBox="0 0 24 24">${icons.delete}</svg>
-          </button>
-        </div>
+        <button class="icon-btn danger remove-sub-camera" data-index="${index}" style="margin-top: 20px;">
+          <svg viewBox="0 0 24 24">${icons.delete}</svg>
+        </button>
       </div>
     `;
   }
@@ -720,9 +668,6 @@ class CamerasPanel extends HTMLElement {
   _attachEventListeners() {
     const settingsBtn = this.shadowRoot.querySelector('#settings-btn');
     const emptySettingsBtn = this.shadowRoot.querySelector('#empty-settings-btn');
-    const mainTtsBtn = this.shadowRoot.querySelector('#main-tts-btn');
-    const mainTtsInput = this.shadowRoot.querySelector('#main-tts-input');
-    const mainVolume = this.shadowRoot.querySelector('#main-volume');
 
     if (settingsBtn) {
       settingsBtn.addEventListener('click', () => {
@@ -740,24 +685,27 @@ class CamerasPanel extends HTMLElement {
       });
     }
 
-    if (mainTtsBtn && mainTtsInput) {
-      mainTtsBtn.addEventListener('click', () => this._sendTTS(mainTtsInput, mainTtsBtn.dataset.mediaPlayer));
-      mainTtsInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') this._sendTTS(mainTtsInput, mainTtsBtn.dataset.mediaPlayer);
+    // TTS buttons
+    this.shadowRoot.querySelectorAll('.camera-tts-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const input = btn.previousElementSibling;
+        this._sendTTS(input, btn.dataset.mediaPlayer);
       });
-    }
+    });
 
-    if (mainVolume) {
-      mainVolume.addEventListener('input', (e) => {
+    // TTS input enter key
+    this.shadowRoot.querySelectorAll('.camera-tts-input').forEach(input => {
+      input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          this._sendTTS(input, input.dataset.mediaPlayer);
+        }
+      });
+    });
+
+    // Volume sliders
+    this.shadowRoot.querySelectorAll('.camera-volume-mini input').forEach(slider => {
+      slider.addEventListener('input', (e) => {
         this._setVolume(e.target.dataset.mediaPlayer, parseFloat(e.target.value));
-      });
-    }
-
-    // Sub camera clicks (to swap with main)
-    this.shadowRoot.querySelectorAll('.sub-camera-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const index = parseInt(card.dataset.index);
-        this._swapWithMain(index);
       });
     });
   }
@@ -773,7 +721,7 @@ class CamerasPanel extends HTMLElement {
       backBtn.addEventListener('click', () => {
         this._showSettings = false;
         this._render();
-        this._setupStreams();
+        this._startCameraRefresh();
       });
     }
 
@@ -794,171 +742,10 @@ class CamerasPanel extends HTMLElement {
     // Remove sub camera buttons
     this.shadowRoot.querySelectorAll('.remove-sub-camera').forEach(btn => {
       btn.addEventListener('click', () => {
-        const index = parseInt(btn.dataset.index);
-        this._removeSubCamera(index);
+        const item = btn.closest('.camera-item');
+        if (item) item.remove();
       });
     });
-  }
-
-  async _setupStreams() {
-    if (this._showSettings || !this._hass) return;
-
-    // Setup main camera stream
-    const mainCamera = this._config?.main_camera;
-    if (mainCamera) {
-      const entityId = typeof mainCamera === 'string' ? mainCamera : mainCamera?.entity_id;
-      if (entityId) {
-        await this._setupHLSStream('main-video', entityId, 'main-stream-placeholder');
-      }
-    }
-
-    // Setup sub camera streams
-    const subCameras = this._config?.sub_cameras || [];
-    for (let i = 0; i < subCameras.length; i++) {
-      const cam = subCameras[i];
-      if (cam?.entity_id) {
-        await this._setupHLSStream(`sub-video-${i}`, cam.entity_id, `sub-stream-placeholder-${i}`);
-      }
-    }
-  }
-
-  async _setupHLSStream(videoId, cameraEntityId, placeholderId) {
-    const video = this.shadowRoot.querySelector(`#${videoId}`);
-    const placeholder = this.shadowRoot.querySelector(`#${placeholderId}`);
-    
-    if (!video) return;
-
-    try {
-      // Get stream URL from backend
-      const result = await this._hass.callWS({
-        type: 'smart_dashboards/get_camera_stream_url',
-        entity_id: cameraEntityId,
-      });
-
-      const streamUrl = result.stream_url;
-
-      // Try HLS.js first
-      if (window.Hls && Hls.isSupported()) {
-        const hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: true,
-        });
-        
-        this._hlsInstances.set(videoId, hls);
-        
-        hls.loadSource(streamUrl);
-        hls.attachMedia(video);
-        
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          video.style.display = 'block';
-          if (placeholder) placeholder.style.display = 'none';
-          video.play().catch(() => {});
-        });
-
-        hls.on(Hls.Events.ERROR, (event, data) => {
-          if (data.fatal) {
-            console.error('HLS error:', data);
-            // Fallback to snapshot mode
-            this._fallbackToSnapshot(video, placeholder, cameraEntityId);
-          }
-        });
-      } 
-      // Native HLS support (Safari)
-      else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = streamUrl;
-        video.addEventListener('loadedmetadata', () => {
-          video.style.display = 'block';
-          if (placeholder) placeholder.style.display = 'none';
-          video.play().catch(() => {});
-        });
-      }
-      // Fallback to snapshot updates
-      else {
-        this._fallbackToSnapshot(video, placeholder, cameraEntityId);
-      }
-    } catch (e) {
-      console.error('Failed to setup stream:', e);
-      this._fallbackToSnapshot(video, placeholder, cameraEntityId);
-    }
-  }
-
-  _fallbackToSnapshot(video, placeholder, cameraEntityId) {
-    // Hide video, show image
-    video.style.display = 'none';
-    
-    const img = document.createElement('img');
-    img.src = `/api/camera_proxy/${cameraEntityId}?t=${Date.now()}`;
-    img.style.cssText = 'width: 100%; height: 100%; object-fit: contain; display: block;';
-    
-    const container = video.parentElement;
-    if (placeholder) placeholder.style.display = 'none';
-    container.insertBefore(img, video);
-
-    // Refresh every 2 seconds
-    const refresher = setInterval(() => {
-      if (!this.isConnected || this._showSettings) {
-        clearInterval(refresher);
-        return;
-      }
-      img.src = `/api/camera_proxy/${cameraEntityId}?t=${Date.now()}`;
-    }, 2000);
-  }
-
-  async _sendTTS(input, mediaPlayer) {
-    if (!input || !mediaPlayer || !this._hass) return;
-
-    const message = input.value.trim();
-    if (!message) return;
-
-    try {
-      await this._hass.callWS({
-        type: 'smart_dashboards/send_tts',
-        media_player: mediaPlayer,
-        message: message,
-        language: this._config?.tts_settings?.language || 'en',
-      });
-      
-      input.value = '';
-      showToast(this.shadowRoot, 'Message sent!');
-    } catch (e) {
-      console.error('TTS failed:', e);
-      showToast(this.shadowRoot, 'Failed to send message', true);
-    }
-  }
-
-  async _setVolume(mediaPlayer, volume) {
-    if (!mediaPlayer || !this._hass) return;
-
-    try {
-      await this._hass.callWS({
-        type: 'smart_dashboards/set_volume',
-        media_player: mediaPlayer,
-        volume: volume,
-      });
-    } catch (e) {
-      console.error('Failed to set volume:', e);
-    }
-  }
-
-  async _swapWithMain(subIndex) {
-    const subCameras = [...(this._config?.sub_cameras || [])];
-    const mainCamera = this._config?.main_camera;
-    
-    if (subIndex < 0 || subIndex >= subCameras.length) return;
-
-    // Swap
-    const newMain = subCameras[subIndex];
-    subCameras[subIndex] = typeof mainCamera === 'string' 
-      ? { entity_id: mainCamera, media_player: null }
-      : mainCamera;
-
-    this._config.main_camera = newMain;
-    this._config.sub_cameras = subCameras;
-
-    // Re-render and setup streams
-    this._cleanup();
-    this._render();
-    await this._setupStreams();
   }
 
   _addSubCamera() {
@@ -977,12 +764,43 @@ class CamerasPanel extends HTMLElement {
     // Attach remove listener
     const newItem = list.querySelector(`.camera-item[data-index="${index}"]`);
     const removeBtn = newItem.querySelector('.remove-sub-camera');
-    removeBtn.addEventListener('click', () => this._removeSubCamera(index));
+    removeBtn.addEventListener('click', () => newItem.remove());
   }
 
-  _removeSubCamera(index) {
-    const item = this.shadowRoot.querySelector(`.camera-item[data-index="${index}"]`);
-    if (item) item.remove();
+  async _sendTTS(input, mediaPlayer) {
+    if (!input || !mediaPlayer || !this._hass) return;
+
+    const message = input.value.trim();
+    if (!message) return;
+
+    try {
+      await this._hass.callWS({
+        type: 'smart_dashboards/send_tts',
+        media_player: mediaPlayer,
+        message: message,
+        language: this._config?.tts_settings?.language || 'en',
+      });
+      
+      input.value = '';
+      showToast(this.shadowRoot, 'Message sent!', 'success');
+    } catch (e) {
+      console.error('TTS failed:', e);
+      showToast(this.shadowRoot, 'Failed to send message', 'error');
+    }
+  }
+
+  async _setVolume(mediaPlayer, volume) {
+    if (!mediaPlayer || !this._hass) return;
+
+    try {
+      await this._hass.callWS({
+        type: 'smart_dashboards/set_volume',
+        media_player: mediaPlayer,
+        volume: volume,
+      });
+    } catch (e) {
+      console.error('Failed to set volume:', e);
+    }
   }
 
   async _saveSettings() {
@@ -1027,26 +845,18 @@ class CamerasPanel extends HTMLElement {
       });
 
       this._config = config;
-      showToast(this.shadowRoot, 'Settings saved!');
+      showToast(this.shadowRoot, 'Settings saved!', 'success');
       
-      // Go back to main view
       setTimeout(() => {
         this._showSettings = false;
         this._render();
-        this._setupStreams();
+        this._startCameraRefresh();
       }, 500);
     } catch (e) {
       console.error('Failed to save settings:', e);
-      showToast(this.shadowRoot, 'Failed to save settings', true);
+      showToast(this.shadowRoot, 'Failed to save settings', 'error');
     }
   }
-}
-
-// Load HLS.js if not already loaded
-if (!window.Hls) {
-  const script = document.createElement('script');
-  script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
-  document.head.appendChild(script);
 }
 
 customElements.define('cameras-panel', CamerasPanel);
