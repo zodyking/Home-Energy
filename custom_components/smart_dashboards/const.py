@@ -31,6 +31,8 @@ DEFAULT_TTS_PREFIX = "Message from Home Energy."
 DEFAULT_ROOM_WARN_MSG = "{prefix} {room_name} is pulling {watts} watts"
 DEFAULT_OUTLET_WARN_MSG = "{prefix} {room_name} {outlet_name} is pulling {watts} watts"
 DEFAULT_SHUTOFF_MSG = "{prefix} {room_name} {outlet_name} {plug} has been reset to protect circuit from overload"
+DEFAULT_BREAKER_WARN_MSG = "{prefix} {breaker_name} is near its max load, reduce electric use to prevent safety shutoff"
+DEFAULT_BREAKER_SHUTOFF_MSG = "{prefix} {breaker_name} is currently at its max limit, safety shutoff enabled"
 
 # Default config structure
 DEFAULT_CONFIG = {
@@ -45,6 +47,7 @@ DEFAULT_CONFIG = {
     },
     "energy": {
         "rooms": [],
+        "breaker_lines": [],
         "tts_settings": {
             "language": DEFAULT_TTS_LANGUAGE,
             "speed": DEFAULT_TTS_SPEED,
@@ -53,6 +56,8 @@ DEFAULT_CONFIG = {
             "room_warn_msg": DEFAULT_ROOM_WARN_MSG,
             "outlet_warn_msg": DEFAULT_OUTLET_WARN_MSG,
             "shutoff_msg": DEFAULT_SHUTOFF_MSG,
+            "breaker_warn_msg": DEFAULT_BREAKER_WARN_MSG,
+            "breaker_shutoff_msg": DEFAULT_BREAKER_SHUTOFF_MSG,
         },
     },
 }

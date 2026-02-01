@@ -92,6 +92,7 @@ class ConfigManager:
         if "energy" in loaded:
             energy = loaded["energy"]
             result["energy"]["rooms"] = energy.get("rooms", [])
+            result["energy"]["breaker_lines"] = energy.get("breaker_lines", [])
             if "tts_settings" in energy:
                 result["energy"]["tts_settings"].update(energy["tts_settings"])
 
@@ -176,6 +177,21 @@ class ConfigManager:
                         })
                 validated["rooms"].append(validated_room)
 
+        # Validate breaker lines
+        breaker_lines = config.get("breaker_lines", [])
+        validated["breaker_lines"] = []
+        for breaker in breaker_lines:
+            if isinstance(breaker, dict) and breaker.get("name"):
+                validated_breaker = {
+                    "id": breaker.get("id", breaker["name"].lower().replace(" ", "_")),
+                    "name": breaker["name"],
+                    "color": breaker.get("color", "#03a9f4"),
+                    "max_load": int(breaker.get("max_load", 2400)),
+                    "threshold": int(breaker.get("threshold", 0)),
+                    "outlet_ids": breaker.get("outlet_ids", []),  # List of outlet identifiers
+                }
+                validated["breaker_lines"].append(validated_breaker)
+
         # Validate TTS settings
         tts = config.get("tts_settings", {})
         default_tts = DEFAULT_CONFIG["energy"]["tts_settings"]
@@ -187,6 +203,8 @@ class ConfigManager:
             "room_warn_msg": tts.get("room_warn_msg", default_tts["room_warn_msg"]),
             "outlet_warn_msg": tts.get("outlet_warn_msg", default_tts["outlet_warn_msg"]),
             "shutoff_msg": tts.get("shutoff_msg", default_tts["shutoff_msg"]),
+            "breaker_warn_msg": tts.get("breaker_warn_msg", default_tts["breaker_warn_msg"]),
+            "breaker_shutoff_msg": tts.get("breaker_shutoff_msg", default_tts["breaker_shutoff_msg"]),
         }
 
         return validated
@@ -290,3 +308,33 @@ class ConfigManager:
     def get_event_counts(self) -> dict[str, Any]:
         """Get all event counts."""
         return self._event_counts.copy()
+
+    def get_all_outlets(self) -> list[dict[str, Any]]:
+        """Get all outlets from all rooms with their identifiers."""
+        outlets = []
+        for room in self.energy_config.get("rooms", []):
+            room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+            for outlet in room.get("outlets", []):
+                outlet_id = f"{room_id}_{outlet.get('name', 'outlet').lower().replace(' ', '_')}"
+                outlets.append({
+                    "id": outlet_id,
+                    "room_id": room_id,
+                    "room_name": room["name"],
+                    "outlet_name": outlet.get("name", "Outlet"),
+                    "plug1_switch": outlet.get("plug1_switch"),
+                    "plug2_switch": outlet.get("plug2_switch"),
+                    "plug1_entity": outlet.get("plug1_entity"),
+                    "plug2_entity": outlet.get("plug2_entity"),
+                })
+        return outlets
+
+    def get_outlets_for_breaker(self, breaker_id: str) -> list[dict[str, Any]]:
+        """Get all outlets assigned to a breaker line."""
+        breaker_lines = self.energy_config.get("breaker_lines", [])
+        breaker = next((b for b in breaker_lines if b.get("id") == breaker_id), None)
+        if not breaker:
+            return []
+        
+        outlet_ids = breaker.get("outlet_ids", [])
+        all_outlets = self.get_all_outlets()
+        return [outlet for outlet in all_outlets if outlet["id"] in outlet_ids]
