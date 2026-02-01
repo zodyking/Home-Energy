@@ -219,19 +219,9 @@ class EnergyPanel extends HTMLElement {
       }
 
       .rooms-grid {
-        display: grid;
-        /* Use flexible columns that accommodate outlet cards */
-        /* Each outlet card is 100px + 6px gap = 106px */
-        /* Room padding adds ~24px, so base column = 130px works well */
-        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-        grid-auto-flow: dense;
+        display: flex;
+        flex-direction: column;
         gap: 12px;
-      }
-
-      @media (max-width: 800px) {
-        .rooms-grid {
-          grid-template-columns: 1fr;
-        }
       }
 
       .room-card {
@@ -241,31 +231,6 @@ class EnergyPanel extends HTMLElement {
         overflow: hidden;
         height: fit-content;
         width: 100%;
-      }
-
-      /* Room cards span columns based on outlet count */
-      /* Formula: Math.ceil(outletCount / 2) for better packing */
-      .room-card.outlets-1 { grid-column: span 1; }
-      .room-card.outlets-2 { grid-column: span 1; }
-      .room-card.outlets-3 { grid-column: span 2; }
-      .room-card.outlets-4 { grid-column: span 2; }
-      .room-card.outlets-5 { grid-column: span 3; }
-      .room-card.outlets-6 { grid-column: span 3; }
-      .room-card.outlets-7 { grid-column: span 4; }
-      .room-card.outlets-8 { grid-column: span 4; }
-      .room-card.outlets-9 { grid-column: span 5; }
-      .room-card.outlets-10 { grid-column: span 5; }
-
-      /* Cap very large rooms */
-      .room-card[class*="outlets-"] {
-        max-width: calc(130px * 5 + 12px * 4);
-      }
-
-      @media (max-width: 800px) {
-        .room-card[class*="outlets-"] {
-          grid-column: span 1 !important;
-          max-width: 100%;
-        }
       }
 
       .room-header {
@@ -364,6 +329,8 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
+        justify-content: flex-start;
+        align-items: flex-start;
       }
 
       .outlet-card {
@@ -892,11 +859,7 @@ class EnergyPanel extends HTMLElement {
           ${rooms.length === 0 ? this._renderEmptyState() : ''}
           
           <div class="rooms-grid">
-            ${rooms
-              .slice()
-              .sort((a, b) => (b.outlets?.length || 0) - (a.outlets?.length || 0))
-              .map((room) => this._renderRoomCard(room))
-              .join('')}
+            ${rooms.map((room) => this._renderRoomCard(room)).join('')}
           </div>
         </div>
       </div>
@@ -927,10 +890,9 @@ class EnergyPanel extends HTMLElement {
     };
 
     const isOverThreshold = room.threshold > 0 && roomData.total_watts > room.threshold;
-    const outletCount = Math.min((room.outlets || []).length, 10); // Cap at 10 for class name
 
     return `
-      <div class="room-card outlets-${outletCount}" data-room-id="${room.id}">
+      <div class="room-card" data-room-id="${room.id}">
         <div class="room-header">
           <div class="room-info">
             <div class="room-icon">
