@@ -220,12 +220,12 @@ class EnergyPanel extends HTMLElement {
 
       .rooms-grid {
         display: grid;
-        /* Each column = ~1 outlet worth (accounts for card + gap + room padding) */
-        /* 10 outlets = 10 columns = 1 full row, 5 outlets = 5 columns = half row */
-        grid-template-columns: repeat(auto-fill, 110px);
+        /* Use flexible columns that accommodate outlet cards */
+        /* Each outlet card is 100px + 6px gap = 106px */
+        /* Room padding adds ~24px, so base column = 130px works well */
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
         grid-auto-flow: dense;
         gap: 12px;
-        justify-content: start;
       }
 
       @media (max-width: 800px) {
@@ -240,31 +240,31 @@ class EnergyPanel extends HTMLElement {
         border: 1px solid var(--card-border);
         overflow: hidden;
         height: fit-content;
+        width: 100%;
       }
 
-      /* Room cards span exactly their outlet count in columns */
-      /* This creates optimal row packing: 10 outlets = 1 row, 5 outlets = half row */
+      /* Room cards span columns based on outlet count */
+      /* Formula: Math.ceil(outletCount / 2) for better packing */
       .room-card.outlets-1 { grid-column: span 1; }
-      .room-card.outlets-2 { grid-column: span 2; }
-      .room-card.outlets-3 { grid-column: span 3; }
-      .room-card.outlets-4 { grid-column: span 4; }
-      .room-card.outlets-5 { grid-column: span 5; }
-      .room-card.outlets-6 { grid-column: span 6; }
-      .room-card.outlets-7 { grid-column: span 7; }
-      .room-card.outlets-8 { grid-column: span 8; }
-      .room-card.outlets-9 { grid-column: span 9; }
-      .room-card.outlets-10 { grid-column: span 10; }
+      .room-card.outlets-2 { grid-column: span 1; }
+      .room-card.outlets-3 { grid-column: span 2; }
+      .room-card.outlets-4 { grid-column: span 2; }
+      .room-card.outlets-5 { grid-column: span 3; }
+      .room-card.outlets-6 { grid-column: span 3; }
+      .room-card.outlets-7 { grid-column: span 4; }
+      .room-card.outlets-8 { grid-column: span 4; }
+      .room-card.outlets-9 { grid-column: span 5; }
+      .room-card.outlets-10 { grid-column: span 5; }
 
-      /* For rooms with more than 10 outlets, cap at 10 columns (1 full row) */
+      /* Cap very large rooms */
       .room-card[class*="outlets-"] {
-        max-width: calc(110px * 10 + 12px * 9);
+        max-width: calc(130px * 5 + 12px * 4);
       }
 
       @media (max-width: 800px) {
         .room-card[class*="outlets-"] {
           grid-column: span 1 !important;
           max-width: 100%;
-          min-width: 100%;
         }
       }
 
@@ -303,6 +303,9 @@ class EnergyPanel extends HTMLElement {
         font-size: 13px;
         font-weight: 500;
         margin: 0 0 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .room-meta {
@@ -311,6 +314,7 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         align-items: center;
         gap: 8px;
+        flex-wrap: wrap;
       }
 
       .room-meta svg {
@@ -329,6 +333,8 @@ class EnergyPanel extends HTMLElement {
         font-weight: 600;
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
       }
 
       .room-total-watts.over-threshold {
@@ -346,6 +352,8 @@ class EnergyPanel extends HTMLElement {
         color: var(--secondary-text-color);
         margin-top: 2px;
         font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
       }
 
       .room-content {
@@ -406,6 +414,8 @@ class EnergyPanel extends HTMLElement {
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
         margin-top: 1px;
+        white-space: nowrap;
+        overflow: hidden;
       }
 
       .outlet-total.over-threshold {
@@ -457,6 +467,8 @@ class EnergyPanel extends HTMLElement {
         font-weight: 600;
         color: var(--primary-text-color);
         font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
       }
 
       .threshold-badge {
@@ -468,6 +480,8 @@ class EnergyPanel extends HTMLElement {
         padding: 1px 3px;
         background: rgba(255, 255, 255, 0.05);
         border-radius: 2px;
+        white-space: nowrap;
+        overflow: hidden;
       }
 
       .threshold-badge svg {
@@ -973,11 +987,9 @@ class EnergyPanel extends HTMLElement {
             <span class="plug-watts plug2-watts">${data.plug2.watts.toFixed(1)}W</span>
           </div>
         </div>
-        ${outlet.threshold > 0 ? `
-          <div class="outlet-threshold">
-            <span class="threshold-badge">${outlet.threshold}W</span>
-          </div>
-        ` : ''}
+        <div class="outlet-threshold">
+          <span class="threshold-badge">${outlet.threshold > 0 ? `${outlet.threshold}W` : '∞ W'}</span>
+        </div>
       </div>
     `;
   }

@@ -26,7 +26,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Smart Dashboards from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["entry_id"] = entry.entry_id
-    hass.data[DOMAIN]["options"] = dict(entry.options)
+    hass.data[DOMAIN]["options"] = dict(entry.options or {})
 
     # Initialize config manager
     from .config_manager import ConfigManager
