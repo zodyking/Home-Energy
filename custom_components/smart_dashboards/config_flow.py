@@ -28,27 +28,23 @@ class SmartDashboardsConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle reconfigure step (same as options: panels + passcode)."""
-        try:
-            entry_id = self.context.get("entry_id")
-        except Exception:
-            entry_id = None
+        """Handle reconfiguration of existing entry (same as Uber Eats pattern)."""
+        errors: dict[str, str] = {}
+        entry_id = self.context.get("entry_id")
         if not entry_id:
             return self.async_abort(reason="entry_not_found")
         entry = self.hass.config_entries.async_get_entry(entry_id)
         if entry is None:
             return self.async_abort(reason="entry_not_found")
 
-        errors = {}
-
         if user_input is not None:
-            passcode = user_input.get("settings_passcode", "")
+            passcode = str(user_input.get("settings_passcode", ""))
             if not passcode.isdigit() or len(passcode) != 4:
                 errors["settings_passcode"] = "invalid_passcode"
             else:
-                self.hass.config_entries.async_update_entry(
-                    entry, data={}, options=user_input
-                )
+                # Update options and reload (like async_update_reload_and_abort; we use options not data)
+                self.hass.config_entries.async_update_entry(entry, data={}, options=user_input)
+                await self.hass.config_entries.async_reload(entry.entry_id)
                 return self.async_abort(reason="reconfigure_successful")
 
         current = entry.options or {}
@@ -118,51 +114,36 @@ class SmartDashboardsOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the options."""
-        errors = {}
+        """Manage the options (same style as Uber Eats async_step_user)."""
+        errors: dict[str, str] = {}
 
-        try:
-            if user_input is not None:
-                passcode = str(user_input.get("settings_passcode", ""))
-                if not passcode.isdigit() or len(passcode) != 4:
-                    errors["settings_passcode"] = "invalid_passcode"
-                else:
-                    return self.async_create_entry(data=dict(user_input))
+        if user_input is not None:
+            passcode = str(user_input.get("settings_passcode", ""))
+            if not passcode.isdigit() or len(passcode) != 4:
+                errors["settings_passcode"] = "invalid_passcode"
+            else:
+                return self.async_create_entry(data=dict(user_input))
 
-            current = getattr(self.config_entry, "options", None) or {}
-            if not isinstance(current, dict):
-                current = {}
+        entry = self.config_entry
+        current = entry.options if entry else {}
+        if not isinstance(current, dict):
+            current = {}
 
-            return self.async_show_form(
-                step_id="init",
-                data_schema=vol.Schema({
-                    vol.Required(
-                        "enable_cameras",
-                        default=current.get("enable_cameras", True),
-                    ): bool,
-                    vol.Required(
-                        "enable_energy",
-                        default=current.get("enable_energy", True),
-                    ): bool,
-                    vol.Required(
-                        "settings_passcode",
-                        default=current.get("settings_passcode", "0000"),
-                    ): str,
-                }),
-                errors=errors,
-            )
-        except Exception as e:
-            _LOGGER.exception("Options flow error: %s", e)
-            errors["base"] = "unknown"
-            current = getattr(self.config_entry, "options", None) or {}
-            if not isinstance(current, dict):
-                current = {}
-            return self.async_show_form(
-                step_id="init",
-                data_schema=vol.Schema({
-                    vol.Required("enable_cameras", default=True): bool,
-                    vol.Required("enable_energy", default=True): bool,
-                    vol.Required("settings_passcode", default="0000"): str,
-                }),
-                errors=errors,
-            )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Required(
+                    "enable_cameras",
+                    default=current.get("enable_cameras", True),
+                ): bool,
+                vol.Required(
+                    "enable_energy",
+                    default=current.get("enable_energy", True),
+                ): bool,
+                vol.Required(
+                    "settings_passcode",
+                    default=current.get("settings_passcode", "0000"),
+                ): str,
+            }),
+            errors=errors,
+        )
