@@ -36,7 +36,7 @@ export const sharedStyles = `
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 24px;
+    padding: 10px 16px;
     background: linear-gradient(135deg, rgba(3, 169, 244, 0.1) 0%, rgba(3, 169, 244, 0.02) 100%);
     border-bottom: 1px solid var(--card-border);
     position: sticky;
@@ -79,16 +79,16 @@ export const sharedStyles = `
   .panel-title {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     margin: 0;
-    font-size: 20px;
+    font-size: 16px;
     font-weight: 500;
     letter-spacing: 0.3px;
   }
 
   .panel-title-icon {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     fill: var(--panel-accent);
   }
 
@@ -101,12 +101,12 @@ export const sharedStyles = `
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 10px 18px;
-    border-radius: 8px;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 6px;
     border: none;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 500;
     transition: all 0.2s ease;
     font-family: inherit;
@@ -151,8 +151,8 @@ export const sharedStyles = `
   }
 
   .content-area {
-    padding: 20px 24px;
-    max-width: 1600px;
+    padding: 12px 16px;
+    max-width: 1800px;
     margin: 0 auto;
   }
 

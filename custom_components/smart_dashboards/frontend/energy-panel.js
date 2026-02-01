@@ -158,46 +158,40 @@ class EnergyPanel extends HTMLElement {
       ${sharedStyles}
       
       .summary-stats {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 12px;
-        margin-bottom: 20px;
-      }
-
-      @media (max-width: 600px) {
-        .summary-stats {
-          grid-template-columns: 1fr;
-        }
+        display: flex;
+        gap: 10px;
+        margin-bottom: 12px;
       }
 
       .stat-card {
+        flex: 1;
         background: var(--card-bg);
-        border-radius: 12px;
+        border-radius: 8px;
         border: 1px solid var(--card-border);
-        padding: 20px;
+        padding: 10px 14px;
         text-align: center;
       }
 
       .stat-value {
-        font-size: 28px;
+        font-size: 18px;
         font-weight: 600;
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
       }
 
       .stat-label {
-        font-size: 12px;
+        font-size: 9px;
         color: var(--secondary-text-color);
-        margin-top: 4px;
+        margin-top: 2px;
         text-transform: uppercase;
         letter-spacing: 0.5px;
       }
 
       .room-card {
         background: var(--card-bg);
-        border-radius: 12px;
+        border-radius: 10px;
         border: 1px solid var(--card-border);
-        margin-bottom: 16px;
+        margin-bottom: 10px;
         overflow: hidden;
       }
 
@@ -205,21 +199,21 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 16px 20px;
-        background: linear-gradient(135deg, rgba(3, 169, 244, 0.08) 0%, transparent 100%);
+        padding: 10px 14px;
+        background: linear-gradient(135deg, rgba(3, 169, 244, 0.06) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
       }
 
       .room-info {
         display: flex;
         align-items: center;
-        gap: 14px;
+        gap: 10px;
       }
 
       .room-icon {
-        width: 40px;
-        height: 40px;
-        border-radius: 10px;
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
         background: var(--panel-accent-dim);
         display: flex;
         align-items: center;
@@ -227,30 +221,30 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-icon svg {
-        width: 22px;
-        height: 22px;
+        width: 16px;
+        height: 16px;
         fill: var(--panel-accent);
       }
 
       .room-name {
-        font-size: 16px;
+        font-size: 13px;
         font-weight: 500;
-        margin: 0 0 4px;
+        margin: 0 0 2px;
       }
 
       .room-meta {
-        font-size: 12px;
+        font-size: 10px;
         color: var(--secondary-text-color);
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 8px;
       }
 
       .room-meta svg {
-        width: 12px;
-        height: 12px;
+        width: 10px;
+        height: 10px;
         fill: currentColor;
-        margin-right: 4px;
+        margin-right: 2px;
       }
 
       .room-stats {
@@ -258,7 +252,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-total-watts {
-        font-size: 24px;
+        font-size: 16px;
         font-weight: 600;
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
@@ -275,55 +269,56 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-total-day {
-        font-size: 12px;
+        font-size: 9px;
         color: var(--secondary-text-color);
-        margin-top: 4px;
+        margin-top: 2px;
         font-variant-numeric: tabular-nums;
       }
 
       .room-content {
-        padding: 16px 20px;
+        padding: 10px 14px;
       }
 
       .outlets-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 8px;
       }
 
       .outlet-card {
-        background: rgba(255, 255, 255, 0.03);
-        border-radius: 10px;
-        padding: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 12px;
+        padding: 8px;
+        border: 2px solid rgba(255, 255, 255, 0.08);
+        position: relative;
       }
 
       .outlet-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 12px;
+        text-align: center;
+        margin-bottom: 6px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
       }
 
       .outlet-name {
-        font-size: 13px;
+        font-size: 10px;
         font-weight: 500;
-        display: flex;
-        align-items: center;
-        gap: 6px;
+        color: var(--secondary-text-color);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .outlet-name svg {
-        width: 16px;
-        height: 16px;
-        fill: var(--panel-accent);
+        display: none;
       }
 
       .outlet-total {
-        font-size: 14px;
+        font-size: 12px;
         font-weight: 600;
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
+        margin-top: 2px;
       }
 
       .outlet-total.over-threshold {
@@ -331,28 +326,47 @@ class EnergyPanel extends HTMLElement {
       }
 
       .plugs-container {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
       }
 
       .plug-card {
-        background: rgba(0, 0, 0, 0.25);
+        background: #1a1a1a;
         border-radius: 8px;
-        padding: 10px;
-        text-align: center;
+        padding: 6px 8px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .plug-card::before {
+        content: '';
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: rgba(3, 169, 244, 0.3);
+        border: 1px solid rgba(3, 169, 244, 0.5);
+        flex-shrink: 0;
+      }
+
+      .plug-card.active::before {
+        background: var(--panel-accent);
+        box-shadow: 0 0 6px var(--panel-accent);
       }
 
       .plug-label {
-        font-size: 10px;
+        font-size: 8px;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.3px;
         color: var(--secondary-text-color);
-        margin-bottom: 4px;
+        flex: 1;
+        margin-left: 6px;
       }
 
       .plug-watts {
-        font-size: 18px;
+        font-size: 11px;
         font-weight: 600;
         color: var(--primary-text-color);
         font-variant-numeric: tabular-nums;
@@ -361,18 +375,23 @@ class EnergyPanel extends HTMLElement {
       .threshold-badge {
         display: inline-flex;
         align-items: center;
-        gap: 4px;
-        font-size: 11px;
+        gap: 3px;
+        font-size: 8px;
         color: var(--secondary-text-color);
-        padding: 2px 8px;
+        padding: 2px 5px;
         background: rgba(255, 255, 255, 0.05);
-        border-radius: 4px;
+        border-radius: 3px;
       }
 
       .threshold-badge svg {
-        width: 12px;
-        height: 12px;
+        width: 8px;
+        height: 8px;
         fill: currentColor;
+      }
+
+      .outlet-threshold {
+        text-align: center;
+        margin-top: 4px;
       }
 
       /* Settings Styles */
@@ -648,32 +667,28 @@ class EnergyPanel extends HTMLElement {
     const data = outletData || { plug1: { watts: 0 }, plug2: { watts: 0 } };
     const outletTotal = data.plug1.watts + data.plug2.watts;
     const isOverThreshold = outlet.threshold > 0 && outletTotal > outlet.threshold;
+    const plug1Active = data.plug1.watts > 0.1;
+    const plug2Active = data.plug2.watts > 0.1;
 
     return `
       <div class="outlet-card" data-outlet-index="${index}">
         <div class="outlet-header">
-          <div class="outlet-name">
-            <svg viewBox="0 0 24 24">${icons.outlet}</svg>
-            ${outlet.name}
-          </div>
+          <div class="outlet-name">${outlet.name}</div>
           <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${outletTotal.toFixed(1)} W</div>
         </div>
         <div class="plugs-container">
-          <div class="plug-card">
-            <div class="plug-label">Plug 1</div>
-            <div class="plug-watts plug1-watts">${data.plug1.watts.toFixed(1)} W</div>
+          <div class="plug-card ${plug1Active ? 'active' : ''}">
+            <span class="plug-label">P1</span>
+            <span class="plug-watts plug1-watts">${data.plug1.watts.toFixed(1)}W</span>
           </div>
-          <div class="plug-card">
-            <div class="plug-label">Plug 2</div>
-            <div class="plug-watts plug2-watts">${data.plug2.watts.toFixed(1)} W</div>
+          <div class="plug-card ${plug2Active ? 'active' : ''}">
+            <span class="plug-label">P2</span>
+            <span class="plug-watts plug2-watts">${data.plug2.watts.toFixed(1)}W</span>
           </div>
         </div>
         ${outlet.threshold > 0 ? `
-          <div style="margin-top: 8px; text-align: center;">
-            <span class="threshold-badge">
-              <svg viewBox="0 0 24 24">${icons.warning}</svg>
-              ${outlet.threshold}W limit
-            </span>
+          <div class="outlet-threshold">
+            <span class="threshold-badge">${outlet.threshold}W</span>
           </div>
         ` : ''}
       </div>
