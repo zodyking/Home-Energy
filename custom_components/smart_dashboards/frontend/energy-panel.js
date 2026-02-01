@@ -316,27 +316,46 @@ class EnergyPanel extends HTMLElement {
 
       .outlets-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-        gap: 8px;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 6px;
+      }
+
+      /* Smart distribution for fewer outlets */
+      .outlets-grid.outlets-1 { grid-template-columns: 1fr; max-width: 120px; margin: 0 auto; }
+      .outlets-grid.outlets-2 { grid-template-columns: repeat(2, 1fr); max-width: 240px; margin: 0 auto; }
+      .outlets-grid.outlets-3 { grid-template-columns: repeat(3, 1fr); max-width: 360px; margin: 0 auto; }
+      .outlets-grid.outlets-4 { grid-template-columns: repeat(4, 1fr); }
+      .outlets-grid.outlets-5 { grid-template-columns: repeat(5, 1fr); }
+      .outlets-grid.outlets-6 { grid-template-columns: repeat(6, 1fr); }
+
+      @media (max-width: 800px) {
+        .outlets-grid { grid-template-columns: repeat(4, 1fr); }
+        .outlets-grid.outlets-1 { grid-template-columns: 1fr; }
+        .outlets-grid.outlets-2 { grid-template-columns: repeat(2, 1fr); }
+        .outlets-grid.outlets-3 { grid-template-columns: repeat(3, 1fr); }
+      }
+
+      @media (max-width: 500px) {
+        .outlets-grid { grid-template-columns: repeat(3, 1fr); }
       }
 
       .outlet-card {
         background: rgba(0, 0, 0, 0.3);
-        border-radius: 12px;
-        padding: 8px;
-        border: 2px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        padding: 5px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
         position: relative;
       }
 
       .outlet-header {
         text-align: center;
-        margin-bottom: 6px;
-        padding-bottom: 4px;
+        margin-bottom: 4px;
+        padding-bottom: 3px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.06);
       }
 
       .outlet-name {
-        font-size: 10px;
+        font-size: 8px;
         font-weight: 500;
         color: var(--secondary-text-color);
         white-space: nowrap;
@@ -349,11 +368,11 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-total {
-        font-size: 12px;
+        font-size: 10px;
         font-weight: 600;
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
-        margin-top: 2px;
+        margin-top: 1px;
       }
 
       .outlet-total.over-threshold {
@@ -363,13 +382,13 @@ class EnergyPanel extends HTMLElement {
       .plugs-container {
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 3px;
       }
 
       .plug-card {
         background: #1a1a1a;
-        border-radius: 8px;
-        padding: 6px 8px;
+        border-radius: 5px;
+        padding: 4px 5px;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -378,8 +397,8 @@ class EnergyPanel extends HTMLElement {
 
       .plug-card::before {
         content: '';
-        width: 8px;
-        height: 8px;
+        width: 6px;
+        height: 6px;
         border-radius: 50%;
         background: rgba(3, 169, 244, 0.3);
         border: 1px solid rgba(3, 169, 244, 0.5);
@@ -388,20 +407,20 @@ class EnergyPanel extends HTMLElement {
 
       .plug-card.active::before {
         background: var(--panel-accent);
-        box-shadow: 0 0 6px var(--panel-accent);
+        box-shadow: 0 0 4px var(--panel-accent);
       }
 
       .plug-label {
-        font-size: 8px;
+        font-size: 7px;
         text-transform: uppercase;
-        letter-spacing: 0.3px;
+        letter-spacing: 0.2px;
         color: var(--secondary-text-color);
         flex: 1;
-        margin-left: 6px;
+        margin-left: 4px;
       }
 
       .plug-watts {
-        font-size: 11px;
+        font-size: 9px;
         font-weight: 600;
         color: var(--primary-text-color);
         font-variant-numeric: tabular-nums;
@@ -410,23 +429,23 @@ class EnergyPanel extends HTMLElement {
       .threshold-badge {
         display: inline-flex;
         align-items: center;
-        gap: 3px;
-        font-size: 8px;
+        gap: 2px;
+        font-size: 7px;
         color: var(--secondary-text-color);
-        padding: 2px 5px;
+        padding: 1px 3px;
         background: rgba(255, 255, 255, 0.05);
-        border-radius: 3px;
+        border-radius: 2px;
       }
 
       .threshold-badge svg {
-        width: 8px;
-        height: 8px;
+        width: 6px;
+        height: 6px;
         fill: currentColor;
       }
 
       .outlet-threshold {
         text-align: center;
-        margin-top: 4px;
+        margin-top: 3px;
       }
 
       /* Settings Styles */
@@ -458,11 +477,93 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-settings-item {
-        padding: 12px;
         background: var(--input-bg);
         border-radius: 8px;
-        margin-bottom: 12px;
+        margin-bottom: 8px;
         border: 1px solid var(--card-border);
+        overflow: hidden;
+        transition: box-shadow 0.2s;
+      }
+
+      .outlet-settings-item.dragging {
+        opacity: 0.5;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      }
+
+      .outlet-settings-item.drag-over {
+        border-color: var(--panel-accent);
+        box-shadow: 0 0 0 2px var(--panel-accent-dim);
+      }
+
+      .outlet-settings-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .outlet-settings-bar:hover {
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .outlet-drag-handle {
+        cursor: grab;
+        color: var(--secondary-text-color);
+        padding: 4px;
+        opacity: 0.5;
+        transition: opacity 0.2s;
+      }
+
+      .outlet-settings-item.collapsed .outlet-drag-handle {
+        opacity: 1;
+      }
+
+      .outlet-drag-handle:active {
+        cursor: grabbing;
+      }
+
+      .outlet-drag-handle svg {
+        width: 14px;
+        height: 14px;
+        fill: currentColor;
+      }
+
+      .outlet-settings-bar .outlet-name-display {
+        flex: 1;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--primary-text-color);
+      }
+
+      .outlet-settings-bar .outlet-name-display.empty {
+        color: var(--secondary-text-color);
+        font-style: italic;
+      }
+
+      .outlet-expand-icon {
+        color: var(--secondary-text-color);
+        transition: transform 0.2s;
+      }
+
+      .outlet-settings-item.collapsed .outlet-expand-icon {
+        transform: rotate(-90deg);
+      }
+
+      .outlet-expand-icon svg {
+        width: 16px;
+        height: 16px;
+        fill: currentColor;
+      }
+
+      .outlet-settings-body {
+        padding: 0 12px 12px;
+        display: block;
+      }
+
+      .outlet-settings-item.collapsed .outlet-settings-body {
+        display: none;
       }
 
       .outlet-settings-header {
@@ -733,7 +834,7 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <div class="room-content">
-          <div class="outlets-grid">
+          <div class="outlets-grid outlets-${Math.min((room.outlets || []).length, 6)}">
             ${(room.outlets || []).map((outlet, oi) => this._renderOutletCard(outlet, oi, roomData.outlets[oi])).join('')}
           </div>
         </div>
@@ -1051,7 +1152,7 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
-  _renderOutletSettings(outlet, outletIndex, powerSensors, roomIndex) {
+  _renderOutletSettings(outlet, outletIndex, powerSensors, roomIndex, isCollapsed = true) {
     const switches = this._getFilteredSwitches(roomIndex);
     
     // Sort switches by similarity to each plug sensor
@@ -1070,70 +1171,85 @@ class EnergyPanel extends HTMLElement {
       return options;
     };
 
+    const displayName = outlet.name || 'Unnamed Outlet';
+    const collapsedClass = isCollapsed ? 'collapsed' : '';
+
     return `
-      <div class="outlet-settings-item" data-outlet-index="${outletIndex}" data-room-index="${roomIndex}">
-        <div class="outlet-settings-header">
-          <div class="form-group" style="flex: 1;">
-            <label class="form-label">Outlet Name</label>
-            <input type="text" class="form-input outlet-name" value="${outlet.name || ''}" placeholder="Outlet">
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${outletIndex}" data-room-index="${roomIndex}" draggable="true">
+        <div class="outlet-settings-bar">
+          <div class="outlet-drag-handle" title="Drag to reorder">
+            <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0 4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
           </div>
-          <div class="form-group">
-            <label class="form-label">Warn Limit</label>
-            <input type="number" class="form-input outlet-threshold" value="${outlet.threshold || ''}" placeholder="W" min="0" style="width: 70px;">
-          </div>
-          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${outletIndex}">
+          <span class="outlet-name-display ${outlet.name ? '' : 'empty'}">${displayName}</span>
+          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${outletIndex}" title="Delete outlet">
             <svg viewBox="0 0 24 24">${icons.delete}</svg>
           </button>
+          <div class="outlet-expand-icon">
+            <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+          </div>
         </div>
         
-        <div class="plugs-settings-grid">
-          <div class="plug-settings-card" data-plug="1">
-            <div class="plug-settings-title">Plug 1</div>
-            <div class="form-group">
-              <label class="form-label">Power Sensor</label>
-              <select class="form-select outlet-plug1">
-                <option value="">None</option>
-                ${powerSensors.map(s => `
-                  <option value="${s.entity_id}" ${outlet.plug1_entity === s.entity_id ? 'selected' : ''}>
-                    ${s.friendly_name}
-                  </option>
-                `).join('')}
-              </select>
+        <div class="outlet-settings-body">
+          <div class="outlet-settings-header">
+            <div class="form-group" style="flex: 1;">
+              <label class="form-label">Outlet Name</label>
+              <input type="text" class="form-input outlet-name" value="${outlet.name || ''}" placeholder="Outlet name...">
             </div>
             <div class="form-group">
-              <label class="form-label">Switch (on/off) <span style="font-size: 8px; color: var(--panel-accent);">★ = best match</span></label>
-              <select class="form-select outlet-plug1-switch">
-                ${renderSwitchOptions(plug1Switches, outlet.plug1_entity, outlet.plug1_switch)}
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Shutoff (W)</label>
-              <input type="number" class="form-input outlet-plug1-shutoff" value="${outlet.plug1_shutoff || ''}" placeholder="Off" min="0" style="width: 70px;">
+              <label class="form-label">Warn Limit</label>
+              <input type="number" class="form-input outlet-threshold" value="${outlet.threshold || ''}" placeholder="W" min="0" style="width: 70px;">
             </div>
           </div>
           
-          <div class="plug-settings-card" data-plug="2">
-            <div class="plug-settings-title">Plug 2</div>
-            <div class="form-group">
-              <label class="form-label">Power Sensor</label>
-              <select class="form-select outlet-plug2">
-                <option value="">None</option>
-                ${powerSensors.map(s => `
-                  <option value="${s.entity_id}" ${outlet.plug2_entity === s.entity_id ? 'selected' : ''}>
-                    ${s.friendly_name}
-                  </option>
-                `).join('')}
-              </select>
+          <div class="plugs-settings-grid">
+            <div class="plug-settings-card" data-plug="1">
+              <div class="plug-settings-title">Plug 1</div>
+              <div class="form-group">
+                <label class="form-label">Power Sensor</label>
+                <select class="form-select outlet-plug1">
+                  <option value="">None</option>
+                  ${powerSensors.map(s => `
+                    <option value="${s.entity_id}" ${outlet.plug1_entity === s.entity_id ? 'selected' : ''}>
+                      ${s.friendly_name}
+                    </option>
+                  `).join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Switch <span style="font-size: 8px; color: var(--panel-accent);">★ = best match</span></label>
+                <select class="form-select outlet-plug1-switch">
+                  ${renderSwitchOptions(plug1Switches, outlet.plug1_entity, outlet.plug1_switch)}
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Shutoff (W)</label>
+                <input type="number" class="form-input outlet-plug1-shutoff" value="${outlet.plug1_shutoff || ''}" placeholder="Off" min="0" style="width: 70px;">
+              </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Switch (on/off) <span style="font-size: 8px; color: var(--panel-accent);">★ = best match</span></label>
-              <select class="form-select outlet-plug2-switch">
-                ${renderSwitchOptions(plug2Switches, outlet.plug2_entity, outlet.plug2_switch)}
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Shutoff (W)</label>
-              <input type="number" class="form-input outlet-plug2-shutoff" value="${outlet.plug2_shutoff || ''}" placeholder="Off" min="0" style="width: 70px;">
+            
+            <div class="plug-settings-card" data-plug="2">
+              <div class="plug-settings-title">Plug 2</div>
+              <div class="form-group">
+                <label class="form-label">Power Sensor</label>
+                <select class="form-select outlet-plug2">
+                  <option value="">None</option>
+                  ${powerSensors.map(s => `
+                    <option value="${s.entity_id}" ${outlet.plug2_entity === s.entity_id ? 'selected' : ''}>
+                      ${s.friendly_name}
+                    </option>
+                  `).join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Switch <span style="font-size: 8px; color: var(--panel-accent);">★ = best match</span></label>
+                <select class="form-select outlet-plug2-switch">
+                  ${renderSwitchOptions(plug2Switches, outlet.plug2_entity, outlet.plug2_switch)}
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Shutoff (W)</label>
+                <input type="number" class="form-input outlet-plug2-shutoff" value="${outlet.plug2_shutoff || ''}" placeholder="Off" min="0" style="width: 70px;">
+              </div>
             </div>
           </div>
         </div>
@@ -1271,28 +1387,10 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
-    // Remove outlet buttons
-    this.shadowRoot.querySelectorAll('.remove-outlet-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const item = btn.closest('.outlet-settings-item');
-        if (item) item.remove();
-      });
-    });
-
-    // Smart switch sorting: when plug sensor changes, re-sort switch dropdown
-    this.shadowRoot.querySelectorAll('.outlet-plug1, .outlet-plug2').forEach(plugSelect => {
-      plugSelect.addEventListener('change', (e) => {
-        const outletItem = e.target.closest('.outlet-settings-item');
-        const roomIndex = outletItem?.dataset?.roomIndex;
-        const isPlug1 = e.target.classList.contains('outlet-plug1');
-        
-        const switchSelect = isPlug1 
-          ? outletItem.querySelector('.outlet-plug1-switch')
-          : outletItem.querySelector('.outlet-plug2-switch');
-        
-        const switches = this._getFilteredSwitches(roomIndex);
-        this._updateSwitchDropdownOrder(e.target, switchSelect, switches);
-      });
+    // Attach event listeners to all existing outlets
+    this.shadowRoot.querySelectorAll('.outlet-settings-item').forEach(outletItem => {
+      const roomIndex = outletItem.dataset.roomIndex;
+      this._attachOutletEventListeners(outletItem, roomIndex);
     });
   }
 
@@ -1531,8 +1629,14 @@ class EnergyPanel extends HTMLElement {
   _addOutlet(roomIndex) {
     const sensors = this._getFilteredSensors(roomIndex);
     const list = this.shadowRoot.querySelector(`#outlets-list-${roomIndex}`);
+    const roomCard = list.closest('.room-settings-card');
     
-    const outletIndex = list.querySelectorAll('.outlet-settings-item').length;
+    // Collapse all existing outlets first
+    list.querySelectorAll('.outlet-settings-item').forEach(item => {
+      item.classList.add('collapsed');
+    });
+    
+    // Generate new outlet index (will be at top, so re-index all)
     const newOutlet = {
       name: '',
       plug1_entity: '',
@@ -1543,25 +1647,138 @@ class EnergyPanel extends HTMLElement {
       plug1_shutoff: 0,
       plug2_shutoff: 0,
     };
-    const html = this._renderOutletSettings(newOutlet, outletIndex, sensors, roomIndex);
     
-    list.insertAdjacentHTML('beforeend', html);
+    // Render as expanded (not collapsed)
+    const html = this._renderOutletSettings(newOutlet, 0, sensors, roomIndex, false);
+    
+    // Insert at TOP of list
+    list.insertAdjacentHTML('afterbegin', html);
+    
+    // Re-index all outlets
+    list.querySelectorAll('.outlet-settings-item').forEach((item, idx) => {
+      item.dataset.outletIndex = idx;
+    });
 
-    const newItem = list.querySelector(`.outlet-settings-item[data-outlet-index="${outletIndex}"]`);
-    const removeBtn = newItem.querySelector('.remove-outlet-btn');
-    removeBtn.addEventListener('click', () => newItem.remove());
+    const newItem = list.querySelector('.outlet-settings-item:first-child');
+    
+    // Attach event listeners to new item
+    this._attachOutletEventListeners(newItem, roomIndex);
+    
+    // Focus on name input
+    const nameInput = newItem.querySelector('.outlet-name');
+    if (nameInput) {
+      setTimeout(() => nameInput.focus(), 100);
+    }
+  }
 
-    // Add smart switch sorting listeners for new outlet
-    newItem.querySelectorAll('.outlet-plug1, .outlet-plug2').forEach(plugSelect => {
+  _attachOutletEventListeners(outletItem, roomIndex) {
+    // Remove button
+    const removeBtn = outletItem.querySelector('.remove-outlet-btn');
+    if (removeBtn) {
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        outletItem.remove();
+      });
+    }
+
+    // Smart switch sorting
+    outletItem.querySelectorAll('.outlet-plug1, .outlet-plug2').forEach(plugSelect => {
       plugSelect.addEventListener('change', (e) => {
         const isPlug1 = e.target.classList.contains('outlet-plug1');
         const switchSelect = isPlug1 
-          ? newItem.querySelector('.outlet-plug1-switch')
-          : newItem.querySelector('.outlet-plug2-switch');
+          ? outletItem.querySelector('.outlet-plug1-switch')
+          : outletItem.querySelector('.outlet-plug2-switch');
         
         const switches = this._getFilteredSwitches(roomIndex);
         this._updateSwitchDropdownOrder(e.target, switchSelect, switches);
       });
+    });
+
+    // Collapse/expand (accordion)
+    const bar = outletItem.querySelector('.outlet-settings-bar');
+    if (bar) {
+      bar.addEventListener('click', (e) => {
+        if (e.target.closest('.remove-outlet-btn') || e.target.closest('.outlet-drag-handle')) return;
+        
+        const roomCard = outletItem.closest('.room-settings-card');
+        
+        if (outletItem.classList.contains('collapsed')) {
+          // Collapse all others, expand this one
+          roomCard.querySelectorAll('.outlet-settings-item').forEach(item => {
+            item.classList.add('collapsed');
+          });
+          outletItem.classList.remove('collapsed');
+        } else {
+          outletItem.classList.add('collapsed');
+        }
+      });
+    }
+
+    // Update display name on input
+    const nameInput = outletItem.querySelector('.outlet-name');
+    if (nameInput) {
+      nameInput.addEventListener('input', (e) => {
+        const displaySpan = outletItem.querySelector('.outlet-name-display');
+        if (displaySpan) {
+          displaySpan.textContent = e.target.value || 'Unnamed Outlet';
+          displaySpan.classList.toggle('empty', !e.target.value);
+        }
+      });
+    }
+
+    // Drag and drop
+    const dragHandle = outletItem.querySelector('.outlet-drag-handle');
+    if (dragHandle) {
+      dragHandle.addEventListener('mousedown', () => {
+        if (outletItem.classList.contains('collapsed')) {
+          outletItem.setAttribute('draggable', 'true');
+        }
+      });
+    }
+
+    outletItem.addEventListener('dragstart', (e) => {
+      if (!outletItem.classList.contains('collapsed')) {
+        e.preventDefault();
+        return;
+      }
+      outletItem.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      this._draggedOutlet = outletItem;
+    });
+
+    outletItem.addEventListener('dragend', () => {
+      outletItem.classList.remove('dragging');
+      outletItem.setAttribute('draggable', 'false');
+      this._draggedOutlet = null;
+    });
+
+    outletItem.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (this._draggedOutlet && this._draggedOutlet !== outletItem) {
+        outletItem.classList.add('drag-over');
+      }
+    });
+
+    outletItem.addEventListener('dragleave', () => {
+      outletItem.classList.remove('drag-over');
+    });
+
+    outletItem.addEventListener('drop', (e) => {
+      e.preventDefault();
+      outletItem.classList.remove('drag-over');
+      
+      if (this._draggedOutlet && this._draggedOutlet !== outletItem) {
+        const list = outletItem.parentElement;
+        const items = Array.from(list.querySelectorAll('.outlet-settings-item'));
+        const draggedIdx = items.indexOf(this._draggedOutlet);
+        const targetIdx = items.indexOf(outletItem);
+        
+        if (draggedIdx < targetIdx) {
+          outletItem.after(this._draggedOutlet);
+        } else {
+          outletItem.before(this._draggedOutlet);
+        }
+      }
     });
   }
 
