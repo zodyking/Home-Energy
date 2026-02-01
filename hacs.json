@@ -1,0 +1,9 @@
+{
+  "name": "Smart Dashboards",
+  "render_readme": false,
+  "domains": ["smart_dashboards"],
+  "country": [],
+  "homeassistant": "2024.1.0",
+  "iot_class": "local_polling",
+  "content_in_root": false
+}
