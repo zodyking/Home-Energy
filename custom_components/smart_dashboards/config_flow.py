@@ -78,7 +78,11 @@ class SmartDashboardsOptionsFlow(OptionsFlow):
             if not passcode.isdigit() or len(passcode) != 4:
                 errors["settings_passcode"] = "invalid_passcode"
             else:
-                return self.async_create_entry(title="", data=user_input)
+                # Return options - in OptionsFlow, data parameter contains the options
+                return self.async_create_entry(
+                    title=self.config_entry.title,
+                    data=user_input
+                )
 
         # Get current options (handle case where options might not exist)
         current = self.config_entry.options or {}
