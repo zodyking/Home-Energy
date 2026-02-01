@@ -43,6 +43,28 @@ class CamerasPanel extends HTMLElement {
     this._refreshIntervals.clear();
   }
 
+  /**
+   * Get auth token for API requests (camera_proxy, camera_proxy_stream).
+   * Tries hass.auth.data.access_token and hass.connection.getAuth().
+   * @returns {string|null}
+   */
+  _getAuthToken() {
+    if (!this._hass) return null;
+    if (this._hass.auth?.data?.access_token) {
+      return this._hass.auth.data.access_token;
+    }
+    try {
+      const getAuth = this._hass.connection?.getAuth;
+      if (typeof getAuth === 'function') {
+        const auth = getAuth();
+        if (auth && auth.access_token) return auth.access_token;
+      }
+    } catch (_) {
+      // ignore
+    }
+    return null;
+  }
+
   async _loadConfig() {
     if (!this._hass) return;
 
@@ -70,37 +92,121 @@ class CamerasPanel extends HTMLElement {
 
   _startCameraRefresh() {
     this._cleanup();
-    
-    // Refresh all camera images every 500ms for smooth live feed
+
+    const token = this._getAuthToken();
+    if (!token) {
+      this._showNoAuthInPlaceholders();
+      return;
+    }
+
+    // Try live stream first; fall back to snapshot refresh on error or timeout
     const mainCamera = this._config?.main_camera;
     if (mainCamera) {
       const entityId = typeof mainCamera === 'string' ? mainCamera : mainCamera?.entity_id;
       if (entityId) {
-        this._startImageRefresh('main-camera-img', entityId);
+        this._startStreamOrSnapshot('main-camera-img', entityId, token);
       }
     }
 
     const subCameras = this._config?.sub_cameras || [];
     subCameras.forEach((cam, i) => {
       if (cam?.entity_id) {
-        this._startImageRefresh(`sub-camera-img-${i}`, cam.entity_id);
+        this._startStreamOrSnapshot(`sub-camera-img-${i}`, cam.entity_id, token);
       }
     });
   }
 
+  _showNoAuthInPlaceholders() {
+    const placeholders = this.shadowRoot.querySelectorAll('.camera-placeholder span');
+    placeholders.forEach((span) => {
+      if (span) span.textContent = 'Not authenticated';
+    });
+  }
+
+  /**
+   * Try video stream first; on error or timeout fall back to snapshot refresh.
+   * @param {string} imgId - id for the img element (snapshot fallback)
+   * @param {string} entityId - camera entity_id
+   * @param {string} token - auth token
+   */
+  _startStreamOrSnapshot(imgId, entityId, token) {
+    const card = this.shadowRoot.querySelector(`#${imgId}`)?.closest('.camera-card');
+    if (!card) return;
+
+    const placeholder = card.querySelector('.camera-placeholder');
+    const video = card.querySelector(`#video-${imgId}`);
+    const img = card.querySelector(`#${imgId}`);
+
+    if (!placeholder || !img) return;
+
+    const streamUrl = `/api/camera_proxy_stream/${entityId}?token=${token}`;
+    const snapshotUrl = () => `/api/camera_proxy/${entityId}?token=${token}&t=${Date.now()}`;
+
+    const showVideo = () => {
+      placeholder.style.display = 'none';
+      if (video) video.style.display = 'block';
+      img.style.display = 'none';
+    };
+
+    const showSnapshot = () => {
+      placeholder.style.display = 'none';
+      if (video) {
+        video.style.display = 'none';
+        video.src = '';
+      }
+      img.style.display = 'block';
+    };
+
+    const fallbackToSnapshot = () => {
+      if (this._refreshIntervals.has(imgId)) return; // already fell back
+      if (video) video.src = '';
+      showSnapshot();
+      const updateImage = () => {
+        if (img && this._hass) {
+          img.src = snapshotUrl();
+        }
+      };
+      updateImage();
+      const interval = setInterval(updateImage, 500);
+      this._refreshIntervals.set(imgId, interval);
+    };
+
+    if (video) {
+      video.src = streamUrl;
+      video.addEventListener('loadeddata', () => showVideo(), { once: true });
+      video.addEventListener('error', () => fallbackToSnapshot(), { once: true });
+      // If stream does not load within 5s, fall back to snapshot
+      setTimeout(() => {
+        if (placeholder && placeholder.style.display !== 'none') {
+          fallbackToSnapshot();
+        }
+      }, 5000);
+    } else {
+      fallbackToSnapshot();
+    }
+
+    // Snapshot fallback: when img loads, hide placeholder (and video if present)
+    img.addEventListener('load', function onImgLoad() {
+      placeholder.style.display = 'none';
+      if (video) video.style.display = 'none';
+      img.style.display = 'block';
+      img.removeEventListener('load', onImgLoad);
+    }, { once: true });
+  }
+
   _startImageRefresh(imgId, entityId) {
+    const token = this._getAuthToken();
+    if (!token) return;
+
     const updateImage = () => {
       const img = this.shadowRoot.querySelector(`#${imgId}`);
       if (img && this._hass) {
         const timestamp = Date.now();
-        img.src = `/api/camera_proxy/${entityId}?token=${this._hass.auth.data.access_token}&t=${timestamp}`;
+        img.src = `/api/camera_proxy/${entityId}?token=${token}&t=${timestamp}`;
       }
     };
-    
-    // Initial load
+
     updateImage();
-    
-    // Refresh every 500ms
     const interval = setInterval(updateImage, 500);
     this._refreshIntervals.set(imgId, interval);
   }
@@ -138,6 +244,16 @@ class CamerasPanel extends HTMLElement {
 
       .camera-card.main {
         aspect-ratio: 16/9;
+      }
+
+      .camera-card .camera-video,
+      .camera-card .camera-snapshot {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
       }
 
       .camera-card img {
@@ -484,7 +600,8 @@ class CamerasPanel extends HTMLElement {
           <svg viewBox="0 0 24 24">${icons.camera}</svg>
           <span>Loading feed...</span>
         </div>
-        <img id="${imgId}" alt="${friendlyName}" style="position: absolute; top: 0; left: 0;" onerror="this.style.display='none'" onload="this.style.display='block'; this.previousElementSibling.style.display='none';">
+        <video id="video-${imgId}" class="camera-video" playsinline muted autoplay style="display: none;" aria-label="${friendlyName}"></video>
+        <img id="${imgId}" alt="${friendlyName}" class="camera-snapshot" style="display: none;">
         <div class="camera-overlay">
           <div class="camera-name">
             ${friendlyName}
