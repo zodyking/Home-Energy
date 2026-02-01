@@ -220,7 +220,9 @@ class EnergyPanel extends HTMLElement {
 
       .rooms-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, 240px);
+        /* Each column = ~1 outlet worth (accounts for card + gap + room padding) */
+        /* 10 outlets = 10 columns = 1 full row, 5 outlets = 5 columns = half row */
+        grid-template-columns: repeat(auto-fill, 110px);
         grid-auto-flow: dense;
         gap: 12px;
         justify-content: start;
@@ -240,22 +242,22 @@ class EnergyPanel extends HTMLElement {
         height: fit-content;
       }
 
-      /* Room cards span columns based on outlet count */
-      /* Formula: Math.ceil(outletCount / 2) - roughly 2 outlets per column */
+      /* Room cards span exactly their outlet count in columns */
+      /* This creates optimal row packing: 10 outlets = 1 row, 5 outlets = half row */
       .room-card.outlets-1 { grid-column: span 1; }
-      .room-card.outlets-2 { grid-column: span 1; }
-      .room-card.outlets-3 { grid-column: span 2; }
-      .room-card.outlets-4 { grid-column: span 2; }
-      .room-card.outlets-5 { grid-column: span 3; }
-      .room-card.outlets-6 { grid-column: span 3; }
-      .room-card.outlets-7 { grid-column: span 4; }
-      .room-card.outlets-8 { grid-column: span 4; }
-      .room-card.outlets-9 { grid-column: span 5; }
-      .room-card.outlets-10 { grid-column: span 5; }
+      .room-card.outlets-2 { grid-column: span 2; }
+      .room-card.outlets-3 { grid-column: span 3; }
+      .room-card.outlets-4 { grid-column: span 4; }
+      .room-card.outlets-5 { grid-column: span 5; }
+      .room-card.outlets-6 { grid-column: span 6; }
+      .room-card.outlets-7 { grid-column: span 7; }
+      .room-card.outlets-8 { grid-column: span 8; }
+      .room-card.outlets-9 { grid-column: span 9; }
+      .room-card.outlets-10 { grid-column: span 10; }
 
-      /* For rooms with more than 10 outlets, use 5 columns max */
+      /* For rooms with more than 10 outlets, cap at 10 columns (1 full row) */
       .room-card[class*="outlets-"] {
-        max-width: calc(240px * 5 + 12px * 4);
+        max-width: calc(110px * 10 + 12px * 9);
       }
 
       @media (max-width: 800px) {
@@ -876,7 +878,11 @@ class EnergyPanel extends HTMLElement {
           ${rooms.length === 0 ? this._renderEmptyState() : ''}
           
           <div class="rooms-grid">
-            ${rooms.map((room) => this._renderRoomCard(room)).join('')}
+            ${rooms
+              .slice()
+              .sort((a, b) => (b.outlets?.length || 0) - (a.outlets?.length || 0))
+              .map((room) => this._renderRoomCard(room))
+              .join('')}
           </div>
         </div>
       </div>
