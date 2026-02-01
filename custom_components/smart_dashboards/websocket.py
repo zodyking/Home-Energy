@@ -29,6 +29,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_areas)
     websocket_api.async_register_command(hass, websocket_get_switches)
     websocket_api.async_register_command(hass, websocket_verify_passcode)
+    websocket_api.async_register_command(hass, websocket_toggle_switch)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -412,6 +413,47 @@ async def websocket_verify_passcode(
         connection.send_result(msg["id"], {"valid": True})
     else:
         connection.send_result(msg["id"], {"valid": False})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/toggle_switch",
+        vol.Required("entity_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_toggle_switch(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Toggle a switch entity for testing."""
+    entity_id = msg["entity_id"]
+    
+    if not entity_id or not entity_id.startswith("switch."):
+        connection.send_error(msg["id"], "invalid_entity", "Not a valid switch entity")
+        return
+    
+    state = hass.states.get(entity_id)
+    if state is None:
+        connection.send_error(msg["id"], "entity_not_found", f"Switch {entity_id} not found")
+        return
+    
+    # Toggle the switch
+    current_state = state.state
+    new_state = "off" if current_state == "on" else "on"
+    
+    try:
+        await hass.services.async_call(
+            "switch",
+            f"turn_{new_state}",
+            {"entity_id": entity_id},
+            blocking=True,
+        )
+        connection.send_result(msg["id"], {"state": new_state})
+    except Exception as e:
+        _LOGGER.error("Failed to toggle switch %s: %s", entity_id, e)
+        connection.send_error(msg["id"], "toggle_failed", str(e))
 
 
 @websocket_api.websocket_command(

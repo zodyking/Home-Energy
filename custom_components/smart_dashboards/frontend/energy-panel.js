@@ -482,19 +482,35 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-settings-header input {
-        font-size: 16px;
+        font-size: 13px;
         font-weight: 500;
-        max-width: 200px;
+        max-width: 160px;
+        padding: 8px 10px;
       }
 
       .room-settings-body {
-        padding: 20px;
+        padding: 12px 14px;
+      }
+
+      .room-settings-body .form-label {
+        font-size: 10px;
+        margin-bottom: 4px;
+      }
+
+      .room-settings-body .form-input,
+      .room-settings-body .form-select {
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+
+      .room-settings-body .grid-2 {
+        gap: 10px;
       }
 
       .outlet-settings-item {
         background: var(--input-bg);
-        border-radius: 8px;
-        margin-bottom: 8px;
+        border-radius: 6px;
+        margin-bottom: 6px;
         border: 1px solid var(--card-border);
         overflow: hidden;
         transition: box-shadow 0.2s;
@@ -513,8 +529,8 @@ class EnergyPanel extends HTMLElement {
       .outlet-settings-bar {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 10px 12px;
+        gap: 6px;
+        padding: 8px 10px;
         cursor: pointer;
         user-select: none;
       }
@@ -526,7 +542,7 @@ class EnergyPanel extends HTMLElement {
       .outlet-drag-handle {
         cursor: grab;
         color: var(--secondary-text-color);
-        padding: 4px;
+        padding: 2px;
         opacity: 0.5;
         transition: opacity 0.2s;
       }
@@ -540,14 +556,14 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-drag-handle svg {
-        width: 14px;
-        height: 14px;
+        width: 12px;
+        height: 12px;
         fill: currentColor;
       }
 
       .outlet-settings-bar .outlet-name-display {
         flex: 1;
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 500;
         color: var(--primary-text-color);
       }
@@ -567,13 +583,13 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-expand-icon svg {
-        width: 16px;
-        height: 16px;
+        width: 14px;
+        height: 14px;
         fill: currentColor;
       }
 
       .outlet-settings-body {
-        padding: 0 12px 12px;
+        padding: 0 10px 10px;
         display: block;
       }
 
@@ -583,17 +599,17 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-settings-header {
         display: flex;
-        gap: 12px;
+        gap: 8px;
         align-items: flex-end;
-        margin-bottom: 12px;
-        padding-bottom: 10px;
+        margin-bottom: 8px;
+        padding-bottom: 8px;
         border-bottom: 1px solid var(--card-border);
       }
 
       .plugs-settings-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 12px;
+        gap: 8px;
       }
 
       @media (max-width: 700px) {
@@ -604,22 +620,22 @@ class EnergyPanel extends HTMLElement {
 
       .plug-settings-card {
         background: rgba(0, 0, 0, 0.2);
-        border-radius: 8px;
-        padding: 10px;
+        border-radius: 6px;
+        padding: 8px;
         border: 1px solid rgba(255, 255, 255, 0.05);
       }
 
       .plug-settings-title {
-        font-size: 11px;
+        font-size: 10px;
         font-weight: 600;
         color: var(--panel-accent);
-        margin-bottom: 10px;
+        margin-bottom: 8px;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.4px;
       }
 
       .plug-settings-card .form-group {
-        margin-bottom: 8px;
+        margin-bottom: 6px;
       }
 
       .plug-settings-card .form-group:last-child {
@@ -628,7 +644,13 @@ class EnergyPanel extends HTMLElement {
 
       .plug-settings-card .form-label {
         font-size: 9px;
-        margin-bottom: 3px;
+        margin-bottom: 2px;
+      }
+
+      .plug-settings-card .form-input,
+      .plug-settings-card .form-select {
+        padding: 6px 8px;
+        font-size: 11px;
       }
 
       .outlet-settings-item .form-group {
@@ -636,8 +658,56 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-settings-item .form-label {
-        font-size: 10px;
-        margin-bottom: 4px;
+        font-size: 9px;
+        margin-bottom: 3px;
+      }
+
+      .outlet-settings-item .form-input {
+        padding: 6px 8px;
+        font-size: 11px;
+      }
+
+      /* Shutoff row with test button */
+      .shutoff-row {
+        display: flex;
+        gap: 6px;
+        align-items: flex-end;
+      }
+
+      .shutoff-row .form-group {
+        flex: 1;
+      }
+
+      .test-switch-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        border: 1px solid var(--input-border);
+        background: var(--input-bg);
+        color: var(--secondary-text-color);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+        flex-shrink: 0;
+      }
+
+      .test-switch-btn:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--primary-text-color);
+      }
+
+      .test-switch-btn.on {
+        background: var(--panel-accent-dim);
+        border-color: var(--panel-accent);
+        color: var(--panel-accent);
+      }
+
+      .test-switch-btn svg {
+        width: 16px;
+        height: 16px;
+        fill: currentColor;
       }
 
       .divider {
@@ -1238,9 +1308,14 @@ class EnergyPanel extends HTMLElement {
                   ${renderSwitchOptions(plug1Switches, outlet.plug1_entity, outlet.plug1_switch)}
                 </select>
               </div>
-              <div class="form-group">
-                <label class="form-label">Shutoff (W)</label>
-                <input type="number" class="form-input outlet-plug1-shutoff" value="${outlet.plug1_shutoff || ''}" placeholder="Off" min="0" style="width: 70px;">
+              <div class="shutoff-row">
+                <div class="form-group">
+                  <label class="form-label">Shutoff (W)</label>
+                  <input type="number" class="form-input outlet-plug1-shutoff" value="${outlet.plug1_shutoff || ''}" placeholder="Off" min="0">
+                </div>
+                <button class="test-switch-btn" data-switch="${outlet.plug1_switch || ''}" title="Test switch">
+                  <svg viewBox="0 0 24 24">${icons.power}</svg>
+                </button>
               </div>
             </div>
             
@@ -1263,9 +1338,14 @@ class EnergyPanel extends HTMLElement {
                   ${renderSwitchOptions(plug2Switches, outlet.plug2_entity, outlet.plug2_switch)}
                 </select>
               </div>
-              <div class="form-group">
-                <label class="form-label">Shutoff (W)</label>
-                <input type="number" class="form-input outlet-plug2-shutoff" value="${outlet.plug2_shutoff || ''}" placeholder="Off" min="0" style="width: 70px;">
+              <div class="shutoff-row">
+                <div class="form-group">
+                  <label class="form-label">Shutoff (W)</label>
+                  <input type="number" class="form-input outlet-plug2-shutoff" value="${outlet.plug2_shutoff || ''}" placeholder="Off" min="0">
+                </div>
+                <button class="test-switch-btn" data-switch="${outlet.plug2_switch || ''}" title="Test switch">
+                  <svg viewBox="0 0 24 24">${icons.power}</svg>
+                </button>
               </div>
             </div>
           </div>
@@ -1415,6 +1495,50 @@ class EnergyPanel extends HTMLElement {
       const roomIndex = outletItem.dataset.roomIndex;
       this._attachOutletEventListeners(outletItem, roomIndex);
     });
+
+    // Test switch buttons
+    this.shadowRoot.querySelectorAll('.test-switch-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._testToggleSwitch(btn);
+      });
+    });
+  }
+
+  async _testToggleSwitch(btn) {
+    // Get switch entity from data attribute or from the adjacent select
+    let switchEntity = btn.dataset.switch;
+    
+    // If no switch in data attribute, try to get from the select in the same plug card
+    if (!switchEntity) {
+      const plugCard = btn.closest('.plug-settings-card');
+      const plugNum = plugCard?.dataset?.plug;
+      const switchSelect = plugCard?.querySelector(`.outlet-plug${plugNum}-switch`);
+      switchEntity = switchSelect?.value;
+    }
+
+    if (!switchEntity) {
+      showToast(this.shadowRoot, 'No switch selected for this plug', 'error');
+      return;
+    }
+
+    btn.disabled = true;
+    
+    try {
+      const result = await this._hass.callWS({
+        type: 'smart_dashboards/toggle_switch',
+        entity_id: switchEntity,
+      });
+      
+      // Update button visual state
+      btn.classList.toggle('on', result.state === 'on');
+      showToast(this.shadowRoot, `Switch ${result.state === 'on' ? 'ON' : 'OFF'}`, 'success');
+    } catch (e) {
+      console.error('Failed to toggle switch:', e);
+      showToast(this.shadowRoot, 'Failed to toggle switch', 'error');
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   async _updateRoomOutletDropdowns(roomIndex, areaId) {
@@ -1802,6 +1926,14 @@ class EnergyPanel extends HTMLElement {
           outletItem.before(this._draggedOutlet);
         }
       }
+    });
+
+    // Test switch buttons
+    outletItem.querySelectorAll('.test-switch-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._testToggleSwitch(btn);
+      });
     });
   }
 
