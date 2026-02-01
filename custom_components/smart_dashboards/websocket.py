@@ -606,76 +606,53 @@ async def websocket_test_trip_breaker(
     breaker_id = msg["breaker_id"]
     outlets = config_manager.get_outlets_for_breaker(breaker_id)
     
-    # Collect all switch entities with their outlet info
-    switch_tasks = []
+    # Collect all switch entity IDs
+    switch_entities = []
     for outlet in outlets:
-        if outlet.get("plug1_switch"):
-            switch_tasks.append({
-                "entity_id": outlet["plug1_switch"],
-                "outlet_name": outlet.get("outlet_name", "Outlet"),
-                "plug": "Plug 1",
-            })
-        if outlet.get("plug2_switch"):
-            switch_tasks.append({
-                "entity_id": outlet["plug2_switch"],
-                "outlet_name": outlet.get("outlet_name", "Outlet"),
-                "plug": "Plug 2",
-            })
+        if outlet.get("plug1_switch") and outlet["plug1_switch"].startswith("switch."):
+            switch_entities.append(outlet["plug1_switch"])
+        if outlet.get("plug2_switch") and outlet["plug2_switch"].startswith("switch."):
+            switch_entities.append(outlet["plug2_switch"])
     
-    if not switch_tasks:
+    if not switch_entities:
         connection.send_error(msg["id"], "no_switches", "No switches found for this breaker")
         return
     
-    # Toggle each switch individually in quick succession
-    results = {
-        "turned_on": [],
-        "turned_off": [],
-        "errors": [],
-    }
+    # Check current state of switches to determine toggle action
+    # If any switch is on, turn all off. If all are off, turn all on.
+    any_on = False
+    for entity_id in switch_entities:
+        state = hass.states.get(entity_id)
+        if state and state.state == "on":
+            any_on = True
+            break
     
-    for switch_info in switch_tasks:
-        entity_id = switch_info["entity_id"]
-        try:
-            # Get current state
-            state = hass.states.get(entity_id)
-            if not state or not entity_id.startswith("switch."):
-                results["errors"].append(f"{switch_info['outlet_name']} {switch_info['plug']}: Invalid switch")
-                continue
-            
-            # Determine new state (toggle)
-            current_state = state.state
-            new_state = "off" if current_state == "on" else "on"
-            service = f"turn_{new_state}"
-            
-            # Toggle the switch
-            await hass.services.async_call(
-                "switch",
-                service,
-                {"entity_id": entity_id},
-                blocking=False,  # Non-blocking for quick succession
-            )
-            
-            # Track result
-            if new_state == "on":
-                results["turned_on"].append(f"{switch_info['outlet_name']} {switch_info['plug']}")
-            else:
-                results["turned_off"].append(f"{switch_info['outlet_name']} {switch_info['plug']}")
-                
-        except Exception as e:
-            _LOGGER.error("Failed to toggle switch %s: %s", entity_id, e)
-            results["errors"].append(f"{switch_info['outlet_name']} {switch_info['plug']}: {str(e)}")
+    # Determine service and new state
+    if any_on:
+        service = "turn_off"
+        new_state = "off"
+    else:
+        service = "turn_on"
+        new_state = "on"
     
-    # Wait a moment for all calls to complete
-    await asyncio.sleep(0.1)
-    
-    connection.send_result(msg["id"], {
-        "success": True,
-        "total_switches": len(switch_tasks),
-        "turned_on": len(results["turned_on"]),
-        "turned_off": len(results["turned_off"]),
-        "errors": len(results["errors"]),
-        "details": results,
-    })
+    try:
+        # Single service call with all entity IDs in a list
+        await hass.services.async_call(
+            "switch",
+            service,
+            {"entity_id": switch_entities},
+            blocking=True,
+        )
+        
+        connection.send_result(msg["id"], {
+            "success": True,
+            "total_switches": len(switch_entities),
+            "state": new_state,
+            "action": service,
+        })
+    except Exception as e:
+        _LOGGER.error("Test trip breaker failed: %s", e)
+        connection.send_error(msg["id"], "trip_failed", str(e))
 
 
 def _get_power_value(hass: HomeAssistant, entity_id: str) -> float:
