@@ -80,8 +80,8 @@ class SmartDashboardsOptionsFlow(OptionsFlow):
             else:
                 return self.async_create_entry(title="", data=user_input)
 
-        # Get current options
-        current = self.config_entry.options
+        # Get current options (handle case where options might not exist)
+        current = self.config_entry.options or {}
 
         return self.async_show_form(
             step_id="init",
