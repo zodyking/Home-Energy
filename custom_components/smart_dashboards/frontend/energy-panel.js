@@ -1053,6 +1053,22 @@ class EnergyPanel extends HTMLElement {
 
   _renderOutletSettings(outlet, outletIndex, powerSensors, roomIndex) {
     const switches = this._getFilteredSwitches(roomIndex);
+    
+    // Sort switches by similarity to each plug sensor
+    const plug1Switches = this._sortSwitchesBySimilarity(switches, outlet.plug1_entity);
+    const plug2Switches = this._sortSwitchesBySimilarity(switches, outlet.plug2_entity);
+    
+    // Helper to render switch options with best match indicator
+    const renderSwitchOptions = (sortedSwitches, sensorEntity, currentSwitch) => {
+      let options = '<option value="">None</option>';
+      options += sortedSwitches.map((s, idx) => {
+        const score = this._getSimilarityScore(s.entity_id, sensorEntity);
+        const isBestMatch = idx === 0 && score > 0.3 && sensorEntity;
+        const label = isBestMatch ? `★ ${s.friendly_name}` : s.friendly_name;
+        return `<option value="${s.entity_id}" ${s.entity_id === currentSwitch ? 'selected' : ''}>${label}</option>`;
+      }).join('');
+      return options;
+    };
 
     return `
       <div class="outlet-settings-item" data-outlet-index="${outletIndex}" data-room-index="${roomIndex}">
@@ -1071,7 +1087,7 @@ class EnergyPanel extends HTMLElement {
         </div>
         
         <div class="plugs-settings-grid">
-          <div class="plug-settings-card">
+          <div class="plug-settings-card" data-plug="1">
             <div class="plug-settings-title">Plug 1</div>
             <div class="form-group">
               <label class="form-label">Power Sensor</label>
@@ -1085,14 +1101,9 @@ class EnergyPanel extends HTMLElement {
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label">Switch (on/off)</label>
+              <label class="form-label">Switch (on/off) <span style="font-size: 8px; color: var(--panel-accent);">★ = best match</span></label>
               <select class="form-select outlet-plug1-switch">
-                <option value="">None</option>
-                ${switches.map(s => `
-                  <option value="${s.entity_id}" ${outlet.plug1_switch === s.entity_id ? 'selected' : ''}>
-                    ${s.friendly_name}
-                  </option>
-                `).join('')}
+                ${renderSwitchOptions(plug1Switches, outlet.plug1_entity, outlet.plug1_switch)}
               </select>
             </div>
             <div class="form-group">
@@ -1101,7 +1112,7 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
           
-          <div class="plug-settings-card">
+          <div class="plug-settings-card" data-plug="2">
             <div class="plug-settings-title">Plug 2</div>
             <div class="form-group">
               <label class="form-label">Power Sensor</label>
@@ -1115,14 +1126,9 @@ class EnergyPanel extends HTMLElement {
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label">Switch (on/off)</label>
+              <label class="form-label">Switch (on/off) <span style="font-size: 8px; color: var(--panel-accent);">★ = best match</span></label>
               <select class="form-select outlet-plug2-switch">
-                <option value="">None</option>
-                ${switches.map(s => `
-                  <option value="${s.entity_id}" ${outlet.plug2_switch === s.entity_id ? 'selected' : ''}>
-                    ${s.friendly_name}
-                  </option>
-                `).join('')}
+                ${renderSwitchOptions(plug2Switches, outlet.plug2_entity, outlet.plug2_switch)}
               </select>
             </div>
             <div class="form-group">
@@ -1272,6 +1278,22 @@ class EnergyPanel extends HTMLElement {
         if (item) item.remove();
       });
     });
+
+    // Smart switch sorting: when plug sensor changes, re-sort switch dropdown
+    this.shadowRoot.querySelectorAll('.outlet-plug1, .outlet-plug2').forEach(plugSelect => {
+      plugSelect.addEventListener('change', (e) => {
+        const outletItem = e.target.closest('.outlet-settings-item');
+        const roomIndex = outletItem?.dataset?.roomIndex;
+        const isPlug1 = e.target.classList.contains('outlet-plug1');
+        
+        const switchSelect = isPlug1 
+          ? outletItem.querySelector('.outlet-plug1-switch')
+          : outletItem.querySelector('.outlet-plug2-switch');
+        
+        const switches = this._getFilteredSwitches(roomIndex);
+        this._updateSwitchDropdownOrder(e.target, switchSelect, switches);
+      });
+    });
   }
 
   async _updateRoomOutletDropdowns(roomIndex, areaId) {
@@ -1361,6 +1383,90 @@ class EnergyPanel extends HTMLElement {
     return this._entities?.switches || [];
   }
 
+  /**
+   * Calculate similarity score between two entity names (0-1, higher = more similar)
+   */
+  _getSimilarityScore(str1, str2) {
+    if (!str1 || !str2) return 0;
+    
+    // Extract the entity name part (after the domain prefix)
+    const name1 = str1.includes('.') ? str1.split('.').pop() : str1;
+    const name2 = str2.includes('.') ? str2.split('.').pop() : str2;
+    
+    // Convert to lowercase and split into words
+    const words1 = name1.toLowerCase().replace(/_/g, ' ').split(/\s+/);
+    const words2 = name2.toLowerCase().replace(/_/g, ' ').split(/\s+/);
+    
+    // Count matching words
+    let matches = 0;
+    for (const word of words1) {
+      if (word.length > 1 && words2.includes(word)) {
+        matches++;
+      }
+    }
+    
+    // Also check for substring containment
+    const n1 = name1.toLowerCase();
+    const n2 = name2.toLowerCase();
+    if (n1.includes(n2) || n2.includes(n1)) {
+      matches += 2;
+    }
+    
+    // Normalize by total unique words
+    const totalWords = new Set([...words1, ...words2]).size;
+    return totalWords > 0 ? matches / totalWords : 0;
+  }
+
+  /**
+   * Sort switches by similarity to a sensor entity_id
+   */
+  _sortSwitchesBySimilarity(switches, sensorEntityId) {
+    if (!sensorEntityId || !switches.length) return switches;
+    
+    return [...switches].sort((a, b) => {
+      const scoreA = this._getSimilarityScore(a.entity_id, sensorEntityId);
+      const scoreB = this._getSimilarityScore(b.entity_id, sensorEntityId);
+      return scoreB - scoreA; // Higher score first
+    });
+  }
+
+  /**
+   * Update switch dropdown options sorted by similarity to the selected plug sensor
+   */
+  _updateSwitchDropdownOrder(plugSelect, switchSelect, switches) {
+    if (!switchSelect) return;
+    
+    const sensorValue = plugSelect?.value || '';
+    const currentSwitchValue = switchSelect.value || '';
+    
+    // Sort switches by similarity to the selected sensor
+    const sortedSwitches = this._sortSwitchesBySimilarity(switches, sensorValue);
+    
+    // Helper to build options
+    const buildOptions = (entities, currentValue) => {
+      let options = '<option value="">None</option>';
+      
+      // If current value not in list, add it first
+      const currentInList = entities.some(e => e.entity_id === currentValue);
+      if (currentValue && !currentInList) {
+        const label = currentValue.split('.').pop().replace(/_/g, ' ');
+        options += `<option value="${currentValue}" selected>${label} (other area)</option>`;
+      }
+      
+      // Add all switches, mark best match
+      options += entities.map((e, idx) => {
+        const score = this._getSimilarityScore(e.entity_id, sensorValue);
+        const isBestMatch = idx === 0 && score > 0.3 && sensorValue;
+        const label = isBestMatch ? `★ ${e.friendly_name}` : e.friendly_name;
+        return `<option value="${e.entity_id}" ${e.entity_id === currentValue ? 'selected' : ''}>${label}</option>`;
+      }).join('');
+      
+      return options;
+    };
+    
+    switchSelect.innerHTML = buildOptions(sortedSwitches, currentSwitchValue);
+  }
+
   _addRoom() {
     const mediaPlayers = this._entities?.media_players || [];
     const powerSensors = this._entities?.power_sensors || [];
@@ -1444,6 +1550,19 @@ class EnergyPanel extends HTMLElement {
     const newItem = list.querySelector(`.outlet-settings-item[data-outlet-index="${outletIndex}"]`);
     const removeBtn = newItem.querySelector('.remove-outlet-btn');
     removeBtn.addEventListener('click', () => newItem.remove());
+
+    // Add smart switch sorting listeners for new outlet
+    newItem.querySelectorAll('.outlet-plug1, .outlet-plug2').forEach(plugSelect => {
+      plugSelect.addEventListener('change', (e) => {
+        const isPlug1 = e.target.classList.contains('outlet-plug1');
+        const switchSelect = isPlug1 
+          ? newItem.querySelector('.outlet-plug1-switch')
+          : newItem.querySelector('.outlet-plug2-switch');
+        
+        const switches = this._getFilteredSwitches(roomIndex);
+        this._updateSwitchDropdownOrder(e.target, switchSelect, switches);
+      });
+    });
   }
 
   async _saveSettings() {
