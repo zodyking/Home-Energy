@@ -837,6 +837,7 @@ class EnergyPanel extends HTMLElement {
         padding: 6px 6px 5px;
         box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
         position: relative;
+        min-height: 200px;
       }
 
       .outlet-card.outlet-face .outlet-name-top {
@@ -1015,7 +1016,6 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: center;
-        min-height: 155px;
       }
 
       .outlet-card.outlet-face.single-outlet .single-receptacle {
