@@ -21,6 +21,7 @@ class EnergyPanel extends HTMLElement {
     this._refreshInterval = null;
     this._loading = true;
     this._error = null;
+    this._draggedRoomCard = null;
   }
 
   set hass(hass) {
@@ -1656,12 +1657,48 @@ class EnergyPanel extends HTMLElement {
         border: 1px solid var(--card-border);
         margin-bottom: 16px;
         overflow: hidden;
+        transition: box-shadow 0.2s, border-color 0.2s;
+      }
+
+      .room-settings-card.dragging {
+        opacity: 0.6;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      }
+
+      .room-settings-card.drag-over {
+        border-color: var(--panel-accent);
+        box-shadow: 0 0 0 2px var(--panel-accent-dim);
+      }
+
+      .room-drag-handle {
+        cursor: grab;
+        color: var(--secondary-text-color);
+        padding: 4px 6px;
+        opacity: 0.6;
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+      }
+
+      .room-drag-handle:hover {
+        opacity: 1;
+      }
+
+      .room-drag-handle:active {
+        cursor: grabbing;
+      }
+
+      .room-drag-handle svg {
+        width: 18px;
+        height: 18px;
+        fill: currentColor;
       }
 
       .room-settings-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: 8px;
         padding: 16px 20px;
         background: linear-gradient(135deg, rgba(3, 169, 244, 0.05) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
@@ -3217,8 +3254,11 @@ class EnergyPanel extends HTMLElement {
       (this._areaSensors?.[room.area_id] || powerSensors) : powerSensors;
 
     return `
-      <div class="room-settings-card" data-room-index="${index}" data-area-id="${room.area_id || ''}">
+      <div class="room-settings-card" data-room-index="${index}" data-area-id="${room.area_id || ''}" draggable="false">
         <div class="room-settings-header">
+          <div class="room-drag-handle" title="Drag to reorder rooms">
+            <svg viewBox="0 0 24 24">${icons.menu}</svg>
+          </div>
           <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name" style="max-width: 180px;">
           <div style="display: flex; gap: 8px;">
             <button class="btn btn-secondary toggle-room-btn" data-index="${index}">Edit</button>
@@ -3670,6 +3710,9 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
+    // Room card drag-and-drop for reordering
+    this._attachRoomDragListeners();
+
     // Add device dropdown (Outlet / Single Outlet)
     this.shadowRoot.querySelectorAll('.add-device-dropdown').forEach(dropdown => {
       const trigger = dropdown.querySelector('.add-device-trigger');
@@ -3971,7 +4014,8 @@ class EnergyPanel extends HTMLElement {
 
     // Attach event listeners for the new room
     const newCard = list.querySelector(`.room-settings-card[data-room-index="${index}"]`);
-    
+    this._attachRoomDragListeners(newCard);
+
     const toggleBtn = newCard.querySelector('.toggle-room-btn');
     toggleBtn.addEventListener('click', () => {
       const body = newCard.querySelector(`#room-body-${index}`);
@@ -4072,6 +4116,55 @@ class EnergyPanel extends HTMLElement {
     if (nameInput) {
       setTimeout(() => nameInput.focus(), 100);
     }
+  }
+
+  _attachRoomDragListeners(singleCard = null) {
+    const list = this.shadowRoot.querySelector('#rooms-list');
+    if (!list) return;
+    const cards = singleCard ? [singleCard] : Array.from(list.querySelectorAll('.room-settings-card'));
+    cards.forEach(card => {
+      const handle = card.querySelector('.room-drag-handle');
+      if (handle) {
+        handle.addEventListener('mousedown', () => {
+          card.setAttribute('draggable', 'true');
+        });
+      }
+      card.addEventListener('dragstart', (e) => {
+        this._draggedRoomCard = card;
+        card.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', card.dataset.roomIndex);
+      });
+      card.addEventListener('dragend', () => {
+        card.classList.remove('dragging');
+        card.setAttribute('draggable', 'false');
+        list.querySelectorAll('.room-settings-card').forEach(c => c.classList.remove('drag-over'));
+        this._draggedRoomCard = null;
+      });
+      card.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        if (this._draggedRoomCard && this._draggedRoomCard !== card) {
+          card.classList.add('drag-over');
+        }
+      });
+      card.addEventListener('dragleave', () => {
+        card.classList.remove('drag-over');
+      });
+      card.addEventListener('drop', (e) => {
+        e.preventDefault();
+        card.classList.remove('drag-over');
+        if (this._draggedRoomCard && this._draggedRoomCard !== card) {
+          const cardsArr = Array.from(list.querySelectorAll('.room-settings-card'));
+          const draggedIdx = cardsArr.indexOf(this._draggedRoomCard);
+          const targetIdx = cardsArr.indexOf(card);
+          if (draggedIdx < targetIdx) {
+            card.after(this._draggedRoomCard);
+          } else {
+            card.before(this._draggedRoomCard);
+          }
+        }
+      });
+    });
   }
 
   _attachOutletEventListeners(outletItem, roomIndex) {
