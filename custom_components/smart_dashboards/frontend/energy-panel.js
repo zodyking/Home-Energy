@@ -812,133 +812,191 @@ class EnergyPanel extends HTMLElement {
         align-items: flex-start;
       }
 
-      .outlet-card {
-        width: 100px;
-        min-width: 100px;
+      .outlet-card.outlet-face {
+        width: 108px;
+        min-width: 108px;
         flex-shrink: 0;
-      }
-
-      @media (max-width: 500px) {
-        .outlet-card {
-          width: 90px;
-          min-width: 90px;
-        }
-      }
-
-      .outlet-card {
-        background: rgba(0, 0, 0, 0.3);
-        border-radius: 8px;
-        padding: 6px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        position: relative;
+        padding: 0;
+        border: none;
+        background: transparent;
         box-sizing: border-box;
       }
 
-      .outlet-header {
-        text-align: center;
-        margin-bottom: 4px;
-        padding-bottom: 3px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      @media (max-width: 500px) {
+        .outlet-card.outlet-face {
+          width: 96px;
+          min-width: 96px;
+        }
       }
 
-      .outlet-name {
+      .outlet-card.outlet-face .faceplate {
+        background: linear-gradient(#f7f7f7, #e9e9e9);
+        border: 1px solid rgba(0, 0, 0, 0.18);
+        border-radius: 12px;
+        padding: 10px 10px 8px;
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        position: relative;
+      }
+
+      .outlet-card.outlet-face .faceplate::before {
+        content: "";
+        position: absolute;
+        inset: 6px;
+        border-radius: 10px;
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,0.07);
+        pointer-events: none;
+      }
+
+      .outlet-card.outlet-face .receptacle {
+        background: linear-gradient(#efefef, #dedede);
+        border: 1px solid rgba(0, 0, 0, 0.22);
+        border-radius: 10px;
+        padding: 10px 8px 6px;
+        position: relative;
+        box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+      }
+
+      .outlet-card.outlet-face .receptacle + .center-screw {
+        margin: 8px auto;
+      }
+
+      .outlet-card.outlet-face .receptacle.active {
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 10px rgba(3, 169, 244, 0.4),
+          inset 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+      }
+
+      .outlet-card.outlet-face .holes {
+        height: 34px;
+        position: relative;
+        margin: 0 auto 6px;
+        width: 58px;
+      }
+
+      .outlet-card.outlet-face .slot {
+        position: absolute;
+        top: 2px;
+        width: 10px;
+        height: 22px;
+        background: #2f2f2f;
+        border-radius: 2px;
+        box-shadow: inset 0 2px 2px rgba(255,255,255,0.08), inset 0 -2px 2px rgba(0,0,0,0.35);
+      }
+
+      .outlet-card.outlet-face .slot.left { left: 8px; }
+      .outlet-card.outlet-face .slot.right { right: 8px; }
+
+      .outlet-card.outlet-face .slot.right::after {
+        content: "";
+        position: absolute;
+        top: 4px;
+        right: 2px;
+        width: 2px;
+        height: 12px;
+        background: rgba(255,255,255,0.08);
+        border-radius: 1px;
+      }
+
+      .outlet-card.outlet-face .ground {
+        position: absolute;
+        left: 50%;
+        bottom: 2px;
+        transform: translateX(-50%);
+        width: 18px;
+        height: 12px;
+        background: #2f2f2f;
+        border-radius: 0 0 10px 10px;
+        box-shadow: inset 0 2px 2px rgba(255,255,255,0.08), inset 0 -2px 2px rgba(0,0,0,0.35);
+      }
+
+      .outlet-card.outlet-face .center-screw {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: linear-gradient(#d8d8d8, #bdbdbd);
+        border: 1px solid rgba(0, 0, 0, 0.25);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 2px rgba(0,0,0,0.2);
+        position: relative;
+        display: block;
+      }
+
+      .outlet-card.outlet-face .center-screw::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 10px;
+        height: 2px;
+        transform: translate(-50%, -50%);
+        background: rgba(0,0,0,0.35);
+        border-radius: 1px;
+      }
+
+      .outlet-card.outlet-face .plug-readout {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 6px;
+        padding: 0 2px;
+      }
+
+      .outlet-card.outlet-face .plug-label {
         font-size: 8px;
-        font-weight: 500;
-        color: var(--secondary-text-color);
+        letter-spacing: 0.2px;
+        color: rgba(0,0,0,0.55);
+        text-transform: uppercase;
+      }
+
+      .outlet-card.outlet-face .plug-watts {
+        font-size: 10px;
+        font-weight: 700;
+        color: rgba(0,0,0,0.78);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .outlet-card.outlet-face .outlet-meta {
+        margin-top: 8px;
+        text-align: center;
+        padding-top: 6px;
+        border-top: 1px solid rgba(0,0,0,0.10);
+      }
+
+      .outlet-card.outlet-face .outlet-name {
+        font-size: 9px;
+        font-weight: 600;
+        color: rgba(0,0,0,0.62);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
 
-      .outlet-name svg {
-        display: none;
-      }
-
-      .outlet-total {
-        font-size: 10px;
-        font-weight: 600;
-        color: var(--panel-accent);
+      .outlet-card.outlet-face .outlet-total {
+        font-size: 11px;
+        font-weight: 800;
+        color: var(--panel-accent, #03a9f4);
         font-variant-numeric: tabular-nums;
-        margin-top: 1px;
+        margin-top: 2px;
         white-space: nowrap;
-        overflow: hidden;
       }
 
-      .outlet-total.over-threshold {
-        color: var(--panel-danger);
+      .outlet-card.outlet-face .outlet-total.over-threshold {
+        color: var(--panel-danger, #ff5252);
       }
 
-      .plugs-container {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
+      .outlet-card.outlet-face .outlet-threshold {
+        margin-top: 4px;
       }
 
-      .plug-card {
-        background: #1a1a1a;
-        border-radius: 5px;
-        padding: 4px 5px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border: 1px solid rgba(255, 255, 255, 0.05);
-      }
-
-      .plug-card::before {
-        content: '';
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: rgba(3, 169, 244, 0.3);
-        border: 1px solid rgba(3, 169, 244, 0.5);
-        flex-shrink: 0;
-      }
-
-      .plug-card.active::before {
-        background: var(--panel-accent);
-        box-shadow: 0 0 4px var(--panel-accent);
-      }
-
-      .plug-label {
-        font-size: 7px;
-        text-transform: uppercase;
-        letter-spacing: 0.2px;
-        color: var(--secondary-text-color);
-        flex: 1;
-        margin-left: 4px;
-      }
-
-      .plug-watts {
-        font-size: 9px;
-        font-weight: 600;
-        color: var(--primary-text-color);
-        font-variant-numeric: tabular-nums;
-        white-space: nowrap;
-        overflow: hidden;
-      }
-
-      .threshold-badge {
+      .outlet-card.outlet-face .threshold-badge {
         display: inline-flex;
         align-items: center;
-        gap: 2px;
-        font-size: 7px;
-        color: var(--secondary-text-color);
-        padding: 1px 3px;
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 2px;
+        font-size: 8px;
+        padding: 2px 5px;
+        border-radius: 6px;
+        color: rgba(0,0,0,0.60);
+        background: rgba(0,0,0,0.06);
+        border: 1px solid rgba(0,0,0,0.10);
         white-space: nowrap;
-        overflow: hidden;
-      }
-
-      .threshold-badge svg {
-        width: 6px;
-        height: 6px;
-        fill: currentColor;
-      }
-
-      .outlet-threshold {
-        text-align: center;
-        margin-top: 3px;
       }
 
       /* Settings Styles */
@@ -1544,29 +1602,47 @@ class EnergyPanel extends HTMLElement {
 
   _renderOutletCard(outlet, index, outletData) {
     const data = outletData || { plug1: { watts: 0 }, plug2: { watts: 0 } };
-    const outletTotal = data.plug1.watts + data.plug2.watts;
+    const outletTotal = (data.plug1?.watts || 0) + (data.plug2?.watts || 0);
     const isOverThreshold = outlet.threshold > 0 && outletTotal > outlet.threshold;
-    const plug1Active = data.plug1.watts > 0.1;
-    const plug2Active = data.plug2.watts > 0.1;
+    const plug1Active = (data.plug1?.watts || 0) > 0.1;
+    const plug2Active = (data.plug2?.watts || 0) > 0.1;
 
     return `
-      <div class="outlet-card" data-outlet-index="${index}">
-        <div class="outlet-header">
-          <div class="outlet-name">${outlet.name}</div>
-          <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${outletTotal.toFixed(1)} W</div>
-        </div>
-        <div class="plugs-container">
-          <div class="plug-card ${plug1Active ? 'active' : ''}">
-            <span class="plug-label">P1</span>
-            <span class="plug-watts plug1-watts">${data.plug1.watts.toFixed(1)}W</span>
+      <div class="outlet-card outlet-face" data-outlet-index="${index}">
+        <div class="faceplate">
+          <div class="receptacle ${plug1Active ? 'active' : ''}">
+            <div class="holes" aria-hidden="true">
+              <span class="slot left"></span>
+              <span class="slot right"></span>
+              <span class="ground"></span>
+            </div>
+            <div class="plug-readout">
+              <span class="plug-label">P1</span>
+              <span class="plug-watts plug1-watts">${(data.plug1?.watts || 0).toFixed(1)}W</span>
+            </div>
           </div>
-          <div class="plug-card ${plug2Active ? 'active' : ''}">
-            <span class="plug-label">P2</span>
-            <span class="plug-watts plug2-watts">${data.plug2.watts.toFixed(1)}W</span>
+
+          <div class="center-screw" aria-hidden="true"></div>
+
+          <div class="receptacle ${plug2Active ? 'active' : ''}">
+            <div class="holes" aria-hidden="true">
+              <span class="slot left"></span>
+              <span class="slot right"></span>
+              <span class="ground"></span>
+            </div>
+            <div class="plug-readout">
+              <span class="plug-label">P2</span>
+              <span class="plug-watts plug2-watts">${(data.plug2?.watts || 0).toFixed(1)}W</span>
+            </div>
           </div>
-        </div>
-        <div class="outlet-threshold">
-          <span class="threshold-badge">${outlet.threshold > 0 ? `${outlet.threshold}W` : '∞ W'}</span>
+
+          <div class="outlet-meta">
+            <div class="outlet-name" title="${(outlet.name || '').replace(/"/g, '&quot;')}">${outlet.name || ''}</div>
+            <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${outletTotal.toFixed(1)} W</div>
+            <div class="outlet-threshold">
+              <span class="threshold-badge">${outlet.threshold > 0 ? `${outlet.threshold}W` : '∞ W'}</span>
+            </div>
+          </div>
         </div>
       </div>
     `;
