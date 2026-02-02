@@ -41,6 +41,12 @@ class CamerasPanel extends HTMLElement {
   _cleanup() {
     this._refreshIntervals.forEach((interval) => clearInterval(interval));
     this._refreshIntervals.clear();
+    this.shadowRoot.querySelectorAll('.camera-card img.camera-snapshot').forEach((img) => {
+      if (img._lastSnapshotUrl) {
+        URL.revokeObjectURL(img._lastSnapshotUrl);
+        img._lastSnapshotUrl = null;
+      }
+    });
   }
 
   /**
@@ -128,10 +134,28 @@ class CamerasPanel extends HTMLElement {
   }
 
   /**
-   * Try video stream first; on error or timeout fall back to snapshot refresh.
-   * @param {string} imgId - id for the img element (snapshot fallback)
-   * @param {string} entityId - camera entity_id
-   * @param {string} token - auth token
+   * Load camera snapshot via fetch with Bearer token (HA expects Authorization header, not query param).
+   * Updates img from blob URL; revokes previous blob URL to avoid leaks.
+   */
+  async _fetchSnapshotToImg(img, entityId, token) {
+    if (!img || !entityId || !this._hass) return;
+    const url = `/api/camera_proxy/${entityId}?t=${Date.now()}`;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    try {
+      const res = await fetch(url, { credentials: 'same-origin', headers });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      if (img._lastSnapshotUrl) URL.revokeObjectURL(img._lastSnapshotUrl);
+      img._lastSnapshotUrl = objectUrl;
+      img.src = objectUrl;
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  /**
+   * Start snapshot refresh (fetch with Bearer token every 500ms) and optionally try video stream.
    */
   _startStreamOrSnapshot(imgId, entityId, token) {
     if (!entityId) return;
@@ -143,10 +167,6 @@ class CamerasPanel extends HTMLElement {
     const img = card.querySelector(`#${imgId}`);
 
     if (!placeholder || !img) return;
-
-    const tokenPart = token ? `token=${token}&` : '';
-    const streamUrl = token ? `/api/camera_proxy_stream/${entityId}?token=${token}` : null;
-    const snapshotUrl = () => `/api/camera_proxy/${entityId}?${tokenPart}t=${Date.now()}`;
 
     const showVideo = () => {
       placeholder.style.display = 'none';
@@ -163,22 +183,21 @@ class CamerasPanel extends HTMLElement {
       img.style.display = 'block';
     };
 
-    const fallbackToSnapshot = () => {
-      if (this._refreshIntervals.has(imgId)) return;
-      if (video) video.src = '';
-      showSnapshot();
-      const updateImage = () => {
-        if (img && this._hass) img.src = snapshotUrl();
-      };
-      updateImage();
-      this._refreshIntervals.set(imgId, setInterval(updateImage, 500));
+    const updateSnapshot = () => {
+      this._fetchSnapshotToImg(img, entityId, token).then(() => {
+        placeholder.style.display = 'none';
+        img.style.display = 'block';
+        if (video) video.style.display = 'none';
+      });
     };
 
-    // Snapshot-first: start snapshot refresh immediately so feed shows quickly
-    fallbackToSnapshot();
+    if (this._refreshIntervals.has(imgId)) return;
+    showSnapshot();
+    updateSnapshot();
+    this._refreshIntervals.set(imgId, setInterval(updateSnapshot, 500));
 
-    // If we have token and video element, try stream; if it loads, switch to video and stop snapshot
-    if (token && video && streamUrl) {
+    if (token && video) {
+      const streamUrl = `/api/camera_proxy_stream/${entityId}?token=${token}`;
       video.src = streamUrl;
       video.addEventListener('loadeddata', () => {
         if (this._refreshIntervals.has(imgId)) {
@@ -190,7 +209,6 @@ class CamerasPanel extends HTMLElement {
       video.addEventListener('error', () => { /* keep snapshot */ }, { once: true });
     }
 
-    // Snapshot fallback: when img loads, hide placeholder (and video if present)
     img.addEventListener('load', function onImgLoad() {
       placeholder.style.display = 'none';
       if (video) video.style.display = 'none';
