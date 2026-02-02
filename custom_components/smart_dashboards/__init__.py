@@ -1,4 +1,4 @@
-"""The Smart Dashboards integration."""
+"""The Home Energy integration."""
 from __future__ import annotations
 
 import json
@@ -13,9 +13,6 @@ from homeassistant.components.http import StaticPathConfig
 
 from .const import (
     DOMAIN,
-    CAMERAS_PANEL_ICON,
-    CAMERAS_PANEL_TITLE,
-    CAMERAS_PANEL_URL,
     ENERGY_PANEL_ICON,
     ENERGY_PANEL_TITLE,
     ENERGY_PANEL_URL,
@@ -68,11 +65,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if "energy_monitor_task" in hass.data.get(DOMAIN, {}):
         hass.data[DOMAIN]["energy_monitor_task"].cancel()
 
-    # Remove panels (only if they were registered)
-    try:
-        frontend.async_remove_panel(hass, CAMERAS_PANEL_URL)
-    except KeyError:
-        pass
+    # Remove panel (only if it was registered)
     try:
         frontend.async_remove_panel(hass, ENERGY_PANEL_URL)
     except KeyError:
@@ -86,8 +79,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_register_panels(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Register the sidebar panels based on user options."""
-    # Get user options
-    enable_cameras = entry.options.get("enable_cameras", True)
     enable_energy = entry.options.get("enable_energy", True)
 
     # Get the path to our panel JS files
@@ -112,28 +103,6 @@ async def async_register_panels(hass: HomeAssistant, entry: ConfigEntry) -> None
     await hass.http.async_register_static_paths([
         StaticPathConfig(panel_url, frontend_path, cache_headers=False)
     ])
-
-    # Register Cameras Panel (if enabled)
-    if enable_cameras:
-        if CAMERAS_PANEL_URL not in hass.data.get("frontend_panels", {}):
-            await panel_custom.async_register_panel(
-                hass,
-                webcomponent_name="cameras-panel",
-                frontend_url_path=CAMERAS_PANEL_URL,
-                sidebar_title=CAMERAS_PANEL_TITLE,
-                sidebar_icon=CAMERAS_PANEL_ICON,
-                module_url=f"{panel_url}/cameras-panel.js?v={version}&_={load_id}",
-                embed_iframe=False,
-                require_admin=False,
-            )
-            _LOGGER.info("Registered Cameras panel")
-    else:
-        # Remove panel if it was previously registered
-        try:
-            frontend.async_remove_panel(hass, CAMERAS_PANEL_URL)
-            _LOGGER.info("Removed Cameras panel (disabled)")
-        except KeyError:
-            pass
 
     # Register Energy Panel (if enabled)
     if enable_energy:
