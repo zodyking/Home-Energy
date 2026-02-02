@@ -128,15 +128,19 @@ class ConfigManager:
                 }
                 for outlet in room.get("outlets", []):
                     if isinstance(outlet, dict) and outlet.get("name"):
+                        outlet_type = outlet.get("type", "outlet")
+                        if outlet_type not in ("outlet", "single_outlet"):
+                            outlet_type = "outlet"
                         validated_room["outlets"].append({
                             "name": outlet["name"],
+                            "type": outlet_type,
                             "plug1_entity": outlet.get("plug1_entity"),
-                            "plug2_entity": outlet.get("plug2_entity"),
+                            "plug2_entity": outlet.get("plug2_entity") if outlet_type == "outlet" else None,
                             "plug1_switch": outlet.get("plug1_switch"),
-                            "plug2_switch": outlet.get("plug2_switch"),
+                            "plug2_switch": outlet.get("plug2_switch") if outlet_type == "outlet" else None,
                             "threshold": int(outlet.get("threshold", 0)),
                             "plug1_shutoff": int(outlet.get("plug1_shutoff", 0)),
-                            "plug2_shutoff": int(outlet.get("plug2_shutoff", 0)),
+                            "plug2_shutoff": int(outlet.get("plug2_shutoff", 0)) if outlet_type == "outlet" else 0,
                         })
                 validated["rooms"].append(validated_room)
 
