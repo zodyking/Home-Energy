@@ -22,7 +22,7 @@ ENERGY_CHECK_INTERVAL = 1  # seconds
 ALERT_COOLDOWN = 60  # seconds between repeated alerts for same room
 SHUTOFF_RESET_DELAY = 5  # seconds to wait before turning plug back on
 
-# Stove safety settings
+# Stove safety defaults (user can override in config)
 STOVE_WARNING_TIMER = 900  # 15 minutes in seconds
 STOVE_SHUTOFF_TIMER = 30  # 30 seconds
 
@@ -38,6 +38,8 @@ DEFAULT_STOVE_OFF_MSG = "{prefix} Stove has been turned off"
 DEFAULT_STOVE_15MIN_WARN_MSG = "{prefix} Stove has been on for 15 minutes with no one in the kitchen. Stove will automatically turn off in 30 seconds if no one returns"
 DEFAULT_STOVE_30SEC_WARN_MSG = "{prefix} Stove will automatically turn off in 30 seconds if no one returns to the kitchen"
 DEFAULT_STOVE_AUTO_OFF_MSG = "{prefix} Stove has been automatically turned off for safety"
+DEFAULT_MICROWAVE_CUT_MSG = "{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off."
+DEFAULT_MICROWAVE_RESTORE_MSG = "{prefix} Microwave is off. Stove power restored."
 
 # Default config structure
 DEFAULT_CONFIG = {
@@ -48,9 +50,13 @@ DEFAULT_CONFIG = {
             "stove_plug_entity": None,
             "stove_plug_switch": None,
             "stove_power_threshold": 100,
+            "cooking_time_minutes": 15,
+            "final_warning_seconds": 30,
             "presence_sensor": None,
             "media_player": None,
             "volume": DEFAULT_TTS_VOLUME,
+            "microwave_plug_entity": None,
+            "microwave_power_threshold": 50,
         },
         "tts_settings": {
             "language": DEFAULT_TTS_LANGUAGE,
@@ -67,6 +73,8 @@ DEFAULT_CONFIG = {
             "stove_15min_warn_msg": DEFAULT_STOVE_15MIN_WARN_MSG,
             "stove_30sec_warn_msg": DEFAULT_STOVE_30SEC_WARN_MSG,
             "stove_auto_off_msg": DEFAULT_STOVE_AUTO_OFF_MSG,
+            "microwave_cut_power_msg": DEFAULT_MICROWAVE_CUT_MSG,
+            "microwave_restore_power_msg": DEFAULT_MICROWAVE_RESTORE_MSG,
         },
     },
 }

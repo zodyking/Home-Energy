@@ -2024,6 +2024,26 @@ class EnergyPanel extends HTMLElement {
                   Variables: <code>{prefix}</code>
                 </div>
               </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Microwave Cut Power Message</div>
+                <div class="tts-msg-desc">Spoken when stove power is cut because microwave is on (shared breaker)</div>
+                <input type="text" class="form-input" id="tts-microwave-cut" 
+                  value="${ttsSettings.microwave_cut_power_msg || '{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off.'}" 
+                  placeholder="{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off.">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code>
+                </div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Microwave Restore Power Message</div>
+                <div class="tts-msg-desc">Spoken when stove power is restored after microwave turns off</div>
+                <input type="text" class="form-input" id="tts-microwave-restore" 
+                  value="${ttsSettings.microwave_restore_power_msg || '{prefix} Microwave is off. Stove power restored.'}" 
+                  placeholder="{prefix} Microwave is off. Stove power restored.">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code>
+                </div>
+              </div>
             </div>
           </div>
           
@@ -2104,6 +2124,26 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
+          <label class="form-label">Cooking Time (minutes)</label>
+          <input type="number" class="form-input" id="stove-cooking-time" 
+            value="${stoveConfig.cooking_time_minutes ?? 15}" 
+            placeholder="15" min="1" max="120" step="1">
+          <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">
+            Time with no presence before warning and final countdown
+          </div>
+        </div>
+
+        <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
+          <label class="form-label">Final Warning (seconds)</label>
+          <input type="number" class="form-input" id="stove-final-warning" 
+            value="${stoveConfig.final_warning_seconds ?? 30}" 
+            placeholder="30" min="5" max="300" step="1">
+          <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">
+            Countdown after warning before auto-shutoff
+          </div>
+        </div>
+
+        <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
           <label class="form-label">Kitchen Presence Sensor</label>
           <select class="form-select" id="stove-presence-sensor">
             <option value="">None</option>
@@ -2139,6 +2179,38 @@ class EnergyPanel extends HTMLElement {
             <span class="stove-volume-display" style="min-width: 40px; text-align: right;">
               ${Math.round((stoveConfig.volume || 0.7) * 100)}%
             </span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 24px; border: 1px solid var(--panel-warning, #ff9800);">
+          <div class="card-header">
+            <h2 class="card-title" style="color: var(--panel-warning);">Microwave Safety (shared breaker)</h2>
+          </div>
+          <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px; padding: 0 12px;">
+            For older homes where microwave and electric stove share the same breaker. When microwave is on, stove power is cut until microwave turns off, then restored. <strong style="color: var(--panel-warning);">Using this feature can damage the stove's LED panel—use at your discretion.</strong>
+          </p>
+          <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
+            <label class="form-label">Microwave Plug Power Sensor</label>
+            <select class="form-select" id="stove-microwave-plug-entity">
+              <option value="">None (disabled)</option>
+              ${powerSensors.map(s => `
+                <option value="${s.entity_id}" ${stoveConfig.microwave_plug_entity === s.entity_id ? 'selected' : ''}>
+                  ${s.friendly_name}
+                </option>
+              `).join('')}
+            </select>
+            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">
+              Power sensor for the microwave outlet
+            </div>
+          </div>
+          <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
+            <label class="form-label">Microwave On Threshold (W)</label>
+            <input type="number" class="form-input" id="stove-microwave-threshold" 
+              value="${stoveConfig.microwave_power_threshold ?? 50}" 
+              placeholder="50" min="0" step="10">
+            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">
+              Microwave is considered "on" when power exceeds this threshold
+            </div>
           </div>
         </div>
       </div>
@@ -3399,6 +3471,8 @@ class EnergyPanel extends HTMLElement {
     const ttsStove15Min = this.shadowRoot.querySelector('#tts-stove-15min')?.value || '{prefix} Stove has been on for 15 minutes with no one in the kitchen. Stove will automatically turn off in 30 seconds if no one returns';
     const ttsStove30Sec = this.shadowRoot.querySelector('#tts-stove-30sec')?.value || '{prefix} Stove will automatically turn off in 30 seconds if no one returns to the kitchen';
     const ttsStoveAutoOff = this.shadowRoot.querySelector('#tts-stove-auto-off')?.value || '{prefix} Stove has been automatically turned off for safety';
+    const ttsMicrowaveCut = this.shadowRoot.querySelector('#tts-microwave-cut')?.value || '{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off.';
+    const ttsMicrowaveRestore = this.shadowRoot.querySelector('#tts-microwave-restore')?.value || '{prefix} Microwave is off. Stove power restored.';
 
     // Collect breaker lines
     const breakerCards = this.shadowRoot.querySelectorAll('.breaker-settings-card');
@@ -3428,9 +3502,13 @@ class EnergyPanel extends HTMLElement {
     const stovePlugEntity = this.shadowRoot.querySelector('#stove-plug-entity')?.value || null;
     const stovePlugSwitch = this.shadowRoot.querySelector('#stove-plug-switch')?.value || null;
     const stovePowerThreshold = parseInt(this.shadowRoot.querySelector('#stove-power-threshold')?.value) || 100;
+    const stoveCookingTime = parseInt(this.shadowRoot.querySelector('#stove-cooking-time')?.value) || 15;
+    const stoveFinalWarning = parseInt(this.shadowRoot.querySelector('#stove-final-warning')?.value) || 30;
     const stovePresenceSensor = this.shadowRoot.querySelector('#stove-presence-sensor')?.value || null;
     const stoveMediaPlayer = this.shadowRoot.querySelector('#stove-media-player')?.value || null;
     const stoveVolume = parseFloat(this.shadowRoot.querySelector('#stove-volume')?.value) || 0.7;
+    const stoveMicrowavePlugEntity = this.shadowRoot.querySelector('#stove-microwave-plug-entity')?.value || null;
+    const stoveMicrowaveThreshold = parseInt(this.shadowRoot.querySelector('#stove-microwave-threshold')?.value) || 50;
 
     const config = {
       rooms: rooms,
@@ -3439,9 +3517,13 @@ class EnergyPanel extends HTMLElement {
         stove_plug_entity: stovePlugEntity,
         stove_plug_switch: stovePlugSwitch,
         stove_power_threshold: stovePowerThreshold,
+        cooking_time_minutes: stoveCookingTime,
+        final_warning_seconds: stoveFinalWarning,
         presence_sensor: stovePresenceSensor,
         media_player: stoveMediaPlayer,
         volume: stoveVolume,
+        microwave_plug_entity: stoveMicrowavePlugEntity || null,
+        microwave_power_threshold: stoveMicrowaveThreshold,
       },
       tts_settings: {
         language: ttsLanguage,
@@ -3457,6 +3539,8 @@ class EnergyPanel extends HTMLElement {
         stove_15min_warn_msg: ttsStove15Min,
         stove_30sec_warn_msg: ttsStove30Sec,
         stove_auto_off_msg: ttsStoveAutoOff,
+        microwave_cut_power_msg: ttsMicrowaveCut,
+        microwave_restore_power_msg: ttsMicrowaveRestore,
       },
     };
 
