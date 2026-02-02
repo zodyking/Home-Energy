@@ -1131,8 +1131,8 @@ class EnergyPanel extends HTMLElement {
       }
 
       .device-card.stove-card {
-        width: 162px;
-        min-width: 162px;
+        width: 243px;
+        min-width: 243px;
         flex-shrink: 0;
       }
 
@@ -1140,7 +1140,7 @@ class EnergyPanel extends HTMLElement {
         background: linear-gradient(#f7f7f7, #e9e9e9);
         border: 1px solid rgba(0, 0, 0, 0.18);
         border-radius: 9px;
-        padding: 8px 10px 6px;
+        padding: 6px 6px 5px;
         box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
         min-height: 200px;
         display: flex;
@@ -1151,94 +1151,112 @@ class EnergyPanel extends HTMLElement {
       .device-card.stove-card .stove-body {
         flex: 1;
         width: 100%;
-        margin: 6px 0;
+        margin: 4px 0;
         display: flex;
         flex-direction: column;
         align-items: stretch;
-        background: linear-gradient(180deg, #d8d8d8, #c0c0c0);
-        border: 2px solid rgba(0, 0, 0, 0.25);
-        border-radius: 8px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.15);
-        padding: 6px;
-        gap: 6px;
+        background: linear-gradient(180deg, #e8e8e8, #d0d0d0);
+        border: 2px solid rgba(0, 0, 0, 0.2);
+        border-radius: 6px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 3px rgba(0,0,0,0.12);
+        overflow: hidden;
       }
 
-      .device-card.stove-card .stove-burners {
+      .device-card.stove-card .stove-cooktop {
+        height: 14px;
+        background: linear-gradient(180deg, #2a2a2a, #1a1a1a);
+        border-bottom: 1px solid rgba(0,0,0,0.3);
         display: flex;
         justify-content: space-between;
+        align-items: center;
+        padding: 2px 8px;
         gap: 4px;
-        padding: 2px 4px;
       }
 
       .device-card.stove-card .stove-burner {
-        width: 18px;
-        height: 18px;
+        width: 10px;
+        height: 10px;
         border-radius: 50%;
-        background: linear-gradient(180deg, #a0a0a0, #707070);
-        border: 1px solid rgba(0, 0, 0, 0.35);
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.3), 0 1px 0 rgba(255,255,255,0.2);
+        background: linear-gradient(180deg, #606060, #404040);
+        border: 1px solid rgba(0, 0, 0, 0.5);
+        box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
         flex-shrink: 0;
       }
 
       .device-card.stove-card .stove-burner.active {
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), inset 0 0 8px rgba(3,169,244,0.3);
+        background: radial-gradient(circle at 30% 30%, #ff6b6b, #c0392b);
+        box-shadow: 0 0 4px rgba(255,82,82,0.6), inset 0 1px 0 rgba(255,255,255,0.2);
       }
 
-      .device-card.stove-card .stove-oven-door {
-        flex: 1;
-        min-height: 50px;
-        border-radius: 6px;
-        background: linear-gradient(#e8e8e8, #d0d0d0);
-        border: 1px solid rgba(0, 0, 0, 0.25);
-        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.12);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-
-      .device-card.stove-card .stove-oven-door.active {
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.6), inset 0 2px 4px rgba(0, 0, 0, 0.12);
-      }
-
-      .device-card.stove-card .stove-oven-window {
-        width: 65%;
-        height: 55%;
-        min-height: 28px;
-        border-radius: 4px;
-        background: linear-gradient(180deg, rgba(25,25,25,0.95), rgba(45,45,45,0.95));
-        border: 1px solid rgba(0, 0, 0, 0.4);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
-      }
-
-      .device-card.stove-card .stove-control-strip {
+      .device-card.stove-card .stove-control-panel {
+        height: 18px;
+        background: linear-gradient(180deg, #1e1e1e, #151515);
         display: flex;
         justify-content: space-between;
         align-items: center;
+        padding: 3px 10px;
         gap: 6px;
-        padding: 6px 8px;
-        background: linear-gradient(180deg, #b8b8b8, #a0a0a0);
-        border-radius: 6px;
-        border: 1px solid rgba(0, 0, 0, 0.2);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.3);
+        border-bottom: 1px solid rgba(0,0,0,0.2);
       }
 
       .device-card.stove-card .stove-knob {
-        width: 12px;
-        height: 12px;
+        width: 10px;
+        height: 10px;
         border-radius: 50%;
-        background: linear-gradient(135deg, #e8e8e8, #b8b8b8);
-        border: 1px solid rgba(0, 0, 0, 0.3);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 2px rgba(0,0,0,0.2);
+        background: linear-gradient(135deg, #d4a84b, #b8860b);
+        border: 1px solid rgba(0, 0, 0, 0.4);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 1px 2px rgba(0,0,0,0.3);
         flex-shrink: 0;
       }
 
       .device-card.stove-card .stove-knob.active {
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.6), inset 0 1px 0 rgba(255,255,255,0.7);
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), inset 0 1px 0 rgba(255,255,255,0.4);
+      }
+
+      .device-card.stove-card .stove-oven-door {
+        flex: 1;
+        min-height: 36px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        background: linear-gradient(180deg, #f0f0f0, #e0e0e0);
+        border-bottom: 1px solid rgba(0,0,0,0.1);
+      }
+
+      .device-card.stove-card .stove-oven-door.active {
+        box-shadow: inset 0 0 0 2px rgba(3, 169, 244, 0.4);
+      }
+
+      .device-card.stove-card .stove-handle {
+        width: 60%;
+        height: 4px;
+        margin: 4px 0 2px;
+        background: linear-gradient(180deg, #c0c0c0, #909090);
+        border-radius: 2px;
+        border: 1px solid rgba(0,0,0,0.15);
+        box-shadow: 0 1px 0 rgba(255,255,255,0.5);
+      }
+
+      .device-card.stove-card .stove-oven-window {
+        flex: 1;
+        width: 75%;
+        min-height: 24px;
+        margin: 0 0 4px;
+        border-radius: 4px;
+        background: linear-gradient(180deg, rgba(20,20,20,0.95), rgba(35,35,35,0.95));
+        border: 1px solid rgba(0, 0, 0, 0.5);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+      }
+
+      .device-card.stove-card .stove-base {
+        height: 8px;
+        background: linear-gradient(180deg, #1a1a1a, #0d0d0d);
+        border-radius: 0 0 4px 4px;
       }
 
       .device-card.microwave-card {
-        width: 162px;
-        min-width: 162px;
+        width: 243px;
+        min-width: 243px;
         flex-shrink: 0;
       }
 
@@ -1246,7 +1264,7 @@ class EnergyPanel extends HTMLElement {
         background: linear-gradient(#f5f5f5, #e0e0e0);
         border: 1px solid rgba(0, 0, 0, 0.18);
         border-radius: 9px;
-        padding: 8px 10px 6px;
+        padding: 6px 6px 5px;
         box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
         min-height: 200px;
         display: flex;
@@ -1259,9 +1277,9 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         align-items: stretch;
         width: 100%;
-        margin: 8px 0;
+        margin: 4px 0;
         border-radius: 8px;
-        padding: 8px;
+        padding: 6px;
         background: linear-gradient(180deg, rgba(235,235,235,0.95), rgba(190,190,190,0.95));
         border: 1px solid rgba(0, 0, 0, 0.12);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
@@ -1273,10 +1291,10 @@ class EnergyPanel extends HTMLElement {
       }
 
       .device-card.microwave-card .mw-door {
-        flex: 1 1 auto;
+        flex: 4 1 auto;
         min-width: 0;
         display: flex;
-        gap: 5px;
+        gap: 4px;
         align-items: stretch;
       }
 
@@ -1290,11 +1308,13 @@ class EnergyPanel extends HTMLElement {
       }
 
       .device-card.microwave-card .mw-controls {
-        width: 42px;
+        flex: 1 0 auto;
+        width: 20%;
+        min-width: 44px;
+        max-width: 52px;
         display: flex;
         flex-direction: column;
-        gap: 4px;
-        flex-shrink: 0;
+        gap: 3px;
       }
 
       .device-card.microwave-card .mw-lcd {
@@ -1363,8 +1383,8 @@ class EnergyPanel extends HTMLElement {
       @media (max-width: 500px) {
         .device-card.stove-card,
         .device-card.microwave-card {
-          width: 144px;
-          min-width: 144px;
+          width: 216px;
+          min-width: 216px;
         }
       }
 
@@ -1991,21 +2011,23 @@ class EnergyPanel extends HTMLElement {
         <div class="stove-faceplate">
           <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
           <div class="stove-body">
-            <div class="stove-burners">
+            <div class="stove-cooktop">
               <div class="stove-burner ${isActive ? 'active' : ''}"></div>
               <div class="stove-burner"></div>
               <div class="stove-burner"></div>
               <div class="stove-burner"></div>
             </div>
-            <div class="stove-oven-door ${isActive ? 'active' : ''}">
-              <div class="stove-oven-window"></div>
-            </div>
-            <div class="stove-control-strip">
+            <div class="stove-control-panel">
               <div class="stove-knob ${isActive ? 'active' : ''}"></div>
               <div class="stove-knob"></div>
               <div class="stove-knob"></div>
               <div class="stove-knob"></div>
             </div>
+            <div class="stove-oven-door ${isActive ? 'active' : ''}">
+              <div class="stove-handle"></div>
+              <div class="stove-oven-window"></div>
+            </div>
+            <div class="stove-base"></div>
           </div>
           <div class="outlet-meta">
             <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
