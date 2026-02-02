@@ -129,19 +129,33 @@ class ConfigManager:
                 for outlet in room.get("outlets", []):
                     if isinstance(outlet, dict) and outlet.get("name"):
                         outlet_type = outlet.get("type", "outlet")
-                        if outlet_type not in ("outlet", "single_outlet"):
+                        if outlet_type not in ("outlet", "single_outlet", "stove", "microwave"):
                             outlet_type = "outlet"
-                        validated_room["outlets"].append({
+                        item = {
                             "name": outlet["name"],
                             "type": outlet_type,
                             "plug1_entity": outlet.get("plug1_entity"),
-                            "plug2_entity": outlet.get("plug2_entity") if outlet_type == "outlet" else None,
-                            "plug1_switch": outlet.get("plug1_switch"),
-                            "plug2_switch": outlet.get("plug2_switch") if outlet_type == "outlet" else None,
                             "threshold": int(outlet.get("threshold", 0)),
-                            "plug1_shutoff": int(outlet.get("plug1_shutoff", 0)),
-                            "plug2_shutoff": int(outlet.get("plug2_shutoff", 0)) if outlet_type == "outlet" else 0,
-                        })
+                        }
+                        if outlet_type == "outlet":
+                            item["plug2_entity"] = outlet.get("plug2_entity")
+                            item["plug1_switch"] = outlet.get("plug1_switch")
+                            item["plug2_switch"] = outlet.get("plug2_switch")
+                            item["plug1_shutoff"] = int(outlet.get("plug1_shutoff", 0))
+                            item["plug2_shutoff"] = int(outlet.get("plug2_shutoff", 0))
+                        elif outlet_type == "single_outlet":
+                            item["plug2_entity"] = None
+                            item["plug1_switch"] = outlet.get("plug1_switch")
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = int(outlet.get("plug1_shutoff", 0))
+                            item["plug2_shutoff"] = 0
+                        else:
+                            item["plug2_entity"] = None
+                            item["plug1_switch"] = None
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = 0
+                            item["plug2_shutoff"] = 0
+                        validated_room["outlets"].append(item)
                 validated["rooms"].append(validated_room)
 
         # Validate breaker lines
