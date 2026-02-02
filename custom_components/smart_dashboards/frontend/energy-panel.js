@@ -1465,6 +1465,7 @@ class EnergyPanel extends HTMLElement {
       .device-card.minisplit-card {
         width: 243px;
         min-width: 243px;
+        min-height: 220px;
         flex-shrink: 0;
         background: transparent;
       }
@@ -1474,7 +1475,7 @@ class EnergyPanel extends HTMLElement {
         border: none;
         padding: 6px 6px 5px;
         box-shadow: none;
-        min-height: 200px;
+        min-height: 220px;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -1488,6 +1489,8 @@ class EnergyPanel extends HTMLElement {
 
       .device-card.minisplit-card .outlet-meta {
         border-top-color: rgba(255,255,255,0.08);
+        margin-top: auto;
+        padding-top: 12px;
       }
 
       .device-card.minisplit-card .threshold-badge {
@@ -1499,8 +1502,8 @@ class EnergyPanel extends HTMLElement {
         flex: 0 0 auto;
         width: 88%;
         max-width: 200px;
-        height: 72px;
-        margin: 12px auto;
+        height: 88px;
+        margin: auto 12px;
         position: relative;
         overflow: visible;
         /* Mini-split shape: tapered, narrower at bottom - mimics real unit, not a perfect rectangle */
@@ -1580,7 +1583,7 @@ class EnergyPanel extends HTMLElement {
         top: 0;
         left: 8%;
         right: 8%;
-        height: 22px;
+        height: 24px;
         background: linear-gradient(180deg, rgba(245,245,248,0.9) 0%, rgba(232,232,236,0.95) 100%);
         border-radius: 6px 6px 0 0;
         box-shadow: inset 0 1px 2px rgba(0,0,0,0.06);
@@ -1591,7 +1594,7 @@ class EnergyPanel extends HTMLElement {
         left: 8px;
         right: 8px;
         bottom: 4px;
-        height: 20px;
+        height: 24px;
         border-radius: 0 0 8px 8px;
         /* Recessed vent - lighter top bevel, darker interior */
         background: linear-gradient(180deg, #c8c8cc 0%, #b0b0b4 20%, #9a9a9e 100%);
