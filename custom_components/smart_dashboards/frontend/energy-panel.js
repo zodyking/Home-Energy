@@ -231,7 +231,10 @@ class EnergyPanel extends HTMLElement {
 
         if (plug1Watts) plug1Watts.textContent = `${outlet.plug1.watts.toFixed(1)}W`;
         if (plug2Watts) plug2Watts.textContent = `${outlet.plug2.watts.toFixed(1)}W`;
-        if (mwLcdWatts) mwLcdWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
+        if (mwLcdWatts) {
+          mwLcdWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
+          mwLcdWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
+        }
         if (outletTotalEl) {
           outletTotalEl.textContent = `${outletTotal.toFixed(1)} W`;
           outletTotalEl.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
@@ -240,10 +243,13 @@ class EnergyPanel extends HTMLElement {
           const mwBody = deviceCard.querySelector('.mw-body');
           if (mwBody) mwBody.classList.toggle('mw-on', outlet.plug1.watts > 0.1);
           if (deviceType === 'stove') {
+            const active = outlet.plug1.watts > 0.1;
             const ovenDoor = deviceCard.querySelector('.stove-oven-door');
+            const firstBurner = deviceCard.querySelector('.stove-burner');
             const firstKnob = deviceCard.querySelector('.stove-knob');
-            if (ovenDoor) ovenDoor.classList.toggle('active', outlet.plug1.watts > 0.1);
-            if (firstKnob) firstKnob.classList.toggle('active', outlet.plug1.watts > 0.1);
+            if (ovenDoor) ovenDoor.classList.toggle('active', active);
+            if (firstBurner) firstBurner.classList.toggle('active', active);
+            if (firstKnob) firstKnob.classList.toggle('active', active);
           }
         }
       });
@@ -1092,6 +1098,11 @@ class EnergyPanel extends HTMLElement {
         color: rgba(0,0,0,0.62);
       }
 
+      .device-card.stove-card .outlet-name-top,
+      .device-card.microwave-card .outlet-name-top {
+        font-size: 12px;
+      }
+
       .device-card .outlet-meta {
         margin-top: 5px;
         text-align: center;
@@ -1137,60 +1148,92 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
       }
 
-      .device-card.stove-card .stove-front {
+      .device-card.stove-card .stove-body {
         flex: 1;
+        width: 100%;
+        margin: 6px 0;
         display: flex;
         flex-direction: column;
-        align-items: center;
-        width: 100%;
-        margin: 8px 0;
+        align-items: stretch;
+        background: linear-gradient(180deg, #d8d8d8, #c0c0c0);
+        border: 2px solid rgba(0, 0, 0, 0.25);
+        border-radius: 8px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.15);
+        padding: 6px;
+        gap: 6px;
+      }
+
+      .device-card.stove-card .stove-burners {
+        display: flex;
+        justify-content: space-between;
+        gap: 4px;
+        padding: 2px 4px;
+      }
+
+      .device-card.stove-card .stove-burner {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: linear-gradient(180deg, #a0a0a0, #707070);
+        border: 1px solid rgba(0, 0, 0, 0.35);
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.3), 0 1px 0 rgba(255,255,255,0.2);
+        flex-shrink: 0;
+      }
+
+      .device-card.stove-card .stove-burner.active {
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), inset 0 0 8px rgba(3,169,244,0.3);
       }
 
       .device-card.stove-card .stove-oven-door {
-        width: 100%;
         flex: 1;
-        min-height: 60px;
+        min-height: 50px;
         border-radius: 6px;
         background: linear-gradient(#e8e8e8, #d0d0d0);
-        border: 1px solid rgba(0, 0, 0, 0.2);
-        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+        border: 1px solid rgba(0, 0, 0, 0.25);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.12);
         display: flex;
         align-items: center;
         justify-content: center;
       }
 
       .device-card.stove-card .stove-oven-door.active {
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.6), inset 0 2px 4px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.6), inset 0 2px 4px rgba(0, 0, 0, 0.12);
       }
 
       .device-card.stove-card .stove-oven-window {
-        width: 70%;
-        height: 50%;
-        min-height: 30px;
+        width: 65%;
+        height: 55%;
+        min-height: 28px;
         border-radius: 4px;
-        background: linear-gradient(180deg, rgba(30,30,30,0.9), rgba(50,50,50,0.9));
-        border: 1px solid rgba(0, 0, 0, 0.3);
+        background: linear-gradient(180deg, rgba(25,25,25,0.95), rgba(45,45,45,0.95));
+        border: 1px solid rgba(0, 0, 0, 0.4);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
       }
 
-      .device-card.stove-card .stove-knobs {
+      .device-card.stove-card .stove-control-strip {
         display: flex;
-        gap: 8px;
-        margin-top: 8px;
-        justify-content: center;
+        justify-content: space-between;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 8px;
+        background: linear-gradient(180deg, #b8b8b8, #a0a0a0);
+        border-radius: 6px;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.3);
       }
 
       .device-card.stove-card .stove-knob {
-        width: 14px;
-        height: 14px;
+        width: 12px;
+        height: 12px;
         border-radius: 50%;
-        background: linear-gradient(#e0e0e0, #b0b0b0);
-        border: 1px solid rgba(0, 0, 0, 0.25);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 1px 2px rgba(0,0,0,0.15);
+        background: linear-gradient(135deg, #e8e8e8, #b8b8b8);
+        border: 1px solid rgba(0, 0, 0, 0.3);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 2px rgba(0,0,0,0.2);
+        flex-shrink: 0;
       }
 
       .device-card.stove-card .stove-knob.active {
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.6), inset 0 1px 0 rgba(255,255,255,0.6);
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.6), inset 0 1px 0 rgba(255,255,255,0.7);
       }
 
       .device-card.microwave-card {
@@ -1230,11 +1273,11 @@ class EnergyPanel extends HTMLElement {
       }
 
       .device-card.microwave-card .mw-door {
-        flex: 1;
-        display: flex;
-        gap: 6px;
-        align-items: stretch;
+        flex: 1 1 auto;
         min-width: 0;
+        display: flex;
+        gap: 5px;
+        align-items: stretch;
       }
 
       .device-card.microwave-card .mw-window {
@@ -1247,18 +1290,18 @@ class EnergyPanel extends HTMLElement {
       }
 
       .device-card.microwave-card .mw-controls {
-        width: 60px;
+        width: 42px;
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 4px;
         flex-shrink: 0;
       }
 
       .device-card.microwave-card .mw-lcd {
-        border-radius: 5px;
+        border-radius: 4px;
         background: rgba(0, 0, 0, 0.75);
         border: 1px solid rgba(255, 255, 255, 0.08);
-        padding: 6px 8px;
+        padding: 4px 5px;
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
       }
 
@@ -1269,45 +1312,49 @@ class EnergyPanel extends HTMLElement {
         font-variant-numeric: tabular-nums;
       }
 
+      .device-card.microwave-card .mw-lcd-watts.over-threshold {
+        color: var(--panel-danger, #ff5252);
+      }
+
       .device-card.microwave-card .mw-keys {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 3px;
+        gap: 2px;
       }
 
       .device-card.microwave-card .mw-key {
-        height: 10px;
-        border-radius: 4px;
+        height: 7px;
+        border-radius: 3px;
         background: rgba(120,120,120,0.5);
         border: 1px solid rgba(255,255,255,0.12);
       }
 
       .device-card.microwave-card .mw-actions {
         display: flex;
-        gap: 4px;
+        gap: 3px;
         align-items: center;
         justify-content: center;
       }
 
       .device-card.microwave-card .mw-btn-pill {
-        width: 24px;
-        height: 8px;
-        border-radius: 8px;
+        width: 18px;
+        height: 6px;
+        border-radius: 6px;
         background: rgba(120,120,120,0.5);
         border: 1px solid rgba(255,255,255,0.12);
       }
 
       .device-card.microwave-card .mw-btn-round {
-        width: 10px;
-        height: 10px;
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
         background: rgba(120,120,120,0.5);
         border: 1px solid rgba(255,255,255,0.12);
       }
 
       .device-card.microwave-card .mw-handle {
-        width: 8px;
-        border-radius: 6px;
+        width: 6px;
+        border-radius: 4px;
         background: linear-gradient(180deg, rgba(160,160,160,0.95), rgba(120,120,120,0.95));
         border: 1px solid rgba(0, 0, 0, 0.2);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
@@ -1943,11 +1990,17 @@ class EnergyPanel extends HTMLElement {
       <div class="device-card stove-card" data-outlet-index="${index}">
         <div class="stove-faceplate">
           <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
-          <div class="stove-front">
+          <div class="stove-body">
+            <div class="stove-burners">
+              <div class="stove-burner ${isActive ? 'active' : ''}"></div>
+              <div class="stove-burner"></div>
+              <div class="stove-burner"></div>
+              <div class="stove-burner"></div>
+            </div>
             <div class="stove-oven-door ${isActive ? 'active' : ''}">
               <div class="stove-oven-window"></div>
             </div>
-            <div class="stove-knobs">
+            <div class="stove-control-strip">
               <div class="stove-knob ${isActive ? 'active' : ''}"></div>
               <div class="stove-knob"></div>
               <div class="stove-knob"></div>
@@ -1982,7 +2035,7 @@ class EnergyPanel extends HTMLElement {
             </div>
             <div class="mw-controls">
               <div class="mw-lcd">
-                <div class="mw-lcd-watts">${watts.toFixed(1)} W</div>
+                <div class="mw-lcd-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
               </div>
               <div class="mw-keys">
                 <div class="mw-key"></div>
@@ -2001,8 +2054,7 @@ class EnergyPanel extends HTMLElement {
               </div>
             </div>
           </div>
-          <div class="outlet-meta">
-            <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
+          <div class="outlet-meta mw-meta">
             <div class="outlet-threshold">
               <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
             </div>
