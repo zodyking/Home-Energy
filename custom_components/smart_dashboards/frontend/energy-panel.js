@@ -1656,7 +1656,7 @@ class EnergyPanel extends HTMLElement {
         border-radius: 12px;
         border: 1px solid var(--card-border);
         margin-bottom: 16px;
-        overflow: hidden;
+        overflow: visible;
         transition: box-shadow 0.2s, border-color 0.2s;
       }
 
