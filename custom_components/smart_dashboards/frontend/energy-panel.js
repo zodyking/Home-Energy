@@ -1019,12 +1019,8 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face.single-outlet .single-receptacle {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        margin: 4px 0;
+        flex: 0 0 auto;
+        margin: auto 0;
       }
 
       .add-device-dropdown {
