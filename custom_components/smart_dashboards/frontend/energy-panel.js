@@ -217,14 +217,15 @@ class EnergyPanel extends HTMLElement {
 
         const outletConfig = roomConfig?.outlets?.[i];
         const outletThreshold = outletConfig?.threshold || 0;
-        const outletTotal = outlet.plug1.watts + outlet.plug2.watts;
+        const isSingleOutlet = outletConfig?.type === 'single_outlet';
+        const outletTotal = isSingleOutlet ? outlet.plug1.watts : outlet.plug1.watts + outlet.plug2.watts;
 
         const plug1Watts = outletCard.querySelector('.plug1-watts');
         const plug2Watts = outletCard.querySelector('.plug2-watts');
         const outletTotalEl = outletCard.querySelector('.outlet-total');
 
-        if (plug1Watts) plug1Watts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
-        if (plug2Watts) plug2Watts.textContent = `${outlet.plug2.watts.toFixed(1)} W`;
+        if (plug1Watts) plug1Watts.textContent = `${outlet.plug1.watts.toFixed(1)}W`;
+        if (plug2Watts) plug2Watts.textContent = `${outlet.plug2.watts.toFixed(1)}W`;
         if (outletTotalEl) {
           outletTotalEl.textContent = `${outletTotal.toFixed(1)} W`;
           outletTotalEl.classList.toggle('over-threshold', outletThreshold > 0 && outletTotal > outletThreshold);
@@ -839,7 +840,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face .outlet-name-top {
-        font-size: 7px;
+        font-size: 12px;
         font-weight: 600;
         color: rgba(0,0,0,0.62);
         white-space: nowrap;
@@ -880,7 +881,7 @@ class EnergyPanel extends HTMLElement {
         height: 26px;
         position: relative;
         margin: 0 auto 4px;
-        width: 44px;
+        width: 48px;
       }
 
       .outlet-card.outlet-face .slot {
@@ -893,8 +894,8 @@ class EnergyPanel extends HTMLElement {
         box-shadow: inset 0 2px 2px rgba(255,255,255,0.08), inset 0 -2px 2px rgba(0,0,0,0.35);
       }
 
-      .outlet-card.outlet-face .slot.left { left: 6px; }
-      .outlet-card.outlet-face .slot.right { right: 6px; }
+      .outlet-card.outlet-face .slot.left { left: 2px; }
+      .outlet-card.outlet-face .slot.right { right: 2px; }
 
       .outlet-card.outlet-face .slot.right::after {
         content: "";
@@ -951,14 +952,14 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face .plug-label {
-        font-size: 6px;
+        font-size: 8px;
         letter-spacing: 0.2px;
         color: rgba(0,0,0,0.55);
         text-transform: uppercase;
       }
 
       .outlet-card.outlet-face .plug-watts {
-        font-size: 8px;
+        font-size: 10px;
         font-weight: 700;
         color: rgba(0,0,0,0.78);
         font-variant-numeric: tabular-nums;
@@ -982,7 +983,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face .outlet-total {
-        font-size: 8px;
+        font-size: 10px;
         font-weight: 800;
         color: var(--panel-accent, #03a9f4);
         font-variant-numeric: tabular-nums;
@@ -1001,13 +1002,66 @@ class EnergyPanel extends HTMLElement {
       .outlet-card.outlet-face .threshold-badge {
         display: inline-flex;
         align-items: center;
-        font-size: 6px;
+        font-size: 8px;
         padding: 2px 4px;
         border-radius: 5px;
         color: rgba(0,0,0,0.60);
         background: rgba(0,0,0,0.06);
         border: 1px solid rgba(0,0,0,0.10);
         white-space: nowrap;
+      }
+
+      .outlet-card.outlet-face.single-outlet .faceplate {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .outlet-card.outlet-face.single-outlet .single-receptacle {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        margin: 4px 0;
+      }
+
+      .add-device-dropdown {
+        position: relative;
+      }
+
+      .add-device-menu {
+        position: absolute;
+        top: 100%;
+        right: 0;
+        margin-top: 4px;
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        z-index: 100;
+        min-width: 140px;
+        overflow: hidden;
+      }
+
+      .add-device-option {
+        display: block;
+        width: 100%;
+        padding: 10px 14px;
+        border: none;
+        background: transparent;
+        color: var(--primary-text-color);
+        font-size: 13px;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+
+      .add-device-option:hover {
+        background: rgba(3, 169, 244, 0.15);
+      }
+
+      .plugs-settings-grid.single-plug {
+        max-width: 320px;
       }
 
       /* Settings Styles */
@@ -1584,7 +1638,7 @@ class EnergyPanel extends HTMLElement {
             <div>
               <h3 class="room-name">${room.name}</h3>
               <div class="room-meta">
-                <span>${room.outlets?.length || 0} outlets</span>
+                <span>${room.outlets?.length || 0} devices</span>
                 ${room.threshold > 0 ? `
                   <span class="threshold-badge">
                     <svg viewBox="0 0 24 24">${icons.warning}</svg>
@@ -1612,11 +1666,41 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderOutletCard(outlet, index, outletData) {
+    const isSingleOutlet = (outlet.type || 'outlet') === 'single_outlet';
     const data = outletData || { plug1: { watts: 0 }, plug2: { watts: 0 } };
-    const outletTotal = (data.plug1?.watts || 0) + (data.plug2?.watts || 0);
+    const outletTotal = isSingleOutlet
+      ? (data.plug1?.watts || 0)
+      : (data.plug1?.watts || 0) + (data.plug2?.watts || 0);
     const isOverThreshold = outlet.threshold > 0 && outletTotal > outlet.threshold;
     const plug1Active = (data.plug1?.watts || 0) > 0.1;
     const plug2Active = (data.plug2?.watts || 0) > 0.1;
+
+    if (isSingleOutlet) {
+      return `
+      <div class="outlet-card outlet-face single-outlet" data-outlet-index="${index}">
+        <div class="faceplate">
+          <div class="outlet-name outlet-name-top" title="${(outlet.name || '').replace(/"/g, '&quot;')}">${outlet.name || ''}</div>
+          <div class="receptacle single-receptacle ${plug1Active ? 'active' : ''}">
+            <div class="holes" aria-hidden="true">
+              <span class="slot left"></span>
+              <span class="slot right"></span>
+              <span class="ground"></span>
+            </div>
+            <div class="plug-readout">
+              <span class="plug-label">Plug</span>
+              <span class="plug-watts plug1-watts">${(data.plug1?.watts || 0).toFixed(1)}W</span>
+            </div>
+          </div>
+          <div class="outlet-meta">
+            <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${outletTotal.toFixed(1)} W</div>
+            <div class="outlet-threshold">
+              <span class="threshold-badge">${outlet.threshold > 0 ? `${outlet.threshold}W` : '∞ W'}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    }
 
     return `
       <div class="outlet-card outlet-face" data-outlet-index="${index}">
@@ -1941,7 +2025,7 @@ class EnergyPanel extends HTMLElement {
         <div class="content-area">
           <div class="settings-tabs">
             <button class="settings-tab ${this._settingsTab === 'rooms' ? 'active' : ''}" data-tab="rooms">
-              Rooms & Outlets
+              Rooms & Devices
             </button>
             <button class="settings-tab ${this._settingsTab === 'tts' ? 'active' : ''}" data-tab="tts">
               TTS Settings
@@ -2457,11 +2541,17 @@ class EnergyPanel extends HTMLElement {
           <div class="divider"></div>
 
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-            <h4 style="margin: 0; font-size: 11px; color: var(--secondary-text-color);">Outlets</h4>
-            <button class="btn btn-secondary add-outlet-btn" data-room-index="${index}">
-              <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
-              Add
-            </button>
+            <h4 style="margin: 0; font-size: 11px; color: var(--secondary-text-color);">Devices</h4>
+            <div class="add-device-dropdown" data-room-index="${index}">
+              <button class="btn btn-secondary add-device-trigger">
+                <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
+                Add
+              </button>
+              <div class="add-device-menu" style="display: none;">
+                <button class="add-device-option" data-type="outlet">Outlet</button>
+                <button class="add-device-option" data-type="single_outlet">Single Outlet</button>
+              </div>
+            </div>
           </div>
 
           <div class="outlets-settings-list" id="outlets-list-${index}">
@@ -2473,11 +2563,12 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderOutletSettings(outlet, outletIndex, powerSensors, roomIndex, isCollapsed = true) {
+    const isSingleOutlet = (outlet.type || 'outlet') === 'single_outlet';
     const switches = this._getFilteredSwitches(roomIndex);
     
     // Sort switches by similarity to each plug sensor
     const plug1Switches = this._sortSwitchesBySimilarity(switches, outlet.plug1_entity);
-    const plug2Switches = this._sortSwitchesBySimilarity(switches, outlet.plug2_entity);
+    const plug2Switches = isSingleOutlet ? [] : this._sortSwitchesBySimilarity(switches, outlet.plug2_entity);
     
     // Helper to render switch options with best match indicator
     const renderSwitchOptions = (sortedSwitches, sensorEntity, currentSwitch) => {
@@ -2521,9 +2612,9 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
           
-          <div class="plugs-settings-grid">
+          <div class="plugs-settings-grid ${isSingleOutlet ? 'single-plug' : ''}">
             <div class="plug-settings-card" data-plug="1">
-              <div class="plug-settings-title">Plug 1</div>
+              <div class="plug-settings-title">${isSingleOutlet ? 'Plug' : 'Plug 1'}</div>
               <div class="form-group">
                 <label class="form-label">Power Sensor</label>
                 <select class="form-select outlet-plug1">
@@ -2551,7 +2642,7 @@ class EnergyPanel extends HTMLElement {
                 </button>
               </div>
             </div>
-            
+            ${isSingleOutlet ? '' : `
             <div class="plug-settings-card" data-plug="2">
               <div class="plug-settings-title">Plug 2</div>
               <div class="form-group">
@@ -2581,6 +2672,7 @@ class EnergyPanel extends HTMLElement {
                 </button>
               </div>
             </div>
+            `}
           </div>
         </div>
       </div>
@@ -2713,12 +2805,30 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
-    // Add outlet buttons
-    this.shadowRoot.querySelectorAll('.add-outlet-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const roomIndex = btn.dataset.roomIndex;
-        this._addOutlet(roomIndex);
+    // Add device dropdown (Outlet / Single Outlet)
+    this.shadowRoot.querySelectorAll('.add-device-dropdown').forEach(dropdown => {
+      const trigger = dropdown.querySelector('.add-device-trigger');
+      const menu = dropdown.querySelector('.add-device-menu');
+      const roomIndex = dropdown.dataset.roomIndex;
+      if (!trigger || !menu) return;
+      trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = menu.style.display === 'block';
+        this.shadowRoot.querySelectorAll('.add-device-menu').forEach(m => { m.style.display = 'none'; });
+        menu.style.display = isOpen ? 'none' : 'block';
       });
+      menu.querySelectorAll('.add-device-option').forEach(opt => {
+        opt.addEventListener('click', (e) => {
+          e.stopPropagation();
+          menu.style.display = 'none';
+          this._addOutlet(roomIndex, opt.dataset.type || 'outlet');
+        });
+      });
+    });
+    this.shadowRoot.addEventListener('click', (e) => {
+      if (!e.target.closest('.add-device-dropdown')) {
+        this.shadowRoot.querySelectorAll('.add-device-menu').forEach(m => { m.style.display = 'none'; });
+      }
     });
 
     // Area selectors - filter outlets when area changes
@@ -3010,8 +3120,26 @@ class EnergyPanel extends HTMLElement {
     const removeBtn = newCard.querySelector('.remove-room-btn');
     removeBtn.addEventListener('click', () => newCard.remove());
 
-    const addOutletBtn = newCard.querySelector('.add-outlet-btn');
-    addOutletBtn.addEventListener('click', () => this._addOutlet(index));
+    const addDeviceDropdown = newCard.querySelector('.add-device-dropdown');
+    if (addDeviceDropdown) {
+      const trigger = addDeviceDropdown.querySelector('.add-device-trigger');
+      const menu = addDeviceDropdown.querySelector('.add-device-menu');
+      if (trigger && menu) {
+        trigger.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isOpen = menu.style.display === 'block';
+          this.shadowRoot.querySelectorAll('.add-device-menu').forEach(m => { m.style.display = 'none'; });
+          menu.style.display = isOpen ? 'none' : 'block';
+        });
+        menu.querySelectorAll('.add-device-option').forEach(opt => {
+          opt.addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.style.display = 'none';
+            this._addOutlet(index, opt.dataset.type || 'outlet');
+          });
+        });
+      }
+    }
 
     const areaSelect = newCard.querySelector('.room-area-select');
     if (areaSelect) {
@@ -3034,7 +3162,7 @@ class EnergyPanel extends HTMLElement {
     toggleBtn.click();
   }
 
-  _addOutlet(roomIndex) {
+  _addOutlet(roomIndex, deviceType = 'outlet') {
     const sensors = this._getFilteredSensors(roomIndex);
     const list = this.shadowRoot.querySelector(`#outlets-list-${roomIndex}`);
     const roomCard = list.closest('.room-settings-card');
@@ -3047,13 +3175,14 @@ class EnergyPanel extends HTMLElement {
     // Generate new outlet index (will be at top, so re-index all)
     const newOutlet = {
       name: '',
+      type: deviceType,
       plug1_entity: '',
-      plug2_entity: '',
+      plug2_entity: deviceType === 'outlet' ? '' : null,
       plug1_switch: '',
-      plug2_switch: '',
+      plug2_switch: deviceType === 'outlet' ? '' : null,
       threshold: 0,
       plug1_shutoff: 0,
-      plug2_shutoff: 0,
+      plug2_shutoff: deviceType === 'outlet' ? 0 : null,
     };
     
     // Render as expanded (not collapsed)
@@ -3488,23 +3617,28 @@ class EnergyPanel extends HTMLElement {
       outletItems.forEach(item => {
         const outletName = item.querySelector('.outlet-name')?.value;
         const plug1 = item.querySelector('.outlet-plug1')?.value;
-        const plug2 = item.querySelector('.outlet-plug2')?.value;
+        const plug2Select = item.querySelector('.outlet-plug2');
+        const plug2 = plug2Select?.value;
         const plug1Switch = item.querySelector('.outlet-plug1-switch')?.value;
-        const plug2Switch = item.querySelector('.outlet-plug2-switch')?.value;
+        const plug2SwitchSelect = item.querySelector('.outlet-plug2-switch');
+        const plug2Switch = plug2SwitchSelect?.value;
         const outletThreshold = parseInt(item.querySelector('.outlet-threshold')?.value) || 0;
         const plug1Shutoff = parseInt(item.querySelector('.outlet-plug1-shutoff')?.value) || 0;
-        const plug2Shutoff = parseInt(item.querySelector('.outlet-plug2-shutoff')?.value) || 0;
+        const plug2ShutoffInput = item.querySelector('.outlet-plug2-shutoff');
+        const plug2Shutoff = plug2ShutoffInput ? (parseInt(plug2ShutoffInput.value) || 0) : 0;
+        const isSingleOutlet = !plug2Select;
 
         if (outletName) {
           outlets.push({
             name: outletName,
+            type: isSingleOutlet ? 'single_outlet' : 'outlet',
             plug1_entity: plug1 || null,
-            plug2_entity: plug2 || null,
+            plug2_entity: isSingleOutlet ? null : (plug2 || null),
             plug1_switch: plug1Switch || null,
-            plug2_switch: plug2Switch || null,
+            plug2_switch: isSingleOutlet ? null : (plug2Switch || null),
             threshold: outletThreshold,
             plug1_shutoff: plug1Shutoff,
-            plug2_shutoff: plug2Shutoff,
+            plug2_shutoff: isSingleOutlet ? 0 : plug2Shutoff,
           });
         }
       });
