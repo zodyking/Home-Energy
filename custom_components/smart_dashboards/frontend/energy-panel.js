@@ -210,25 +210,40 @@ class EnergyPanel extends HTMLElement {
         eventCounts[1].textContent = `⚡ ${shutoffs}`;
       }
 
-      // Update individual outlets
+      // Update individual devices
       room.outlets.forEach((outlet, i) => {
-        const outletCard = roomCard.querySelector(`.outlet-card[data-outlet-index="${i}"]`);
-        if (!outletCard) return;
+        const deviceCard = roomCard.querySelector(`[data-outlet-index="${i}"]`);
+        if (!deviceCard) return;
 
-        const outletConfig = roomConfig?.outlets?.[i];
-        const outletThreshold = outletConfig?.threshold || 0;
-        const isSingleOutlet = outletConfig?.type === 'single_outlet';
-        const outletTotal = isSingleOutlet ? outlet.plug1.watts : outlet.plug1.watts + outlet.plug2.watts;
+        const deviceConfig = roomConfig?.outlets?.[i];
+        const deviceThreshold = deviceConfig?.threshold || 0;
+        const deviceType = deviceConfig?.type || 'outlet';
+        const isSingleOutlet = deviceType === 'single_outlet';
+        const isAppliance = deviceType === 'stove' || deviceType === 'microwave';
+        const outletTotal = isAppliance || isSingleOutlet
+          ? outlet.plug1.watts
+          : outlet.plug1.watts + outlet.plug2.watts;
 
-        const plug1Watts = outletCard.querySelector('.plug1-watts');
-        const plug2Watts = outletCard.querySelector('.plug2-watts');
-        const outletTotalEl = outletCard.querySelector('.outlet-total');
+        const plug1Watts = deviceCard.querySelector('.plug1-watts');
+        const plug2Watts = deviceCard.querySelector('.plug2-watts');
+        const outletTotalEl = deviceCard.querySelector('.outlet-total');
+        const mwLcdWatts = deviceCard.querySelector('.mw-lcd-watts');
 
         if (plug1Watts) plug1Watts.textContent = `${outlet.plug1.watts.toFixed(1)}W`;
         if (plug2Watts) plug2Watts.textContent = `${outlet.plug2.watts.toFixed(1)}W`;
+        if (mwLcdWatts) mwLcdWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
         if (outletTotalEl) {
           outletTotalEl.textContent = `${outletTotal.toFixed(1)} W`;
-          outletTotalEl.classList.toggle('over-threshold', outletThreshold > 0 && outletTotal > outletThreshold);
+          outletTotalEl.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
+        }
+        if (isAppliance) {
+          const mwBody = deviceCard.querySelector('.mw-body');
+          if (mwBody) mwBody.classList.toggle('mw-on', outlet.plug1.watts > 0.1);
+          if (deviceType === 'stove') {
+            deviceCard.querySelectorAll('.stove-burner').forEach((b, idx) => {
+              b.classList.toggle('active', idx === 0 && outlet.plug1.watts > 0.1);
+            });
+          }
         }
       });
     });
@@ -1045,7 +1060,7 @@ class EnergyPanel extends HTMLElement {
         border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         z-index: 100;
-        min-width: 140px;
+        min-width: 160px;
         overflow: hidden;
       }
 
@@ -1068,6 +1083,137 @@ class EnergyPanel extends HTMLElement {
 
       .plugs-settings-grid.single-plug {
         grid-template-columns: 1fr;
+      }
+
+      .device-card.stove-card {
+        width: 162px;
+        min-width: 162px;
+        flex-shrink: 0;
+      }
+
+      .device-card.stove-card .stove-faceplate {
+        background: linear-gradient(#f7f7f7, #e9e9e9);
+        border: 1px solid rgba(0, 0, 0, 0.18);
+        border-radius: 9px;
+        padding: 8px 10px 6px;
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        min-height: 200px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .device-card.stove-card .stove-burners {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin: 12px 0;
+        min-height: 80px;
+      }
+
+      .device-card.stove-card .stove-burner {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: linear-gradient(#e0e0e0, #c0c0c0);
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+      }
+
+      .device-card.stove-card .stove-burner.active {
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 12px rgba(3, 169, 244, 0.4),
+          inset 0 2px 4px rgba(0, 0, 0, 0.15);
+      }
+
+      .device-card.microwave-card {
+        width: 162px;
+        min-width: 162px;
+        flex-shrink: 0;
+      }
+
+      .device-card.microwave-card .mw-faceplate {
+        background: linear-gradient(#f5f5f5, #e0e0e0);
+        border: 1px solid rgba(0, 0, 0, 0.18);
+        border-radius: 9px;
+        padding: 8px 10px 6px;
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        min-height: 200px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .device-card.microwave-card .mw-body {
+        flex: 1;
+        display: flex;
+        align-items: stretch;
+        width: 100%;
+        margin: 8px 0;
+        border-radius: 8px;
+        padding: 8px;
+        background: linear-gradient(180deg, rgba(235,235,235,0.95), rgba(190,190,190,0.95));
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
+      }
+
+      .device-card.microwave-card .mw-body.mw-on {
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.4), inset 0 1px 0 rgba(255,255,255,0.55);
+      }
+
+      .device-card.microwave-card .mw-door {
+        flex: 1;
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+        min-width: 0;
+      }
+
+      .device-card.microwave-card .mw-window {
+        flex: 1;
+        min-width: 0;
+        border-radius: 6px;
+        background: linear-gradient(180deg, rgba(25,25,25,0.95), rgba(40,40,40,0.95));
+        border: 1px solid rgba(0, 0, 0, 0.4);
+        position: relative;
+        overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+      }
+
+      .device-card.microwave-card .mw-lcd {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 8px 10px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+      }
+
+      .device-card.microwave-card .mw-lcd-watts {
+        font-size: 14px;
+        font-weight: 800;
+        color: rgba(255, 255, 255, 0.95);
+        font-variant-numeric: tabular-nums;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+      }
+
+      .device-card.microwave-card .mw-handle {
+        width: 10px;
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(160,160,160,0.95), rgba(120,120,120,0.95));
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
+      }
+
+      @media (max-width: 500px) {
+        .device-card.stove-card,
+        .device-card.microwave-card {
+          width: 144px;
+          min-width: 144px;
+        }
       }
 
       /* Settings Styles */
@@ -1668,7 +1814,72 @@ class EnergyPanel extends HTMLElement {
 
         <div class="room-content">
           <div class="outlets-grid">
-            ${(room.outlets || []).map((outlet, oi) => this._renderOutletCard(outlet, oi, roomData.outlets[oi])).join('')}
+            ${(room.outlets || []).map((device, oi) => this._renderDeviceCard(device, oi, roomData.outlets[oi])).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderDeviceCard(device, index, deviceData) {
+    const type = device.type || 'outlet';
+    if (type === 'stove') return this._renderStoveCard(device, index, deviceData);
+    if (type === 'microwave') return this._renderMicrowaveCard(device, index, deviceData);
+    return this._renderOutletCard(device, index, deviceData);
+  }
+
+  _renderStoveCard(device, index, deviceData) {
+    const data = deviceData || { plug1: { watts: 0 } };
+    const watts = data.plug1?.watts || 0;
+    const isOverThreshold = device.threshold > 0 && watts > device.threshold;
+    const isActive = watts > 0.1;
+
+    return `
+      <div class="device-card stove-card" data-outlet-index="${index}">
+        <div class="stove-faceplate">
+          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="stove-burners">
+            <div class="stove-burner ${isActive ? 'active' : ''}"></div>
+            <div class="stove-burner"></div>
+            <div class="stove-burner"></div>
+            <div class="stove-burner"></div>
+          </div>
+          <div class="outlet-meta">
+            <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
+            <div class="outlet-threshold">
+              <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderMicrowaveCard(device, index, deviceData) {
+    const data = deviceData || { plug1: { watts: 0 } };
+    const watts = data.plug1?.watts || 0;
+    const isOverThreshold = device.threshold > 0 && watts > device.threshold;
+    const isActive = watts > 0.1;
+
+    return `
+      <div class="device-card microwave-card" data-outlet-index="${index}">
+        <div class="mw-faceplate">
+          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="mw-body ${isActive ? 'mw-on' : ''}">
+            <div class="mw-door">
+              <div class="mw-window">
+                <div class="mw-lcd">
+                  <div class="mw-lcd-watts">${watts.toFixed(1)} W</div>
+                </div>
+              </div>
+              <div class="mw-handle"></div>
+            </div>
+          </div>
+          <div class="outlet-meta">
+            <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
+            <div class="outlet-threshold">
+              <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -2562,12 +2773,72 @@ class EnergyPanel extends HTMLElement {
               <div class="add-device-menu" style="display: none;">
                 <button class="add-device-option" data-type="outlet">Outlet</button>
                 <button class="add-device-option" data-type="single_outlet">Single Outlet</button>
+                <button class="add-device-option" data-type="stove">Stove</button>
+                <button class="add-device-option" data-type="microwave">Microwave</button>
               </div>
             </div>
           </div>
 
           <div class="outlets-settings-list" id="outlets-list-${index}">
-            ${(room.outlets || []).map((outlet, oi) => this._renderOutletSettings(outlet, oi, filteredSensors, index)).join('')}
+            ${(room.outlets || []).map((outlet, oi) => this._renderDeviceSettings(outlet, oi, filteredSensors, index)).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderDeviceSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed = true) {
+    const type = device.type || 'outlet';
+    if (type === 'stove' || type === 'microwave') {
+      return this._renderApplianceSettings(device, deviceIndex, powerSensors, roomIndex, type, isCollapsed);
+    }
+    return this._renderOutletSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
+  }
+
+  _renderApplianceSettings(device, deviceIndex, powerSensors, roomIndex, deviceType, isCollapsed = true) {
+    const displayName = device.name || (deviceType === 'stove' ? 'Unnamed Stove' : 'Unnamed Microwave');
+    const collapsedClass = isCollapsed ? 'collapsed' : '';
+
+    return `
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="${deviceType}" draggable="true">
+        <div class="outlet-settings-bar">
+          <div class="outlet-drag-handle" title="Drag to reorder">
+            <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0 4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
+          </div>
+          <span class="outlet-name-display ${device.name ? '' : 'empty'}">${displayName}</span>
+          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${deviceIndex}" title="Delete">
+            <svg viewBox="0 0 24 24">${icons.delete}</svg>
+          </button>
+          <div class="outlet-expand-icon">
+            <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+          </div>
+        </div>
+        <div class="outlet-settings-body">
+          <div class="outlet-settings-header">
+            <div class="form-group" style="flex: 1;">
+              <label class="form-label">${deviceType === 'stove' ? 'Stove' : 'Microwave'} Name</label>
+              <input type="text" class="form-input outlet-name" value="${device.name || ''}" placeholder="${deviceType === 'stove' ? 'Stove name...' : 'Microwave name...'}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Warn Limit</label>
+              <input type="number" class="form-input outlet-threshold" value="${device.threshold || ''}" placeholder="W" min="0" style="width: 70px;">
+            </div>
+          </div>
+          <div class="plugs-settings-grid single-plug">
+            <div class="plug-settings-card" data-plug="1">
+              <div class="plug-settings-title">Power Sensor</div>
+              <div class="form-group">
+                <label class="form-label">Power Sensor</label>
+                <select class="form-select outlet-plug1">
+                  <option value="">None</option>
+                  ${powerSensors.map(s => `
+                    <option value="${s.entity_id}" ${device.plug1_entity === s.entity_id ? 'selected' : ''}>
+                      ${s.friendly_name}
+                    </option>
+                  `).join('')}
+                </select>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -3184,21 +3455,22 @@ class EnergyPanel extends HTMLElement {
       item.classList.add('collapsed');
     });
     
-    // Generate new outlet index (will be at top, so re-index all)
+    // Generate new device based on type
+    const isAppliance = deviceType === 'stove' || deviceType === 'microwave';
     const newOutlet = {
       name: '',
       type: deviceType,
       plug1_entity: '',
       plug2_entity: deviceType === 'outlet' ? '' : null,
-      plug1_switch: '',
+      plug1_switch: isAppliance ? null : '',
       plug2_switch: deviceType === 'outlet' ? '' : null,
       threshold: 0,
-      plug1_shutoff: 0,
+      plug1_shutoff: isAppliance ? 0 : 0,
       plug2_shutoff: deviceType === 'outlet' ? 0 : null,
     };
     
     // Render as expanded (not collapsed)
-    const html = this._renderOutletSettings(newOutlet, 0, sensors, roomIndex, false);
+    const html = this._renderDeviceSettings(newOutlet, 0, sensors, roomIndex, false);
     
     // Insert at TOP of list
     list.insertAdjacentHTML('afterbegin', html);
@@ -3635,23 +3907,36 @@ class EnergyPanel extends HTMLElement {
         const plug2SwitchSelect = item.querySelector('.outlet-plug2-switch');
         const plug2Switch = plug2SwitchSelect?.value;
         const outletThreshold = parseInt(item.querySelector('.outlet-threshold')?.value) || 0;
-        const plug1Shutoff = parseInt(item.querySelector('.outlet-plug1-shutoff')?.value) || 0;
+        const plug1ShutoffInput = item.querySelector('.outlet-plug1-shutoff');
+        const plug1Shutoff = plug1ShutoffInput ? (parseInt(plug1ShutoffInput.value) || 0) : 0;
         const plug2ShutoffInput = item.querySelector('.outlet-plug2-shutoff');
         const plug2Shutoff = plug2ShutoffInput ? (parseInt(plug2ShutoffInput.value) || 0) : 0;
+        const plug1SwitchSelect = item.querySelector('.outlet-plug1-switch');
         const isSingleOutlet = !plug2Select;
+        const isAppliance = !plug1SwitchSelect;
 
         if (outletName) {
-          outlets.push({
+          const device = {
             name: outletName,
-            type: isSingleOutlet ? 'single_outlet' : 'outlet',
             plug1_entity: plug1 || null,
-            plug2_entity: isSingleOutlet ? null : (plug2 || null),
-            plug1_switch: plug1Switch || null,
-            plug2_switch: isSingleOutlet ? null : (plug2Switch || null),
             threshold: outletThreshold,
-            plug1_shutoff: plug1Shutoff,
-            plug2_shutoff: isSingleOutlet ? 0 : plug2Shutoff,
-          });
+          };
+          if (isAppliance) {
+            device.type = item.dataset.deviceType || 'stove';
+            device.plug2_entity = null;
+            device.plug1_switch = null;
+            device.plug2_switch = null;
+            device.plug1_shutoff = 0;
+            device.plug2_shutoff = 0;
+          } else {
+            device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
+            device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
+            device.plug1_switch = plug1Switch || null;
+            device.plug2_switch = isSingleOutlet ? null : (plug2Switch || null);
+            device.plug1_shutoff = plug1Shutoff;
+            device.plug2_shutoff = isSingleOutlet ? 0 : plug2Shutoff;
+          }
+          outlets.push(device);
         }
       });
 
