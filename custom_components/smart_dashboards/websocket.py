@@ -19,13 +19,11 @@ _LOGGER = logging.getLogger(__name__)
 def async_setup(hass: HomeAssistant) -> None:
     """Set up WebSocket API."""
     websocket_api.async_register_command(hass, websocket_get_config)
-    websocket_api.async_register_command(hass, websocket_save_cameras)
     websocket_api.async_register_command(hass, websocket_save_energy)
     websocket_api.async_register_command(hass, websocket_get_entities)
     websocket_api.async_register_command(hass, websocket_send_tts)
     websocket_api.async_register_command(hass, websocket_set_volume)
     websocket_api.async_register_command(hass, websocket_get_power_data)
-    websocket_api.async_register_command(hass, websocket_get_camera_stream_url)
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
     websocket_api.async_register_command(hass, websocket_get_areas)
     websocket_api.async_register_command(hass, websocket_get_switches)
@@ -52,27 +50,6 @@ async def websocket_get_config(
     config_manager = hass.data[DOMAIN].get("config_manager")
     if config_manager:
         connection.send_result(msg["id"], config_manager.config)
-    else:
-        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): "smart_dashboards/save_cameras",
-        vol.Required("config"): dict,
-    }
-)
-@websocket_api.async_response
-async def websocket_save_cameras(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict[str, Any],
-) -> None:
-    """Save cameras configuration."""
-    config_manager = hass.data[DOMAIN].get("config_manager")
-    if config_manager:
-        await config_manager.async_update_cameras(msg["config"])
-        connection.send_result(msg["id"], {"success": True})
     else:
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
 
@@ -110,10 +87,9 @@ async def websocket_get_entities(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Get available entities (cameras, media players, power sensors)."""
+    """Get available entities (media players, power sensors, etc.)."""
     entity_type = msg.get("entity_type")
     result: dict[str, list[dict[str, str]]] = {
-        "cameras": [],
         "media_players": [],
         "power_sensors": [],
         "binary_sensors": [],
@@ -122,13 +98,6 @@ async def websocket_get_entities(
     for state in hass.states.async_all():
         entity_id = state.entity_id
         friendly_name = state.attributes.get("friendly_name", entity_id)
-
-        if entity_type is None or entity_type == "camera":
-            if entity_id.startswith("camera."):
-                result["cameras"].append({
-                    "entity_id": entity_id,
-                    "friendly_name": friendly_name,
-                })
 
         if entity_type is None or entity_type == "media_player":
             if entity_id.startswith("media_player."):
@@ -382,34 +351,6 @@ async def websocket_get_areas(
         })
 
     connection.send_result(msg["id"], {"areas": areas})
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): "smart_dashboards/get_camera_stream_url",
-        vol.Required("entity_id"): str,
-    }
-)
-@websocket_api.async_response
-async def websocket_get_camera_stream_url(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict[str, Any],
-) -> None:
-    """Get camera stream URL."""
-    entity_id = msg["entity_id"]
-    
-    # Check if entity exists
-    state = hass.states.get(entity_id)
-    if state is None:
-        connection.send_error(msg["id"], "entity_not_found", f"Camera {entity_id} not found")
-        return
-
-    # Return the stream proxy URL
-    connection.send_result(msg["id"], {
-        "stream_url": f"/api/camera_proxy_stream/{entity_id}",
-        "snapshot_url": f"/api/camera_proxy/{entity_id}",
-    })
 
 
 @websocket_api.websocket_command(

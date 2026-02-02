@@ -52,11 +52,6 @@ class ConfigManager:
         return self._config
 
     @property
-    def cameras_config(self) -> dict[str, Any]:
-        """Return cameras configuration."""
-        return self._config.get("cameras", DEFAULT_CONFIG["cameras"])
-
-    @property
     def energy_config(self) -> dict[str, Any]:
         """Return energy configuration."""
         return self._config.get("energy", DEFAULT_CONFIG["energy"])
@@ -96,14 +91,6 @@ class ConfigManager:
         """Merge loaded config with defaults to ensure all keys exist."""
         result = deepcopy(DEFAULT_CONFIG)
 
-        # Merge cameras config
-        if "cameras" in loaded:
-            cameras = loaded["cameras"]
-            result["cameras"]["main_camera"] = cameras.get("main_camera")
-            result["cameras"]["sub_cameras"] = cameras.get("sub_cameras", [])
-            if "tts_settings" in cameras:
-                result["cameras"]["tts_settings"].update(cameras["tts_settings"])
-
         # Merge energy config
         if "energy" in loaded:
             energy = loaded["energy"]
@@ -116,52 +103,10 @@ class ConfigManager:
 
         return result
 
-    async def async_update_cameras(self, cameras_config: dict[str, Any]) -> None:
-        """Update cameras configuration."""
-        self._config["cameras"] = self._validate_cameras_config(cameras_config)
-        await self.async_save()
-
     async def async_update_energy(self, energy_config: dict[str, Any]) -> None:
         """Update energy configuration."""
         self._config["energy"] = self._validate_energy_config(energy_config)
         await self.async_save()
-
-    def _validate_cameras_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        """Validate and sanitize cameras configuration."""
-        validated = deepcopy(DEFAULT_CONFIG["cameras"])
-
-        # Validate main camera
-        main_camera = config.get("main_camera")
-        if main_camera and isinstance(main_camera, dict):
-            validated["main_camera"] = {
-                "entity_id": main_camera.get("entity_id"),
-                "media_player": main_camera.get("media_player"),
-            }
-        elif main_camera and isinstance(main_camera, str):
-            validated["main_camera"] = {
-                "entity_id": main_camera,
-                "media_player": None,
-            }
-
-        # Validate sub cameras
-        sub_cameras = config.get("sub_cameras", [])
-        validated["sub_cameras"] = []
-        for cam in sub_cameras:
-            if isinstance(cam, dict) and cam.get("entity_id"):
-                validated["sub_cameras"].append({
-                    "entity_id": cam["entity_id"],
-                    "media_player": cam.get("media_player"),
-                })
-
-        # Validate TTS settings
-        tts = config.get("tts_settings", {})
-        validated["tts_settings"] = {
-            "language": tts.get("language", DEFAULT_CONFIG["cameras"]["tts_settings"]["language"]),
-            "speed": float(tts.get("speed", DEFAULT_CONFIG["cameras"]["tts_settings"]["speed"])),
-            "volume": float(tts.get("volume", DEFAULT_CONFIG["cameras"]["tts_settings"]["volume"])),
-        }
-
-        return validated
 
     def _validate_energy_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """Validate and sanitize energy configuration."""
