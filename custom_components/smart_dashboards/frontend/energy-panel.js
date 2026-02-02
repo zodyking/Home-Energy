@@ -813,8 +813,8 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face {
-        width: 108px;
-        min-width: 108px;
+        width: 81px;
+        min-width: 81px;
         flex-shrink: 0;
         padding: 0;
         border: none;
@@ -824,25 +824,36 @@ class EnergyPanel extends HTMLElement {
 
       @media (max-width: 500px) {
         .outlet-card.outlet-face {
-          width: 96px;
-          min-width: 96px;
+          width: 72px;
+          min-width: 72px;
         }
       }
 
       .outlet-card.outlet-face .faceplate {
         background: linear-gradient(#f7f7f7, #e9e9e9);
         border: 1px solid rgba(0, 0, 0, 0.18);
-        border-radius: 12px;
-        padding: 10px 10px 8px;
-        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        border-radius: 9px;
+        padding: 6px 6px 5px;
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
         position: relative;
+      }
+
+      .outlet-card.outlet-face .outlet-name-top {
+        font-size: 7px;
+        font-weight: 600;
+        color: rgba(0,0,0,0.62);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-align: center;
+        margin-bottom: 4px;
       }
 
       .outlet-card.outlet-face .faceplate::before {
         content: "";
         position: absolute;
-        inset: 6px;
-        border-radius: 10px;
+        inset: 4px;
+        border-radius: 7px;
         box-shadow: inset 0 0 0 1px rgba(0,0,0,0.07);
         pointer-events: none;
       }
@@ -850,48 +861,48 @@ class EnergyPanel extends HTMLElement {
       .outlet-card.outlet-face .receptacle {
         background: linear-gradient(#efefef, #dedede);
         border: 1px solid rgba(0, 0, 0, 0.22);
-        border-radius: 10px;
-        padding: 10px 8px 6px;
+        border-radius: 8px;
+        padding: 6px 6px 4px;
         position: relative;
-        box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
       }
 
       .outlet-card.outlet-face .receptacle + .center-screw {
-        margin: 8px auto;
+        margin: 5px auto;
       }
 
       .outlet-card.outlet-face .receptacle.active {
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 10px rgba(3, 169, 244, 0.4),
-          inset 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 8px rgba(3, 169, 244, 0.4),
+          inset 0 2px 4px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
       }
 
       .outlet-card.outlet-face .holes {
-        height: 34px;
+        height: 26px;
         position: relative;
-        margin: 0 auto 6px;
-        width: 58px;
+        margin: 0 auto 4px;
+        width: 44px;
       }
 
       .outlet-card.outlet-face .slot {
         position: absolute;
         top: 2px;
-        width: 10px;
-        height: 22px;
+        width: 8px;
+        height: 16px;
         background: #2f2f2f;
         border-radius: 2px;
         box-shadow: inset 0 2px 2px rgba(255,255,255,0.08), inset 0 -2px 2px rgba(0,0,0,0.35);
       }
 
-      .outlet-card.outlet-face .slot.left { left: 8px; }
-      .outlet-card.outlet-face .slot.right { right: 8px; }
+      .outlet-card.outlet-face .slot.left { left: 6px; }
+      .outlet-card.outlet-face .slot.right { right: 6px; }
 
       .outlet-card.outlet-face .slot.right::after {
         content: "";
         position: absolute;
-        top: 4px;
-        right: 2px;
+        top: 3px;
+        right: 1px;
         width: 2px;
-        height: 12px;
+        height: 9px;
         background: rgba(255,255,255,0.08);
         border-radius: 1px;
       }
@@ -909,8 +920,8 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face .center-screw {
-        width: 14px;
-        height: 14px;
+        width: 10px;
+        height: 10px;
         border-radius: 50%;
         background: linear-gradient(#d8d8d8, #bdbdbd);
         border: 1px solid rgba(0, 0, 0, 0.25);
@@ -935,19 +946,19 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
-        gap: 6px;
-        padding: 0 2px;
+        gap: 4px;
+        padding: 0 1px;
       }
 
       .outlet-card.outlet-face .plug-label {
-        font-size: 8px;
+        font-size: 6px;
         letter-spacing: 0.2px;
         color: rgba(0,0,0,0.55);
         text-transform: uppercase;
       }
 
       .outlet-card.outlet-face .plug-watts {
-        font-size: 10px;
+        font-size: 8px;
         font-weight: 700;
         color: rgba(0,0,0,0.78);
         font-variant-numeric: tabular-nums;
@@ -955,14 +966,14 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face .outlet-meta {
-        margin-top: 8px;
+        margin-top: 5px;
         text-align: center;
-        padding-top: 6px;
+        padding-top: 4px;
         border-top: 1px solid rgba(0,0,0,0.10);
       }
 
       .outlet-card.outlet-face .outlet-name {
-        font-size: 9px;
+        font-size: 7px;
         font-weight: 600;
         color: rgba(0,0,0,0.62);
         white-space: nowrap;
@@ -971,7 +982,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face .outlet-total {
-        font-size: 11px;
+        font-size: 8px;
         font-weight: 800;
         color: var(--panel-accent, #03a9f4);
         font-variant-numeric: tabular-nums;
@@ -984,15 +995,15 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face .outlet-threshold {
-        margin-top: 4px;
+        margin-top: 3px;
       }
 
       .outlet-card.outlet-face .threshold-badge {
         display: inline-flex;
         align-items: center;
-        font-size: 8px;
-        padding: 2px 5px;
-        border-radius: 6px;
+        font-size: 6px;
+        padding: 2px 4px;
+        border-radius: 5px;
         color: rgba(0,0,0,0.60);
         background: rgba(0,0,0,0.06);
         border: 1px solid rgba(0,0,0,0.10);
@@ -1610,6 +1621,7 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="outlet-card outlet-face" data-outlet-index="${index}">
         <div class="faceplate">
+          <div class="outlet-name outlet-name-top" title="${(outlet.name || '').replace(/"/g, '&quot;')}">${outlet.name || ''}</div>
           <div class="receptacle ${plug1Active ? 'active' : ''}">
             <div class="holes" aria-hidden="true">
               <span class="slot left"></span>
@@ -1637,7 +1649,6 @@ class EnergyPanel extends HTMLElement {
           </div>
 
           <div class="outlet-meta">
-            <div class="outlet-name" title="${(outlet.name || '').replace(/"/g, '&quot;')}">${outlet.name || ''}</div>
             <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${outletTotal.toFixed(1)} W</div>
             <div class="outlet-threshold">
               <span class="threshold-badge">${outlet.threshold > 0 ? `${outlet.threshold}W` : '∞ W'}</span>
