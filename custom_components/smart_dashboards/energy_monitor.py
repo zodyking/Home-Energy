@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_BREAKER_SHUTOFF_MSG,
     DEFAULT_STOVE_ON_MSG,
     DEFAULT_STOVE_OFF_MSG,
+    DEFAULT_STOVE_TIMER_STARTED_MSG,
     DEFAULT_STOVE_15MIN_WARN_MSG,
     DEFAULT_STOVE_30SEC_WARN_MSG,
     DEFAULT_STOVE_AUTO_OFF_MSG,
@@ -612,8 +613,10 @@ class EnergyMonitor:
                 return
         
         # Get current presence state
+        # Present: detected, on | Not present: clear, cleared, unavailable, unknown, off
         presence_state = self.hass.states.get(presence_sensor)
-        presence_detected = presence_state and presence_state.state == "on"
+        state_val = (presence_state.state or "").lower() if presence_state else ""
+        presence_detected = state_val in ("detected", "on")
         
         # Detect stove state changes
         if stove_is_on and self._stove_state != "on":
@@ -675,11 +678,28 @@ class EnergyMonitor:
         elif not presence_detected:
             # No presence - manage timer
             if self._stove_last_presence == "on":
-                # Just left - start cooking timer
+                # Just left - start cooking timer and announce
                 self._stove_timer_start = dt_util.now()
                 self._stove_timer_phase = "15min"
                 self._stove_15min_warn_sent = False
                 self._stove_30sec_warn_sent = False
+                if media_player:
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg_template = tts_settings.get(
+                        "stove_timer_started_msg", DEFAULT_STOVE_TIMER_STARTED_MSG
+                    )
+                    message = msg_template.format(
+                        prefix=prefix,
+                        cooking_time_minutes=cooking_time_minutes,
+                        final_warning_seconds=final_warning_sec,
+                    )
+                    await async_send_tts(
+                        self.hass,
+                        media_player=media_player,
+                        message=message,
+                        language=tts_settings.get("language"),
+                        volume=volume,
+                    )
                 _LOGGER.info("Presence left - starting cooking timer (%d min)", cooking_time_minutes)
             
             self._stove_last_presence = "off"
@@ -696,7 +716,11 @@ class EnergyMonitor:
                             if media_player:
                                 prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                                 msg_template = tts_settings.get("stove_15min_warn_msg", DEFAULT_STOVE_15MIN_WARN_MSG)
-                                message = msg_template.format(prefix=prefix)
+                                message = msg_template.format(
+                                    prefix=prefix,
+                                    cooking_time_minutes=cooking_time_minutes,
+                                    final_warning_seconds=final_warning_sec,
+                                )
                                 await async_send_tts(
                                     self.hass,
                                     media_player=media_player,
@@ -720,7 +744,11 @@ class EnergyMonitor:
                             if media_player:
                                 prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                                 msg_template = tts_settings.get("stove_30sec_warn_msg", DEFAULT_STOVE_30SEC_WARN_MSG)
-                                message = msg_template.format(prefix=prefix)
+                                message = msg_template.format(
+                                    prefix=prefix,
+                                    cooking_time_minutes=cooking_time_minutes,
+                                    final_warning_seconds=final_warning_sec,
+                                )
                                 await async_send_tts(
                                     self.hass,
                                     media_player=media_player,
