@@ -1023,6 +1023,14 @@ class EnergyPanel extends HTMLElement {
         margin: auto 0;
       }
 
+      .outlet-card.outlet-face.single-outlet .plate-screw:first-of-type {
+        margin: 4px auto 16px;
+      }
+
+      .outlet-card.outlet-face.single-outlet .plate-screw:last-of-type {
+        margin: 16px auto 4px;
+      }
+
       .add-device-dropdown {
         position: relative;
       }
@@ -1682,6 +1690,7 @@ class EnergyPanel extends HTMLElement {
       <div class="outlet-card outlet-face single-outlet" data-outlet-index="${index}">
         <div class="faceplate">
           <div class="outlet-name outlet-name-top" title="${(outlet.name || '').replace(/"/g, '&quot;')}">${outlet.name || ''}</div>
+          <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="receptacle single-receptacle ${plug1Active ? 'active' : ''}">
             <div class="holes" aria-hidden="true">
               <span class="slot left"></span>
@@ -1693,6 +1702,7 @@ class EnergyPanel extends HTMLElement {
               <span class="plug-watts plug1-watts">${(data.plug1?.watts || 0).toFixed(1)}W</span>
             </div>
           </div>
+          <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="outlet-meta">
             <div class="outlet-total ${isOverThreshold ? 'over-threshold' : ''}">${outletTotal.toFixed(1)} W</div>
             <div class="outlet-threshold">
