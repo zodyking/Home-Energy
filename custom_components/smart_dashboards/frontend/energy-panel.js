@@ -1465,7 +1465,6 @@ class EnergyPanel extends HTMLElement {
       .device-card.minisplit-card {
         width: 243px;
         min-width: 243px;
-        min-height: 220px;
         flex-shrink: 0;
         background: transparent;
       }
@@ -1475,7 +1474,7 @@ class EnergyPanel extends HTMLElement {
         border: none;
         padding: 6px 6px 5px;
         box-shadow: none;
-        min-height: 220px;
+        min-height: 200px;
         display: flex;
         flex-direction: column;
         align-items: center;
