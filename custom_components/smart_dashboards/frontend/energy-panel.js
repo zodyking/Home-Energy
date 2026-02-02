@@ -840,7 +840,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face .outlet-name-top {
-        font-size: 12px;
+        font-size: 14px;
         font-weight: 600;
         color: rgba(0,0,0,0.62);
         white-space: nowrap;
@@ -1015,6 +1015,7 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: center;
+        min-height: 155px;
       }
 
       .outlet-card.outlet-face.single-outlet .single-receptacle {
@@ -1022,6 +1023,7 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         justify-content: center;
+        align-items: center;
         margin: 4px 0;
       }
 
@@ -1061,7 +1063,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .plugs-settings-grid.single-plug {
-        max-width: 320px;
+        grid-template-columns: 1fr;
       }
 
       /* Settings Styles */
@@ -1098,9 +1100,13 @@ class EnergyPanel extends HTMLElement {
         margin-bottom: 4px;
       }
 
-      .room-settings-body .form-input,
-      .room-settings-body .form-select {
+      .room-settings-body .form-input {
         padding: 8px 10px;
+        font-size: 12px;
+      }
+
+      .room-settings-body .form-select {
+        padding: 8px 32px 8px 10px;
         font-size: 12px;
       }
 
@@ -1250,7 +1256,7 @@ class EnergyPanel extends HTMLElement {
 
       .plug-settings-card .form-input,
       .plug-settings-card .form-select {
-        padding: 6px 8px;
+        padding: 6px 32px 6px 8px;
         font-size: 11px;
       }
 
