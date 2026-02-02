@@ -1496,48 +1496,70 @@ class EnergyPanel extends HTMLElement {
       }
 
       .device-card.minisplit-card .ms-unit {
-        flex: 1;
-        width: 92%;
-        max-width: 220px;
-        margin: 4px 0;
-        border-radius: 18px 18px 14px 14px;
-        background: linear-gradient(180deg, #f8f8f8, #e8e8e8);
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        box-shadow: 0 6px 14px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.9);
+        flex: 0 0 auto;
+        width: 88%;
+        max-width: 200px;
+        height: 72px;
+        margin: 12px auto;
         position: relative;
-        overflow: hidden;
+        overflow: visible;
+        /* Mini-split shape: tapered, narrower at bottom - mimics real unit, not a perfect rectangle */
+        clip-path: polygon(0 0, 100% 0, 96% 100%, 4% 100%);
+        border-radius: 14px 14px 8px 8px;
+        /* Main body gradient - light from upper left, shading toward lower right */
+        background: linear-gradient(145deg, #ffffff 0%, #fafafa 20%, #f2f2f2 50%, #eaeaea 80%, #e2e2e2 100%);
+        border: 1px solid rgba(0, 0, 0, 0.06);
+        box-shadow:
+          6px 8px 18px rgba(0,0,0,0.14),
+          2px 4px 8px rgba(0,0,0,0.08),
+          inset 0 1px 0 rgba(255,255,255,0.92);
       }
 
+      /* Top bevel - subtle darker edge suggesting 3D curve */
       .device-card.minisplit-card .ms-unit::before {
         content: "";
         position: absolute;
         top: 0;
         left: 0;
         right: 0;
-        height: 20px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.6), transparent);
-        opacity: 0.9;
+        height: 14px;
+        border-radius: 14px 14px 0 0;
+        background: linear-gradient(180deg, rgba(220,222,225,0.5) 0%, rgba(255,255,255,0) 100%);
+        pointer-events: none;
+      }
+
+      /* Right-side shading - depth from light source upper-left */
+      .device-card.minisplit-card .ms-unit::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 35%;
+        background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(0,0,0,0.04) 50%, rgba(0,0,0,0.08) 100%);
+        pointer-events: none;
       }
 
       .device-card.minisplit-card .ms-lcd {
         position: absolute;
-        top: 8px;
+        top: 10px;
         left: 50%;
         transform: translateX(-50%);
-        width: 70%;
-        min-width: 80px;
-        height: 16px;
+        width: 20%;
+        min-width: 44px;
+        max-width: 52px;
+        height: 12px;
         display: flex;
         align-items: center;
         justify-content: center;
-        border-radius: 8px;
-        background: linear-gradient(180deg, rgba(35,35,38,0.95), rgba(15,15,18,0.95));
-        border: 1px solid rgba(0, 0, 0, 0.4);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+        border-radius: 4px;
+        background: linear-gradient(180deg, rgba(45,45,48,0.95), rgba(25,25,28,0.95));
+        border: 1px solid rgba(0, 0, 0, 0.35);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
       }
 
       .device-card.minisplit-card .ms-lcd-watts {
-        font-size: 10px;
+        font-size: 9px;
         font-weight: 800;
         color: var(--panel-accent, #03a9f4);
         font-variant-numeric: tabular-nums;
@@ -1549,36 +1571,71 @@ class EnergyPanel extends HTMLElement {
 
       .device-card.minisplit-card .ms-unit.ms-on .ms-lcd {
         border-color: rgba(3,169,244,0.4);
-        box-shadow: 0 0 8px rgba(3,169,244,0.2), inset 0 1px 0 rgba(255,255,255,0.08);
+        box-shadow: 0 0 6px rgba(3,169,244,0.2), inset 0 1px 0 rgba(255,255,255,0.06);
+      }
+
+      /* Recessed upper strip - light grey band for display area */
+      .device-card.minisplit-card .ms-upper-panel {
+        position: absolute;
+        top: 0;
+        left: 8%;
+        right: 8%;
+        height: 22px;
+        background: linear-gradient(180deg, rgba(245,245,248,0.9) 0%, rgba(232,232,236,0.95) 100%);
+        border-radius: 6px 6px 0 0;
+        box-shadow: inset 0 1px 2px rgba(0,0,0,0.06);
       }
 
       .device-card.minisplit-card .ms-vent {
         position: absolute;
         left: 8px;
         right: 8px;
-        bottom: 8px;
-        height: 28px;
-        border-radius: 12px;
-        background: linear-gradient(180deg, #c8c8c8, #a8a8a8);
-        border: 1px solid rgba(0, 0, 0, 0.15);
+        bottom: 4px;
+        height: 20px;
+        border-radius: 0 0 8px 8px;
+        /* Recessed vent - lighter top bevel, darker interior */
+        background: linear-gradient(180deg, #c8c8cc 0%, #b0b0b4 20%, #9a9a9e 100%);
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.15);
       }
 
-      .device-card.minisplit-card .ms-slats {
+      /* Grey bevel strip above vent - transition from white body */
+      .device-card.minisplit-card .ms-vent::before {
+        content: "";
         position: absolute;
-        left: 10px;
-        right: 10px;
+        left: -2px;
+        right: -2px;
+        top: -5px;
+        height: 5px;
+        background: linear-gradient(180deg, rgba(200,202,206,0.95), rgba(180,182,186,0.95));
+        border-radius: 2px 2px 0 0;
+      }
+
+      .device-card.minisplit-card .ms-vent-inner {
+        position: absolute;
+        left: 6px;
+        right: 6px;
         top: 50%;
         transform: translateY(-50%);
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 3px;
         justify-content: center;
       }
 
       .device-card.minisplit-card .ms-slat {
-        height: 2px;
-        border-radius: 1px;
-        background: rgba(0, 0, 0, 0.5);
+        height: 1px;
+        background: #1a1a1a;
+      }
+
+      .device-card.minisplit-card .ms-vent-edge {
+        position: absolute;
+        left: 4px;
+        right: 4px;
+        bottom: 0;
+        height: 1px;
+        background: rgba(0, 0, 0, 0.25);
+        border-radius: 0 0 6px 6px;
       }
 
       @media (max-width: 500px) {
@@ -2308,11 +2365,14 @@ class EnergyPanel extends HTMLElement {
         <div class="ms-faceplate">
           <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
           <div class="ms-unit ${isActive ? 'ms-on' : ''}">
-            <div class="ms-lcd">
-              <div class="ms-lcd-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
+            <div class="ms-upper-panel">
+              <div class="ms-lcd">
+                <div class="ms-lcd-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
+              </div>
             </div>
+            <div class="ms-body"></div>
             <div class="ms-vent">
-              <div class="ms-slats">
+              <div class="ms-vent-inner">
                 <span class="ms-slat"></span>
                 <span class="ms-slat"></span>
                 <span class="ms-slat"></span>
