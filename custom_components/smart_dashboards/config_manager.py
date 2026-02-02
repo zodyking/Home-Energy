@@ -129,7 +129,7 @@ class ConfigManager:
                 for outlet in room.get("outlets", []):
                     if isinstance(outlet, dict) and outlet.get("name"):
                         outlet_type = outlet.get("type", "outlet")
-                        if outlet_type not in ("outlet", "single_outlet", "stove", "microwave"):
+                        if outlet_type not in ("outlet", "single_outlet", "stove", "microwave", "minisplit"):
                             outlet_type = "outlet"
                         item = {
                             "name": outlet["name"],
@@ -143,7 +143,7 @@ class ConfigManager:
                             item["plug2_switch"] = outlet.get("plug2_switch")
                             item["plug1_shutoff"] = int(outlet.get("plug1_shutoff", 0))
                             item["plug2_shutoff"] = int(outlet.get("plug2_shutoff", 0))
-                        elif outlet_type == "single_outlet":
+                        elif outlet_type in ("single_outlet", "minisplit"):
                             item["plug2_entity"] = None
                             item["plug1_switch"] = outlet.get("plug1_switch")
                             item["plug2_switch"] = None

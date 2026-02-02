@@ -219,8 +219,9 @@ class EnergyPanel extends HTMLElement {
         const deviceThreshold = deviceConfig?.threshold || 0;
         const deviceType = deviceConfig?.type || 'outlet';
         const isSingleOutlet = deviceType === 'single_outlet';
+        const isMinisplit = deviceType === 'minisplit';
         const isAppliance = deviceType === 'stove' || deviceType === 'microwave';
-        const outletTotal = isAppliance || isSingleOutlet
+        const outletTotal = isAppliance || isSingleOutlet || isMinisplit
           ? outlet.plug1.watts
           : outlet.plug1.watts + outlet.plug2.watts;
 
@@ -229,12 +230,17 @@ class EnergyPanel extends HTMLElement {
         const outletTotalEl = deviceCard.querySelector('.outlet-total');
         const mwLcdWatts = deviceCard.querySelector('.mw-lcd-watts');
         const stoveDoorWatts = deviceCard.querySelector('.stove-door-watts');
+        const msLcdWatts = deviceCard.querySelector('.ms-lcd-watts');
 
         if (plug1Watts) plug1Watts.textContent = `${outlet.plug1.watts.toFixed(1)}W`;
         if (plug2Watts) plug2Watts.textContent = `${outlet.plug2.watts.toFixed(1)}W`;
         if (mwLcdWatts) {
           mwLcdWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
           mwLcdWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
+        }
+        if (msLcdWatts) {
+          msLcdWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
+          msLcdWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
         }
         if (stoveDoorWatts) {
           stoveDoorWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
@@ -254,6 +260,10 @@ class EnergyPanel extends HTMLElement {
             if (ovenDoor) ovenDoor.classList.toggle('active', active);
             if (firstKnob) firstKnob.classList.toggle('active', active);
           }
+        }
+        if (isMinisplit) {
+          const msUnit = deviceCard.querySelector('.ms-unit');
+          if (msUnit) msUnit.classList.toggle('ms-on', outlet.plug1.watts > 0.1);
         }
       });
     });
@@ -1102,7 +1112,8 @@ class EnergyPanel extends HTMLElement {
       }
 
       .device-card.stove-card .outlet-name-top,
-      .device-card.microwave-card .outlet-name-top {
+      .device-card.microwave-card .outlet-name-top,
+      .device-card.minisplit-card .outlet-name-top {
         font-size: 12px;
         color: var(--primary-text-color);
       }
@@ -1451,9 +1462,129 @@ class EnergyPanel extends HTMLElement {
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
       }
 
+      .device-card.minisplit-card {
+        width: 243px;
+        min-width: 243px;
+        flex-shrink: 0;
+        background: transparent;
+      }
+
+      .device-card.minisplit-card .ms-faceplate {
+        background: transparent;
+        border: none;
+        padding: 6px 6px 5px;
+        box-shadow: none;
+        min-height: 200px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .device-card.minisplit-card .outlet-name-top,
+      .device-card.minisplit-card .outlet-meta,
+      .device-card.minisplit-card .threshold-badge {
+        color: var(--primary-text-color);
+      }
+
+      .device-card.minisplit-card .outlet-meta {
+        border-top-color: rgba(255,255,255,0.08);
+      }
+
+      .device-card.minisplit-card .threshold-badge {
+        background: rgba(255,255,255,0.08);
+        border-color: rgba(255,255,255,0.12);
+      }
+
+      .device-card.minisplit-card .ms-unit {
+        flex: 1;
+        width: 92%;
+        max-width: 220px;
+        margin: 4px 0;
+        border-radius: 18px 18px 14px 14px;
+        background: linear-gradient(180deg, #f8f8f8, #e8e8e8);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        box-shadow: 0 6px 14px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.9);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .device-card.minisplit-card .ms-unit::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 20px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.6), transparent);
+        opacity: 0.9;
+      }
+
+      .device-card.minisplit-card .ms-lcd {
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 70%;
+        min-width: 80px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(35,35,38,0.95), rgba(15,15,18,0.95));
+        border: 1px solid rgba(0, 0, 0, 0.4);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+      }
+
+      .device-card.minisplit-card .ms-lcd-watts {
+        font-size: 10px;
+        font-weight: 800;
+        color: var(--panel-accent, #03a9f4);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .device-card.minisplit-card .ms-lcd-watts.over-threshold {
+        color: var(--panel-danger, #ff5252);
+      }
+
+      .device-card.minisplit-card .ms-unit.ms-on .ms-lcd {
+        border-color: rgba(3,169,244,0.4);
+        box-shadow: 0 0 8px rgba(3,169,244,0.2), inset 0 1px 0 rgba(255,255,255,0.08);
+      }
+
+      .device-card.minisplit-card .ms-vent {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        height: 28px;
+        border-radius: 12px;
+        background: linear-gradient(180deg, #c8c8c8, #a8a8a8);
+        border: 1px solid rgba(0, 0, 0, 0.15);
+      }
+
+      .device-card.minisplit-card .ms-slats {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        justify-content: center;
+      }
+
+      .device-card.minisplit-card .ms-slat {
+        height: 2px;
+        border-radius: 1px;
+        background: rgba(0, 0, 0, 0.5);
+      }
+
       @media (max-width: 500px) {
         .device-card.stove-card,
-        .device-card.microwave-card {
+        .device-card.microwave-card,
+        .device-card.minisplit-card {
           width: 216px;
           min-width: 216px;
         }
@@ -1496,6 +1627,11 @@ class EnergyPanel extends HTMLElement {
       .room-settings-body .form-input {
         padding: 8px 10px;
         font-size: 12px;
+      }
+
+      .room-settings-body .form-input.threshold-disabled:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
       }
 
       .room-settings-body .form-select {
@@ -2068,6 +2204,7 @@ class EnergyPanel extends HTMLElement {
     const type = device.type || 'outlet';
     if (type === 'stove') return this._renderStoveCard(device, index, deviceData);
     if (type === 'microwave') return this._renderMicrowaveCard(device, index, deviceData);
+    if (type === 'minisplit') return this._renderMinisplitCard(device, index, deviceData);
     return this._renderOutletCard(device, index, deviceData);
   }
 
@@ -2103,7 +2240,7 @@ class EnergyPanel extends HTMLElement {
           </div>
           <div class="outlet-meta stove-meta">
             <div class="outlet-threshold">
-              <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
+              <span class="threshold-badge">∞ W</span>
             </div>
           </div>
         </div>
@@ -2151,6 +2288,39 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
           <div class="outlet-meta mw-meta">
+            <div class="outlet-threshold">
+              <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderMinisplitCard(device, index, deviceData) {
+    const data = deviceData || { plug1: { watts: 0 } };
+    const watts = data.plug1?.watts || 0;
+    const isOverThreshold = device.threshold > 0 && watts > device.threshold;
+    const isActive = watts > 0.1;
+
+    return `
+      <div class="device-card minisplit-card" data-outlet-index="${index}">
+        <div class="ms-faceplate">
+          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="ms-unit ${isActive ? 'ms-on' : ''}">
+            <div class="ms-lcd">
+              <div class="ms-lcd-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
+            </div>
+            <div class="ms-vent">
+              <div class="ms-slats">
+                <span class="ms-slat"></span>
+                <span class="ms-slat"></span>
+                <span class="ms-slat"></span>
+                <span class="ms-slat"></span>
+              </div>
+            </div>
+          </div>
+          <div class="outlet-meta ms-meta">
             <div class="outlet-threshold">
               <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
             </div>
@@ -3049,6 +3219,7 @@ class EnergyPanel extends HTMLElement {
                 <button class="add-device-option" data-type="single_outlet">Single Outlet</button>
                 <button class="add-device-option" data-type="stove">Stove</button>
                 <button class="add-device-option" data-type="microwave">Microwave</button>
+                <button class="add-device-option" data-type="minisplit">Mini-Split (Heater/AC)</button>
               </div>
             </div>
           </div>
@@ -3066,7 +3237,82 @@ class EnergyPanel extends HTMLElement {
     if (type === 'stove' || type === 'microwave') {
       return this._renderApplianceSettings(device, deviceIndex, powerSensors, roomIndex, type, isCollapsed);
     }
+    if (type === 'minisplit') {
+      return this._renderMinisplitSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
+    }
     return this._renderOutletSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
+  }
+
+  _renderMinisplitSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed = true) {
+    const switches = this._getFilteredSwitches(roomIndex);
+    const plug1Switches = this._sortSwitchesBySimilarity(switches, device.plug1_entity);
+    const renderSwitchOptions = (sortedSwitches, sensorEntity, currentSwitch) => {
+      let options = '<option value="">None</option>';
+      options += sortedSwitches.map((s, idx) => {
+        const score = this._getSimilarityScore(s.entity_id, sensorEntity);
+        const isBestMatch = idx === 0 && score > 0.3 && sensorEntity;
+        const label = isBestMatch ? `★ ${s.friendly_name}` : s.friendly_name;
+        return `<option value="${s.entity_id}" ${s.entity_id === currentSwitch ? 'selected' : ''}>${label}</option>`;
+      }).join('');
+      return options;
+    };
+    const displayName = device.name || 'Unnamed Mini-Split';
+    const collapsedClass = isCollapsed ? 'collapsed' : '';
+    return `
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="minisplit" draggable="true">
+        <div class="outlet-settings-bar">
+          <div class="outlet-drag-handle" title="Drag to reorder">
+            <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0 4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
+          </div>
+          <span class="outlet-name-display ${device.name ? '' : 'empty'}">${displayName}</span>
+          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${deviceIndex}" title="Delete">
+            <svg viewBox="0 0 24 24">${icons.delete}</svg>
+          </button>
+          <div class="outlet-expand-icon">
+            <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+          </div>
+        </div>
+        <div class="outlet-settings-body">
+          <div class="outlet-settings-header">
+            <div class="form-group" style="flex: 1;">
+              <label class="form-label">Mini-Split Name</label>
+              <input type="text" class="form-input outlet-name" value="${device.name || ''}" placeholder="Mini-Split name...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Warn Limit</label>
+              <input type="number" class="form-input outlet-threshold" value="${device.threshold || ''}" placeholder="W" min="0" style="width: 70px;">
+            </div>
+          </div>
+          <div class="plugs-settings-grid single-plug">
+            <div class="plug-settings-card" data-plug="1">
+              <div class="plug-settings-title">Power Sensor</div>
+              <div class="form-group">
+                <label class="form-label">Power Sensor</label>
+                <select class="form-select outlet-plug1">
+                  <option value="">None</option>
+                  ${powerSensors.map(s => `<option value="${s.entity_id}" ${device.plug1_entity === s.entity_id ? 'selected' : ''}>${s.friendly_name}</option>`).join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Switch <span style="font-size: 8px; color: var(--panel-accent);">★ = best match</span></label>
+                <select class="form-select outlet-plug1-switch">
+                  ${renderSwitchOptions(plug1Switches, device.plug1_entity, device.plug1_switch)}
+                </select>
+              </div>
+              <div class="shutoff-row">
+                <div class="form-group">
+                  <label class="form-label">Shutoff (W)</label>
+                  <input type="number" class="form-input outlet-plug1-shutoff" value="${device.plug1_shutoff || ''}" placeholder="Off" min="0">
+                </div>
+                <button class="test-switch-btn" data-switch="${device.plug1_switch || ''}" title="Test switch">
+                  <svg viewBox="0 0 24 24">${icons.power}</svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   _renderApplianceSettings(device, deviceIndex, powerSensors, roomIndex, deviceType, isCollapsed = true) {
@@ -3095,7 +3341,7 @@ class EnergyPanel extends HTMLElement {
             </div>
             <div class="form-group">
               <label class="form-label">Warn Limit</label>
-              <input type="number" class="form-input outlet-threshold" value="${device.threshold || ''}" placeholder="W" min="0" style="width: 70px;">
+              <input type="number" class="form-input outlet-threshold threshold-disabled" value="" placeholder="∞ W" min="0" style="width: 70px;" disabled title="Stove and microwave use infinite threshold">
             </div>
           </div>
           <div class="plugs-settings-grid single-plug">
@@ -4188,6 +4434,7 @@ class EnergyPanel extends HTMLElement {
         const plug1SwitchSelect = item.querySelector('.outlet-plug1-switch');
         const isSingleOutlet = !plug2Select;
         const isAppliance = !plug1SwitchSelect;
+        const deviceTypeFromItem = item.dataset.deviceType;
 
         if (outletName) {
           const device = {
@@ -4196,11 +4443,18 @@ class EnergyPanel extends HTMLElement {
             threshold: outletThreshold,
           };
           if (isAppliance) {
-            device.type = item.dataset.deviceType || 'stove';
+            device.type = deviceTypeFromItem || 'stove';
             device.plug2_entity = null;
             device.plug1_switch = null;
             device.plug2_switch = null;
             device.plug1_shutoff = 0;
+            device.plug2_shutoff = 0;
+          } else if (deviceTypeFromItem === 'minisplit') {
+            device.type = 'minisplit';
+            device.plug2_entity = null;
+            device.plug1_switch = plug1Switch || null;
+            device.plug2_switch = null;
+            device.plug1_shutoff = plug1Shutoff;
             device.plug2_shutoff = 0;
           } else {
             device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
