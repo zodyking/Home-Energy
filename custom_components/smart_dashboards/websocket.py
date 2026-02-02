@@ -643,6 +643,10 @@ async def websocket_get_stove_data(
     stove_plug_entity = stove_config.get("stove_plug_entity")
     presence_sensor = stove_config.get("presence_sensor")
     stove_power_threshold = stove_config.get("stove_power_threshold", 100)
+    cooking_time_minutes = int(stove_config.get("cooking_time_minutes", 15))
+    final_warning_seconds = int(stove_config.get("final_warning_seconds", 30))
+    cooking_time_sec = max(1, cooking_time_minutes) * 60
+    final_warning_sec = max(1, min(final_warning_seconds, 300))
 
     result: dict[str, Any] = {
         "configured": bool(stove_plug_entity and presence_sensor),
@@ -651,6 +655,10 @@ async def websocket_get_stove_data(
         "current_power": 0.0,
         "timer_phase": "none",
         "time_remaining": 0,
+        "cooking_time_minutes": cooking_time_minutes,
+        "final_warning_seconds": final_warning_sec,
+        "microwave_plug_entity": stove_config.get("microwave_plug_entity"),
+        "microwave_power_threshold": stove_config.get("microwave_power_threshold", 50),
     }
 
     if not result["configured"]:
@@ -673,19 +681,16 @@ async def websocket_get_stove_data(
         result["timer_phase"] = energy_monitor._stove_timer_phase
         
         if energy_monitor._stove_timer_start and energy_monitor._stove_timer_phase != "none":
-            from datetime import datetime
             from homeassistant.util import dt as dt_util
             
             now = dt_util.now()
             elapsed = (now - energy_monitor._stove_timer_start).total_seconds()
             
             if energy_monitor._stove_timer_phase == "15min":
-                from .const import STOVE_WARNING_TIMER
-                remaining = max(0, STOVE_WARNING_TIMER - elapsed)
+                remaining = max(0, cooking_time_sec - elapsed)
                 result["time_remaining"] = int(remaining)
             elif energy_monitor._stove_timer_phase == "30sec":
-                from .const import STOVE_SHUTOFF_TIMER
-                remaining = max(0, STOVE_SHUTOFF_TIMER - elapsed)
+                remaining = max(0, final_warning_sec - elapsed)
                 result["time_remaining"] = int(remaining)
 
     connection.send_result(msg["id"], result)

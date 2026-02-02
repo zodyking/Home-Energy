@@ -162,9 +162,13 @@ class ConfigManager:
             "stove_plug_entity": stove_safety.get("stove_plug_entity"),
             "stove_plug_switch": stove_safety.get("stove_plug_switch"),
             "stove_power_threshold": int(stove_safety.get("stove_power_threshold", default_stove["stove_power_threshold"])),
+            "cooking_time_minutes": int(stove_safety.get("cooking_time_minutes", default_stove["cooking_time_minutes"])),
+            "final_warning_seconds": int(stove_safety.get("final_warning_seconds", default_stove["final_warning_seconds"])),
             "presence_sensor": stove_safety.get("presence_sensor"),
             "media_player": stove_safety.get("media_player"),
             "volume": float(stove_safety.get("volume", default_stove["volume"])),
+            "microwave_plug_entity": stove_safety.get("microwave_plug_entity"),
+            "microwave_power_threshold": int(stove_safety.get("microwave_power_threshold", default_stove["microwave_power_threshold"])),
         }
 
         # Validate TTS settings
@@ -185,6 +189,8 @@ class ConfigManager:
             "stove_15min_warn_msg": tts.get("stove_15min_warn_msg", default_tts["stove_15min_warn_msg"]),
             "stove_30sec_warn_msg": tts.get("stove_30sec_warn_msg", default_tts["stove_30sec_warn_msg"]),
             "stove_auto_off_msg": tts.get("stove_auto_off_msg", default_tts["stove_auto_off_msg"]),
+            "microwave_cut_power_msg": tts.get("microwave_cut_power_msg", default_tts["microwave_cut_power_msg"]),
+            "microwave_restore_power_msg": tts.get("microwave_restore_power_msg", default_tts["microwave_restore_power_msg"]),
         }
 
         return validated

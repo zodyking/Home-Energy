@@ -10,6 +10,7 @@ export const sharedStyles = `
     background: var(--primary-background-color, #111318);
     color: var(--primary-text-color, #e1e1e1);
     font-family: var(--paper-font-body1_-_font-family, 'Roboto', 'Segoe UI', sans-serif);
+    color-scheme: dark;
     --panel-accent: #03a9f4;
     --panel-accent-rgb: 3, 169, 244;
     --panel-accent-dim: rgba(3, 169, 244, 0.15);
@@ -221,11 +222,13 @@ export const sharedStyles = `
     background-repeat: no-repeat;
     background-position: right 12px center;
     padding-right: 36px;
+    color-scheme: dark;
   }
 
   .form-select option {
-    background: var(--input-bg, #2a2a2a);
-    color: var(--primary-text-color, #e0e0e0);
+    background: #2a2a2a !important;
+    background-color: #2a2a2a !important;
+    color: #e0e0e0 !important;
   }
 
   /* Volume Slider */
