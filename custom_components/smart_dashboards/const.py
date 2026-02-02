@@ -35,8 +35,9 @@ DEFAULT_BREAKER_WARN_MSG = "{prefix} {breaker_name} is near its max load, reduce
 DEFAULT_BREAKER_SHUTOFF_MSG = "{prefix} {breaker_name} is currently at its max limit, safety shutoff enabled"
 DEFAULT_STOVE_ON_MSG = "{prefix} Stove has been turned on"
 DEFAULT_STOVE_OFF_MSG = "{prefix} Stove has been turned off"
-DEFAULT_STOVE_15MIN_WARN_MSG = "{prefix} Stove has been on for 15 minutes with no one in the kitchen. Stove will automatically turn off in 30 seconds if no one returns"
-DEFAULT_STOVE_30SEC_WARN_MSG = "{prefix} Stove will automatically turn off in 30 seconds if no one returns to the kitchen"
+DEFAULT_STOVE_TIMER_STARTED_MSG = "{prefix} The stove is on with no one in the kitchen. A {cooking_time_minutes} minute Unattended cooking timer has started."
+DEFAULT_STOVE_15MIN_WARN_MSG = "{prefix} Stove has been on for {cooking_time_minutes} minutes with no one in the kitchen. Stove will automatically turn off in {final_warning_seconds} seconds if no one returns"
+DEFAULT_STOVE_30SEC_WARN_MSG = "{prefix} Stove will automatically turn off in {final_warning_seconds} seconds if no one returns to the kitchen"
 DEFAULT_STOVE_AUTO_OFF_MSG = "{prefix} Stove has been automatically turned off for safety"
 DEFAULT_MICROWAVE_CUT_MSG = "{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off."
 DEFAULT_MICROWAVE_RESTORE_MSG = "{prefix} Microwave is off. Stove power restored."
@@ -70,6 +71,7 @@ DEFAULT_CONFIG = {
             "breaker_shutoff_msg": DEFAULT_BREAKER_SHUTOFF_MSG,
             "stove_on_msg": DEFAULT_STOVE_ON_MSG,
             "stove_off_msg": DEFAULT_STOVE_OFF_MSG,
+            "stove_timer_started_msg": DEFAULT_STOVE_TIMER_STARTED_MSG,
             "stove_15min_warn_msg": DEFAULT_STOVE_15MIN_WARN_MSG,
             "stove_30sec_warn_msg": DEFAULT_STOVE_30SEC_WARN_MSG,
             "stove_auto_off_msg": DEFAULT_STOVE_AUTO_OFF_MSG,

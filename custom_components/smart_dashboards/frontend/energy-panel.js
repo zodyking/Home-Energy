@@ -3,7 +3,7 @@
  * Room-based power monitoring with automatic TTS threshold alerts
  */
 
-import { sharedStyles, icons, showToast, passcodeModalStyles, showPasscodeModal } from './shared-utils.js';
+import { sharedStyles, icons, showToast, passcodeModalStyles, showPasscodeModal, renderCustomSelect, initCustomSelects } from './shared-utils.js';
 
 class EnergyPanel extends HTMLElement {
   constructor() {
@@ -1993,24 +1993,35 @@ class EnergyPanel extends HTMLElement {
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Stove 15-Minute Warning</div>
-                <div class="tts-msg-desc">Spoken when stove has been on for 15 minutes with no presence detected</div>
-                <input type="text" class="form-input" id="tts-stove-15min" 
-                  value="${ttsSettings.stove_15min_warn_msg || '{prefix} Stove has been on for 15 minutes with no one in the kitchen. Stove will automatically turn off in 30 seconds if no one returns'}" 
-                  placeholder="{prefix} Stove has been on for 15 minutes with no one in the kitchen. Stove will automatically turn off in 30 seconds if no one returns">
+                <div class="tts-msg-title">Stove Timer Started Message</div>
+                <div class="tts-msg-desc">Spoken when stove is on and no one is in the kitchen (timer just started)</div>
+                <input type="text" class="form-input" id="tts-stove-timer-started" 
+                  value="${ttsSettings.stove_timer_started_msg || '{prefix} The stove is on with no one in the kitchen. A {cooking_time_minutes} minute Unattended cooking timer has started.'}" 
+                  placeholder="{prefix} The stove is on with no one in the kitchen. A {cooking_time_minutes} minute Unattended cooking timer has started.">
                 <div class="tts-var-help">
-                  Variables: <code>{prefix}</code>
+                  Variables: <code>{prefix}</code> <code>{cooking_time_minutes}</code> <code>{final_warning_seconds}</code>
                 </div>
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Stove 30-Second Warning</div>
-                <div class="tts-msg-desc">Spoken when 30-second countdown begins before auto-shutoff</div>
-                <input type="text" class="form-input" id="tts-stove-30sec" 
-                  value="${ttsSettings.stove_30sec_warn_msg || '{prefix} Stove will automatically turn off in 30 seconds if no one returns to the kitchen'}" 
-                  placeholder="{prefix} Stove will automatically turn off in 30 seconds if no one returns to the kitchen">
+                <div class="tts-msg-title">Stove Cooking-Time Warning</div>
+                <div class="tts-msg-desc">Spoken when stove has been on for the configured cooking time with no presence detected</div>
+                <input type="text" class="form-input" id="tts-stove-15min" 
+                  value="${ttsSettings.stove_15min_warn_msg || '{prefix} Stove has been on for {cooking_time_minutes} minutes with no one in the kitchen. Stove will automatically turn off in {final_warning_seconds} seconds if no one returns'}" 
+                  placeholder="{prefix} Stove has been on for {cooking_time_minutes} minutes with no one in the kitchen. Stove will automatically turn off in {final_warning_seconds} seconds if no one returns">
                 <div class="tts-var-help">
-                  Variables: <code>{prefix}</code>
+                  Variables: <code>{prefix}</code> <code>{cooking_time_minutes}</code> <code>{final_warning_seconds}</code>
+                </div>
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Stove Final Warning</div>
+                <div class="tts-msg-desc">Spoken when final countdown begins before auto-shutoff</div>
+                <input type="text" class="form-input" id="tts-stove-30sec" 
+                  value="${ttsSettings.stove_30sec_warn_msg || '{prefix} Stove will automatically turn off in {final_warning_seconds} seconds if no one returns to the kitchen'}" 
+                  placeholder="{prefix} Stove will automatically turn off in {final_warning_seconds} seconds if no one returns to the kitchen">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code> <code>{final_warning_seconds}</code>
                 </div>
               </div>
               
@@ -2059,6 +2070,7 @@ class EnergyPanel extends HTMLElement {
     `;
 
     this._attachSettingsEventListeners();
+    initCustomSelects(this.shadowRoot);
     if (this._settingsTab === 'breakers') {
       this._attachBreakerEventListeners();
     }
@@ -2091,26 +2103,12 @@ class EnergyPanel extends HTMLElement {
         
         <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
           <label class="form-label">Stove Plug Power Sensor</label>
-          <select class="form-select" id="stove-plug-entity">
-            <option value="">None</option>
-            ${powerSensors.map(s => `
-              <option value="${s.entity_id}" ${stoveConfig.stove_plug_entity === s.entity_id ? 'selected' : ''}>
-                ${s.friendly_name}
-              </option>
-            `).join('')}
-          </select>
+          ${renderCustomSelect('stove-plug-entity', [{value: '', label: 'None'}, ...powerSensors.map(s => ({value: s.entity_id, label: s.friendly_name}))], stoveConfig.stove_plug_entity)}
         </div>
 
         <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
           <label class="form-label">Stove Plug Switch</label>
-          <select class="form-select" id="stove-plug-switch">
-            <option value="">None</option>
-            ${switches.map(s => `
-              <option value="${s.entity_id}" ${stoveConfig.stove_plug_switch === s.entity_id ? 'selected' : ''}>
-                ${s.friendly_name}
-              </option>
-            `).join('')}
-          </select>
+          ${renderCustomSelect('stove-plug-switch', [{value: '', label: 'None'}, ...switches.map(s => ({value: s.entity_id, label: s.friendly_name}))], stoveConfig.stove_plug_switch)}
         </div>
 
         <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
@@ -2145,29 +2143,15 @@ class EnergyPanel extends HTMLElement {
 
         <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
           <label class="form-label">Kitchen Presence Sensor</label>
-          <select class="form-select" id="stove-presence-sensor">
-            <option value="">None</option>
-            ${binarySensors.map(s => `
-              <option value="${s.entity_id}" ${stoveConfig.presence_sensor === s.entity_id ? 'selected' : ''}>
-                ${s.friendly_name || s.entity_id}
-              </option>
-            `).join('')}
-          </select>
+          ${renderCustomSelect('stove-presence-sensor', [{value: '', label: 'None'}, ...binarySensors.map(s => ({value: s.entity_id, label: s.friendly_name || s.entity_id}))], stoveConfig.presence_sensor)}
           <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">
-            Binary sensor that detects presence in the kitchen (on = present, off = not present)
+            Presence = detected or on. No presence = clear, cleared, unavailable, unknown, or off.
           </div>
         </div>
 
         <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
           <label class="form-label">Media Player for Alerts</label>
-          <select class="form-select" id="stove-media-player">
-            <option value="">None</option>
-            ${mediaPlayers.map(mp => `
-              <option value="${mp.entity_id}" ${stoveConfig.media_player === mp.entity_id ? 'selected' : ''}>
-                ${mp.friendly_name}
-              </option>
-            `).join('')}
-          </select>
+          ${renderCustomSelect('stove-media-player', [{value: '', label: 'None'}, ...mediaPlayers.map(mp => ({value: mp.entity_id, label: mp.friendly_name}))], stoveConfig.media_player)}
         </div>
 
         <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
@@ -2191,14 +2175,7 @@ class EnergyPanel extends HTMLElement {
           </p>
           <div class="form-group" style="padding: 0 12px; margin-bottom: 16px;">
             <label class="form-label">Microwave Plug Power Sensor</label>
-            <select class="form-select" id="stove-microwave-plug-entity">
-              <option value="">None (disabled)</option>
-              ${powerSensors.map(s => `
-                <option value="${s.entity_id}" ${stoveConfig.microwave_plug_entity === s.entity_id ? 'selected' : ''}>
-                  ${s.friendly_name}
-                </option>
-              `).join('')}
-            </select>
+            ${renderCustomSelect('stove-microwave-plug-entity', [{value: '', label: 'None (disabled)'}, ...powerSensors.map(s => ({value: s.entity_id, label: s.friendly_name}))], stoveConfig.microwave_plug_entity, 'None (disabled)')}
             <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">
               Power sensor for the microwave outlet
             </div>
@@ -3468,8 +3445,9 @@ class EnergyPanel extends HTMLElement {
     const ttsBreakerShutoff = this.shadowRoot.querySelector('#tts-breaker-shutoff')?.value || '{prefix} {breaker_name} is currently at its max limit, safety shutoff enabled';
     const ttsStoveOn = this.shadowRoot.querySelector('#tts-stove-on')?.value || '{prefix} Stove has been turned on';
     const ttsStoveOff = this.shadowRoot.querySelector('#tts-stove-off')?.value || '{prefix} Stove has been turned off';
-    const ttsStove15Min = this.shadowRoot.querySelector('#tts-stove-15min')?.value || '{prefix} Stove has been on for 15 minutes with no one in the kitchen. Stove will automatically turn off in 30 seconds if no one returns';
-    const ttsStove30Sec = this.shadowRoot.querySelector('#tts-stove-30sec')?.value || '{prefix} Stove will automatically turn off in 30 seconds if no one returns to the kitchen';
+    const ttsStoveTimerStarted = this.shadowRoot.querySelector('#tts-stove-timer-started')?.value || '{prefix} The stove is on with no one in the kitchen. A {cooking_time_minutes} minute Unattended cooking timer has started.';
+    const ttsStove15Min = this.shadowRoot.querySelector('#tts-stove-15min')?.value || '{prefix} Stove has been on for {cooking_time_minutes} minutes with no one in the kitchen. Stove will automatically turn off in {final_warning_seconds} seconds if no one returns';
+    const ttsStove30Sec = this.shadowRoot.querySelector('#tts-stove-30sec')?.value || '{prefix} Stove will automatically turn off in {final_warning_seconds} seconds if no one returns to the kitchen';
     const ttsStoveAutoOff = this.shadowRoot.querySelector('#tts-stove-auto-off')?.value || '{prefix} Stove has been automatically turned off for safety';
     const ttsMicrowaveCut = this.shadowRoot.querySelector('#tts-microwave-cut')?.value || '{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off.';
     const ttsMicrowaveRestore = this.shadowRoot.querySelector('#tts-microwave-restore')?.value || '{prefix} Microwave is off. Stove power restored.';
@@ -3536,6 +3514,7 @@ class EnergyPanel extends HTMLElement {
         breaker_shutoff_msg: ttsBreakerShutoff,
         stove_on_msg: ttsStoveOn,
         stove_off_msg: ttsStoveOff,
+        stove_timer_started_msg: ttsStoveTimerStarted,
         stove_15min_warn_msg: ttsStove15Min,
         stove_30sec_warn_msg: ttsStove30Sec,
         stove_auto_off_msg: ttsStoveAutoOff,

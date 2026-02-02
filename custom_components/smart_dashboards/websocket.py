@@ -671,10 +671,11 @@ async def websocket_get_stove_data(
         result["current_power"] = round(current_power, 1)
         result["stove_state"] = "on" if current_power > stove_power_threshold else "off"
 
-    # Get presence state
+    # Get presence state (present: detected, on | not present: clear, cleared, unavailable, unknown, off)
     if presence_sensor:
         presence_state = hass.states.get(presence_sensor)
-        result["presence_detected"] = presence_state and presence_state.state == "on"
+        state_val = (presence_state.state or "").lower() if presence_state else ""
+        result["presence_detected"] = state_val in ("detected", "on")
 
     # Get timer information from energy monitor
     if hasattr(energy_monitor, "_stove_timer_phase"):

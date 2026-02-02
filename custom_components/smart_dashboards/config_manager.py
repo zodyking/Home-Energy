@@ -186,6 +186,7 @@ class ConfigManager:
             "breaker_shutoff_msg": tts.get("breaker_shutoff_msg", default_tts["breaker_shutoff_msg"]),
             "stove_on_msg": tts.get("stove_on_msg", default_tts["stove_on_msg"]),
             "stove_off_msg": tts.get("stove_off_msg", default_tts["stove_off_msg"]),
+            "stove_timer_started_msg": tts.get("stove_timer_started_msg", default_tts["stove_timer_started_msg"]),
             "stove_15min_warn_msg": tts.get("stove_15min_warn_msg", default_tts["stove_15min_warn_msg"]),
             "stove_30sec_warn_msg": tts.get("stove_30sec_warn_msg", default_tts["stove_30sec_warn_msg"]),
             "stove_auto_off_msg": tts.get("stove_auto_off_msg", default_tts["stove_auto_off_msg"]),

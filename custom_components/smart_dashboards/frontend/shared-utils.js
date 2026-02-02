@@ -20,7 +20,7 @@ export const sharedStyles = `
     --panel-success: #4caf50;
     --card-bg: var(--card-background-color, rgba(32, 33, 39, 0.95));
     --card-border: rgba(255, 255, 255, 0.08);
-    --input-bg: rgba(255, 255, 255, 0.04);
+    --input-bg: #2a2a2a;
     --input-border: rgba(255, 255, 255, 0.12);
   }
 
@@ -211,24 +211,89 @@ export const sharedStyles = `
   .form-input:focus, .form-select:focus {
     outline: none;
     border-color: var(--panel-accent);
-    background: rgba(3, 169, 244, 0.05);
+    background: #2a2a2a;
   }
 
   .form-select {
     cursor: pointer;
     appearance: none;
-    background-color: var(--input-bg, #2a2a2a);
+    -webkit-appearance: none;
+    background-color: #2a2a2a;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239e9e9e' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
     padding-right: 36px;
     color-scheme: dark;
+    accent-color: var(--panel-accent);
   }
 
   .form-select option {
     background: #2a2a2a !important;
     background-color: #2a2a2a !important;
     color: #e0e0e0 !important;
+  }
+
+  @supports (appearance: base-select) {
+    .form-select {
+      appearance: base-select;
+    }
+  }
+
+  /* Custom select - gray dropdown with white text (replaces native when needed) */
+  .custom-select-wrapper {
+    position: relative;
+    width: 100%;
+  }
+  .custom-select-trigger {
+    width: 100%;
+    padding: 12px 36px 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--input-border, rgba(255,255,255,0.12));
+    background: #2a2a2a;
+    color: #e0e0e0;
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239e9e9e' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+  }
+  .custom-select-trigger:hover {
+    border-color: rgba(255,255,255,0.2);
+  }
+  .custom-select-trigger.open {
+    border-color: var(--panel-accent);
+  }
+  .custom-select-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    max-height: 240px;
+    overflow-y: auto;
+    background: #2a2a2a;
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    z-index: 1000;
+  }
+  .custom-select-wrapper.open .custom-select-dropdown {
+    display: block;
+  }
+  .custom-select-option {
+    padding: 10px 14px;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.15s;
+  }
+  .custom-select-option:hover,
+  .custom-select-option.selected {
+    background: rgba(3, 169, 244, 0.25);
+    color: #fff;
   }
 
   /* Volume Slider */
@@ -490,6 +555,70 @@ export const icons = {
   menu: `<svg viewBox="0 0 24 24"><path d="M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z"/></svg>`,
   power: `<svg viewBox="0 0 24 24"><path d="M13,3h-2v10h2V3z M17.83,5.17l-1.42,1.42C17.99,7.86,19,9.81,19,12c0,3.87-3.13,7-7,7s-7-3.13-7-7 c0-2.19,1.01-4.14,2.58-5.42L6.17,5.17C4.23,6.82,3,9.26,3,12c0,4.97,4.03,9,9,9s9-4.03,9-9C21,9.26,19.77,6.82,17.83,5.17z"/></svg>`,
 };
+
+/** Render a custom select (gray bg, white text) - use initCustomSelects(container) after render */
+export function renderCustomSelect(id, options, selectedValue, placeholder = 'None') {
+  const opts = Array.isArray(options) ? options : [];
+  const sel = String(selectedValue ?? '');
+  const selected = opts.find(o => String(o.value ?? '') === sel);
+  const label = selected ? selected.label : placeholder;
+  const optionsHtml = opts.map(o => {
+    const v = String(o.value ?? '');
+    const isSel = v === sel;
+    return `<div class="custom-select-option" data-value="${v.replace(/"/g, '&quot;')}" ${isSel ? 'data-selected' : ''}>${(o.label || '').replace(/</g, '&lt;')}</div>`;
+  }).join('');
+  return `
+    <div class="custom-select-wrapper" data-select-id="${id}">
+      <input type="hidden" id="${id}" value="${sel.replace(/"/g, '&quot;')}">
+      <div class="custom-select-trigger">${(label || placeholder).replace(/</g, '&lt;')}</div>
+      <div class="custom-select-dropdown">${optionsHtml}</div>
+    </div>
+  `;
+}
+
+/** Initialize custom selects - call after rendering settings */
+export function initCustomSelects(container) {
+  if (!container) return;
+  container.querySelectorAll('.custom-select-wrapper').forEach(wrapper => {
+    const trigger = wrapper.querySelector('.custom-select-trigger');
+    const dropdown = wrapper.querySelector('.custom-select-dropdown');
+    const hiddenInput = wrapper.querySelector('input[type="hidden"]');
+    const selectId = wrapper.dataset.selectId;
+    if (!trigger || !dropdown || !hiddenInput) return;
+
+    const close = () => wrapper.classList.remove('open');
+    const update = (value, label) => {
+      hiddenInput.value = value || '';
+      trigger.textContent = label || 'None';
+      dropdown.querySelectorAll('.custom-select-option').forEach(opt => {
+        opt.classList.toggle('selected', opt.dataset.value === value);
+      });
+    };
+
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      container.querySelectorAll('.custom-select-wrapper.open').forEach(w => { if (w !== wrapper) w.classList.remove('open'); });
+      const isOpen = wrapper.classList.toggle('open');
+      if (isOpen) {
+        const handler = () => { close(); document.removeEventListener('click', handler); };
+        setTimeout(() => document.addEventListener('click', handler), 0);
+      }
+    });
+
+    dropdown.querySelectorAll('.custom-select-option').forEach(opt => {
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const val = opt.dataset.value;
+        const lbl = opt.textContent;
+        update(val, lbl);
+        close();
+      });
+    });
+
+    const curOpt = dropdown.querySelector('[data-selected]');
+    if (curOpt) curOpt.classList.add('selected');
+  });
+}
 
 // Helper function to show toast
 export function showToast(shadowRoot, message, type = 'default') {
