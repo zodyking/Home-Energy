@@ -1890,7 +1890,7 @@ class EnergyPanel extends HTMLElement {
           
           <div class="view-tabs">
             <button class="view-tab ${this._dashboardView === 'outlets' ? 'active' : ''}" data-view="outlets">
-              Outlets
+              Rooms
             </button>
             <button class="view-tab ${this._dashboardView === 'breakers' ? 'active' : ''}" data-view="breakers">
               Breakers
