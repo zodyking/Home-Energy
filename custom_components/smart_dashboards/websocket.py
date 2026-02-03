@@ -93,6 +93,7 @@ async def websocket_get_entities(
         "media_players": [],
         "power_sensors": [],
         "binary_sensors": [],
+        "lights": [],
     }
 
     for state in hass.states.async_all():
@@ -129,6 +130,13 @@ async def websocket_get_entities(
         if entity_type is None or entity_type == "binary_sensor":
             if entity_id.startswith("binary_sensor."):
                 result["binary_sensors"].append({
+                    "entity_id": entity_id,
+                    "friendly_name": friendly_name,
+                })
+
+        if entity_type is None or entity_type == "light":
+            if entity_id.startswith("light."):
+                result["lights"].append({
                     "entity_id": entity_id,
                     "friendly_name": friendly_name,
                 })
@@ -233,27 +241,38 @@ async def websocket_get_power_data(
         }
 
         for outlet in room.get("outlets", []):
+            outlet_type = outlet.get("type", "outlet")
             outlet_data = {
                 "name": outlet["name"],
+                "type": outlet_type,
                 "plug1": {"watts": 0, "day_wh": 0},
                 "plug2": {"watts": 0, "day_wh": 0},
             }
 
-            # Get plug 1 data
-            if outlet.get("plug1_entity"):
-                watts = _get_power_value(hass, outlet["plug1_entity"])
-                day_wh = config_manager.get_day_energy(outlet["plug1_entity"])
-                outlet_data["plug1"] = {"watts": watts, "day_wh": round(day_wh, 2)}
-                room_data["total_watts"] += watts
-                room_data["total_day_wh"] += day_wh
+            if outlet_type == "light":
+                # Light: switch state for on/off display
+                switch_entity = outlet.get("switch_entity")
+                if switch_entity:
+                    state = hass.states.get(switch_entity)
+                    outlet_data["switch_state"] = (state.state or "off").lower() in ("on",)
+                else:
+                    outlet_data["switch_state"] = False
+            else:
+                # Get plug 1 data
+                if outlet.get("plug1_entity"):
+                    watts = _get_power_value(hass, outlet["plug1_entity"])
+                    day_wh = config_manager.get_day_energy(outlet["plug1_entity"])
+                    outlet_data["plug1"] = {"watts": watts, "day_wh": round(day_wh, 2)}
+                    room_data["total_watts"] += watts
+                    room_data["total_day_wh"] += day_wh
 
-            # Get plug 2 data
-            if outlet.get("plug2_entity"):
-                watts = _get_power_value(hass, outlet["plug2_entity"])
-                day_wh = config_manager.get_day_energy(outlet["plug2_entity"])
-                outlet_data["plug2"] = {"watts": watts, "day_wh": round(day_wh, 2)}
-                room_data["total_watts"] += watts
-                room_data["total_day_wh"] += day_wh
+                # Get plug 2 data
+                if outlet.get("plug2_entity"):
+                    watts = _get_power_value(hass, outlet["plug2_entity"])
+                    day_wh = config_manager.get_day_energy(outlet["plug2_entity"])
+                    outlet_data["plug2"] = {"watts": watts, "day_wh": round(day_wh, 2)}
+                    room_data["total_watts"] += watts
+                    room_data["total_day_wh"] += day_wh
 
             room_data["outlets"].append(outlet_data)
 
@@ -628,7 +647,7 @@ async def websocket_get_stove_data(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Get current stove safety status and timer information."""
+    """Get current stove safety status and timer information (first configured stove)."""
     config_manager = hass.data[DOMAIN].get("config_manager")
     if not config_manager:
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
@@ -639,14 +658,38 @@ async def websocket_get_stove_data(
         connection.send_error(msg["id"], "not_ready", "Energy monitor not initialized")
         return
 
-    stove_config = config_manager.energy_config.get("stove_safety", {})
-    stove_plug_entity = stove_config.get("stove_plug_entity")
-    presence_sensor = stove_config.get("presence_sensor")
-    stove_power_threshold = stove_config.get("stove_power_threshold", 100)
-    cooking_time_minutes = int(stove_config.get("cooking_time_minutes", 15))
-    final_warning_seconds = int(stove_config.get("final_warning_seconds", 30))
+    # Get first configured stove from device config
+    stove_config = None
+    for room in config_manager.energy_config.get("rooms", []):
+        for outlet in room.get("outlets", []):
+            if outlet.get("type") == "stove" and outlet.get("plug1_entity") and outlet.get("presence_sensor"):
+                stove_config = outlet
+                break
+        if stove_config:
+            break
+
+    stove_plug_entity = stove_config.get("plug1_entity") if stove_config else None
+    presence_sensor = stove_config.get("presence_sensor") if stove_config else None
+    stove_power_threshold = int(stove_config.get("stove_power_threshold", 100)) if stove_config else 100
+    cooking_time_minutes = int(stove_config.get("cooking_time_minutes", 15)) if stove_config else 15
+    final_warning_seconds = int(stove_config.get("final_warning_seconds", 30)) if stove_config else 30
     cooking_time_sec = max(1, cooking_time_minutes) * 60
     final_warning_sec = max(1, min(final_warning_seconds, 300))
+
+    # Get first microwave in same room as stove (for backward compat display)
+    microwave_plug_entity = None
+    microwave_power_threshold = 50
+    if stove_config and stove_plug_entity:
+        for room in config_manager.energy_config.get("rooms", []):
+            outlets = room.get("outlets", [])
+            has_stove = any(o.get("type") == "stove" and o.get("plug1_entity") == stove_plug_entity for o in outlets)
+            if has_stove:
+                for outlet in outlets:
+                    if outlet.get("type") == "microwave" and outlet.get("plug1_entity"):
+                        microwave_plug_entity = outlet.get("plug1_entity")
+                        microwave_power_threshold = int(outlet.get("microwave_power_threshold", 50))
+                        break
+                break
 
     result: dict[str, Any] = {
         "configured": bool(stove_plug_entity and presence_sensor),
@@ -657,42 +700,37 @@ async def websocket_get_stove_data(
         "time_remaining": 0,
         "cooking_time_minutes": cooking_time_minutes,
         "final_warning_seconds": final_warning_sec,
-        "microwave_plug_entity": stove_config.get("microwave_plug_entity"),
-        "microwave_power_threshold": stove_config.get("microwave_power_threshold", 50),
+        "microwave_plug_entity": microwave_plug_entity,
+        "microwave_power_threshold": microwave_power_threshold,
     }
 
     if not result["configured"]:
         connection.send_result(msg["id"], result)
         return
 
-    # Get current power
     if stove_plug_entity:
         current_power = _get_power_value(hass, stove_plug_entity)
         result["current_power"] = round(current_power, 1)
         result["stove_state"] = "on" if current_power > stove_power_threshold else "off"
 
-    # Get presence state (present: detected, on | not present: clear, cleared, unavailable, unknown, off)
     if presence_sensor:
         presence_state = hass.states.get(presence_sensor)
         state_val = (presence_state.state or "").lower() if presence_state else ""
         result["presence_detected"] = state_val in ("detected", "on")
 
-    # Get timer information from energy monitor
-    if hasattr(energy_monitor, "_stove_timer_phase"):
-        result["timer_phase"] = energy_monitor._stove_timer_phase
-        
-        if energy_monitor._stove_timer_start and energy_monitor._stove_timer_phase != "none":
+    key = stove_plug_entity
+    if hasattr(energy_monitor, "_stove_timer_phase") and isinstance(energy_monitor._stove_timer_phase, dict):
+        result["timer_phase"] = energy_monitor._stove_timer_phase.get(key, "none")
+        timer_start = energy_monitor._stove_timer_start.get(key) if isinstance(energy_monitor._stove_timer_start, dict) else None
+        timer_phase = result["timer_phase"]
+        if timer_start and timer_phase != "none":
             from homeassistant.util import dt as dt_util
-            
             now = dt_util.now()
-            elapsed = (now - energy_monitor._stove_timer_start).total_seconds()
-            
-            if energy_monitor._stove_timer_phase == "15min":
-                remaining = max(0, cooking_time_sec - elapsed)
-                result["time_remaining"] = int(remaining)
-            elif energy_monitor._stove_timer_phase == "30sec":
-                remaining = max(0, final_warning_sec - elapsed)
-                result["time_remaining"] = int(remaining)
+            elapsed = (now - timer_start).total_seconds()
+            if timer_phase == "15min":
+                result["time_remaining"] = int(max(0, cooking_time_sec - elapsed))
+            elif timer_phase == "30sec":
+                result["time_remaining"] = int(max(0, final_warning_sec - elapsed))
 
     connection.send_result(msg["id"], result)
 
