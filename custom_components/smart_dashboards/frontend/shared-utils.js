@@ -189,17 +189,35 @@ export const sharedStyles = `
   .light-entity-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     margin-bottom: 8px;
+    flex-wrap: nowrap;
   }
 
-  .light-entity-row .light-entity-select {
+  .light-entity-row .entity-autocomplete-wrapper {
     flex: 1;
-    min-width: 0;
+    min-width: 120px;
   }
 
   .light-entity-row .light-entity-watts {
     flex-shrink: 0;
+    width: 60px;
+  }
+
+  .light-entity-row .light-entity-wrgb {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .light-entity-row .light-entity-wrgb label {
+    font-size: 11px;
+    color: var(--secondary-text-color);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
   }
 
   .light-entity-row .light-entity-remove-btn {
@@ -336,6 +354,56 @@ export const sharedStyles = `
   .custom-select-option.selected {
     background: rgba(3, 169, 244, 0.25);
     color: #fff;
+  }
+
+  /* Entity autocomplete */
+  .entity-autocomplete-wrapper {
+    position: relative;
+    width: 100%;
+  }
+  .entity-autocomplete-input {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--input-border, rgba(255,255,255,0.12));
+    background: var(--input-bg, #2a2a2a);
+    color: var(--primary-text-color, #e0e0e0);
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color 0.2s;
+  }
+  .entity-autocomplete-input:focus {
+    outline: none;
+    border-color: var(--panel-accent);
+  }
+  .entity-autocomplete-list {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--input-bg, #2a2a2a);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    z-index: 1000;
+  }
+  .entity-autocomplete-wrapper.open .entity-autocomplete-list {
+    display: block;
+  }
+  .entity-autocomplete-option {
+    padding: 10px 14px;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.15s;
+  }
+  .entity-autocomplete-option:hover,
+  .entity-autocomplete-option.highlighted {
+    background: rgba(3, 169, 244, 0.25);
   }
 
   /* Volume Slider */

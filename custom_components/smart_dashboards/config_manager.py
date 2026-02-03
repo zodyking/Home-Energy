@@ -201,15 +201,18 @@ class ConfigManager:
                                     eid = None
                                     w = 0
                                     if isinstance(e, dict) and e.get("entity_id", "").startswith("light."):
-                                        eid, w = e["entity_id"], max(0, int(e.get("watts", 0)))
+                                        eid = e["entity_id"]
+                                        w = max(0, int(e.get("watts", 0)))
+                                        wrgb = bool(e.get("wrgb", False))
+                                        by_entity[eid] = {"entity_id": eid, "watts": w, "wrgb": wrgb}
                                     elif isinstance(e, str) and e.strip().startswith("light."):
                                         eid, w = e.strip(), 0
-                                    if eid:
-                                        by_entity[eid] = {"entity_id": eid, "watts": w}
+                                        if eid:
+                                            by_entity[eid] = {"entity_id": eid, "watts": w, "wrgb": False}
                                 item["light_entities"] = list(by_entity.values())
                             elif isinstance(light_ents, str):
                                 item["light_entities"] = [
-                                    {"entity_id": e.strip(), "watts": 0}
+                                    {"entity_id": e.strip(), "watts": 0, "wrgb": False}
                                     for e in light_ents.split(",") if e.strip().startswith("light.")
                                 ]
                             else:
