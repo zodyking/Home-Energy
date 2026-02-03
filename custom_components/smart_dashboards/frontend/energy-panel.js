@@ -247,7 +247,7 @@ class EnergyPanel extends HTMLElement {
           stoveDoorWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
           stoveDoorWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
         }
-        if (outletTotalEl) {
+        if (outletTotalEl && deviceType !== 'light') {
           outletTotalEl.textContent = `${outletTotal.toFixed(1)} W`;
           outletTotalEl.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
         }
@@ -268,15 +268,22 @@ class EnergyPanel extends HTMLElement {
         }
         if (deviceType === 'light') {
           const isOn = outlet.switch_state === true;
-          const lightToggle = deviceCard.querySelector('.light-toggle');
+          const lightRocker = deviceCard.querySelector('.light-toggle-rocker');
           const lightLabel = deviceCard.querySelector('.light-toggle-label');
-          const lightBadge = deviceCard.querySelector('.light-state-badge');
-          if (lightToggle) {
-            lightToggle.classList.toggle('on', isOn);
-            lightToggle.classList.toggle('off', !isOn);
+          const lightStateText = deviceCard.querySelector('.light-state-text');
+          const lightStateDisplay = deviceCard.querySelector('.light-state-display');
+          const lightReceptacle = deviceCard.querySelector('.light-toggle-receptacle');
+          if (lightRocker) {
+            lightRocker.classList.toggle('on', isOn);
+            lightRocker.classList.toggle('off', !isOn);
           }
           if (lightLabel) lightLabel.textContent = isOn ? 'ON' : 'OFF';
-          if (lightBadge) lightBadge.textContent = isOn ? 'On' : 'Off';
+          if (lightStateText) lightStateText.textContent = isOn ? 'On' : 'Off';
+          if (lightStateDisplay) {
+            lightStateDisplay.textContent = isOn ? 'On' : 'Off';
+            lightStateDisplay.classList.toggle('off', !isOn);
+          }
+          if (lightReceptacle) lightReceptacle.classList.toggle('active', isOn);
           deviceCard.classList.toggle('light-on', isOn);
         }
       });
@@ -1080,118 +1087,101 @@ class EnergyPanel extends HTMLElement {
         margin: 16px auto 4px;
       }
 
-      .device-card.light-card {
+      .outlet-card.outlet-face.light-outlet {
         width: 81px;
         min-width: 81px;
         flex-shrink: 0;
-        padding: 0;
-        border: none;
-        background: transparent;
-        box-sizing: border-box;
       }
 
-      .device-card.light-card .light-faceplate {
-        background: linear-gradient(#f7f7f7, #e9e9e9);
-        border: 1px solid rgba(0, 0, 0, 0.18);
-        border-radius: 9px;
-        padding: 6px 6px 5px;
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      .outlet-card.outlet-face.light-outlet .light-toggle-receptacle {
+        background: linear-gradient(#efefef, #dedede);
+        border: 1px solid rgba(0, 0, 0, 0.22);
+        border-radius: 8px;
+        padding: 6px 6px 4px;
         position: relative;
-        min-height: 200px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+        flex: 0 0 auto;
+        margin: auto 0;
       }
 
-      .device-card.light-card .outlet-name-top {
-        font-size: 14px;
-        font-weight: 600;
-        color: rgba(0,0,0,0.62);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        text-align: center;
-        margin-bottom: 4px;
+      .outlet-card.outlet-face.light-outlet .light-toggle-receptacle.active {
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 8px rgba(3, 169, 244, 0.4),
+          inset 0 2px 4px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
       }
 
-      .device-card.light-card .light-switch-plate {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-      }
-
-      .device-card.light-card .light-plate-screw {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: linear-gradient(#d8d8d8, #bdbdbd);
-        border: 1px solid rgba(0, 0, 0, 0.25);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 2px rgba(0,0,0,0.2);
-      }
-
-      .device-card.light-card .light-toggle-wrap {
-        width: 52px;
-        height: 72px;
-        background: #fff;
-        border: 2px solid #1a1a1a;
+      .outlet-card.outlet-face.light-outlet .light-toggle-frame {
+        width: 44px;
+        height: 56px;
+        background: #2a2a2a;
         border-radius: 6px;
         padding: 4px;
-        box-shadow: inset 0 1px 2px rgba(0,0,0,0.08);
+        margin: 0 auto 4px;
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.4);
         display: flex;
         align-items: center;
         justify-content: center;
+        position: relative;
       }
 
-      .device-card.light-card .light-toggle {
+      .outlet-card.outlet-face.light-outlet .light-toggle-rocker {
         width: 100%;
-        height: 28px;
-        background: #fff;
-        border: 2px solid #1a1a1a;
+        height: 22px;
+        background: linear-gradient(#fafafa, #e8e8e8);
+        border: 1px solid rgba(0,0,0,0.2);
         border-radius: 4px;
         display: flex;
         align-items: center;
         justify-content: center;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.9);
       }
 
-      .device-card.light-card .light-toggle.off {
-        transform: translateY(12px);
+      .outlet-card.outlet-face.light-outlet .light-toggle-rocker.off {
+        transform: translateY(10px);
       }
 
-      .device-card.light-card .light-toggle.on {
-        transform: translateY(-12px);
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.5);
+      .outlet-card.outlet-face.light-outlet .light-toggle-rocker.on {
+        transform: translateY(-10px);
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.6), 0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.9);
       }
 
-      .device-card.light-card .light-toggle-label {
-        font-size: 9px;
+      .outlet-card.outlet-face.light-outlet .light-toggle-label {
+        font-size: 8px;
         font-weight: 700;
-        color: rgba(0,0,0,0.7);
+        color: rgba(0,0,0,0.75);
         letter-spacing: 0.5px;
+        text-shadow: 0 1px 0 rgba(255,255,255,0.5);
       }
 
-      .device-card.light-card .light-meta {
-        margin-top: 5px;
-        padding-top: 4px;
-        border-top: 1px solid rgba(0,0,0,0.10);
-        text-align: center;
+      .outlet-card.outlet-face.light-outlet .light-state-text {
+        font-size: 10px;
+        font-weight: 700;
+        color: rgba(0,0,0,0.78);
+        font-variant-numeric: tabular-nums;
       }
 
-      .device-card.light-card .light-state-badge {
-        font-size: 9px;
-        font-weight: 600;
-        color: rgba(0,0,0,0.6);
-        padding: 2px 6px;
-        border-radius: 4px;
-        background: rgba(0,0,0,0.06);
+      .outlet-card.outlet-face.light-outlet .outlet-total.light-state-display {
+        font-size: 10px;
+        font-weight: 800;
+        color: var(--panel-accent, #03a9f4);
       }
 
-      .device-card.light-card.light-on .light-state-badge {
-        color: var(--panel-accent);
+      .outlet-card.outlet-face.light-outlet .outlet-total.light-state-display.off {
+        color: rgba(0,0,0,0.55);
+      }
+
+      .outlet-card.outlet-face.light-outlet .plate-screw:first-of-type {
+        margin: 4px auto 16px;
+      }
+
+      .outlet-card.outlet-face.light-outlet .plate-screw:last-of-type {
+        margin: 16px auto 4px;
+      }
+
+      .outlet-card.outlet-face.light-outlet .faceplate {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
       }
 
       .add-device-dropdown {
@@ -2524,20 +2514,27 @@ class EnergyPanel extends HTMLElement {
   _renderLightCard(device, index, deviceData) {
     const isOn = deviceData?.switch_state === true;
     return `
-      <div class="device-card light-card ${isOn ? 'light-on' : ''}" data-outlet-index="${index}">
-        <div class="light-faceplate">
+      <div class="outlet-card outlet-face light-outlet ${isOn ? 'light-on' : ''}" data-outlet-index="${index}">
+        <div class="faceplate">
           <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
-          <div class="light-switch-plate">
-            <div class="light-plate-screw" aria-hidden="true"></div>
-            <div class="light-toggle-wrap">
-              <div class="light-toggle ${isOn ? 'on' : 'off'}">
+          <div class="center-screw plate-screw" aria-hidden="true"></div>
+          <div class="light-toggle-receptacle ${isOn ? 'active' : ''}">
+            <div class="light-toggle-frame" aria-hidden="true">
+              <div class="light-toggle-rocker ${isOn ? 'on' : 'off'}">
                 <span class="light-toggle-label">${isOn ? 'ON' : 'OFF'}</span>
               </div>
             </div>
-            <div class="light-plate-screw" aria-hidden="true"></div>
+            <div class="plug-readout">
+              <span class="plug-label">Switch</span>
+              <span class="light-state-text">${isOn ? 'On' : 'Off'}</span>
+            </div>
           </div>
-          <div class="outlet-meta light-meta">
-            <span class="light-state-badge">${isOn ? 'On' : 'Off'}</span>
+          <div class="center-screw plate-screw" aria-hidden="true"></div>
+          <div class="outlet-meta">
+            <div class="outlet-total light-state-display ${isOn ? '' : 'off'}">${isOn ? 'On' : 'Off'}</div>
+            <div class="outlet-threshold">
+              <span class="threshold-badge">—</span>
+            </div>
           </div>
         </div>
       </div>
@@ -3376,12 +3373,45 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderLightSettings(device, deviceIndex, roomIndex, isCollapsed = true) {
-    const switches = this._getFilteredSwitches(roomIndex);
-    const lights = this._entities?.lights || [];
+    // Switch Entity: only switch.* entities (e.g. switch.hallway_switch)
+    const allSwitches = this._getFilteredSwitches(roomIndex);
+    const switches = (allSwitches || []).filter(s => (s.entity_id || '').startsWith('switch.'));
+    // Mapped Light Entities: only light.* entities (e.g. light.bathroom_light)
+    const allLights = this._entities?.lights || [];
+    const lights = allLights.filter(l => (l.entity_id || '').startsWith('light.'));
     const displayName = device.name || 'Unnamed Light';
     const collapsedClass = isCollapsed ? 'collapsed' : '';
-    const lightEntities = Array.isArray(device.light_entities) ? device.light_entities : (device.light_entities || '').split(',').map(e => e.trim()).filter(Boolean);
-    const lightEntitiesStr = lightEntities.join(', ');
+    // light_entities: list of { entity_id, watts } (legacy: list of strings -> [{ entity_id, watts: 0 }])
+    let lightEntityRows = [];
+    const raw = device.light_entities;
+    if (Array.isArray(raw)) {
+      lightEntityRows = raw.map(e => typeof e === 'object' && e?.entity_id
+        ? { entity_id: e.entity_id, watts: Math.max(0, parseInt(e.watts, 10) || 0) }
+        : typeof e === 'string' && e.startsWith('light.') ? { entity_id: e, watts: 0 } : null
+      ).filter(Boolean);
+    } else if (typeof raw === 'string' && raw.trim()) {
+      lightEntityRows = raw.split(',').map(e => e.trim()).filter(e => e.startsWith('light.')).map(e => ({ entity_id: e, watts: 0 }));
+    }
+    if (lightEntityRows.length === 0) lightEntityRows = [{ entity_id: '', watts: 0 }];
+
+    const lightRowOptions = (currentId) => {
+      let opts = '<option value="">Select light...</option>';
+      lights.forEach(l => {
+        const sel = l.entity_id === currentId ? 'selected' : '';
+        opts += `<option value="${l.entity_id}" ${sel}>${l.friendly_name || l.entity_id}</option>`;
+      });
+      return opts;
+    };
+
+    const lightRowsHtml = lightEntityRows.map((row, idx) => `
+      <div class="light-entity-row" data-row-index="${idx}">
+        <select class="form-select light-entity-select">
+          ${lightRowOptions(row.entity_id)}
+        </select>
+        <input type="number" class="form-input light-entity-watts" value="${row.watts}" min="0" max="500" step="1" placeholder="W" style="width: 60px;" title="Running power when on">
+        <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
+      </div>
+    `).join('');
 
     return `
       <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="light" draggable="true">
@@ -3411,20 +3441,17 @@ class EnergyPanel extends HTMLElement {
                 <label class="form-label">Switch Entity</label>
                 <select class="form-select light-switch-entity">
                   <option value="">None</option>
-                  ${switches.map(s => `<option value="${s.entity_id}" ${device.switch_entity === s.entity_id ? 'selected' : ''}>${s.friendly_name}</option>`).join('')}
+                  ${switches.map(s => `<option value="${s.entity_id}" ${device.switch_entity === s.entity_id ? 'selected' : ''}>${s.friendly_name || s.entity_id}</option>`).join('')}
                 </select>
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Primary switch for on/off state. Toggle up = on, down = off.</div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Switch entities only (switch.*). Primary switch for on/off state. Toggle up = on, down = off.</div>
               </div>
               <div class="form-group">
-                <label class="form-label">Mapped Light Entities</label>
-                <select class="form-select light-entities-select" multiple size="4">
-                  ${lights.map(l => `<option value="${l.entity_id}" ${lightEntities.includes(l.entity_id) ? 'selected' : ''}>${l.friendly_name || l.entity_id}</option>`).join('')}
-                </select>
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Map multiple lights to this switch. For smart lights: enables future intensity, color controls. Hold Ctrl/Cmd to multi-select.</div>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Or enter entity IDs (comma-separated)</label>
-                <input type="text" class="form-input light-entities-input" value="${lightEntitiesStr}" placeholder="light.bathroom_light, light.kitchen_light">
+                <label class="form-label">Mapped Lights & Running Power (W)</label>
+                <div class="light-entity-rows">
+                  ${lightRowsHtml}
+                </div>
+                <button type="button" class="btn btn-secondary light-entity-add-btn" style="margin-top: 8px;">+ Add light</button>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">For each light, enter its running power (watts) when on. Used for room totals and daily energy.</div>
               </div>
               <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
                 <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
@@ -3515,6 +3542,8 @@ class EnergyPanel extends HTMLElement {
     const plug1Switches = this._sortSwitchesBySimilarity(switches, device.plug1_entity);
     const binarySensors = this._entities?.binary_sensors || [];
     const hasStoveInRoom = roomOutlets.some(o => (o.type || '') === 'stove');
+    const stoveInRoom = roomOutlets.find(o => (o.type || '') === 'stove');
+    const hasStoveSafetyEnabled = stoveInRoom ? (stoveInRoom.stove_safety_enabled !== false) : false;
 
     const renderSwitchOptions = (sortedSwitches, sensorEntity, currentSwitch) => {
       let options = '<option value="">None</option>';
@@ -3531,6 +3560,13 @@ class EnergyPanel extends HTMLElement {
           <div class="divider" style="margin: 16px 0;"></div>
           <div class="plug-settings-title" style="margin-bottom: 12px;">Stove Safety</div>
           <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">Configure unattended cooking monitoring. Uses TTS messages from TTS Settings.</p>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="toggle-row">
+              <input type="checkbox" class="form-checkbox stove-safety-enabled" ${device.stove_safety_enabled !== false ? 'checked' : ''}>
+              <span class="toggle-label">Enable stove safety shutoff</span>
+            </label>
+            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">When ON: timer runs, TTS plays, and stove auto-shuts off after final warning. When OFF: TTS only, no shutoff.</div>
+          </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Stove Plug Switch</label>
             <select class="form-select outlet-plug1-switch">
@@ -3567,7 +3603,14 @@ class EnergyPanel extends HTMLElement {
     const microwaveSafetyFields = deviceType === 'microwave' && hasStoveInRoom ? `
           <div class="divider" style="margin: 16px 0;"></div>
           <div class="plug-settings-title" style="margin-bottom: 12px; color: var(--panel-warning);">Microwave Safety (shared breaker)</div>
-          <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">For older homes where microwave and stove share the same breaker. When microwave is on, stove power is cut until microwave turns off. <strong style="color: var(--panel-warning);">Can damage stove LED panel—use at your discretion.</strong></p>
+          <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">For older homes where microwave and stove share the same breaker. When microwave is on, stove power is cut until microwave turns off. <strong style="color: var(--panel-warning);">Can damage stove LED panel—use at your discretion.</strong> Requires stove safety to be enabled.</p>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="toggle-row ${!hasStoveSafetyEnabled ? 'toggle-disabled' : ''}">
+              <input type="checkbox" class="form-checkbox microwave-safety-enabled" ${device.microwave_safety_enabled !== false ? 'checked' : ''} ${!hasStoveSafetyEnabled ? 'disabled' : ''}>
+              <span class="toggle-label">Enable microwave safety (cut stove when microwave on)</span>
+            </label>
+            ${!hasStoveSafetyEnabled ? '<div style="font-size: 10px; color: var(--panel-warning); margin-top: 4px;">Enable stove safety shutoff in the Stove card first.</div>' : ''}
+          </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Microwave On Threshold (W)</label>
             <input type="number" class="form-input microwave-power-threshold" value="${device.microwave_power_threshold ?? 50}" min="0" step="10" placeholder="50">
@@ -4336,13 +4379,26 @@ class EnergyPanel extends HTMLElement {
       });
     }
 
-    // Light entities: sync multi-select to text input
-    const lightSelect = outletItem.querySelector('.light-entities-select');
-    const lightInput = outletItem.querySelector('.light-entities-input');
-    if (lightSelect && lightInput) {
-      lightSelect.addEventListener('change', () => {
-        const selected = Array.from(lightSelect.selectedOptions).map(o => o.value);
-        lightInput.value = selected.join(', ');
+    // Light entity rows: add/remove
+    const lightEntityRows = outletItem.querySelector('.light-entity-rows');
+    const lightEntityAddBtn = outletItem.querySelector('.light-entity-add-btn');
+    const lights = (this._entities?.lights || []).filter(l => (l.entity_id || '').startsWith('light.'));
+    if (lightEntityRows && lightEntityAddBtn) {
+      const addRow = () => {
+        const opts = '<option value="">Select light...</option>' + lights.map(l => `<option value="${l.entity_id}">${l.friendly_name || l.entity_id}</option>`).join('');
+        const row = document.createElement('div');
+        row.className = 'light-entity-row';
+        row.innerHTML = `
+          <select class="form-select light-entity-select">${opts}</select>
+          <input type="number" class="form-input light-entity-watts" value="0" min="0" max="500" step="1" placeholder="W" style="width: 60px;" title="Running power when on">
+          <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
+        `;
+        row.querySelector('.light-entity-remove-btn').addEventListener('click', () => row.remove());
+        lightEntityRows.appendChild(row);
+      };
+      lightEntityAddBtn.addEventListener('click', addRow);
+      lightEntityRows.querySelectorAll('.light-entity-remove-btn').forEach(btn => {
+        btn.addEventListener('click', () => btn.closest('.light-entity-row')?.remove());
       });
     }
 
@@ -4775,6 +4831,7 @@ class EnergyPanel extends HTMLElement {
             device.plug2_switch = null;
             device.plug1_shutoff = 0;
             device.plug2_shutoff = 0;
+            device.stove_safety_enabled = item.querySelector('.stove-safety-enabled')?.checked !== false;
             device.stove_power_threshold = parseInt(item.querySelector('.stove-power-threshold')?.value) || 100;
             device.cooking_time_minutes = parseInt(item.querySelector('.stove-cooking-time')?.value) || 15;
             device.final_warning_seconds = parseInt(item.querySelector('.stove-final-warning')?.value) || 30;
@@ -4786,6 +4843,8 @@ class EnergyPanel extends HTMLElement {
             device.plug2_switch = null;
             device.plug1_shutoff = 0;
             device.plug2_shutoff = 0;
+            const mwSafetyCheck = item.querySelector('.microwave-safety-enabled');
+            device.microwave_safety_enabled = mwSafetyCheck && !mwSafetyCheck.disabled && mwSafetyCheck.checked;
             device.microwave_power_threshold = parseInt(item.querySelector('.microwave-power-threshold')?.value) || 50;
           } else if (isLight) {
             device.type = 'light';
@@ -4795,13 +4854,17 @@ class EnergyPanel extends HTMLElement {
             device.plug2_switch = null;
             device.plug1_shutoff = 0;
             device.plug2_shutoff = 0;
-            device.switch_entity = item.querySelector('.light-switch-entity')?.value || null;
-            const lightInput = item.querySelector('.light-entities-input')?.value || '';
-            const lightSelect = item.querySelector('.light-entities-select');
-            let lightEntities = lightInput ? lightInput.split(',').map(e => e.trim()).filter(Boolean) : [];
-            if (lightEntities.length === 0 && lightSelect) {
-              lightEntities = Array.from(lightSelect.selectedOptions).map(o => o.value);
-            }
+            const switchVal = item.querySelector('.light-switch-entity')?.value || null;
+            device.switch_entity = (switchVal && switchVal.startsWith('switch.')) ? switchVal : null;
+            const lightRows = item.querySelectorAll('.light-entity-row');
+            const lightEntities = [];
+            lightRows.forEach(row => {
+              const entityId = row.querySelector('.light-entity-select')?.value;
+              const watts = parseInt(row.querySelector('.light-entity-watts')?.value, 10) || 0;
+              if (entityId && entityId.startsWith('light.')) {
+                lightEntities.push({ entity_id: entityId, watts: Math.max(0, watts) });
+              }
+            });
             device.light_entities = lightEntities;
           } else if (deviceTypeFromItem === 'minisplit') {
             device.type = 'minisplit';

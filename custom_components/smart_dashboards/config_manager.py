@@ -172,6 +172,7 @@ class ConfigManager:
                             item["plug2_switch"] = None
                             item["plug1_shutoff"] = 0
                             item["plug2_shutoff"] = 0
+                            item["stove_safety_enabled"] = outlet.get("stove_safety_enabled", True)
                             item["stove_power_threshold"] = int(outlet.get("stove_power_threshold", 100))
                             item["cooking_time_minutes"] = int(outlet.get("cooking_time_minutes", 15))
                             item["final_warning_seconds"] = int(outlet.get("final_warning_seconds", 30))
@@ -182,6 +183,7 @@ class ConfigManager:
                             item["plug2_switch"] = None
                             item["plug1_shutoff"] = 0
                             item["plug2_shutoff"] = 0
+                            item["microwave_safety_enabled"] = outlet.get("microwave_safety_enabled", False)
                             item["microwave_power_threshold"] = int(outlet.get("microwave_power_threshold", 50))
                         elif outlet_type == "light":
                             item["plug1_entity"] = None
@@ -192,10 +194,24 @@ class ConfigManager:
                             item["plug2_shutoff"] = 0
                             item["switch_entity"] = outlet.get("switch_entity")
                             light_ents = outlet.get("light_entities")
+                            # Support list of {entity_id, watts} or legacy list of entity_id strings
                             if isinstance(light_ents, list):
-                                item["light_entities"] = [e for e in light_ents if e]
+                                by_entity = {}
+                                for e in light_ents:
+                                    eid = None
+                                    w = 0
+                                    if isinstance(e, dict) and e.get("entity_id", "").startswith("light."):
+                                        eid, w = e["entity_id"], max(0, int(e.get("watts", 0)))
+                                    elif isinstance(e, str) and e.strip().startswith("light."):
+                                        eid, w = e.strip(), 0
+                                    if eid:
+                                        by_entity[eid] = {"entity_id": eid, "watts": w}
+                                item["light_entities"] = list(by_entity.values())
                             elif isinstance(light_ents, str):
-                                item["light_entities"] = [e.strip() for e in light_ents.split(",") if e.strip()]
+                                item["light_entities"] = [
+                                    {"entity_id": e.strip(), "watts": 0}
+                                    for e in light_ents.split(",") if e.strip().startswith("light.")
+                                ]
                             else:
                                 item["light_entities"] = []
                         elif outlet_type in ("single_outlet", "minisplit"):
