@@ -268,22 +268,21 @@ class EnergyPanel extends HTMLElement {
         }
         if (deviceType === 'light') {
           const isOn = outlet.switch_state === true;
-          const lightRocker = deviceCard.querySelector('.light-toggle-rocker');
+          const totalWatts = isOn ? (outlet.plug1?.watts || 0) : 0;
+          const lightLever = deviceCard.querySelector('.light-toggle-lever');
           const lightLabel = deviceCard.querySelector('.light-toggle-label');
-          const lightStateText = deviceCard.querySelector('.light-state-text');
-          const lightStateDisplay = deviceCard.querySelector('.light-state-display');
-          const lightReceptacle = deviceCard.querySelector('.light-toggle-receptacle');
-          if (lightRocker) {
-            lightRocker.classList.toggle('on', isOn);
-            lightRocker.classList.toggle('off', !isOn);
+          const lightWattsDisplay = deviceCard.querySelector('.light-watts-display');
+          const lightSwitchPlate = deviceCard.querySelector('.light-switch-plate');
+          if (lightLever) {
+            lightLever.classList.toggle('on', isOn);
+            lightLever.classList.toggle('off', !isOn);
           }
           if (lightLabel) lightLabel.textContent = isOn ? 'ON' : 'OFF';
-          if (lightStateText) lightStateText.textContent = isOn ? 'On' : 'Off';
-          if (lightStateDisplay) {
-            lightStateDisplay.textContent = isOn ? 'On' : 'Off';
-            lightStateDisplay.classList.toggle('off', !isOn);
+          if (lightWattsDisplay) {
+            lightWattsDisplay.textContent = `${totalWatts.toFixed(1)} W`;
+            lightWattsDisplay.classList.toggle('off', totalWatts <= 0);
           }
-          if (lightReceptacle) lightReceptacle.classList.toggle('active', isOn);
+          if (lightSwitchPlate) lightSwitchPlate.classList.toggle('active', isOn);
           deviceCard.classList.toggle('light-on', isOn);
         }
       });
@@ -1093,80 +1092,63 @@ class EnergyPanel extends HTMLElement {
         flex-shrink: 0;
       }
 
-      .outlet-card.outlet-face.light-outlet .light-toggle-receptacle {
-        background: linear-gradient(#efefef, #dedede);
-        border: 1px solid rgba(0, 0, 0, 0.22);
-        border-radius: 8px;
-        padding: 6px 6px 4px;
-        position: relative;
-        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
-        flex: 0 0 auto;
-        margin: auto 0;
-      }
-
-      .outlet-card.outlet-face.light-outlet .light-toggle-receptacle.active {
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 8px rgba(3, 169, 244, 0.4),
-          inset 0 2px 4px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
-      }
-
-      .outlet-card.outlet-face.light-outlet .light-toggle-frame {
+      .outlet-card.outlet-face.light-outlet .light-switch-plate {
         width: 44px;
-        height: 56px;
+        height: 58px;
         background: #2a2a2a;
-        border-radius: 6px;
-        padding: 4px;
-        margin: 0 auto 4px;
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.4);
+        border: 1px solid rgba(0, 0, 0, 0.4);
+        border-radius: 4px;
+        padding: 8px 10px;
+        margin: 0 auto;
+        box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5);
         display: flex;
         align-items: center;
         justify-content: center;
-        position: relative;
+        flex: 0 0 auto;
       }
 
-      .outlet-card.outlet-face.light-outlet .light-toggle-rocker {
-        width: 100%;
-        height: 22px;
-        background: linear-gradient(#fafafa, #e8e8e8);
-        border: 1px solid rgba(0,0,0,0.2);
-        border-radius: 4px;
+      .outlet-card.outlet-face.light-outlet .light-switch-plate.active {
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.6), inset 0 2px 6px rgba(0, 0, 0, 0.5);
+      }
+
+      .outlet-card.outlet-face.light-outlet .light-toggle-lever {
+        width: 32px;
+        height: 24px;
+        background: linear-gradient(#f5f5f5, #e0e0e0);
+        border: 1px solid rgba(0,0,0,0.25);
+        border-radius: 2px;
         display: flex;
         align-items: center;
         justify-content: center;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.9);
+        box-shadow: 0 1px 2px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.8);
       }
 
-      .outlet-card.outlet-face.light-outlet .light-toggle-rocker.off {
-        transform: translateY(10px);
+      .outlet-card.outlet-face.light-outlet .light-toggle-lever.off {
+        transform: translateY(6px);
       }
 
-      .outlet-card.outlet-face.light-outlet .light-toggle-rocker.on {
-        transform: translateY(-10px);
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.6), 0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.9);
+      .outlet-card.outlet-face.light-outlet .light-toggle-lever.on {
+        transform: translateY(-6px);
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.5), 0 1px 2px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.8);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-label {
-        font-size: 8px;
+        font-size: 7px;
         font-weight: 700;
-        color: rgba(0,0,0,0.75);
-        letter-spacing: 0.5px;
-        text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+        color: rgba(0,0,0,0.85);
+        letter-spacing: 0.3px;
+        text-shadow: 0 1px 0 rgba(255,255,255,0.7);
       }
 
-      .outlet-card.outlet-face.light-outlet .light-state-text {
-        font-size: 10px;
-        font-weight: 700;
-        color: rgba(0,0,0,0.78);
-        font-variant-numeric: tabular-nums;
-      }
-
-      .outlet-card.outlet-face.light-outlet .outlet-total.light-state-display {
+      .outlet-card.outlet-face.light-outlet .outlet-total.light-watts-display {
         font-size: 10px;
         font-weight: 800;
         color: var(--panel-accent, #03a9f4);
+        font-variant-numeric: tabular-nums;
       }
 
-      .outlet-card.outlet-face.light-outlet .outlet-total.light-state-display.off {
+      .outlet-card.outlet-face.light-outlet .outlet-total.light-watts-display.off {
         color: rgba(0,0,0,0.55);
       }
 
@@ -2513,25 +2495,20 @@ class EnergyPanel extends HTMLElement {
 
   _renderLightCard(device, index, deviceData) {
     const isOn = deviceData?.switch_state === true;
+    const totalWatts = isOn ? (deviceData?.plug1?.watts || 0) : 0;
     return `
       <div class="outlet-card outlet-face light-outlet ${isOn ? 'light-on' : ''}" data-outlet-index="${index}">
         <div class="faceplate">
           <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
           <div class="center-screw plate-screw" aria-hidden="true"></div>
-          <div class="light-toggle-receptacle ${isOn ? 'active' : ''}">
-            <div class="light-toggle-frame" aria-hidden="true">
-              <div class="light-toggle-rocker ${isOn ? 'on' : 'off'}">
-                <span class="light-toggle-label">${isOn ? 'ON' : 'OFF'}</span>
-              </div>
-            </div>
-            <div class="plug-readout">
-              <span class="plug-label">Switch</span>
-              <span class="light-state-text">${isOn ? 'On' : 'Off'}</span>
+          <div class="light-switch-plate ${isOn ? 'active' : ''}">
+            <div class="light-toggle-lever ${isOn ? 'on' : 'off'}">
+              <span class="light-toggle-label">${isOn ? 'ON' : 'OFF'}</span>
             </div>
           </div>
           <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="outlet-meta">
-            <div class="outlet-total light-state-display ${isOn ? '' : 'off'}">${isOn ? 'On' : 'Off'}</div>
+            <div class="outlet-total light-watts-display ${totalWatts > 0 ? '' : 'off'}">${totalWatts.toFixed(1)} W</div>
             <div class="outlet-threshold">
               <span class="threshold-badge">—</span>
             </div>
@@ -3381,34 +3358,27 @@ class EnergyPanel extends HTMLElement {
     const lights = allLights.filter(l => (l.entity_id || '').startsWith('light.'));
     const displayName = device.name || 'Unnamed Light';
     const collapsedClass = isCollapsed ? 'collapsed' : '';
-    // light_entities: list of { entity_id, watts } (legacy: list of strings -> [{ entity_id, watts: 0 }])
+    // light_entities: list of { entity_id, watts, wrgb } (legacy: list of strings -> [{ entity_id, watts: 0, wrgb: false }])
     let lightEntityRows = [];
     const raw = device.light_entities;
     if (Array.isArray(raw)) {
       lightEntityRows = raw.map(e => typeof e === 'object' && e?.entity_id
-        ? { entity_id: e.entity_id, watts: Math.max(0, parseInt(e.watts, 10) || 0) }
-        : typeof e === 'string' && e.startsWith('light.') ? { entity_id: e, watts: 0 } : null
+        ? { entity_id: e.entity_id, watts: Math.max(0, parseInt(e.watts, 10) || 0), wrgb: !!e.wrgb }
+        : typeof e === 'string' && e.startsWith('light.') ? { entity_id: e, watts: 0, wrgb: false } : null
       ).filter(Boolean);
     } else if (typeof raw === 'string' && raw.trim()) {
-      lightEntityRows = raw.split(',').map(e => e.trim()).filter(e => e.startsWith('light.')).map(e => ({ entity_id: e, watts: 0 }));
+      lightEntityRows = raw.split(',').map(e => e.trim()).filter(e => e.startsWith('light.')).map(e => ({ entity_id: e, watts: 0, wrgb: false }));
     }
-    if (lightEntityRows.length === 0) lightEntityRows = [{ entity_id: '', watts: 0 }];
-
-    const lightRowOptions = (currentId) => {
-      let opts = '<option value="">Select light...</option>';
-      lights.forEach(l => {
-        const sel = l.entity_id === currentId ? 'selected' : '';
-        opts += `<option value="${l.entity_id}" ${sel}>${l.friendly_name || l.entity_id}</option>`;
-      });
-      return opts;
-    };
+    if (lightEntityRows.length === 0) lightEntityRows = [{ entity_id: '', watts: 0, wrgb: false }];
 
     const lightRowsHtml = lightEntityRows.map((row, idx) => `
       <div class="light-entity-row" data-row-index="${idx}">
-        <select class="form-select light-entity-select">
-          ${lightRowOptions(row.entity_id)}
-        </select>
-        <input type="number" class="form-input light-entity-watts" value="${row.watts}" min="0" max="500" step="1" placeholder="W" style="width: 60px;" title="Running power when on">
+        ${this._renderEntityAutocomplete(row.entity_id || '', 'light', roomIndex, 'light-entity-select', 'light.bathroom_light')}
+        <input type="number" class="form-input light-entity-watts" value="${row.watts}" min="0" max="500" step="1" placeholder="W" title="Running power when on">
+        <label class="light-entity-wrgb">
+          <input type="checkbox" class="form-checkbox light-entity-wrgb-toggle" ${row.wrgb ? 'checked' : ''} title="WRGB (White/Red/Green/Blue) light">
+          WRGB
+        </label>
         <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
       </div>
     `).join('');
@@ -3439,11 +3409,8 @@ class EnergyPanel extends HTMLElement {
               <div class="plug-settings-title">Switch & Lights</div>
               <div class="form-group">
                 <label class="form-label">Switch Entity</label>
-                <select class="form-select light-switch-entity">
-                  <option value="">None</option>
-                  ${switches.map(s => `<option value="${s.entity_id}" ${device.switch_entity === s.entity_id ? 'selected' : ''}>${s.friendly_name || s.entity_id}</option>`).join('')}
-                </select>
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Switch entities only (switch.*). Primary switch for on/off state. Toggle up = on, down = off.</div>
+                ${this._renderEntityAutocomplete(device.switch_entity || '', 'switch', roomIndex, 'light-switch-entity', 'switch.hallway_switch')}
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Switch entities only (switch.*). Type to search. Primary switch for on/off state.</div>
               </div>
               <div class="form-group">
                 <label class="form-label">Mapped Lights & Running Power (W)</label>
@@ -3451,7 +3418,7 @@ class EnergyPanel extends HTMLElement {
                   ${lightRowsHtml}
                 </div>
                 <button type="button" class="btn btn-secondary light-entity-add-btn" style="margin-top: 8px;">+ Add light</button>
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">For each light, enter its running power (watts) when on. Used for room totals and daily energy.</div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Each row: light entity, watts when on, WRGB toggle. Used for room totals and daily energy.</div>
               </div>
               <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
                 <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
@@ -3464,18 +3431,6 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderMinisplitSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed = true) {
-    const switches = this._getFilteredSwitches(roomIndex);
-    const plug1Switches = this._sortSwitchesBySimilarity(switches, device.plug1_entity);
-    const renderSwitchOptions = (sortedSwitches, sensorEntity, currentSwitch) => {
-      let options = '<option value="">None</option>';
-      options += sortedSwitches.map((s, idx) => {
-        const score = this._getSimilarityScore(s.entity_id, sensorEntity);
-        const isBestMatch = idx === 0 && score > 0.3 && sensorEntity;
-        const label = isBestMatch ? `★ ${s.friendly_name}` : s.friendly_name;
-        return `<option value="${s.entity_id}" ${s.entity_id === currentSwitch ? 'selected' : ''}>${label}</option>`;
-      }).join('');
-      return options;
-    };
     const displayName = device.name || 'Unnamed Mini-Split';
     const collapsedClass = isCollapsed ? 'collapsed' : '';
     return `
@@ -3508,16 +3463,11 @@ class EnergyPanel extends HTMLElement {
               <div class="plug-settings-title">Power Sensor</div>
               <div class="form-group">
                 <label class="form-label">Power Sensor</label>
-                <select class="form-select outlet-plug1">
-                  <option value="">None</option>
-                  ${powerSensors.map(s => `<option value="${s.entity_id}" ${device.plug1_entity === s.entity_id ? 'selected' : ''}>${s.friendly_name}</option>`).join('')}
-                </select>
+                ${this._renderEntityAutocomplete(device.plug1_entity || '', 'sensor', roomIndex, 'outlet-plug1', 'sensor.kitchen_power')}
               </div>
               <div class="form-group">
-                <label class="form-label">Switch <span style="font-size: 8px; color: var(--panel-accent);">★ = best match</span></label>
-                <select class="form-select outlet-plug1-switch">
-                  ${renderSwitchOptions(plug1Switches, device.plug1_entity, device.plug1_switch)}
-                </select>
+                <label class="form-label">Switch</label>
+                ${this._renderEntityAutocomplete(device.plug1_switch || '', 'switch', roomIndex, 'outlet-plug1-switch', 'switch.kitchen_outlet')}
               </div>
               <div class="shutoff-row">
                 <div class="form-group">
@@ -3538,23 +3488,9 @@ class EnergyPanel extends HTMLElement {
   _renderApplianceSettings(device, deviceIndex, powerSensors, roomIndex, deviceType, roomOutlets = [], isCollapsed = true) {
     const displayName = device.name || (deviceType === 'stove' ? 'Unnamed Stove' : 'Unnamed Microwave');
     const collapsedClass = isCollapsed ? 'collapsed' : '';
-    const switches = this._getFilteredSwitches(roomIndex);
-    const plug1Switches = this._sortSwitchesBySimilarity(switches, device.plug1_entity);
-    const binarySensors = this._entities?.binary_sensors || [];
     const hasStoveInRoom = roomOutlets.some(o => (o.type || '') === 'stove');
     const stoveInRoom = roomOutlets.find(o => (o.type || '') === 'stove');
     const hasStoveSafetyEnabled = stoveInRoom ? (stoveInRoom.stove_safety_enabled !== false) : false;
-
-    const renderSwitchOptions = (sortedSwitches, sensorEntity, currentSwitch) => {
-      let options = '<option value="">None</option>';
-      options += sortedSwitches.map((s, idx) => {
-        const score = this._getSimilarityScore(s.entity_id, sensorEntity);
-        const isBestMatch = idx === 0 && score > 0.3 && sensorEntity;
-        const label = isBestMatch ? `★ ${s.friendly_name}` : s.friendly_name;
-        return `<option value="${s.entity_id}" ${s.entity_id === currentSwitch ? 'selected' : ''}>${label}</option>`;
-      }).join('');
-      return options;
-    };
 
     const stoveSafetyFields = deviceType === 'stove' ? `
           <div class="divider" style="margin: 16px 0;"></div>
@@ -3569,9 +3505,7 @@ class EnergyPanel extends HTMLElement {
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Stove Plug Switch</label>
-            <select class="form-select outlet-plug1-switch">
-              ${renderSwitchOptions(plug1Switches, device.plug1_entity, device.plug1_switch)}
-            </select>
+            ${this._renderEntityAutocomplete(device.plug1_switch || '', 'switch', roomIndex, 'outlet-plug1-switch', 'switch.kitchen_outlet')}
             <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Switch to turn off when unattended</div>
           </div>
           <div class="grid-2" style="margin-bottom: 12px;">
@@ -3592,10 +3526,7 @@ class EnergyPanel extends HTMLElement {
             </div>
             <div class="form-group">
               <label class="form-label">Presence Sensor</label>
-              <select class="form-select stove-presence-sensor">
-                <option value="">None</option>
-                ${binarySensors.map(s => `<option value="${s.entity_id}" ${device.presence_sensor === s.entity_id ? 'selected' : ''}>${s.friendly_name || s.entity_id}</option>`).join('')}
-              </select>
+              ${this._renderEntityAutocomplete(device.presence_sensor || '', 'binary_sensor', roomIndex, 'stove-presence-sensor', 'binary_sensor.kitchen_presence')}
             </div>
           </div>
         ` : '';
@@ -3653,14 +3584,7 @@ class EnergyPanel extends HTMLElement {
               <div class="plug-settings-title">Power Sensor</div>
               <div class="form-group">
                 <label class="form-label">Power Sensor</label>
-                <select class="form-select outlet-plug1">
-                  <option value="">None</option>
-                  ${powerSensors.map(s => `
-                    <option value="${s.entity_id}" ${device.plug1_entity === s.entity_id ? 'selected' : ''}>
-                      ${s.friendly_name}
-                    </option>
-                  `).join('')}
-                </select>
+                ${this._renderEntityAutocomplete(device.plug1_entity || '', 'sensor', roomIndex, 'outlet-plug1', 'sensor.kitchen_power')}
               </div>
               ${stoveSafetyFields}
               ${microwaveSafetyFields}
@@ -3673,24 +3597,6 @@ class EnergyPanel extends HTMLElement {
 
   _renderOutletSettings(outlet, outletIndex, powerSensors, roomIndex, isCollapsed = true) {
     const isSingleOutlet = (outlet.type || 'outlet') === 'single_outlet';
-    const switches = this._getFilteredSwitches(roomIndex);
-    
-    // Sort switches by similarity to each plug sensor
-    const plug1Switches = this._sortSwitchesBySimilarity(switches, outlet.plug1_entity);
-    const plug2Switches = isSingleOutlet ? [] : this._sortSwitchesBySimilarity(switches, outlet.plug2_entity);
-    
-    // Helper to render switch options with best match indicator
-    const renderSwitchOptions = (sortedSwitches, sensorEntity, currentSwitch) => {
-      let options = '<option value="">None</option>';
-      options += sortedSwitches.map((s, idx) => {
-        const score = this._getSimilarityScore(s.entity_id, sensorEntity);
-        const isBestMatch = idx === 0 && score > 0.3 && sensorEntity;
-        const label = isBestMatch ? `★ ${s.friendly_name}` : s.friendly_name;
-        return `<option value="${s.entity_id}" ${s.entity_id === currentSwitch ? 'selected' : ''}>${label}</option>`;
-      }).join('');
-      return options;
-    };
-
     const displayName = outlet.name || 'Unnamed Outlet';
     const collapsedClass = isCollapsed ? 'collapsed' : '';
 
@@ -3726,20 +3632,11 @@ class EnergyPanel extends HTMLElement {
               <div class="plug-settings-title">${isSingleOutlet ? 'Plug' : 'Plug 1'}</div>
               <div class="form-group">
                 <label class="form-label">Power Sensor</label>
-                <select class="form-select outlet-plug1">
-                  <option value="">None</option>
-                  ${powerSensors.map(s => `
-                    <option value="${s.entity_id}" ${outlet.plug1_entity === s.entity_id ? 'selected' : ''}>
-                      ${s.friendly_name}
-                    </option>
-                  `).join('')}
-                </select>
+                ${this._renderEntityAutocomplete(outlet.plug1_entity || '', 'sensor', roomIndex, 'outlet-plug1', 'sensor.kitchen_power')}
               </div>
               <div class="form-group">
-                <label class="form-label">Switch <span style="font-size: 8px; color: var(--panel-accent);">★ = best match</span></label>
-                <select class="form-select outlet-plug1-switch">
-                  ${renderSwitchOptions(plug1Switches, outlet.plug1_entity, outlet.plug1_switch)}
-                </select>
+                <label class="form-label">Switch</label>
+                ${this._renderEntityAutocomplete(outlet.plug1_switch || '', 'switch', roomIndex, 'outlet-plug1-switch', 'switch.kitchen_outlet')}
               </div>
               <div class="shutoff-row">
                 <div class="form-group">
@@ -3756,20 +3653,11 @@ class EnergyPanel extends HTMLElement {
               <div class="plug-settings-title">Plug 2</div>
               <div class="form-group">
                 <label class="form-label">Power Sensor</label>
-                <select class="form-select outlet-plug2">
-                  <option value="">None</option>
-                  ${powerSensors.map(s => `
-                    <option value="${s.entity_id}" ${outlet.plug2_entity === s.entity_id ? 'selected' : ''}>
-                      ${s.friendly_name}
-                    </option>
-                  `).join('')}
-                </select>
+                ${this._renderEntityAutocomplete(outlet.plug2_entity || '', 'sensor', roomIndex, 'outlet-plug2', 'sensor.kitchen_power')}
               </div>
               <div class="form-group">
-                <label class="form-label">Switch <span style="font-size: 8px; color: var(--panel-accent);">★ = best match</span></label>
-                <select class="form-select outlet-plug2-switch">
-                  ${renderSwitchOptions(plug2Switches, outlet.plug2_entity, outlet.plug2_switch)}
-                </select>
+                <label class="form-label">Switch</label>
+                ${this._renderEntityAutocomplete(outlet.plug2_switch || '', 'switch', roomIndex, 'outlet-plug2-switch', 'switch.kitchen_outlet')}
               </div>
               <div class="shutoff-row">
                 <div class="form-group">
@@ -3967,6 +3855,7 @@ class EnergyPanel extends HTMLElement {
       const roomIndex = outletItem.dataset.roomIndex;
       this._attachOutletEventListeners(outletItem, roomIndex);
     });
+    this._initEntityAutocompletes(this.shadowRoot);
 
     // Test switch buttons
     this.shadowRoot.querySelectorAll('.test-switch-btn').forEach(btn => {
@@ -4029,52 +3918,7 @@ class EnergyPanel extends HTMLElement {
       switches = this._areaSwitches[areaId] || [];
     }
 
-    // Update all outlet dropdowns in this room - PRESERVE existing selections
-    const outletItems = roomCard.querySelectorAll('.outlet-settings-item');
-    outletItems.forEach(item => {
-      const plug1Select = item.querySelector('.outlet-plug1');
-      const plug2Select = item.querySelector('.outlet-plug2');
-      const plug1SwitchSelect = item.querySelector('.outlet-plug1-switch');
-      const plug2SwitchSelect = item.querySelector('.outlet-plug2-switch');
-      
-      // Save current values BEFORE rebuilding options
-      const plug1Value = plug1Select?.value || '';
-      const plug2Value = plug2Select?.value || '';
-      const plug1SwitchValue = plug1SwitchSelect?.value || '';
-      const plug2SwitchValue = plug2SwitchSelect?.value || '';
-
-      // Helper to build options while preserving current selection
-      const buildOptions = (entities, currentValue, type = 'sensor') => {
-        let options = '<option value="">None</option>';
-        
-        // If there's a current value that's NOT in the filtered list, add it first (marked)
-        const currentInList = entities.some(e => e.entity_id === currentValue);
-        if (currentValue && !currentInList) {
-          const label = currentValue.split('.').pop().replace(/_/g, ' ');
-          options += `<option value="${currentValue}" selected style="color: var(--warning-color);">${label} (other area)</option>`;
-        }
-        
-        // Add all entities from the filtered list
-        options += entities.map(e => 
-          `<option value="${e.entity_id}" ${e.entity_id === currentValue ? 'selected' : ''}>${e.friendly_name}</option>`
-        ).join('');
-        
-        return options;
-      };
-
-      if (plug1Select) {
-        plug1Select.innerHTML = buildOptions(sensors, plug1Value, 'sensor');
-      }
-      if (plug2Select) {
-        plug2Select.innerHTML = buildOptions(sensors, plug2Value, 'sensor');
-      }
-      if (plug1SwitchSelect) {
-        plug1SwitchSelect.innerHTML = buildOptions(switches, plug1SwitchValue, 'switch');
-      }
-      if (plug2SwitchSelect) {
-        plug2SwitchSelect.innerHTML = buildOptions(switches, plug2SwitchValue, 'switch');
-      }
-    });
+    // Entity autocomplete inputs use area-filtered suggestions on focus - no need to rebuild
 
     const areaName = this._areas?.find(a => a.id === areaId)?.name || 'all areas';
     showToast(this.shadowRoot, `Filtering to ${areaName} (existing selections preserved)`, 'success');
@@ -4100,88 +3944,90 @@ class EnergyPanel extends HTMLElement {
     return this._entities?.switches || [];
   }
 
-  /**
-   * Calculate similarity score between two entity names (0-1, higher = more similar)
-   */
-  _getSimilarityScore(str1, str2) {
-    if (!str1 || !str2) return 0;
-    
-    // Extract the entity name part (after the domain prefix)
-    const name1 = str1.includes('.') ? str1.split('.').pop() : str1;
-    const name2 = str2.includes('.') ? str2.split('.').pop() : str2;
-    
-    // Convert to lowercase and split into words
-    const words1 = name1.toLowerCase().replace(/_/g, ' ').split(/\s+/);
-    const words2 = name2.toLowerCase().replace(/_/g, ' ').split(/\s+/);
-    
-    // Count matching words
-    let matches = 0;
-    for (const word of words1) {
-      if (word.length > 1 && words2.includes(word)) {
-        matches++;
-      }
+  _getEntitiesForAutocomplete(roomIndex, entityType) {
+    const prefix = entityType === 'sensor' ? 'sensor.' : entityType === 'switch' ? 'switch.' : entityType === 'light' ? 'light.' : entityType === 'binary_sensor' ? 'binary_sensor.' : '';
+    if (entityType === 'sensor') {
+      const list = this._getFilteredSensors(roomIndex) || [];
+      return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
     }
-    
-    // Also check for substring containment
-    const n1 = name1.toLowerCase();
-    const n2 = name2.toLowerCase();
-    if (n1.includes(n2) || n2.includes(n1)) {
-      matches += 2;
+    if (entityType === 'switch') {
+      const list = (this._getFilteredSwitches(roomIndex) || []).filter(s => (s.entity_id || '').startsWith('switch.'));
+      return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
     }
-    
-    // Normalize by total unique words
-    const totalWords = new Set([...words1, ...words2]).size;
-    return totalWords > 0 ? matches / totalWords : 0;
+    if (entityType === 'light') {
+      const list = (this._entities?.lights || []).filter(l => (l.entity_id || '').startsWith('light.'));
+      return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+    }
+    if (entityType === 'binary_sensor') {
+      const list = (this._entities?.binary_sensors || []).filter(b => (b.entity_id || '').startsWith('binary_sensor.'));
+      return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+    }
+    return [];
   }
 
-  /**
-   * Sort switches by similarity to a sensor entity_id
-   */
-  _sortSwitchesBySimilarity(switches, sensorEntityId) {
-    if (!sensorEntityId || !switches.length) return switches;
-    
-    return [...switches].sort((a, b) => {
-      const scoreA = this._getSimilarityScore(a.entity_id, sensorEntityId);
-      const scoreB = this._getSimilarityScore(b.entity_id, sensorEntityId);
-      return scoreB - scoreA; // Higher score first
+  _filterEntityMatches(entities, query) {
+    if (!query || !query.trim()) return entities.slice(0, 15);
+    const q = query.toLowerCase().trim();
+    const scored = entities.map(e => {
+      const id = (e.entity_id || '').toLowerCase();
+      const name = (e.friendly_name || '').toLowerCase();
+      let score = 0;
+      if (id.includes(q) || id.startsWith(q)) score += 10;
+      if (name.includes(q) || name.startsWith(q)) score += 5;
+      if (id === q || name === q) score += 20;
+      return { ...e, _score: score };
+    }).filter(e => e._score > 0).sort((a, b) => b._score - a._score);
+    return scored.slice(0, 15).map(({ _score, ...e }) => e);
+  }
+
+  _renderEntityAutocomplete(value, entityType, roomIndex, inputClass, placeholder) {
+    const val = (value || '').trim();
+    const safeVal = val.replace(/"/g, '&quot;');
+    return `
+      <div class="entity-autocomplete-wrapper" data-entity-type="${entityType}" data-room-index="${roomIndex}">
+        <input type="text" class="form-input entity-autocomplete-input ${inputClass || ''}" value="${safeVal}" placeholder="${(placeholder || 'Type to search...').replace(/"/g, '&quot;')}" autocomplete="off">
+        <div class="entity-autocomplete-list"></div>
+      </div>
+    `;
+  }
+
+  _initEntityAutocompletes(container) {
+    if (!container) return;
+    container.querySelectorAll('.entity-autocomplete-wrapper').forEach(wrapper => {
+      const input = wrapper.querySelector('.entity-autocomplete-input');
+      const list = wrapper.querySelector('.entity-autocomplete-list');
+      const roomIndex = wrapper.dataset.roomIndex;
+      const entityType = wrapper.dataset.entityType;
+      if (!input || !list || roomIndex == null || !entityType) return;
+
+      const close = () => wrapper.classList.remove('open');
+      const show = (items) => {
+        list.innerHTML = items.length ? items.map(e => {
+          const label = (e.friendly_name || e.entity_id || '').replace(/</g, '&lt;');
+          const id = (e.entity_id || '').replace(/"/g, '&quot;');
+          return `<div class="entity-autocomplete-option" data-value="${id}">${label}</div>`;
+        }).join('') : '<div class="entity-autocomplete-option" style="color: var(--secondary-text-color);">No matches</div>';
+        wrapper.classList.add('open');
+      };
+
+      const update = () => {
+        const entities = this._getEntitiesForAutocomplete(roomIndex, entityType);
+        const matches = this._filterEntityMatches(entities, input.value);
+        show(matches);
+      };
+
+      input.addEventListener('focus', () => update());
+      input.addEventListener('input', () => update());
+      input.addEventListener('blur', () => setTimeout(close, 150));
+      list.addEventListener('mousedown', (e) => e.preventDefault());
+      list.addEventListener('click', (e) => {
+        const opt = e.target.closest('.entity-autocomplete-option[data-value]');
+        if (opt && opt.dataset.value) {
+          input.value = opt.dataset.value;
+          close();
+        }
+      });
     });
-  }
-
-  /**
-   * Update switch dropdown options sorted by similarity to the selected plug sensor
-   */
-  _updateSwitchDropdownOrder(plugSelect, switchSelect, switches) {
-    if (!switchSelect) return;
-    
-    const sensorValue = plugSelect?.value || '';
-    const currentSwitchValue = switchSelect.value || '';
-    
-    // Sort switches by similarity to the selected sensor
-    const sortedSwitches = this._sortSwitchesBySimilarity(switches, sensorValue);
-    
-    // Helper to build options
-    const buildOptions = (entities, currentValue) => {
-      let options = '<option value="">None</option>';
-      
-      // If current value not in list, add it first
-      const currentInList = entities.some(e => e.entity_id === currentValue);
-      if (currentValue && !currentInList) {
-        const label = currentValue.split('.').pop().replace(/_/g, ' ');
-        options += `<option value="${currentValue}" selected>${label} (other area)</option>`;
-      }
-      
-      // Add all switches, mark best match
-      options += entities.map((e, idx) => {
-        const score = this._getSimilarityScore(e.entity_id, sensorValue);
-        const isBestMatch = idx === 0 && score > 0.3 && sensorValue;
-        const label = isBestMatch ? `★ ${e.friendly_name}` : e.friendly_name;
-        return `<option value="${e.entity_id}" ${e.entity_id === currentValue ? 'selected' : ''}>${label}</option>`;
-      }).join('');
-      
-      return options;
-    };
-    
-    switchSelect.innerHTML = buildOptions(sortedSwitches, currentSwitchValue);
   }
 
   _addRoom() {
@@ -4312,6 +4158,7 @@ class EnergyPanel extends HTMLElement {
     
     // Attach event listeners to new item
     this._attachOutletEventListeners(newItem, roomIndex);
+    this._initEntityAutocompletes(newItem);
     
     // Focus on name input
     const nameInput = newItem.querySelector('.outlet-name');
@@ -4385,35 +4232,27 @@ class EnergyPanel extends HTMLElement {
     const lights = (this._entities?.lights || []).filter(l => (l.entity_id || '').startsWith('light.'));
     if (lightEntityRows && lightEntityAddBtn) {
       const addRow = () => {
-        const opts = '<option value="">Select light...</option>' + lights.map(l => `<option value="${l.entity_id}">${l.friendly_name || l.entity_id}</option>`).join('');
         const row = document.createElement('div');
         row.className = 'light-entity-row';
+        const acHtml = this._renderEntityAutocomplete('', 'light', roomIndex, 'light-entity-select', 'light.bathroom_light');
         row.innerHTML = `
-          <select class="form-select light-entity-select">${opts}</select>
-          <input type="number" class="form-input light-entity-watts" value="0" min="0" max="500" step="1" placeholder="W" style="width: 60px;" title="Running power when on">
+          ${acHtml}
+          <input type="number" class="form-input light-entity-watts" value="0" min="0" max="500" step="1" placeholder="W" title="Running power when on">
+          <label class="light-entity-wrgb">
+            <input type="checkbox" class="form-checkbox light-entity-wrgb-toggle" title="WRGB (White/Red/Green/Blue) light">
+            WRGB
+          </label>
           <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
         `;
         row.querySelector('.light-entity-remove-btn').addEventListener('click', () => row.remove());
         lightEntityRows.appendChild(row);
+        this._initEntityAutocompletes(row);
       };
       lightEntityAddBtn.addEventListener('click', addRow);
       lightEntityRows.querySelectorAll('.light-entity-remove-btn').forEach(btn => {
         btn.addEventListener('click', () => btn.closest('.light-entity-row')?.remove());
       });
     }
-
-    // Smart switch sorting
-    outletItem.querySelectorAll('.outlet-plug1, .outlet-plug2').forEach(plugSelect => {
-      plugSelect.addEventListener('change', (e) => {
-        const isPlug1 = e.target.classList.contains('outlet-plug1');
-        const switchSelect = isPlug1 
-          ? outletItem.querySelector('.outlet-plug1-switch')
-          : outletItem.querySelector('.outlet-plug2-switch');
-        
-        const switches = this._getFilteredSwitches(roomIndex);
-        this._updateSwitchDropdownOrder(e.target, switchSelect, switches);
-      });
-    });
 
     // Collapse/expand (accordion)
     const bar = outletItem.querySelector('.outlet-settings-bar');
@@ -4859,10 +4698,12 @@ class EnergyPanel extends HTMLElement {
             const lightRows = item.querySelectorAll('.light-entity-row');
             const lightEntities = [];
             lightRows.forEach(row => {
-              const entityId = row.querySelector('.light-entity-select')?.value;
+              const input = row.querySelector('.entity-autocomplete-input.light-entity-select');
+              const entityId = input?.value?.trim?.() || row.querySelector('.light-entity-select')?.value?.trim?.() || '';
               const watts = parseInt(row.querySelector('.light-entity-watts')?.value, 10) || 0;
+              const wrgb = row.querySelector('.light-entity-wrgb-toggle')?.checked || false;
               if (entityId && entityId.startsWith('light.')) {
-                lightEntities.push({ entity_id: entityId, watts: Math.max(0, watts) });
+                lightEntities.push({ entity_id: entityId, watts: Math.max(0, watts), wrgb });
               }
             });
             device.light_entities = lightEntities;
