@@ -186,6 +186,27 @@ export const sharedStyles = `
     margin-bottom: 16px;
   }
 
+  .light-entity-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .light-entity-row .light-entity-select {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .light-entity-row .light-entity-watts {
+    flex-shrink: 0;
+  }
+
+  .light-entity-row .light-entity-remove-btn {
+    flex-shrink: 0;
+    padding: 6px;
+  }
+
   .form-label {
     display: block;
     margin-bottom: 6px;
@@ -194,6 +215,32 @@ export const sharedStyles = `
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--primary-text-color);
+  }
+
+  .toggle-row.toggle-disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .form-checkbox {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--panel-accent);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .toggle-label {
+    user-select: none;
   }
 
   .form-input, .form-select {

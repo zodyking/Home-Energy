@@ -117,6 +117,25 @@ class EnergyMonitor:
                 outlet_threshold = outlet.get("threshold", 0)
                 outlet_total_watts = 0.0
 
+                # Light outlets: when switch on, sum watts from mapped lights and track energy
+                if outlet.get("type") == "light":
+                    switch_entity = outlet.get("switch_entity")
+                    if switch_entity:
+                        state = self.hass.states.get(switch_entity)
+                        is_on = (state.state or "off").lower() in ("on",)
+                        if is_on:
+                            light_ents = outlet.get("light_entities") or []
+                            for le in light_ents:
+                                if isinstance(le, dict) and le.get("entity_id", "").startswith("light."):
+                                    outlet_total_watts += float(le.get("watts", 0) or 0)
+                            if outlet_total_watts > 0:
+                                tracking_key = f"light_{room_id}_{outlet.get('name', 'light').lower().replace(' ', '_')}"
+                                await self.config_manager.async_add_energy_reading(
+                                    tracking_key, outlet_total_watts
+                                )
+                    room_total_watts += outlet_total_watts
+                    continue
+
                 # Get plug 1 power and check shutoff threshold
                 plug1_watts = 0.0
                 if outlet.get("plug1_entity"):
@@ -556,7 +575,12 @@ class EnergyMonitor:
     async def _check_stove_safety(self, tts_settings: dict) -> None:
         """Check stove safety per device - monitor stove state, presence, microwave, and manage timers."""
         # Microwave safety first: cut stove when microwave on (shared breaker)
+        # Requires both stove safety and microwave safety to be enabled
         for mw_outlet, stove_outlet, room in self._get_microwave_stove_pairs():
+            if stove_outlet.get("stove_safety_enabled") is False:
+                continue
+            if mw_outlet.get("microwave_safety_enabled") is False:
+                continue
             mw_entity = mw_outlet.get("plug1_entity")
             stove_switch = stove_outlet.get("plug1_switch")
             stove_entity = stove_outlet.get("plug1_entity")
@@ -730,9 +754,16 @@ class EnergyMonitor:
                                     )
                                 self._stove_15min_warn_sent[key] = True
                                 _LOGGER.warning("Stove cooking-time warning - starting %ds countdown", final_warning_sec)
-                            self._stove_timer_start[key] = now
-                            self._stove_timer_phase[key] = "30sec"
-                            self._stove_30sec_warn_sent[key] = False
+                            # When shutoff disabled, skip 30sec final warning (it's only relevant before shutoff)
+                            if stove_outlet.get("stove_safety_enabled") is False:
+                                self._stove_timer_start[key] = None
+                                self._stove_timer_phase[key] = "none"
+                                self._stove_15min_warn_sent[key] = False
+                                self._stove_30sec_warn_sent[key] = False
+                            else:
+                                self._stove_timer_start[key] = now
+                                self._stove_timer_phase[key] = "30sec"
+                                self._stove_30sec_warn_sent[key] = False
                     elif self._stove_timer_phase[key] == "30sec":
                         if elapsed >= final_warning_sec:
                             if not self._stove_30sec_warn_sent[key]:
@@ -748,7 +779,8 @@ class EnergyMonitor:
                                         language=tts_settings.get("language"), volume=volume,
                                     )
                                 self._stove_30sec_warn_sent[key] = True
-                            if stove_plug_switch:
+                            # Only turn off stove if stove_safety_enabled; when off, TTS still plays but no shutoff
+                            if stove_outlet.get("stove_safety_enabled") is not False and stove_plug_switch:
                                 try:
                                     await self.hass.services.async_call(
                                         "switch", "turn_off",
@@ -762,13 +794,14 @@ class EnergyMonitor:
                                             self.hass, media_player=media_player, message=msg_template.format(prefix=prefix),
                                             language=tts_settings.get("language"), volume=volume,
                                         )
-                                    self._stove_timer_start[key] = None
-                                    self._stove_timer_phase[key] = "none"
-                                    self._stove_15min_warn_sent[key] = False
-                                    self._stove_30sec_warn_sent[key] = False
                                     _LOGGER.warning("Stove automatically turned off for safety")
                                 except Exception as e:
                                     _LOGGER.error("Failed to turn off stove: %s", e)
+                            # Reset timer state in both cases (shutoff or TTS-only) to avoid re-triggering
+                            self._stove_timer_start[key] = None
+                            self._stove_timer_phase[key] = "none"
+                            self._stove_15min_warn_sent[key] = False
+                            self._stove_30sec_warn_sent[key] = False
 
 
 async def async_start_energy_monitor(

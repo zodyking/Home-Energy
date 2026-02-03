@@ -250,11 +250,24 @@ async def websocket_get_power_data(
             }
 
             if outlet_type == "light":
-                # Light: switch state for on/off display
+                # Light: switch state for on/off display; when on, sum watts from mapped lights
                 switch_entity = outlet.get("switch_entity")
                 if switch_entity:
                     state = hass.states.get(switch_entity)
-                    outlet_data["switch_state"] = (state.state or "off").lower() in ("on",)
+                    is_on = (state.state or "off").lower() in ("on",)
+                    outlet_data["switch_state"] = is_on
+                    if is_on:
+                        light_ents = outlet.get("light_entities") or []
+                        total_watts = 0.0
+                        total_day_wh = 0.0
+                        tracking_key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                        for le in light_ents:
+                            if isinstance(le, dict) and le.get("entity_id", "").startswith("light."):
+                                total_watts += float(le.get("watts", 0) or 0)
+                        total_day_wh = config_manager.get_day_energy(tracking_key)
+                        outlet_data["plug1"] = {"watts": total_watts, "day_wh": round(total_day_wh, 2)}
+                        room_data["total_watts"] += total_watts
+                        room_data["total_day_wh"] += total_day_wh
                 else:
                     outlet_data["switch_state"] = False
             else:
