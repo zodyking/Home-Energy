@@ -78,8 +78,6 @@ class EnergyPanel extends HTMLElement {
       this._entities.switches = switchesResult.switches || [];
       this._entities.binary_sensors = entities.binary_sensors || [];
       this._areas = areasResult.areas || [];
-      this._areaSensors = {};
-      this._areaSwitches = {};
       await Promise.all([
         this._loadPowerData(),
         this._loadBreakerData(),
@@ -92,29 +90,6 @@ class EnergyPanel extends HTMLElement {
       this._loading = false;
       this._error = e.message || 'Failed to load configuration';
       this._render();
-    }
-  }
-
-  async _loadAreaSensors(areaId) {
-    if (!areaId || this._areaSensors[areaId]) return this._areaSensors[areaId];
-
-    try {
-      const [sensorsResult, switchesResult] = await Promise.all([
-        this._hass.callWS({
-          type: 'smart_dashboards/get_entities_by_area',
-          area_id: areaId,
-        }),
-        this._hass.callWS({
-          type: 'smart_dashboards/get_switches',
-          area_id: areaId,
-        }),
-      ]);
-      this._areaSensors[areaId] = sensorsResult.outlets || [];
-      this._areaSwitches[areaId] = switchesResult.switches || [];
-      return this._areaSensors[areaId];
-    } catch (e) {
-      console.error('Failed to load area sensors:', e);
-      return [];
     }
   }
 
@@ -1092,15 +1067,39 @@ class EnergyPanel extends HTMLElement {
         flex-shrink: 0;
       }
 
+      .outlet-card.outlet-face.light-outlet .faceplate {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        position: relative;
+        padding-top: 20px;
+        padding-bottom: 20px;
+      }
+
+      .outlet-card.outlet-face.light-outlet .plate-screw {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        margin: 0;
+      }
+
+      .outlet-card.outlet-face.light-outlet .plate-screw:first-of-type {
+        top: 6px;
+      }
+
+      .outlet-card.outlet-face.light-outlet .plate-screw:last-of-type {
+        bottom: 6px;
+      }
+
       .outlet-card.outlet-face.light-outlet .light-switch-plate {
-        width: 44px;
-        height: 58px;
-        background: #2a2a2a;
-        border: 1px solid rgba(0, 0, 0, 0.4);
-        border-radius: 4px;
-        padding: 8px 10px;
-        margin: 0 auto;
-        box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5);
+        width: 48px;
+        height: 56px;
+        background: linear-gradient(#efefef, #dedede);
+        border: 1px solid rgba(0, 0, 0, 0.22);
+        border-radius: 8px;
+        padding: 6px 8px;
+        margin: 24px auto 8px;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.65);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1108,37 +1107,38 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face.light-outlet .light-switch-plate.active {
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.6), inset 0 2px 6px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 8px rgba(3, 169, 244, 0.3),
+          inset 0 2px 4px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.65);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-lever {
-        width: 32px;
-        height: 24px;
-        background: linear-gradient(#f5f5f5, #e0e0e0);
-        border: 1px solid rgba(0,0,0,0.25);
-        border-radius: 2px;
+        width: 36px;
+        height: 20px;
+        background: linear-gradient(#f8f8f8, #e8e8e8);
+        border: 1px solid rgba(0,0,0,0.2);
+        border-radius: 10px;
         display: flex;
         align-items: center;
         justify-content: center;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.8);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.9);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-lever.off {
-        transform: translateY(6px);
+        transform: translateY(5px);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-lever.on {
-        transform: translateY(-6px);
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.5), 0 1px 2px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.8);
+        transform: translateY(-5px);
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.5), 0 2px 4px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.9);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-label {
-        font-size: 7px;
+        font-size: 6px;
         font-weight: 700;
-        color: rgba(0,0,0,0.85);
-        letter-spacing: 0.3px;
-        text-shadow: 0 1px 0 rgba(255,255,255,0.7);
+        color: rgba(0,0,0,0.75);
+        letter-spacing: 0.4px;
+        text-shadow: 0 1px 0 rgba(255,255,255,0.8);
       }
 
       .outlet-card.outlet-face.light-outlet .outlet-total.light-watts-display {
@@ -1149,21 +1149,11 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face.light-outlet .outlet-total.light-watts-display.off {
-        color: rgba(0,0,0,0.55);
+        color: rgba(0,0,0,0.5);
       }
 
-      .outlet-card.outlet-face.light-outlet .plate-screw:first-of-type {
-        margin: 4px auto 16px;
-      }
-
-      .outlet-card.outlet-face.light-outlet .plate-screw:last-of-type {
-        margin: 16px auto 4px;
-      }
-
-      .outlet-card.outlet-face.light-outlet .faceplate {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
+      .outlet-card.outlet-face.light-outlet .outlet-meta {
+        margin-top: 4px;
       }
 
       .add-device-dropdown {
@@ -3249,12 +3239,8 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderRoomSettings(room, index, mediaPlayers, powerSensors) {
-    const areas = this._areas || [];
-    const filteredSensors = room.area_id ? 
-      (this._areaSensors?.[room.area_id] || powerSensors) : powerSensors;
-
     return `
-      <div class="room-settings-card" data-room-index="${index}" data-area-id="${room.area_id || ''}" draggable="false">
+      <div class="room-settings-card" data-room-index="${index}" draggable="false">
         <div class="room-settings-header">
           <div class="room-drag-handle" title="Drag to reorder rooms">
             <svg viewBox="0 0 24 24">${icons.menu}</svg>
@@ -3269,18 +3255,6 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <div class="room-settings-body" id="room-body-${index}" style="display: none;">
-          <div class="form-group" style="margin-bottom: 12px; padding: 10px; background: var(--panel-accent-dim); border-radius: 8px;">
-            <label class="form-label" style="color: var(--panel-accent);">HA Area (filters outlet list)</label>
-            <select class="form-select room-area-select" data-room-index="${index}">
-              <option value="">All areas (no filter)</option>
-              ${areas.map(area => `
-                <option value="${area.id}" ${room.area_id === area.id ? 'selected' : ''}>
-                  ${area.name}
-                </option>
-              `).join('')}
-            </select>
-          </div>
-
           <div class="grid-2" style="margin-bottom: 12px;">
             <div class="form-group">
               <label class="form-label">Media Player</label>
@@ -3328,7 +3302,7 @@ class EnergyPanel extends HTMLElement {
           </div>
 
           <div class="outlets-settings-list" id="outlets-list-${index}">
-            ${(room.outlets || []).map((outlet, oi) => this._renderDeviceSettings(outlet, oi, filteredSensors, index, room.outlets || [])).join('')}
+            ${(room.outlets || []).map((outlet, oi) => this._renderDeviceSettings(outlet, oi, powerSensors, index, room.outlets || [])).join('')}
           </div>
         </div>
       </div>
@@ -3373,13 +3347,25 @@ class EnergyPanel extends HTMLElement {
 
     const lightRowsHtml = lightEntityRows.map((row, idx) => `
       <div class="light-entity-row" data-row-index="${idx}">
-        ${this._renderEntityAutocomplete(row.entity_id || '', 'light', roomIndex, 'light-entity-select', 'light.bathroom_light')}
-        <input type="number" class="form-input light-entity-watts" value="${row.watts}" min="0" max="500" step="1" placeholder="W" title="Running power when on">
-        <label class="light-entity-wrgb">
-          <input type="checkbox" class="form-checkbox light-entity-wrgb-toggle" ${row.wrgb ? 'checked' : ''} title="WRGB (White/Red/Green/Blue) light">
-          WRGB
-        </label>
-        <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
+        <div class="light-field">
+          <label class="form-label">Light</label>
+          ${this._renderEntityAutocomplete(row.entity_id || '', 'light', roomIndex, 'light-entity-select', 'light.bathroom_light')}
+        </div>
+        <div class="light-field">
+          <label class="form-label">W</label>
+          <input type="number" class="form-input light-entity-watts" value="${row.watts}" min="0" max="500" step="1" placeholder="0" title="Running power when on">
+        </div>
+        <div class="light-field">
+          <label class="form-label">WRGB</label>
+          <label class="toggle-switch">
+            <input type="checkbox" class="light-entity-wrgb-toggle" ${row.wrgb ? 'checked' : ''} title="WRGB (White/Red/Green/Blue) light">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="light-field light-field-remove">
+          <label class="form-label">&nbsp;</label>
+          <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
+        </div>
       </div>
     `).join('');
 
@@ -3418,7 +3404,7 @@ class EnergyPanel extends HTMLElement {
                   ${lightRowsHtml}
                 </div>
                 <button type="button" class="btn btn-secondary light-entity-add-btn" style="margin-top: 8px;">+ Add light</button>
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Each row: light entity, watts when on, WRGB toggle. Used for room totals and daily energy.</div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Used for room totals and daily energy.</div>
               </div>
               <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
                 <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
@@ -3832,13 +3818,6 @@ class EnergyPanel extends HTMLElement {
     });
 
     // Area selectors - filter outlets when area changes
-    this.shadowRoot.querySelectorAll('.room-area-select').forEach(select => {
-      select.addEventListener('change', async (e) => {
-        const roomIndex = e.target.dataset.roomIndex;
-        const areaId = e.target.value;
-        await this._updateRoomOutletDropdowns(roomIndex, areaId);
-      });
-    });
 
     // Room volume sliders
     this.shadowRoot.querySelectorAll('.room-volume').forEach(slider => {
@@ -3902,45 +3881,11 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
-  async _updateRoomOutletDropdowns(roomIndex, areaId) {
-    const roomCard = this.shadowRoot.querySelector(`.room-settings-card[data-room-index="${roomIndex}"]`);
-    if (!roomCard) return;
-
-    // Update stored area_id
-    roomCard.dataset.areaId = areaId;
-
-    // Get sensors and switches for this area
-    let sensors = this._entities?.power_sensors || [];
-    let switches = this._entities?.switches || [];
-    if (areaId) {
-      await this._loadAreaSensors(areaId);
-      sensors = this._areaSensors[areaId] || [];
-      switches = this._areaSwitches[areaId] || [];
-    }
-
-    // Entity autocomplete inputs use area-filtered suggestions on focus - no need to rebuild
-
-    const areaName = this._areas?.find(a => a.id === areaId)?.name || 'all areas';
-    showToast(this.shadowRoot, `Filtering to ${areaName} (existing selections preserved)`, 'success');
-  }
-
   _getFilteredSensors(roomIndex) {
-    const roomCard = this.shadowRoot.querySelector(`.room-settings-card[data-room-index="${roomIndex}"]`);
-    const areaId = roomCard?.dataset?.areaId;
-    
-    if (areaId && this._areaSensors[areaId]) {
-      return this._areaSensors[areaId];
-    }
     return this._entities?.power_sensors || [];
   }
 
   _getFilteredSwitches(roomIndex) {
-    const roomCard = this.shadowRoot.querySelector(`.room-settings-card[data-room-index="${roomIndex}"]`);
-    const areaId = roomCard?.dataset?.areaId;
-    
-    if (areaId && this._areaSwitches && this._areaSwitches[areaId]) {
-      return this._areaSwitches[areaId];
-    }
     return this._entities?.switches || [];
   }
 
@@ -3981,52 +3926,39 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderEntityAutocomplete(value, entityType, roomIndex, inputClass, placeholder) {
+    this._entityDatalistId = (this._entityDatalistId || 0) + 1;
+    const dlId = `entity-dl-${this._entityDatalistId}`;
     const val = (value || '').trim();
     const safeVal = val.replace(/"/g, '&quot;');
     return `
-      <div class="entity-autocomplete-wrapper" data-entity-type="${entityType}" data-room-index="${roomIndex}">
-        <input type="text" class="form-input entity-autocomplete-input ${inputClass || ''}" value="${safeVal}" placeholder="${(placeholder || 'Type to search...').replace(/"/g, '&quot;')}" autocomplete="off">
-        <div class="entity-autocomplete-list"></div>
-      </div>
+      <input type="text" class="form-input entity-datalist-input ${inputClass || ''}" value="${safeVal}" placeholder="${(placeholder || 'Type to search...').replace(/"/g, '&quot;')}" list="${dlId}" data-entity-type="${entityType}" data-room-index="${roomIndex}" autocomplete="off">
+      <datalist id="${dlId}" data-entity-type="${entityType}" data-room-index="${roomIndex}"></datalist>
     `;
   }
 
   _initEntityAutocompletes(container) {
     if (!container) return;
-    container.querySelectorAll('.entity-autocomplete-wrapper').forEach(wrapper => {
-      const input = wrapper.querySelector('.entity-autocomplete-input');
-      const list = wrapper.querySelector('.entity-autocomplete-list');
-      const roomIndex = wrapper.dataset.roomIndex;
-      const entityType = wrapper.dataset.entityType;
-      if (!input || !list || roomIndex == null || !entityType) return;
-
-      const close = () => wrapper.classList.remove('open');
-      const show = (items) => {
-        list.innerHTML = items.length ? items.map(e => {
-          const label = (e.friendly_name || e.entity_id || '').replace(/</g, '&lt;');
-          const id = (e.entity_id || '').replace(/"/g, '&quot;');
-          return `<div class="entity-autocomplete-option" data-value="${id}">${label}</div>`;
-        }).join('') : '<div class="entity-autocomplete-option" style="color: var(--secondary-text-color);">No matches</div>';
-        wrapper.classList.add('open');
-      };
+    container.querySelectorAll('.entity-datalist-input').forEach(input => {
+      const dlId = input.getAttribute('list');
+      const datalist = dlId ? container.querySelector(`#${dlId}`) : null;
+      const roomIndex = input.dataset.roomIndex;
+      const entityType = input.dataset.entityType;
+      if (!datalist || roomIndex == null || !entityType) return;
+      if (input._entityDatalistInit) return;
+      input._entityDatalistInit = true;
 
       const update = () => {
         const entities = this._getEntitiesForAutocomplete(roomIndex, entityType);
         const matches = this._filterEntityMatches(entities, input.value);
-        show(matches);
+        datalist.innerHTML = matches.map(e => {
+          const id = (e.entity_id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+          const label = (e.friendly_name || e.entity_id || '').replace(/</g, '&lt;');
+          return `<option value="${id}">${label}</option>`;
+        }).join('');
       };
 
       input.addEventListener('focus', () => update());
       input.addEventListener('input', () => update());
-      input.addEventListener('blur', () => setTimeout(close, 150));
-      list.addEventListener('mousedown', (e) => e.preventDefault());
-      list.addEventListener('click', (e) => {
-        const opt = e.target.closest('.entity-autocomplete-option[data-value]');
-        if (opt && opt.dataset.value) {
-          input.value = opt.dataset.value;
-          close();
-        }
-      });
     });
   }
 
@@ -4087,13 +4019,6 @@ class EnergyPanel extends HTMLElement {
           });
         });
       }
-    }
-
-    const areaSelect = newCard.querySelector('.room-area-select');
-    if (areaSelect) {
-      areaSelect.addEventListener('change', async (e) => {
-        await this._updateRoomOutletDropdowns(index, e.target.value);
-      });
     }
 
     const volumeSlider = newCard.querySelector('.room-volume');
@@ -4236,13 +4161,25 @@ class EnergyPanel extends HTMLElement {
         row.className = 'light-entity-row';
         const acHtml = this._renderEntityAutocomplete('', 'light', roomIndex, 'light-entity-select', 'light.bathroom_light');
         row.innerHTML = `
-          ${acHtml}
-          <input type="number" class="form-input light-entity-watts" value="0" min="0" max="500" step="1" placeholder="W" title="Running power when on">
-          <label class="light-entity-wrgb">
-            <input type="checkbox" class="form-checkbox light-entity-wrgb-toggle" title="WRGB (White/Red/Green/Blue) light">
-            WRGB
-          </label>
-          <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
+          <div class="light-field">
+            <label class="form-label">Light</label>
+            ${acHtml}
+          </div>
+          <div class="light-field">
+            <label class="form-label">W</label>
+            <input type="number" class="form-input light-entity-watts" value="0" min="0" max="500" step="1" placeholder="0" title="Running power when on">
+          </div>
+          <div class="light-field">
+            <label class="form-label">WRGB</label>
+            <label class="toggle-switch">
+              <input type="checkbox" class="light-entity-wrgb-toggle" title="WRGB (White/Red/Green/Blue) light">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="light-field light-field-remove">
+            <label class="form-label">&nbsp;</label>
+            <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
+          </div>
         `;
         row.querySelector('.light-entity-remove-btn').addEventListener('click', () => row.remove());
         lightEntityRows.appendChild(row);
@@ -4630,7 +4567,6 @@ class EnergyPanel extends HTMLElement {
 
     roomCards.forEach((card) => {
       const nameInput = card.querySelector('.room-name-input');
-      const areaSelect = card.querySelector('.room-area-select');
       const mediaPlayerSelect = card.querySelector('.room-media-player');
       const thresholdInput = card.querySelector('.room-threshold');
       const volumeSlider = card.querySelector('.room-volume');
@@ -4698,8 +4634,8 @@ class EnergyPanel extends HTMLElement {
             const lightRows = item.querySelectorAll('.light-entity-row');
             const lightEntities = [];
             lightRows.forEach(row => {
-              const input = row.querySelector('.entity-autocomplete-input.light-entity-select');
-              const entityId = input?.value?.trim?.() || row.querySelector('.light-entity-select')?.value?.trim?.() || '';
+              const input = row.querySelector('.entity-datalist-input.light-entity-select') || row.querySelector('input.light-entity-select');
+              const entityId = input?.value?.trim?.() || '';
               const watts = parseInt(row.querySelector('.light-entity-watts')?.value, 10) || 0;
               const wrgb = row.querySelector('.light-entity-wrgb-toggle')?.checked || false;
               if (entityId && entityId.startsWith('light.')) {
@@ -4731,7 +4667,6 @@ class EnergyPanel extends HTMLElement {
         rooms.push({
           id: roomName.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
           name: roomName,
-          area_id: areaSelect?.value || null,
           media_player: mediaPlayerSelect?.value || null,
           threshold: parseInt(thresholdInput?.value) || 0,
           volume: parseFloat(volumeSlider?.value) || 0.7,
