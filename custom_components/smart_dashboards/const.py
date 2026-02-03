@@ -47,18 +47,6 @@ DEFAULT_CONFIG = {
     "energy": {
         "rooms": [],
         "breaker_lines": [],
-        "stove_safety": {
-            "stove_plug_entity": None,
-            "stove_plug_switch": None,
-            "stove_power_threshold": 100,
-            "cooking_time_minutes": 15,
-            "final_warning_seconds": 30,
-            "presence_sensor": None,
-            "media_player": None,
-            "volume": DEFAULT_TTS_VOLUME,
-            "microwave_plug_entity": None,
-            "microwave_power_threshold": 50,
-        },
         "tts_settings": {
             "language": DEFAULT_TTS_LANGUAGE,
             "speed": DEFAULT_TTS_SPEED,

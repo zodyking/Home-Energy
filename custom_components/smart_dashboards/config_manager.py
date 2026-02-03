@@ -96,8 +96,31 @@ class ConfigManager:
             energy = loaded["energy"]
             result["energy"]["rooms"] = energy.get("rooms", [])
             result["energy"]["breaker_lines"] = energy.get("breaker_lines", [])
-            if "stove_safety" in energy:
-                result["energy"]["stove_safety"].update(energy["stove_safety"])
+            # Migrate legacy stove_safety to first stove device (and microwave in same room)
+            legacy_stove = energy.get("stove_safety", {})
+            if legacy_stove and any(v for v in legacy_stove.values() if v):
+                for room in result["energy"]["rooms"]:
+                    outlets = room.get("outlets", [])
+                    stove_outlet = next((o for o in outlets if o.get("type") == "stove"), None)
+                    if stove_outlet:
+                        stove_outlet["plug1_entity"] = stove_outlet.get("plug1_entity") or legacy_stove.get("stove_plug_entity")
+                        stove_outlet["plug1_switch"] = stove_outlet.get("plug1_switch") or legacy_stove.get("stove_plug_switch")
+                        stove_outlet["stove_power_threshold"] = stove_outlet.get("stove_power_threshold", legacy_stove.get("stove_power_threshold", 100))
+                        stove_outlet["cooking_time_minutes"] = stove_outlet.get("cooking_time_minutes", legacy_stove.get("cooking_time_minutes", 15))
+                        stove_outlet["final_warning_seconds"] = stove_outlet.get("final_warning_seconds", legacy_stove.get("final_warning_seconds", 30))
+                        stove_outlet["presence_sensor"] = stove_outlet.get("presence_sensor") or legacy_stove.get("presence_sensor")
+                        # Media player and volume come from room; migrate legacy to room
+                        if legacy_stove.get("media_player"):
+                            room["media_player"] = legacy_stove["media_player"]
+                        if legacy_stove.get("volume") is not None:
+                            room["volume"] = float(legacy_stove["volume"])
+                        if legacy_stove.get("microwave_plug_entity"):
+                            for mw in outlets:
+                                if mw.get("type") == "microwave":
+                                    mw["plug1_entity"] = mw.get("plug1_entity") or legacy_stove.get("microwave_plug_entity")
+                                    mw["microwave_power_threshold"] = mw.get("microwave_power_threshold", legacy_stove.get("microwave_power_threshold", 50))
+                                    break
+                        break
             if "tts_settings" in energy:
                 result["energy"]["tts_settings"].update(energy["tts_settings"])
 
@@ -129,7 +152,7 @@ class ConfigManager:
                 for outlet in room.get("outlets", []):
                     if isinstance(outlet, dict) and outlet.get("name"):
                         outlet_type = outlet.get("type", "outlet")
-                        if outlet_type not in ("outlet", "single_outlet", "stove", "microwave", "minisplit"):
+                        if outlet_type not in ("outlet", "single_outlet", "stove", "microwave", "minisplit", "light"):
                             outlet_type = "outlet"
                         item = {
                             "name": outlet["name"],
@@ -143,6 +166,38 @@ class ConfigManager:
                             item["plug2_switch"] = outlet.get("plug2_switch")
                             item["plug1_shutoff"] = int(outlet.get("plug1_shutoff", 0))
                             item["plug2_shutoff"] = int(outlet.get("plug2_shutoff", 0))
+                        elif outlet_type == "stove":
+                            item["plug2_entity"] = None
+                            item["plug1_switch"] = outlet.get("plug1_switch")
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = 0
+                            item["plug2_shutoff"] = 0
+                            item["stove_power_threshold"] = int(outlet.get("stove_power_threshold", 100))
+                            item["cooking_time_minutes"] = int(outlet.get("cooking_time_minutes", 15))
+                            item["final_warning_seconds"] = int(outlet.get("final_warning_seconds", 30))
+                            item["presence_sensor"] = outlet.get("presence_sensor")
+                        elif outlet_type == "microwave":
+                            item["plug2_entity"] = None
+                            item["plug1_switch"] = None
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = 0
+                            item["plug2_shutoff"] = 0
+                            item["microwave_power_threshold"] = int(outlet.get("microwave_power_threshold", 50))
+                        elif outlet_type == "light":
+                            item["plug1_entity"] = None
+                            item["plug2_entity"] = None
+                            item["plug1_switch"] = None
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = 0
+                            item["plug2_shutoff"] = 0
+                            item["switch_entity"] = outlet.get("switch_entity")
+                            light_ents = outlet.get("light_entities")
+                            if isinstance(light_ents, list):
+                                item["light_entities"] = [e for e in light_ents if e]
+                            elif isinstance(light_ents, str):
+                                item["light_entities"] = [e.strip() for e in light_ents.split(",") if e.strip()]
+                            else:
+                                item["light_entities"] = []
                         elif outlet_type in ("single_outlet", "minisplit"):
                             item["plug2_entity"] = None
                             item["plug1_switch"] = outlet.get("plug1_switch")
@@ -172,22 +227,6 @@ class ConfigManager:
                     "outlet_ids": breaker.get("outlet_ids", []),  # List of outlet identifiers
                 }
                 validated["breaker_lines"].append(validated_breaker)
-
-        # Validate stove safety
-        stove_safety = config.get("stove_safety", {})
-        default_stove = DEFAULT_CONFIG["energy"]["stove_safety"]
-        validated["stove_safety"] = {
-            "stove_plug_entity": stove_safety.get("stove_plug_entity"),
-            "stove_plug_switch": stove_safety.get("stove_plug_switch"),
-            "stove_power_threshold": int(stove_safety.get("stove_power_threshold", default_stove["stove_power_threshold"])),
-            "cooking_time_minutes": int(stove_safety.get("cooking_time_minutes", default_stove["cooking_time_minutes"])),
-            "final_warning_seconds": int(stove_safety.get("final_warning_seconds", default_stove["final_warning_seconds"])),
-            "presence_sensor": stove_safety.get("presence_sensor"),
-            "media_player": stove_safety.get("media_player"),
-            "volume": float(stove_safety.get("volume", default_stove["volume"])),
-            "microwave_plug_entity": stove_safety.get("microwave_plug_entity"),
-            "microwave_power_threshold": int(stove_safety.get("microwave_power_threshold", default_stove["microwave_power_threshold"])),
-        }
 
         # Validate TTS settings
         tts = config.get("tts_settings", {})
