@@ -247,6 +247,10 @@ class ConfigManager:
                         validated_room["outlets"].append(item)
                 validated["rooms"].append(validated_room)
 
+        # Validate breaker panel size
+        panel_size = config.get("breaker_panel_size", 20)
+        validated["breaker_panel_size"] = max(2, min(40, int(panel_size))) if panel_size % 2 == 0 else 20
+
         # Validate breaker lines
         breaker_lines = config.get("breaker_lines", [])
         validated["breaker_lines"] = []
@@ -255,6 +259,7 @@ class ConfigManager:
                 validated_breaker = {
                     "id": breaker.get("id", breaker["name"].lower().replace(" ", "_")),
                     "name": breaker["name"],
+                    "number": max(1, min(validated["breaker_panel_size"], int(breaker.get("number", 1)))),
                     "color": breaker.get("color", "#03a9f4"),
                     "max_load": int(breaker.get("max_load", 2400)),
                     "threshold": int(breaker.get("threshold", 0)),
