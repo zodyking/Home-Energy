@@ -1583,24 +1583,19 @@ class EnergyPanel extends HTMLElement {
         }
 
       .bp-card {
-        width: min(860px, 94vw);
-        aspect-ratio: 16/9;
+        width: min(1200px, 94vw);
+        min-height: 800px;
+        aspect-ratio: 3/2;
         border-radius: 22px;
         padding: 26px;
-        background:
-          radial-gradient(130% 120% at 50% 38%, rgba(255,255,255,.92), rgba(255,255,255,0) 55%),
-          radial-gradient(70% 70% at 30% 35%, rgba(205,226,246,.40), rgba(205,226,246,0) 58%),
-          linear-gradient(180deg, rgba(255,255,255,.85), rgba(235,245,255,.85));
-          box-shadow: 
-          0 26px 80px rgba(0,0,0,.18),
-          0 6px 16px rgba(0,0,0,.14);
+        background: transparent;
         display: grid;
         place-items: center;
           overflow: hidden;
       }
 
       .bp-card svg {
-        width: min(560px, 78%);
+        width: min(800px, 85%);
         height: auto;
         display: block;
         filter: drop-shadow(0 26px 40px rgba(0,0,0,.14));
@@ -2831,55 +2826,59 @@ class EnergyPanel extends HTMLElement {
 
     const svg = this._createSVGElement("svg", {
       xmlns: NS,
-      viewBox: "0 0 640 640",
+      viewBox: "0 0 800 800",
       role: "img",
       "aria-label": "Breaker panel"
     }, NS);
+    
+    // Scale factor: 800/640 = 1.25
+    const scale = 1.25;
+    const scaleCoord = (v) => v * scale;
 
     const defs = this._createSVGElement("defs", {}, NS);
     defs.append(
       this._createLinearGradient("metalOuter", [
-        [0, "#edf3f7"],
-        [0.28, "#dbe3ea"],
-        [0.55, "#cbd5dd"],
-        [0.78, "#b9c4cd"],
-        [1, "#d8e0e7"]
+        [0, "#4a5568"],
+        [0.28, "#3d4756"],
+        [0.55, "#2d3441"],
+        [0.78, "#252a35"],
+        [1, "#3a4250"]
       ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
 
       this._createLinearGradient("metalOuterEdge", [
-        [0, "rgba(255,255,255,.70)"],
-        [0.45, "rgba(255,255,255,0)"],
-        [1, "rgba(0,0,0,.18)"]
+        [0, "rgba(120,130,150,.50)"],
+        [0.45, "rgba(120,130,150,0)"],
+        [1, "rgba(0,0,0,.35)"]
       ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
 
       this._createRadialGradient("outerGlow", [
-        [0, "rgba(255,255,255,.70)"],
-        [0.55, "rgba(255,255,255,.18)"],
-        [1, "rgba(255,255,255,0)"]
+        [0, "rgba(120,130,150,.40)"],
+        [0.55, "rgba(80,90,110,.15)"],
+        [1, "rgba(0,0,0,0)"]
       ], { cx: "38%", cy: "18%", r: "90%" }, NS),
 
       this._createLinearGradient("metalInset", [
-        [0, "#e3eaef"],
-        [0.5, "#cdd6dd"],
-        [1, "#b7c2cb"]
+        [0, "#3d4756"],
+        [0.5, "#2d3441"],
+        [1, "#252a35"]
       ], { x1: "0", y1: "0", x2: "1", y2: "1" }, NS),
 
       this._createLinearGradient("doorMetal", [
-        [0, "#e2e9ee"],
-        [0.55, "#cbd4dc"],
-        [1, "#b7c2cb"]
+        [0, "#3a4250"],
+        [0.55, "#2d3441"],
+        [1, "#252a35"]
       ], { x1: "0", y1: "0", x2: "1", y2: "1" }, NS),
 
       this._createRadialGradient("doorSheen", [
-        [0, "rgba(255,255,255,.55)"],
-        [0.5, "rgba(255,255,255,.10)"],
-        [1, "rgba(255,255,255,0)"]
+        [0, "rgba(120,130,150,.35)"],
+        [0.5, "rgba(80,90,110,.08)"],
+        [1, "rgba(0,0,0,0)"]
       ], { cx: "42%", cy: "18%", r: "95%" }, NS),
 
       this._createLinearGradient("stripMetal", [
-        [0, "#eaf0f5"],
-        [0.45, "#d5dee6"],
-        [1, "#c1ccd5"]
+        [0, "#4a5568"],
+        [0.45, "#3d4756"],
+        [1, "#2d3441"]
       ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
 
       this._createLinearGradient("breakerBody", [
@@ -2895,10 +2894,9 @@ class EnergyPanel extends HTMLElement {
       ], { cx: "35%", cy: "35%", r: "85%" }, NS),
 
       this._createLinearGradient("screwGrad", [
-        [0, "#f2f7fa"],
-        [0.55, "#d2dbe2"],
-        [1, "#aebbc6"]
-      ], { x1: "0", y1: "0", x2: "1", y2: "1" }, NS),
+        [0, "#d8d8d8"],
+        [1, "#bdbdbd"]
+      ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
 
       this._createFilterDropInner("softBevel", 0.9, NS)
     );
@@ -2907,145 +2905,145 @@ class EnergyPanel extends HTMLElement {
     const g = this._createSVGElement("g", {}, NS);
     svg.append(g);
 
-    const panel = this._createRoundedRect(60, 60, 520, 520, 10, {
+    const panel = this._createRoundedRect(scaleCoord(60), scaleCoord(60), scaleCoord(520), scaleCoord(520), scaleCoord(10), {
       fill: "url(#metalOuter)"
     }, NS);
     g.append(panel);
 
-    g.append(this._createRoundedRect(60, 60, 520, 520, 10, {
+    g.append(this._createRoundedRect(scaleCoord(60), scaleCoord(60), scaleCoord(520), scaleCoord(520), scaleCoord(10), {
       fill: "none",
       stroke: "rgba(10,16,22,.55)",
-      "stroke-width": 3.2
+      "stroke-width": scaleCoord(3.2)
     }, NS));
 
-    g.append(this._createRoundedRect(72, 72, 496, 496, 9, {
+    g.append(this._createRoundedRect(scaleCoord(72), scaleCoord(72), scaleCoord(496), scaleCoord(496), scaleCoord(9), {
       fill: "none",
-      stroke: "rgba(255,255,255,.55)",
-      "stroke-width": 2.2
+      stroke: "rgba(120,130,150,.40)",
+      "stroke-width": scaleCoord(2.2)
     }, NS));
 
-    g.append(this._createRoundedRect(76, 76, 488, 488, 8, {
+    g.append(this._createRoundedRect(scaleCoord(76), scaleCoord(76), scaleCoord(488), scaleCoord(488), scaleCoord(8), {
       fill: "none",
       stroke: "rgba(10,16,22,.22)",
-      "stroke-width": 1.8
+      "stroke-width": scaleCoord(1.8)
     }, NS));
 
-    g.append(this._createRoundedRect(60, 60, 520, 520, 10, {
+    g.append(this._createRoundedRect(scaleCoord(60), scaleCoord(60), scaleCoord(520), scaleCoord(520), scaleCoord(10), {
       fill: "url(#outerGlow)",
       opacity: 0.9
     }, NS));
 
-    g.append(this._createRoundedRect(60, 60, 520, 520, 10, {
+    g.append(this._createRoundedRect(scaleCoord(60), scaleCoord(60), scaleCoord(520), scaleCoord(520), scaleCoord(10), {
       fill: "none",
       stroke: "url(#metalOuterEdge)",
-      "stroke-width": 3
+      "stroke-width": scaleCoord(3)
     }, NS));
 
-    g.append(this._createRoundedRect(170, 140, 300, 360, 10, {
+    g.append(this._createRoundedRect(scaleCoord(170), scaleCoord(140), scaleCoord(300), scaleCoord(360), scaleCoord(10), {
       fill: "url(#metalInset)",
       stroke: "rgba(10,16,22,.35)",
-      "stroke-width": 2.2
+      "stroke-width": scaleCoord(2.2)
     }, NS));
 
-    g.append(this._createRoundedRect(182, 152, 276, 336, 12, {
+    g.append(this._createRoundedRect(scaleCoord(182), scaleCoord(152), scaleCoord(276), scaleCoord(336), scaleCoord(12), {
       fill: "none",
-      stroke: "rgba(255,255,255,.35)",
-      "stroke-width": 1.8
+      stroke: "rgba(120,130,150,.25)",
+      "stroke-width": scaleCoord(1.8)
     }, NS));
 
-    const door = this._createRoundedRect(185, 155, 270, 330, 14, {
+    const door = this._createRoundedRect(scaleCoord(185), scaleCoord(155), scaleCoord(270), scaleCoord(330), scaleCoord(14), {
       fill: "url(#doorMetal)",
       stroke: "rgba(10,16,22,.42)",
-      "stroke-width": 2.2
+      "stroke-width": scaleCoord(2.2)
     }, NS);
     g.append(door);
 
-    g.append(this._createRoundedRect(185, 155, 270, 330, 14, {
+    g.append(this._createRoundedRect(scaleCoord(185), scaleCoord(155), scaleCoord(270), scaleCoord(330), scaleCoord(14), {
       fill: "url(#doorSheen)",
       opacity: 0.9
     }, NS));
 
-    g.append(this._createRoundedRect(195, 168, 250, 304, 22, {
+    g.append(this._createRoundedRect(scaleCoord(195), scaleCoord(168), scaleCoord(250), scaleCoord(304), scaleCoord(22), {
       fill: "none",
       stroke: "rgba(10,16,22,.32)",
-      "stroke-width": 2.0
+      "stroke-width": scaleCoord(2.0)
     }, NS));
 
-    g.append(this._createRoundedRect(202, 176, 236, 288, 20, {
+    g.append(this._createRoundedRect(scaleCoord(202), scaleCoord(176), scaleCoord(236), scaleCoord(288), scaleCoord(20), {
       fill: "none",
-      stroke: "rgba(255,255,255,.28)",
-      "stroke-width": 1.6
+      stroke: "rgba(120,130,150,.20)",
+      "stroke-width": scaleCoord(1.6)
     }, NS));
 
-    g.append(this._createRoundedRect(170, 140, 300, 360, 10, {
+    g.append(this._createRoundedRect(scaleCoord(170), scaleCoord(140), scaleCoord(300), scaleCoord(360), scaleCoord(10), {
       fill: "none",
       stroke: "rgba(0,0,0,.10)",
-      "stroke-width": 1.2
+      "stroke-width": scaleCoord(1.2)
     }, NS));
 
-    g.append(this._createRoundedRect(286, 168, 68, 12, 3, {
-      fill: "rgba(245,250,255,.38)",
-      stroke: "rgba(10,16,22,.30)",
-      "stroke-width": 1.4
+    g.append(this._createRoundedRect(scaleCoord(286), scaleCoord(168), scaleCoord(68), scaleCoord(12), scaleCoord(3), {
+      fill: "rgba(60,70,85,.50)",
+      stroke: "rgba(40,45,55,.40)",
+      "stroke-width": scaleCoord(1.4)
     }, NS));
 
-    g.append(this._createRoundedRect(286, 460, 68, 12, 3, {
-      fill: "rgba(245,250,255,.38)",
-      stroke: "rgba(10,16,22,.30)",
-      "stroke-width": 1.4
+    g.append(this._createRoundedRect(scaleCoord(286), scaleCoord(460), scaleCoord(68), scaleCoord(12), scaleCoord(3), {
+      fill: "rgba(60,70,85,.50)",
+      stroke: "rgba(40,45,55,.40)",
+      "stroke-width": scaleCoord(1.4)
     }, NS));
 
-    g.append(this._createRoundedRect(472, 310, 12, 36, 3, {
+    g.append(this._createRoundedRect(scaleCoord(472), scaleCoord(310), scaleCoord(12), scaleCoord(36), scaleCoord(3), {
       fill: "rgba(55,70,85,.70)"
     }, NS));
 
     g.append(this._createSVGElement("path", {
-      d: "M180 498 L460 498",
+      d: `M${scaleCoord(180)} ${scaleCoord(498)} L${scaleCoord(460)} ${scaleCoord(498)}`,
       stroke: "rgba(10,16,22,.14)",
-      "stroke-width": 1.2,
+      "stroke-width": scaleCoord(1.2),
       opacity: 0.8
     }, NS));
 
-    const stripOuter = this._createRoundedRect(244, 242, 152, 222, 7, {
+    const stripOuter = this._createRoundedRect(scaleCoord(244), scaleCoord(242), scaleCoord(152), scaleCoord(222), scaleCoord(7), {
       fill: "url(#stripMetal)",
       stroke: "rgba(10,16,22,.26)",
-      "stroke-width": 1.6
+      "stroke-width": scaleCoord(1.6)
     }, NS);
     g.append(stripOuter);
 
-    g.append(this._createRoundedRect(248, 246, 144, 214, 6, {
+    g.append(this._createRoundedRect(scaleCoord(248), scaleCoord(246), scaleCoord(144), scaleCoord(214), scaleCoord(6), {
       fill: "none",
-      stroke: "rgba(255,255,255,.35)",
-      "stroke-width": 1.6
+      stroke: "rgba(120,130,150,.25)",
+      "stroke-width": scaleCoord(1.6)
     }, NS));
 
-    g.append(this._createRoundedRect(252, 250, 136, 206, 6, {
+    g.append(this._createRoundedRect(scaleCoord(252), scaleCoord(250), scaleCoord(136), scaleCoord(206), scaleCoord(6), {
       fill: "none",
       stroke: "rgba(0,0,0,.10)",
-      "stroke-width": 1.2
+      "stroke-width": scaleCoord(1.2)
     }, NS));
 
-    const leftColX = 258;
-    const rightColX = 323;
-    const topY = 258;
-    const rowH = 18;
-    const gap = 6;
+    const leftColX = scaleCoord(258);
+    const rightColX = scaleCoord(323);
+    const topY = scaleCoord(258);
+    const rowH = scaleCoord(18);
+    const gap = scaleCoord(6);
 
     for (let i = 0; i < 8; i++) {
       const y = topY + i * (rowH + gap);
-      g.append(this._createBreaker(leftColX, y, 56, rowH, NS));
-      g.append(this._createBreaker(rightColX, y, 56, rowH, NS));
+      g.append(this._createBreaker(leftColX, y, scaleCoord(56), rowH, NS));
+      g.append(this._createBreaker(rightColX, y, scaleCoord(56), rowH, NS));
     }
 
-    g.append(this._createNumberScale(238, 258, 12, 210, true, NS));
-    g.append(this._createNumberScale(404, 258, 12, 210, false, NS));
+    g.append(this._createNumberScale(scaleCoord(238), scaleCoord(258), scaleCoord(12), scaleCoord(210), true, NS));
+    g.append(this._createNumberScale(scaleCoord(404), scaleCoord(258), scaleCoord(12), scaleCoord(210), false, NS));
 
-    g.append(this._createScrew(92, 92, NS));
-    g.append(this._createScrew(548, 92, NS));
-    g.append(this._createScrew(92, 548, NS));
-    g.append(this._createScrew(548, 548, NS));
+    g.append(this._createScrew(scaleCoord(92), scaleCoord(92), NS));
+    g.append(this._createScrew(scaleCoord(548), scaleCoord(92), NS));
+    g.append(this._createScrew(scaleCoord(92), scaleCoord(548), NS));
+    g.append(this._createScrew(scaleCoord(548), scaleCoord(548), NS));
 
-    g.append(this._createVignette(defs, NS));
+    g.append(this._createVignette(defs, NS, scaleCoord));
 
     mount.replaceChildren(svg);
   }
@@ -3097,83 +3095,81 @@ class EnergyPanel extends HTMLElement {
 
   _createScrew(cx, cy, NS) {
     const group = this._createSVGElement("g", {}, NS);
+    const scale = 1.25;
+    // Main screw body - matching outlet card style (10px in original = 8px, scaled to 10px)
     group.append(this._createSVGElement("circle", {
-      cx, cy, r: 14,
+      cx, cy, r: 5 * scale,
       fill: "url(#screwGrad)",
-      stroke: "rgba(10,16,22,.45)",
-      "stroke-width": 2.2
+      stroke: "rgba(0,0,0,0.25)",
+      "stroke-width": scale
     }, NS));
-    group.append(this._createSVGElement("circle", {
-      cx, cy, r: 9,
-      fill: "rgba(255,255,255,.18)",
-      stroke: "rgba(10,16,22,.26)",
-      "stroke-width": 1.6
+    // Inner highlight - subtle top highlight
+    group.append(this._createSVGElement("ellipse", {
+      cx, cy: cy - 1.5 * scale,
+      rx: 4 * scale,
+      ry: 2 * scale,
+      fill: "rgba(255,255,255,0.7)",
+      opacity: 0.6
     }, NS));
+    // Screw slot line - horizontal
     group.append(this._createSVGElement("rect", {
-      x: cx - 7,
-      y: cy - 1,
-      width: 14,
-      height: 2,
-      rx: 1,
-      fill: "rgba(10,16,22,.55)",
-      transform: `rotate(-18 ${cx} ${cy})`
-    }, NS));
-    group.append(this._createSVGElement("circle", {
-      cx: cx - 3.5,
-      cy: cy - 4,
-      r: 4,
-      fill: "rgba(255,255,255,.52)",
-      opacity: 0.75
+      x: cx - 5 * scale,
+      y: cy - scale,
+      width: 10 * scale,
+      height: 2 * scale,
+      rx: scale,
+      fill: "rgba(0,0,0,0.35)"
     }, NS));
     return group;
   }
 
   _createBreaker(x, y, w, h, NS) {
     const group = this._createSVGElement("g", {}, NS);
+    const scale = 1.25;
 
-    group.append(this._createRoundedRect(x, y, w, h, 3, {
+    group.append(this._createRoundedRect(x, y, w, h, 3 * scale, {
       fill: "url(#breakerBody)",
-      stroke: "rgba(255,255,255,.10)",
-      "stroke-width": 1
+      stroke: "rgba(80,90,110,.20)",
+      "stroke-width": scale
     }, NS));
 
-    group.append(this._createRoundedRect(x + 1.2, y + 1.2, w - 2.4, h - 2.4, 3, {
+    group.append(this._createRoundedRect(x + 1.2 * scale, y + 1.2 * scale, w - 2.4 * scale, h - 2.4 * scale, 3 * scale, {
       fill: "none",
       stroke: "rgba(0,0,0,.40)",
-      "stroke-width": 1,
+      "stroke-width": scale,
       opacity: 0.30
     }, NS));
 
-    group.append(this._createRoundedRect(x + 6, y + 4, 16, h - 8, 2.5, {
+    group.append(this._createRoundedRect(x + 6 * scale, y + 4 * scale, 16 * scale, h - 8 * scale, 2.5 * scale, {
       fill: "rgba(18,24,30,.80)",
-      stroke: "rgba(255,255,255,.10)",
-      "stroke-width": 1
+      stroke: "rgba(80,90,110,.20)",
+      "stroke-width": scale
     }, NS));
 
-    group.append(this._createRoundedRect(x + 6, y + 4, 16, h - 8, 2.5, {
+    group.append(this._createRoundedRect(x + 6 * scale, y + 4 * scale, 16 * scale, h - 8 * scale, 2.5 * scale, {
       fill: "url(#blueToggle)",
       opacity: 0.85
     }, NS));
 
-    group.append(this._createRoundedRect(x + w - 24, y + 4, 18, h - 8, 2, {
-      fill: "rgba(255,255,255,.06)"
+    group.append(this._createRoundedRect(x + w - 24 * scale, y + 4 * scale, 18 * scale, h - 8 * scale, 2 * scale, {
+      fill: "rgba(80,90,110,.10)"
     }, NS));
 
     for (let i = 0; i < 4; i++) {
       group.append(this._createSVGElement("rect", {
-        x: x + w - 22 + i * 4.2,
-        y: y + 5,
-        width: 1.5,
-        height: h - 10,
-        fill: "rgba(255,255,255,.16)",
+        x: x + w - 22 * scale + i * 4.2 * scale,
+        y: y + 5 * scale,
+        width: 1.5 * scale,
+        height: h - 10 * scale,
+        fill: "rgba(120,130,150,.20)",
         opacity: 0.50
       }, NS));
     }
 
     group.append(this._createSVGElement("path", {
-      d: `M ${x+2} ${y+2} L ${x+w-2} ${y+2}`,
-      stroke: "rgba(255,255,255,.10)",
-      "stroke-width": 1
+      d: `M ${x+2*scale} ${y+2*scale} L ${x+w-2*scale} ${y+2*scale}`,
+      stroke: "rgba(80,90,110,.20)",
+      "stroke-width": scale
     }, NS));
 
     return group;
@@ -3182,6 +3178,7 @@ class EnergyPanel extends HTMLElement {
   _createNumberScale(x, y, w, h, left, NS) {
     const group = this._createSVGElement("g", {}, NS);
     const steps = 8;
+    const scale = 1.25;
 
     for (let i = 0; i <= steps; i++) {
       const yy = y + (h / steps) * i;
@@ -3191,7 +3188,7 @@ class EnergyPanel extends HTMLElement {
         x2: x + w,
         y2: yy,
         stroke: "rgba(0,0,0,.18)",
-        "stroke-width": 1
+        "stroke-width": scale
       }, NS));
     }
 
@@ -3201,11 +3198,11 @@ class EnergyPanel extends HTMLElement {
     for (let i = 0; i < steps; i++) {
       const yy = y + (h / steps) * i + (h / steps) * 0.52;
       const t = this._createSVGElement("text", {
-        x: left ? (x + 1) : (x + w - 1),
+        x: left ? (x + scale) : (x + w - scale),
         y: yy,
         "text-anchor": left ? "start" : "end",
         "dominant-baseline": "middle",
-        "font-size": 10,
+        "font-size": 10 * scale,
         fill: "rgba(0,0,0,.34)"
       }, NS);
       t.textContent = left ? numsLeft[i] : numsRight[i];
@@ -3215,21 +3212,21 @@ class EnergyPanel extends HTMLElement {
     return group;
   }
 
-  _createVignette(defs, NS) {
+  _createVignette(defs, NS, scaleCoord) {
     const v = this._createSVGElement("path", {
-      d: "M60,60 h520 v520 h-520 z",
+      d: `M${scaleCoord(60)},${scaleCoord(60)} h${scaleCoord(520)} v${scaleCoord(520)} h${-scaleCoord(520)} z`,
       fill: "rgba(0,0,0,.00)"
     }, NS);
     v.setAttribute("filter", "url(#softBevel)");
 
     const overlay = this._createSVGElement("rect", {
-      x: 60, y: 60, width: 520, height: 520, rx: 10, ry: 10,
+      x: scaleCoord(60), y: scaleCoord(60), width: scaleCoord(520), height: scaleCoord(520), rx: scaleCoord(10), ry: scaleCoord(10),
       fill: "rgba(0,0,0,.06)",
       opacity: 0.18
     }, NS);
 
     const mask = this._createSVGElement("mask", { id: "fadeMask" }, NS);
-    const mrect = this._createSVGElement("rect", { x: 0, y: 0, width: 640, height: 640, fill: "white" }, NS);
+    const mrect = this._createSVGElement("rect", { x: 0, y: 0, width: 800, height: 800, fill: "white" }, NS);
     mask.append(mrect);
     defs.append(mask);
 
@@ -3239,10 +3236,10 @@ class EnergyPanel extends HTMLElement {
     const g2 = this._createSVGElement("g", {}, NS);
     g2.append(overlay);
 
-    g2.append(this._createRoundedRect(60, 60, 520, 520, 10, {
+    g2.append(this._createRoundedRect(scaleCoord(60), scaleCoord(60), scaleCoord(520), scaleCoord(520), scaleCoord(10), {
       fill: "none",
       stroke: "rgba(0,0,0,.10)",
-      "stroke-width": 1.2,
+      "stroke-width": scaleCoord(1.2),
       opacity: 0.75
     }, NS));
 
