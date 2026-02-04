@@ -2953,6 +2953,10 @@ class EnergyPanel extends HTMLElement {
               ${Array.from({ length: rows }, (_, row) => {
                 const leftSlot = breakerSlots[row * 2];
                 const rightSlot = breakerSlots[row * 2 + 1];
+                
+                // Safety check for leftSlot
+                if (!leftSlot) return '';
+                
                 return `
                   <div class="breaker-panel-breaker-row">
                     <div class="breaker-panel-slot">
@@ -2976,10 +2980,25 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderBreakerSwitch(breaker, data) {
+    // Ensure data exists with defaults
+    if (!data) {
+      data = {
+        total_watts: 0,
+        max_load: breaker?.max_load || 2400,
+        total_day_wh: 0,
+        outlets: [],
+      };
+    }
+    
+    // Ensure breaker exists
+    if (!breaker) {
+      return '<div class="breaker-panel-empty-slot"></div>';
+    }
+    
     const percentage = data.max_load > 0 ? Math.min((data.total_watts / data.max_load) * 100, 100) : 0;
     const isOn = data.total_watts > 0 || percentage > 0;
     const isAtMax = data.max_load > 0 && data.total_watts >= data.max_load;
-    const isNearThreshold = breaker.threshold > 0 && data.total_watts >= breaker.threshold;
+    const isNearThreshold = (breaker.threshold || 0) > 0 && data.total_watts >= breaker.threshold;
     
     // Determine switch state: 'on' (up), 'off' (down), or 'tripped' (middle)
     let switchState = isOn ? 'on' : 'off';
@@ -2988,11 +3007,11 @@ class EnergyPanel extends HTMLElement {
     }
 
     return `
-      <div class="breaker-panel-switch" data-breaker-id="${breaker.id}" style="--breaker-color: ${breaker.color || '#03a9f4'}">
+      <div class="breaker-panel-switch" data-breaker-id="${breaker.id || ''}" style="--breaker-color: ${breaker.color || '#03a9f4'}">
         <div class="breaker-panel-switch-body ${switchState} ${isAtMax ? 'tripped' : ''} ${isNearThreshold ? 'warning' : ''}" style="border-color: ${breaker.color || '#03a9f4'}">
           <div class="breaker-panel-switch-handle ${switchState}"></div>
         </div>
-        <div class="breaker-panel-switch-label">${breaker.name}</div>
+        <div class="breaker-panel-switch-label">${breaker.name || 'Unknown'}</div>
         <div class="breaker-panel-switch-watts">${data.total_watts.toFixed(0)}W</div>
       </div>
     `;
