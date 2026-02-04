@@ -832,14 +832,24 @@ class EnergyPanel extends HTMLElement {
 
       .room-content {
         padding: 10px 12px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        /* Hide scrollbar for Chrome, Safari and Opera */
+        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none; /* IE and Edge */
+      }
+
+      .room-content::-webkit-scrollbar {
+        display: none; /* Chrome, Safari and Opera */
       }
 
       .outlets-grid {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         gap: 6px;
         justify-content: flex-start;
         align-items: flex-start;
+        min-width: min-content;
       }
 
       .outlet-card.outlet-face {
@@ -3243,6 +3253,7 @@ class EnergyPanel extends HTMLElement {
     const rgb = room.responsive_light_color || [245, 0, 0];
     const rgbHex = '#' + [rgb[0], rgb[1], rgb[2]].map(x => Math.round(Math.min(255, Math.max(0, x))).toString(16).padStart(2, '0')).join('');
     const tempK = room.responsive_light_temp ?? 6500;
+    const interval = room.responsive_light_interval ?? 1.5;
     return `
       <div class="form-group responsive-light-section" style="margin-bottom: 16px; padding: 12px; background: var(--panel-accent-dim); border-radius: 8px;">
         <div class="toggle-row ${!eligible ? 'toggle-disabled' : ''}">
@@ -3262,6 +3273,10 @@ class EnergyPanel extends HTMLElement {
             <div class="form-group">
               <label class="form-label">Rest color (Kelvin)</label>
               <input type="number" class="form-input responsive-light-temp-picker" value="${tempK}" min="2000" max="6500" step="100" placeholder="6500" style="width: 90px;" title="Color temp when alternating">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Change frequency (seconds)</label>
+              <input type="number" class="form-input responsive-light-interval-picker" value="${interval}" min="0.1" max="10" step="0.1" placeholder="1.5" style="width: 90px;" title="Interval between color changes">
             </div>
           </div>
         ` : ''}
@@ -4702,6 +4717,7 @@ class EnergyPanel extends HTMLElement {
         const responsiveToggle = card.querySelector('.responsive-light-warnings-toggle');
         const responsiveColor = card.querySelector('.responsive-light-color-picker');
         const responsiveTemp = card.querySelector('.responsive-light-temp-picker');
+        const responsiveInterval = card.querySelector('.responsive-light-interval-picker');
         let rgb = [245, 0, 0];
         if (responsiveColor?.value) {
           const hex = responsiveColor.value;
@@ -4712,6 +4728,7 @@ class EnergyPanel extends HTMLElement {
           ];
         }
         const tempK = parseInt(responsiveTemp?.value, 10) || 6500;
+        const interval = parseFloat(responsiveInterval?.value) || 1.5;
         rooms.push({
           id: roomName.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
           name: roomName,
@@ -4721,6 +4738,7 @@ class EnergyPanel extends HTMLElement {
           responsive_light_warnings: responsiveToggle?.checked === true && !responsiveToggle.disabled,
           responsive_light_color: rgb,
           responsive_light_temp: tempK,
+          responsive_light_interval: interval,
           outlets: outlets,
         });
       }

@@ -367,6 +367,7 @@ class EnergyMonitor:
         rgb_color: list[int],
         temp_kelvin: int,
         tts_task: asyncio.Task,
+        interval: float = 1.5,
     ) -> None:
         """Loop light color/temp changes until TTS task completes."""
         try:
@@ -377,7 +378,7 @@ class EnergyMonitor:
                     {"entity_id": entity_ids, "rgb_color": rgb_color},
                     blocking=True,
                 )
-                await asyncio.sleep(2)
+                await asyncio.sleep(interval)
                 if tts_task.done():
                     break
                 await self.hass.services.async_call(
@@ -386,7 +387,7 @@ class EnergyMonitor:
                     {"entity_id": entity_ids, "color_temp_kelvin": temp_kelvin},
                     blocking=True,
                 )
-                await asyncio.sleep(2)
+                await asyncio.sleep(interval)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -434,6 +435,7 @@ class EnergyMonitor:
         wrgb_lights = self._get_wrgb_light_entities(room) if room.get("responsive_light_warnings") else []
         rgb = room.get("responsive_light_color") or [245, 0, 0]
         temp_k = int(room.get("responsive_light_temp", 6500))
+        interval = float(room.get("responsive_light_interval", 1.5))
         if wrgb_lights:
             restore_data = self._get_light_restore_data(wrgb_lights)
             tts_task = asyncio.create_task(
@@ -446,7 +448,7 @@ class EnergyMonitor:
                 )
             )
             light_task = asyncio.create_task(
-                self._async_light_warning_loop(wrgb_lights, rgb, temp_k, tts_task)
+                self._async_light_warning_loop(wrgb_lights, rgb, temp_k, tts_task, interval)
             )
             await asyncio.gather(tts_task, light_task)
             await self._async_restore_lights(wrgb_lights, restore_data)
