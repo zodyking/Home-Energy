@@ -1678,7 +1678,7 @@ class EnergyPanel extends HTMLElement {
         border-left: 1px solid rgba(255, 255, 255, 0.08);
           border-radius: 6px;
         padding: 18px;
-        box-shadow: 
+          box-shadow: 
           inset 0 3px 6px rgba(0, 0, 0, 0.5),
           inset 0 1px 0 rgba(255, 255, 255, 0.1),
           0 2px 4px rgba(0, 0, 0, 0.3);
@@ -1693,7 +1693,7 @@ class EnergyPanel extends HTMLElement {
         border-top: 1px solid rgba(255, 255, 255, 0.08);
         border-left: 1px solid rgba(255, 255, 255, 0.05);
           border-radius: 4px;
-        padding: 20px;
+          padding: 20px;
         min-height: 400px;
           box-shadow: 
           inset 0 4px 8px rgba(0, 0, 0, 0.6),
@@ -1735,8 +1735,8 @@ class EnergyPanel extends HTMLElement {
         text-align: right;
         padding-right: 12px;
           display: flex;
-          flex-direction: column;
-        gap: 6px;
+        flex-direction: column;
+        gap: 8px;
         align-items: flex-end;
       }
 
@@ -1745,8 +1745,359 @@ class EnergyPanel extends HTMLElement {
         padding-left: 12px;
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 8px;
         align-items: flex-start;
+      }
+
+      .breaker-label-with-tag {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+      }
+
+      .breaker-label-left .breaker-label-with-tag {
+        flex-direction: row;
+      }
+
+      .breaker-label-right .breaker-label-with-tag {
+        flex-direction: row-reverse;
+      }
+
+      .breaker-color-tag {
+        width: 28px;
+        height: 28px;
+        border-radius: 3px;
+        border: 2px solid rgba(0, 0, 0, 0.5);
+        border-top: 1px solid rgba(255, 255, 255, 0.2);
+        border-left: 1px solid rgba(255, 255, 255, 0.15);
+        display: flex;
+        align-items: center;
+          justify-content: center;
+        cursor: pointer;
+        box-shadow: 
+          inset 0 1px 2px rgba(0, 0, 0, 0.4),
+          inset 0 1px 0 rgba(255, 255, 255, 0.15),
+          0 1px 2px rgba(0, 0, 0, 0.3);
+        transition: all 0.2s ease;
+        flex-shrink: 0;
+      }
+
+      .breaker-color-tag:hover {
+        border-color: rgba(255, 255, 255, 0.3);
+          box-shadow: 
+          inset 0 1px 2px rgba(0, 0, 0, 0.4),
+          inset 0 1px 0 rgba(255, 255, 255, 0.2),
+          0 1px 2px rgba(0, 0, 0, 0.3),
+          0 0 8px rgba(90, 159, 212, 0.4);
+        transform: scale(1.05);
+      }
+
+      .breaker-tag-number {
+        font-size: 11px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.95);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        font-family: 'Courier New', monospace;
+        letter-spacing: 0.5px;
+      }
+
+      .breaker-settings-wrapper {
+          display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+        justify-content: flex-end;
+      }
+
+      .breaker-label-right .breaker-settings-wrapper {
+        justify-content: flex-start;
+      }
+
+      .breaker-sensor-link-btn,
+      .breaker-threshold-btn {
+        padding: 4px 8px;
+        font-size: 9px;
+        background: rgba(30, 35, 45, 0.8);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 3px;
+        color: rgba(255, 255, 255, 0.7);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        transition: all 0.2s ease;
+        box-shadow: 
+          inset 0 1px 2px rgba(0, 0, 0, 0.4),
+          0 1px 1px rgba(0, 0, 0, 0.2);
+      }
+
+      .breaker-sensor-link-btn:hover,
+      .breaker-threshold-btn:hover {
+        background: rgba(40, 45, 55, 0.9);
+        border-color: rgba(90, 159, 212, 0.4);
+        color: rgba(255, 255, 255, 0.9);
+        box-shadow: 
+          inset 0 1px 2px rgba(0, 0, 0, 0.4),
+          0 1px 1px rgba(0, 0, 0, 0.2),
+          0 0 6px rgba(90, 159, 212, 0.3);
+      }
+
+      .breaker-sensor-link-btn svg,
+      .breaker-threshold-btn svg {
+        width: 12px;
+        height: 12px;
+        opacity: 0.8;
+      }
+
+      .breaker-switch-toggle {
+          position: relative;
+        display: inline-block;
+        width: 36px;
+        height: 18px;
+        cursor: pointer;
+      }
+
+      .breaker-switch-toggle input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .breaker-switch-slider {
+          position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(40, 45, 55, 0.8);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        border-radius: 18px;
+        transition: 0.3s;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+      }
+
+      .breaker-switch-slider:before {
+        position: absolute;
+        content: "";
+        height: 14px;
+        width: 14px;
+        left: 2px;
+        bottom: 1px;
+        background-color: rgba(200, 200, 200, 0.9);
+        border-radius: 50%;
+        transition: 0.3s;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+      }
+
+      .breaker-switch-toggle input:checked + .breaker-switch-slider {
+        background-color: rgba(90, 159, 212, 0.6);
+        border-color: rgba(90, 159, 212, 0.4);
+      }
+
+      .breaker-switch-toggle input:checked + .breaker-switch-slider:before {
+        transform: translateX(18px);
+        background-color: rgba(90, 159, 212, 1);
+        box-shadow: 0 0 6px rgba(90, 159, 212, 0.6);
+      }
+
+      .breaker-row-delete-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: rgba(200, 50, 50, 0.8);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        color: white;
+        font-size: 18px;
+        font-weight: bold;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        transition: all 0.2s ease;
+        box-shadow: 
+          inset 0 1px 2px rgba(0, 0, 0, 0.4),
+          0 1px 2px rgba(0, 0, 0, 0.3);
+        z-index: 10;
+      }
+
+      .breaker-row-delete-btn:hover {
+        background: rgba(220, 70, 70, 1);
+        transform: scale(1.1);
+        box-shadow: 
+          inset 0 1px 2px rgba(0, 0, 0, 0.4),
+          0 2px 4px rgba(0, 0, 0, 0.4),
+          0 0 8px rgba(220, 70, 70, 0.5);
+      }
+
+      .breaker-tag-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 10000;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .breaker-tag-modal.active {
+        display: flex;
+      }
+
+      .breaker-tag-modal-content {
+        background: linear-gradient(180deg, #2d3441 0%, #1f252e 100%);
+        border: 2px solid rgba(0, 0, 0, 0.8);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        padding: 20px;
+        min-width: 280px;
+        box-shadow: 
+          inset 0 2px 4px rgba(0, 0, 0, 0.6),
+          0 4px 12px rgba(0, 0, 0, 0.8);
+      }
+
+      .breaker-tag-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .breaker-tag-modal-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.9);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .breaker-tag-modal-close {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: rgba(200, 50, 50, 0.8);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        color: white;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        transition: all 0.2s ease;
+      }
+
+      .breaker-tag-modal-close:hover {
+        background: rgba(220, 70, 70, 1);
+        transform: scale(1.1);
+      }
+
+      .breaker-tag-modal-form {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .breaker-tag-modal-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .breaker-tag-modal-label {
+          font-size: 10px;
+          font-weight: 600;
+        color: rgba(255, 255, 255, 0.7);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .breaker-tag-modal-number-input {
+        padding: 8px 12px;
+        background: rgba(20, 25, 35, 0.8);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 4px;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 14px;
+        font-weight: 700;
+        font-family: 'Courier New', monospace;
+        text-align: center;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+      }
+
+      .breaker-tag-modal-number-input:focus {
+        outline: none;
+        border-color: rgba(90, 159, 212, 0.5);
+        box-shadow: 
+          inset 0 1px 2px rgba(0, 0, 0, 0.4),
+          0 0 8px rgba(90, 159, 212, 0.3);
+      }
+
+      .breaker-tag-modal-color-input {
+          width: 100%;
+        height: 40px;
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 4px;
+        cursor: pointer;
+        background: rgba(20, 25, 35, 0.8);
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+        }
+
+      .breaker-tag-modal-actions {
+          display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .breaker-tag-modal-btn {
+        flex: 1;
+        padding: 8px 16px;
+        background: rgba(40, 45, 55, 0.8);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 4px;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+          transition: all 0.2s ease;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+        }
+
+      .breaker-tag-modal-btn:hover {
+        background: rgba(50, 55, 65, 0.9);
+        border-color: rgba(90, 159, 212, 0.4);
+          box-shadow: 
+          inset 0 1px 2px rgba(0, 0, 0, 0.4),
+          0 0 6px rgba(90, 159, 212, 0.3);
+      }
+
+      .breaker-tag-modal-btn.primary {
+        background: rgba(90, 159, 212, 0.6);
+      }
+
+      .breaker-tag-modal-btn.primary:hover {
+        background: rgba(90, 159, 212, 0.8);
       }
 
       .breaker-label-text {
@@ -1762,7 +2113,7 @@ class EnergyPanel extends HTMLElement {
         padding: 5px 10px;
         min-width: 130px;
         text-align: center;
-        box-shadow: 
+          box-shadow: 
           inset 0 2px 3px rgba(0, 0, 0, 0.5),
           inset 0 1px 0 rgba(255, 255, 255, 0.15),
           0 1px 1px rgba(0, 0, 0, 0.3);
@@ -1774,7 +2125,7 @@ class EnergyPanel extends HTMLElement {
       .breaker-label-text:focus {
         outline: none;
         border-color: rgba(90, 159, 212, 0.5);
-        box-shadow: 
+            box-shadow: 
           inset 0 2px 3px rgba(0, 0, 0, 0.5),
           inset 0 1px 0 rgba(255, 255, 255, 0.15),
           0 1px 1px rgba(0, 0, 0, 0.3),
@@ -1805,7 +2156,7 @@ class EnergyPanel extends HTMLElement {
         border-radius: 3px;
         cursor: pointer;
         background: rgba(20, 25, 35, 0.8);
-          box-shadow: 
+            box-shadow: 
           inset 0 2px 3px rgba(0, 0, 0, 0.5),
           inset 0 1px 0 rgba(255, 255, 255, 0.1),
           0 1px 1px rgba(0, 0, 0, 0.3);
@@ -1828,88 +2179,97 @@ class EnergyPanel extends HTMLElement {
         }
 
       .breaker-switch {
-          width: 52px;
-          height: 96px;
+        width: 120px;
+        height: 48px;
         background: 
-          radial-gradient(ellipse at 50% 20%, rgba(40, 45, 55, 0.4) 0%, transparent 60%),
-          linear-gradient(to bottom, #2d3441 0%, #252a35 25%, #1f252e 50%, #1a1f26 75%, #151920 100%);
+          radial-gradient(ellipse at 50% 50%, rgba(40, 45, 55, 0.3) 0%, transparent 70%),
+          linear-gradient(to right, #2d3441 0%, #252a35 30%, #1f252e 50%, #252a35 70%, #2d3441 100%);
         border: 2px solid rgba(0, 0, 0, 0.8);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 3px;
-          position: relative;
-            box-shadow: 
-            inset 0 4px 8px rgba(0, 0, 0, 0.7),
-            inset 0 1px 0 rgba(255, 255, 255, 0.12),
-            inset 0 -1px 2px rgba(0, 0, 0, 0.5),
-            0 2px 4px rgba(0, 0, 0, 0.5),
-            0 1px 0 rgba(255, 255, 255, 0.05);
+        border-radius: 4px;
+        position: relative;
+        box-shadow: 
+          inset 0 2px 4px rgba(0, 0, 0, 0.7),
+          inset 0 1px 0 rgba(255, 255, 255, 0.12),
+          inset 0 -1px 2px rgba(0, 0, 0, 0.5),
+          0 2px 4px rgba(0, 0, 0, 0.5),
+          0 1px 0 rgba(255, 255, 255, 0.05);
         cursor: pointer;
-          transition: all 0.2s ease;
+        transition: all 0.2s ease;
+        overflow: hidden;
         }
 
-      .breaker-switch::before {
-        content: "";
+        .breaker-switch-handle {
           position: absolute;
-        top: 8px;
-          left: 50%;
-          transform: translateX(-50%);
-        width: 22px;
-        height: 24px;
-          border-radius: 2px;
-        background: var(--breaker-color, #5a9fd4);
-            box-shadow: 
-          0 0 12px var(--breaker-color, #5a9fd4),
-          0 0 6px rgba(90, 159, 212, 0.7),
-          0 2px 4px rgba(0, 0, 0, 0.6),
-            inset 0 2px 4px rgba(255, 255, 255, 0.4),
-            inset 0 -2px 4px rgba(0, 0, 0, 0.4);
-        border: 1px solid rgba(255, 255, 255, 0.25);
-        border-bottom: 1px solid rgba(0, 0, 0, 0.3);
+        left: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 32px;
+        height: 32px;
+          border-radius: 3px;
+        background: 
+          linear-gradient(135deg, #4a5568 0%, #3d4756 50%, #2d3441 100%);
+        border: 2px solid rgba(0, 0, 0, 0.6);
+        border-top: 1px solid rgba(255, 255, 255, 0.2);
+        border-left: 1px solid rgba(255, 255, 255, 0.15);
+          box-shadow: 
+          inset 0 2px 4px rgba(0, 0, 0, 0.6),
+          inset 0 1px 0 rgba(255, 255, 255, 0.2),
+          0 2px 4px rgba(0, 0, 0, 0.5);
+        transition: all 0.3s ease;
       }
 
-      .breaker-switch::after {
-        content: "";
-          position: absolute;
-        top: 36px;
-          left: 50%;
-          transform: translateX(-50%);
-          width: 20px;
-        height: 3px;
-        background: linear-gradient(to right, 
-          transparent 0%, 
-          rgba(255, 255, 255, 0.15) 20%, 
-          rgba(255, 255, 255, 0.2) 50%, 
-          rgba(255, 255, 255, 0.15) 80%, 
-          transparent 100%);
-        border-radius: 1px;
-        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+      .breaker-switch.on .breaker-switch-handle {
+        left: calc(100% - 40px);
+        background: 
+          linear-gradient(135deg, #5a9fd4 0%, #4a8fc4 50%, #3a7fb4 100%);
+        box-shadow: 
+          inset 0 2px 4px rgba(0, 0, 0, 0.4),
+          inset 0 1px 0 rgba(255, 255, 255, 0.3),
+            0 2px 4px rgba(0, 0, 0, 0.5),
+          0 0 8px rgba(90, 159, 212, 0.5);
       }
 
-      .breaker-switch-number {
+      .breaker-switch-label {
         position: absolute;
-        bottom: 8px;
-        left: 50%;
-        transform: translateX(-50%);
-        font-size: 12px;
-        font-weight: 900;
-        color: rgba(255, 255, 255, 0.7);
-        text-shadow: 
-          0 1px 2px rgba(0, 0, 0, 0.9),
-          0 0 4px rgba(0, 0, 0, 0.5);
-        font-family: 'Arial', 'Helvetica', sans-serif;
-        letter-spacing: 0.5px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 10px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.3);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        transition: all 0.3s ease;
+      }
+
+      .breaker-switch-label:first-of-type {
+        left: 50px;
+      }
+
+      .breaker-switch-label-off {
+        right: 50px;
+        left: auto;
+      }
+
+      .breaker-switch.on .breaker-switch-label:first-of-type {
+        color: rgba(90, 159, 212, 0.9);
+        text-shadow: 0 0 4px rgba(90, 159, 212, 0.5);
+      }
+
+      .breaker-switch:not(.on) .breaker-switch-label-off {
+        color: rgba(255, 255, 255, 0.5);
       }
 
       .breaker-switch:hover {
         border-color: rgba(255, 255, 255, 0.2);
         box-shadow: 
-          inset 0 4px 8px rgba(0, 0, 0, 0.7),
+          inset 0 2px 4px rgba(0, 0, 0, 0.7),
           inset 0 1px 0 rgba(255, 255, 255, 0.12),
           inset 0 -1px 2px rgba(0, 0, 0, 0.5),
           0 2px 4px rgba(0, 0, 0, 0.5),
           0 1px 0 rgba(255, 255, 255, 0.05),
-          0 0 16px var(--breaker-color, #5a9fd4);
+          0 0 12px rgba(90, 159, 212, 0.3);
         transform: translateY(-1px);
         }
 
@@ -3119,6 +3479,19 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _rgbToHex(rgb) {
+    if (!rgb) return null;
+    if (rgb.startsWith('#')) return rgb;
+    const match = rgb.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    if (match) {
+      const r = parseInt(match[1], 10).toString(16).padStart(2, '0');
+      const g = parseInt(match[2], 10).toString(16).padStart(2, '0');
+      const b = parseInt(match[3], 10).toString(16).padStart(2, '0');
+      return `#${r}${g}${b}`;
+    }
+    return null;
+  }
+
   _renderBreakerPanelCard() {
     const rows = this._breakerRows || 6;
     const defaultRows = 6;
@@ -3126,29 +3499,65 @@ class EnergyPanel extends HTMLElement {
     const renderRow = (rowIndex, isDefault = false) => {
       const leftBreakerNum = rowIndex * 2 + 1;
       const rightBreakerNum = rowIndex * 2 + 2;
+      const deleteBtn = !isDefault ? `<button class="breaker-row-delete-btn" data-row-index="${rowIndex}" title="Delete row">×</button>` : '';
 
     return `
         <div class="breaker-panel-row" data-row-index="${rowIndex}" data-is-default="${isDefault}">
+          ${deleteBtn}
           <div class="breaker-label-left" data-breaker-num="${leftBreakerNum}">
-            <input type="text" class="breaker-name-input breaker-label-text" placeholder="Breaker ${leftBreakerNum}" value="" data-breaker-num="${leftBreakerNum}">
-            <div class="breaker-color-picker-wrapper">
-              <div class="breaker-color-picker-label">Color</div>
-              <input type="color" class="breaker-color-input" value="#5a9fd4" data-breaker-num="${leftBreakerNum}">
+            <div class="breaker-label-with-tag">
+              <input type="text" class="breaker-name-input breaker-label-text" placeholder="Breaker ${leftBreakerNum}" value="" data-breaker-num="${leftBreakerNum}">
+              <div class="breaker-color-tag" data-breaker-num="${leftBreakerNum}" style="background-color: #5a9fd4;">
+                <span class="breaker-tag-number">${String(leftBreakerNum).padStart(2, '0')}</span>
             </div>
                 </div>
+            <div class="breaker-settings-wrapper">
+              <button class="breaker-sensor-link-btn" data-breaker-num="${leftBreakerNum}" title="Link sensors">
+                <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                Link
+              </button>
+              <label class="breaker-switch-toggle">
+                <input type="checkbox" class="breaker-onoff-switch" data-breaker-num="${leftBreakerNum}">
+                <span class="breaker-switch-slider"></span>
+              </label>
+              <button class="breaker-threshold-btn" data-breaker-num="${leftBreakerNum}" title="Threshold settings">
+                <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+                Thresholds
+              </button>
+                    </div>
+                    </div>
           <div class="breaker-switch-container">
-            <div class="breaker-switch" data-breaker-num="${leftBreakerNum}" style="--breaker-color: #5a9fd4;">
-              <div class="breaker-switch-number">${leftBreakerNum}</div>
-                    </div>
-            <div class="breaker-switch" data-breaker-num="${rightBreakerNum}" style="--breaker-color: #5a9fd4;">
-              <div class="breaker-switch-number">${rightBreakerNum}</div>
-                    </div>
+            <div class="breaker-switch" data-breaker-num="${leftBreakerNum}">
+              <div class="breaker-switch-handle"></div>
+              <div class="breaker-switch-label">ON</div>
+              <div class="breaker-switch-label breaker-switch-label-off">OFF</div>
                   </div>
+            <div class="breaker-switch" data-breaker-num="${rightBreakerNum}">
+              <div class="breaker-switch-handle"></div>
+              <div class="breaker-switch-label">ON</div>
+              <div class="breaker-switch-label breaker-switch-label-off">OFF</div>
+            </div>
+          </div>
           <div class="breaker-label-right" data-breaker-num="${rightBreakerNum}">
-            <input type="text" class="breaker-name-input breaker-label-text" placeholder="Breaker ${rightBreakerNum}" value="" data-breaker-num="${rightBreakerNum}">
-            <div class="breaker-color-picker-wrapper">
-              <div class="breaker-color-picker-label">Color</div>
-              <input type="color" class="breaker-color-input" value="#5a9fd4" data-breaker-num="${rightBreakerNum}">
+            <div class="breaker-label-with-tag">
+              <div class="breaker-color-tag" data-breaker-num="${rightBreakerNum}" style="background-color: #5a9fd4;">
+                <span class="breaker-tag-number">${String(rightBreakerNum).padStart(2, '0')}</span>
+        </div>
+              <input type="text" class="breaker-name-input breaker-label-text" placeholder="Breaker ${rightBreakerNum}" value="" data-breaker-num="${rightBreakerNum}">
+            </div>
+            <div class="breaker-settings-wrapper">
+              <button class="breaker-sensor-link-btn" data-breaker-num="${rightBreakerNum}" title="Link sensors">
+                <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                Link
+              </button>
+              <label class="breaker-switch-toggle">
+                <input type="checkbox" class="breaker-onoff-switch" data-breaker-num="${rightBreakerNum}">
+                <span class="breaker-switch-slider"></span>
+              </label>
+              <button class="breaker-threshold-btn" data-breaker-num="${rightBreakerNum}" title="Threshold settings">
+                <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+                Thresholds
+              </button>
             </div>
           </div>
         </div>
@@ -3157,7 +3566,7 @@ class EnergyPanel extends HTMLElement {
     
     const defaultRowsHtml = Array.from({ length: defaultRows }, (_, i) => renderRow(i, true)).join('');
     const additionalRows = rows > defaultRows ? Array.from({ length: rows - defaultRows }, (_, i) => renderRow(i + defaultRows, false)).join('') : '';
-    
+
     return `
       <div class="breaker-panel-card">
         <div class="breaker-panel-screw top-center"></div>
@@ -3172,7 +3581,29 @@ class EnergyPanel extends HTMLElement {
           <div class="breaker-panel-inner">
             ${defaultRowsHtml}
             ${additionalRows}
+            </div>
+                </div>
+        <div class="breaker-tag-modal" id="breaker-tag-modal">
+          <div class="breaker-tag-modal-content">
+            <div class="breaker-tag-modal-header">
+              <div class="breaker-tag-modal-title">Edit Breaker Tag</div>
+              <button class="breaker-tag-modal-close" id="breaker-tag-modal-close">×</button>
+                    </div>
+            <div class="breaker-tag-modal-form">
+              <div class="breaker-tag-modal-field">
+                <label class="breaker-tag-modal-label">Number (2 digits)</label>
+                <input type="text" class="breaker-tag-modal-number-input" id="breaker-tag-number-input" maxlength="2" pattern="[0-9]{1,2}" placeholder="01">
+                    </div>
+              <div class="breaker-tag-modal-field">
+                <label class="breaker-tag-modal-label">Color</label>
+                <input type="color" class="breaker-tag-modal-color-input" id="breaker-tag-color-input" value="#5a9fd4">
+                  </div>
+              <div class="breaker-tag-modal-actions">
+                <button class="breaker-tag-modal-btn" id="breaker-tag-modal-cancel">Cancel</button>
+                <button class="breaker-tag-modal-btn primary" id="breaker-tag-modal-save">Save</button>
+            </div>
           </div>
+        </div>
         </div>
       </div>
     `;
@@ -3776,7 +4207,7 @@ class EnergyPanel extends HTMLElement {
       });
     }
 
-    // Attach breaker name and color input listeners
+    // Attach breaker name input listeners
     this.shadowRoot.querySelectorAll('.breaker-name-input').forEach(input => {
       input.addEventListener('input', (e) => {
         const breakerNum = e.target.dataset.breakerNum;
@@ -3784,16 +4215,112 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
-    this.shadowRoot.querySelectorAll('.breaker-color-input').forEach(input => {
-      const updateColor = (e) => {
-        const breakerNum = e.target.dataset.breakerNum;
-        const switchEl = this.shadowRoot.querySelector(`[data-breaker-num="${breakerNum}"].breaker-switch`);
-        if (switchEl) {
-          switchEl.style.setProperty('--breaker-color', e.target.value);
+    // Color tag double-click to open modal
+    this.shadowRoot.querySelectorAll('.breaker-color-tag').forEach(tag => {
+      tag.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        const breakerNum = tag.dataset.breakerNum;
+        const modal = this.shadowRoot.getElementById('breaker-tag-modal');
+        const numberInput = this.shadowRoot.getElementById('breaker-tag-number-input');
+        const colorInput = this.shadowRoot.getElementById('breaker-tag-color-input');
+        
+        if (modal && numberInput && colorInput) {
+          // Get current values from tag
+          const currentNumber = tag.querySelector('.breaker-tag-number')?.textContent || String(breakerNum).padStart(2, '0');
+          const currentColor = tag.style.backgroundColor || '#5a9fd4';
+          
+          numberInput.value = currentNumber;
+          colorInput.value = this._rgbToHex(currentColor) || '#5a9fd4';
+          
+          modal.dataset.breakerNum = breakerNum;
+          modal.classList.add('active');
         }
-      };
-      input.addEventListener('change', updateColor);
-      input.addEventListener('input', updateColor);
+      });
+    });
+
+    // Modal close and cancel
+    const modalClose = this.shadowRoot.getElementById('breaker-tag-modal-close');
+    const modalCancel = this.shadowRoot.getElementById('breaker-tag-modal-cancel');
+    const closeModal = () => {
+      const modal = this.shadowRoot.getElementById('breaker-tag-modal');
+      if (modal) modal.classList.remove('active');
+    };
+    if (modalClose) modalClose.addEventListener('click', closeModal);
+    if (modalCancel) modalCancel.addEventListener('click', closeModal);
+
+    // Modal save
+    const modalSave = this.shadowRoot.getElementById('breaker-tag-modal-save');
+    if (modalSave) {
+      modalSave.addEventListener('click', () => {
+        const modal = this.shadowRoot.getElementById('breaker-tag-modal');
+        const breakerNum = modal?.dataset.breakerNum;
+        const numberInput = this.shadowRoot.getElementById('breaker-tag-number-input');
+        const colorInput = this.shadowRoot.getElementById('breaker-tag-color-input');
+        
+        if (breakerNum && numberInput && colorInput) {
+          const tag = this.shadowRoot.querySelector(`.breaker-color-tag[data-breaker-num="${breakerNum}"]`);
+          if (tag) {
+            const number = numberInput.value.padStart(2, '0').slice(0, 2);
+            const color = colorInput.value;
+            
+            tag.style.backgroundColor = color;
+            const numberSpan = tag.querySelector('.breaker-tag-number');
+            if (numberSpan) numberSpan.textContent = number;
+          }
+        }
+        closeModal();
+      });
+    }
+
+    // Delete row button
+    this.shadowRoot.querySelectorAll('.breaker-row-delete-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const rowIndex = parseInt(btn.dataset.rowIndex);
+        const row = btn.closest('.breaker-panel-row');
+        const isDefault = row?.dataset.isDefault === 'true';
+        
+        if (!isDefault && row) {
+          this._breakerRows = Math.max(6, (this._breakerRows || 6) - 1);
+          this._render();
+        }
+      });
+    });
+
+    // Breaker switch click to toggle
+    this.shadowRoot.querySelectorAll('.breaker-switch').forEach(switchEl => {
+      switchEl.addEventListener('click', () => {
+        switchEl.classList.toggle('on');
+      });
+    });
+
+    // Sensor link button
+    this.shadowRoot.querySelectorAll('.breaker-sensor-link-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const breakerNum = btn.dataset.breakerNum;
+        // TODO: Open sensor linking dialog
+        console.log('Link sensors for breaker', breakerNum);
+      });
+    });
+
+    // On/off switch toggle
+    this.shadowRoot.querySelectorAll('.breaker-onoff-switch').forEach(toggle => {
+      toggle.addEventListener('change', (e) => {
+        const breakerNum = toggle.dataset.breakerNum;
+        // TODO: Handle on/off state
+        console.log('On/off switch for breaker', breakerNum, e.target.checked);
+      });
+    });
+
+    // Threshold button
+    this.shadowRoot.querySelectorAll('.breaker-threshold-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const breakerNum = btn.dataset.breakerNum;
+        // TODO: Open threshold settings dialog
+        console.log('Threshold settings for breaker', breakerNum);
+      });
     });
 
     // Tab switching
