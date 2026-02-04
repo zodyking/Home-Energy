@@ -1582,229 +1582,28 @@ class EnergyPanel extends HTMLElement {
           padding: 20px;
         }
 
-        .breaker-panel-card {
-          position: relative;
-          width: 100%;
-          max-width: 600px;
-          background: linear-gradient(135deg, #d3d3d3 0%, #b0b0b0 100%);
-          border-radius: 12px;
-          border: 2px solid #b0b0b0;
+      .bp-card {
+        width: min(860px, 94vw);
+        aspect-ratio: 16/9;
+        border-radius: 22px;
+        padding: 26px;
+        background:
+          radial-gradient(130% 120% at 50% 38%, rgba(255,255,255,.92), rgba(255,255,255,0) 55%),
+          radial-gradient(70% 70% at 30% 35%, rgba(205,226,246,.40), rgba(205,226,246,0) 58%),
+          linear-gradient(180deg, rgba(255,255,255,.85), rgba(235,245,255,.85));
           box-shadow: 
-            0 8px 16px rgba(0, 0, 0, 0.3),
-            inset 0 2px 4px rgba(255, 255, 255, 0.2);
+          0 26px 80px rgba(0,0,0,.18),
+          0 6px 16px rgba(0,0,0,.14);
+        display: grid;
+        place-items: center;
           overflow: hidden;
-          padding: 20px;
-        }
+      }
 
-        .breaker-panel-screw {
-          position: absolute;
-          width: 12px;
-          height: 12px;
-          background: radial-gradient(circle at 30% 30%, #c8ccd0, #808488);
-          border-radius: 50%;
-          box-shadow: 
-            inset 0 0 0 1px rgba(255, 255, 255, 0.3),
-            inset 0 1px 2px rgba(255, 255, 255, 0.4),
-            0 1px 2px rgba(0, 0, 0, 0.3);
-          z-index: 10;
-        }
-
-        .breaker-panel-screw.top-left {
-          top: 8px;
-          left: 8px;
-        }
-
-        .breaker-panel-screw.top-right {
-          top: 8px;
-          right: 8px;
-        }
-
-        .breaker-panel-screw.bottom-left {
-          bottom: 8px;
-          left: 8px;
-        }
-
-        .breaker-panel-screw.bottom-right {
-          bottom: 8px;
-          right: 8px;
-        }
-
-        .breaker-panel-outer {
-          background: linear-gradient(135deg, #d3d3d3 0%, #b0b0b0 100%);
-          border-radius: 8px;
-          border: 1px solid rgba(0, 0, 0, 0.2);
-          box-shadow: 
-            inset 0 2px 4px rgba(0, 0, 0, 0.2),
-            0 2px 4px rgba(0, 0, 0, 0.1);
-          padding: 16px;
-        }
-
-        .breaker-panel-inner {
-          background: linear-gradient(180deg, #2a2a2a 0%, #1a1a1a 100%);
-          border-radius: 6px;
-          padding: 20px;
-          min-height: 200px;
-        }
-
-        .breaker-panel-empty-message {
-          text-align: center;
-          padding: 40px 20px;
-          color: rgba(255, 255, 255, 0.4);
-          font-size: 13px;
-        }
-
-        .breaker-panel-empty-message p {
-          margin: 0;
-        }
-
-        .breaker-panel-main {
-          margin-bottom: 16px;
-          padding: 12px;
-          background: #1a1a1a;
-          border-radius: 6px;
-          display: flex;
-          justify-content: center;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .breaker-main-switch {
-          width: 60px;
-          height: 30px;
-          background: linear-gradient(to bottom, #3a3a3a 0%, #2a2a2a 100%);
-          border-radius: 4px;
-          border: 2px solid #555;
-          position: relative;
-          box-shadow: 
-            inset 0 2px 4px rgba(0, 0, 0, 0.5),
-            0 2px 4px rgba(0, 0, 0, 0.3);
-        }
-
-        .breaker-main-switch::before {
-          content: '';
-          position: absolute;
-          top: 50%;
-          left: 4px;
-          transform: translateY(-50%);
-          width: 20px;
-          height: 20px;
-          background: #4caf50;
-          border-radius: 2px;
-          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-        }
-
-        .breaker-panel-grid {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-
-        .breaker-panel-row {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 12px;
-        }
-
-        .breaker-slot {
-          position: relative;
-          padding: 8px;
-          background: #1a1a1a;
-          border-radius: 4px;
-          min-height: 100px;
-          border: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .breaker-slot-number {
-          position: absolute;
-          left: 4px;
-          top: 4px;
-          font-size: 10px;
-          color: rgba(255, 255, 255, 0.4);
-          font-weight: 600;
-          z-index: 1;
-        }
-
-        .breaker-empty-slot {
-          width: 100%;
-          height: 80px;
-          background: #2a2a2a;
-          border: 1px dashed rgba(255, 255, 255, 0.1);
-          border-radius: 4px;
-          margin-top: 16px;
-        }
-
-        .breaker-switch {
-          margin-top: 16px;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 4px;
-        }
-
-        .breaker-switch-body {
-          width: 50px;
-          height: 80px;
-          background: linear-gradient(to bottom, #4a4a4a 0%, #2a2a2a 100%);
-          border: 2px solid #555;
-          border-radius: 6px;
-          position: relative;
-          box-shadow: 
-            inset 0 2px 4px rgba(0, 0, 0, 0.5),
-            0 2px 4px rgba(0, 0, 0, 0.3);
-          transition: all 0.2s ease;
-        }
-
-        .breaker-switch-body.on {
-          border-color: #4caf50;
-          box-shadow: 
-            inset 0 2px 4px rgba(0, 0, 0, 0.5),
-            0 0 8px rgba(76, 175, 80, 0.4);
-        }
-
-        .breaker-switch-body.tripped {
-          border-color: #f44336;
-          box-shadow: 
-            inset 0 2px 4px rgba(0, 0, 0, 0.5),
-            0 0 12px rgba(244, 67, 54, 0.7);
-          animation: breaker-trip-pulse 1s infinite;
-        }
-
-        @keyframes breaker-trip-pulse {
-          0%, 100% { 
-            box-shadow: 
-              inset 0 2px 4px rgba(0, 0, 0, 0.5),
-              0 0 12px rgba(244, 67, 54, 0.7);
-          }
-          50% { 
-            box-shadow: 
-              inset 0 2px 4px rgba(0, 0, 0, 0.5),
-              0 0 20px rgba(244, 67, 54, 1);
-          }
-        }
-
-        .breaker-switch-handle {
-          position: absolute;
-          left: 50%;
-          transform: translateX(-50%);
-          width: 20px;
-          height: 20px;
-          background: #6a6a6a;
-          border-radius: 3px;
-          box-shadow: 
-            0 2px 4px rgba(0, 0, 0, 0.5),
-            inset 0 1px 2px rgba(255, 255, 255, 0.2);
-          transition: top 0.2s ease, background 0.2s ease;
-        }
-
-        .breaker-switch-handle.on {
-          background: #4caf50;
-        }
-
-        .breaker-switch-handle.off {
-          background: #6a6a6a;
-        }
-
-        .breaker-switch-handle.tripped {
-          background: #f44336;
+      .bp-card svg {
+        width: min(560px, 78%);
+        height: auto;
+        display: block;
+        filter: drop-shadow(0 26px 40px rgba(0,0,0,.14));
         }
 
       @media (max-width: 500px) {
@@ -2986,6 +2785,11 @@ class EnergyPanel extends HTMLElement {
 
     this._attachSettingsEventListeners();
     initCustomSelects(this.shadowRoot);
+    
+    // Render breaker panel SVG if breaker tab is active
+    if (this._settingsTab === 'breakers') {
+      setTimeout(() => this._renderBreakerPanelSVG(), 0);
+    }
   }
 
   _renderBreakerPanel() {
@@ -3016,51 +2820,433 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderBreakerPanelCard() {
-    const breakerCount = this._breakerCount || 0;
-    const maxBreakers = 20;
-    // Only show rows for breakers that exist, plus one empty row if we have breakers
-    const rows = breakerCount > 0 ? Math.ceil(breakerCount / 2) : 0;
+    return `<div class="bp-card" id="breaker-panel-mount" aria-label="Breaker panel card"></div>`;
+  }
 
-    return `
-      <div class="breaker-panel-card">
-        <div class="breaker-panel-screw top-left"></div>
-        <div class="breaker-panel-screw top-right"></div>
-        <div class="breaker-panel-outer">
-          <div class="breaker-panel-inner">
-            <div class="breaker-panel-main">
-              <div class="breaker-main-switch"></div>
-            </div>
-            <div class="breaker-panel-grid">
-              ${rows === 0 ? `
-                <div class="breaker-panel-empty-message">
-                  <p>No breakers added yet. Click "Add Breaker Pair" to start.</p>
-                </div>
-              ` : Array.from({ length: rows }, (_, row) => {
-                const leftNum = row * 2 + 1;
-                const rightNum = row * 2 + 2;
-                const leftHasBreaker = leftNum <= breakerCount;
-                const rightHasBreaker = rightNum <= breakerCount;
-                
-                return `
-                  <div class="breaker-panel-row">
-                    <div class="breaker-slot">
-                      <div class="breaker-slot-number">${leftNum}</div>
-                      ${leftHasBreaker ? this._renderBreakerSwitch(leftNum, 'off') : '<div class="breaker-empty-slot"></div>'}
-                    </div>
-                    <div class="breaker-slot">
-                      <div class="breaker-slot-number">${rightNum}</div>
-                      ${rightHasBreaker ? this._renderBreakerSwitch(rightNum, 'off') : '<div class="breaker-empty-slot"></div>'}
-                    </div>
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          </div>
-        </div>
-        <div class="breaker-panel-screw bottom-left"></div>
-        <div class="breaker-panel-screw bottom-right"></div>
-      </div>
-    `;
+  _renderBreakerPanelSVG() {
+    const mount = this.shadowRoot?.getElementById('breaker-panel-mount');
+    if (!mount) return;
+
+    const NS = "http://www.w3.org/2000/svg";
+
+    const svg = this._createSVGElement("svg", {
+      xmlns: NS,
+      viewBox: "0 0 640 640",
+      role: "img",
+      "aria-label": "Breaker panel"
+    }, NS);
+
+    const defs = this._createSVGElement("defs", {}, NS);
+    defs.append(
+      this._createLinearGradient("metalOuter", [
+        [0, "#edf3f7"],
+        [0.28, "#dbe3ea"],
+        [0.55, "#cbd5dd"],
+        [0.78, "#b9c4cd"],
+        [1, "#d8e0e7"]
+      ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
+
+      this._createLinearGradient("metalOuterEdge", [
+        [0, "rgba(255,255,255,.70)"],
+        [0.45, "rgba(255,255,255,0)"],
+        [1, "rgba(0,0,0,.18)"]
+      ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
+
+      this._createRadialGradient("outerGlow", [
+        [0, "rgba(255,255,255,.70)"],
+        [0.55, "rgba(255,255,255,.18)"],
+        [1, "rgba(255,255,255,0)"]
+      ], { cx: "38%", cy: "18%", r: "90%" }, NS),
+
+      this._createLinearGradient("metalInset", [
+        [0, "#e3eaef"],
+        [0.5, "#cdd6dd"],
+        [1, "#b7c2cb"]
+      ], { x1: "0", y1: "0", x2: "1", y2: "1" }, NS),
+
+      this._createLinearGradient("doorMetal", [
+        [0, "#e2e9ee"],
+        [0.55, "#cbd4dc"],
+        [1, "#b7c2cb"]
+      ], { x1: "0", y1: "0", x2: "1", y2: "1" }, NS),
+
+      this._createRadialGradient("doorSheen", [
+        [0, "rgba(255,255,255,.55)"],
+        [0.5, "rgba(255,255,255,.10)"],
+        [1, "rgba(255,255,255,0)"]
+      ], { cx: "42%", cy: "18%", r: "95%" }, NS),
+
+      this._createLinearGradient("stripMetal", [
+        [0, "#eaf0f5"],
+        [0.45, "#d5dee6"],
+        [1, "#c1ccd5"]
+      ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
+
+      this._createLinearGradient("breakerBody", [
+        [0, "#1a1f26"],
+        [0.5, "#0f1318"],
+        [1, "#1b212a"]
+      ], { x1: "0", y1: "0", x2: "1", y2: "1" }, NS),
+
+      this._createRadialGradient("blueToggle", [
+        [0, "rgba(90,190,235,.45)"],
+        [0.55, "rgba(90,190,235,.14)"],
+        [1, "rgba(0,0,0,0)"]
+      ], { cx: "35%", cy: "35%", r: "85%" }, NS),
+
+      this._createLinearGradient("screwGrad", [
+        [0, "#f2f7fa"],
+        [0.55, "#d2dbe2"],
+        [1, "#aebbc6"]
+      ], { x1: "0", y1: "0", x2: "1", y2: "1" }, NS),
+
+      this._createFilterDropInner("softBevel", 0.9, NS)
+    );
+    svg.append(defs);
+
+    const g = this._createSVGElement("g", {}, NS);
+    svg.append(g);
+
+    const panel = this._createRoundedRect(60, 60, 520, 520, 10, {
+      fill: "url(#metalOuter)"
+    }, NS);
+    g.append(panel);
+
+    g.append(this._createRoundedRect(60, 60, 520, 520, 10, {
+      fill: "none",
+      stroke: "rgba(10,16,22,.55)",
+      "stroke-width": 3.2
+    }, NS));
+
+    g.append(this._createRoundedRect(72, 72, 496, 496, 9, {
+      fill: "none",
+      stroke: "rgba(255,255,255,.55)",
+      "stroke-width": 2.2
+    }, NS));
+
+    g.append(this._createRoundedRect(76, 76, 488, 488, 8, {
+      fill: "none",
+      stroke: "rgba(10,16,22,.22)",
+      "stroke-width": 1.8
+    }, NS));
+
+    g.append(this._createRoundedRect(60, 60, 520, 520, 10, {
+      fill: "url(#outerGlow)",
+      opacity: 0.9
+    }, NS));
+
+    g.append(this._createRoundedRect(60, 60, 520, 520, 10, {
+      fill: "none",
+      stroke: "url(#metalOuterEdge)",
+      "stroke-width": 3
+    }, NS));
+
+    g.append(this._createRoundedRect(170, 140, 300, 360, 10, {
+      fill: "url(#metalInset)",
+      stroke: "rgba(10,16,22,.35)",
+      "stroke-width": 2.2
+    }, NS));
+
+    g.append(this._createRoundedRect(182, 152, 276, 336, 12, {
+      fill: "none",
+      stroke: "rgba(255,255,255,.35)",
+      "stroke-width": 1.8
+    }, NS));
+
+    const door = this._createRoundedRect(185, 155, 270, 330, 14, {
+      fill: "url(#doorMetal)",
+      stroke: "rgba(10,16,22,.42)",
+      "stroke-width": 2.2
+    }, NS);
+    g.append(door);
+
+    g.append(this._createRoundedRect(185, 155, 270, 330, 14, {
+      fill: "url(#doorSheen)",
+      opacity: 0.9
+    }, NS));
+
+    g.append(this._createRoundedRect(195, 168, 250, 304, 22, {
+      fill: "none",
+      stroke: "rgba(10,16,22,.32)",
+      "stroke-width": 2.0
+    }, NS));
+
+    g.append(this._createRoundedRect(202, 176, 236, 288, 20, {
+      fill: "none",
+      stroke: "rgba(255,255,255,.28)",
+      "stroke-width": 1.6
+    }, NS));
+
+    g.append(this._createRoundedRect(170, 140, 300, 360, 10, {
+      fill: "none",
+      stroke: "rgba(0,0,0,.10)",
+      "stroke-width": 1.2
+    }, NS));
+
+    g.append(this._createRoundedRect(286, 168, 68, 12, 3, {
+      fill: "rgba(245,250,255,.38)",
+      stroke: "rgba(10,16,22,.30)",
+      "stroke-width": 1.4
+    }, NS));
+
+    g.append(this._createRoundedRect(286, 460, 68, 12, 3, {
+      fill: "rgba(245,250,255,.38)",
+      stroke: "rgba(10,16,22,.30)",
+      "stroke-width": 1.4
+    }, NS));
+
+    g.append(this._createRoundedRect(472, 310, 12, 36, 3, {
+      fill: "rgba(55,70,85,.70)"
+    }, NS));
+
+    g.append(this._createSVGElement("path", {
+      d: "M180 498 L460 498",
+      stroke: "rgba(10,16,22,.14)",
+      "stroke-width": 1.2,
+      opacity: 0.8
+    }, NS));
+
+    const stripOuter = this._createRoundedRect(244, 242, 152, 222, 7, {
+      fill: "url(#stripMetal)",
+      stroke: "rgba(10,16,22,.26)",
+      "stroke-width": 1.6
+    }, NS);
+    g.append(stripOuter);
+
+    g.append(this._createRoundedRect(248, 246, 144, 214, 6, {
+      fill: "none",
+      stroke: "rgba(255,255,255,.35)",
+      "stroke-width": 1.6
+    }, NS));
+
+    g.append(this._createRoundedRect(252, 250, 136, 206, 6, {
+      fill: "none",
+      stroke: "rgba(0,0,0,.10)",
+      "stroke-width": 1.2
+    }, NS));
+
+    const leftColX = 258;
+    const rightColX = 323;
+    const topY = 258;
+    const rowH = 18;
+    const gap = 6;
+
+    for (let i = 0; i < 8; i++) {
+      const y = topY + i * (rowH + gap);
+      g.append(this._createBreaker(leftColX, y, 56, rowH, NS));
+      g.append(this._createBreaker(rightColX, y, 56, rowH, NS));
+    }
+
+    g.append(this._createNumberScale(238, 258, 12, 210, true, NS));
+    g.append(this._createNumberScale(404, 258, 12, 210, false, NS));
+
+    g.append(this._createScrew(92, 92, NS));
+    g.append(this._createScrew(548, 92, NS));
+    g.append(this._createScrew(92, 548, NS));
+    g.append(this._createScrew(548, 548, NS));
+
+    g.append(this._createVignette(defs, NS));
+
+    mount.replaceChildren(svg);
+  }
+
+  _createSVGElement(name, attrs, NS) {
+    const n = document.createElementNS(NS, name);
+    if (attrs) {
+      for (const k in attrs) {
+        n.setAttribute(k, attrs[k]);
+      }
+    }
+    return n;
+  }
+
+  _createRoundedRect(x, y, w, h, r, attrs, NS) {
+    return this._createSVGElement("rect", { x, y, width: w, height: h, rx: r, ry: r, ...attrs }, NS);
+  }
+
+  _createLinearGradient(id, stops, attrs, NS) {
+    const lg = this._createSVGElement("linearGradient", { id, ...attrs }, NS);
+    stops.forEach(([o, c]) => {
+      lg.append(this._createSVGElement("stop", { offset: this._pct(o), "stop-color": c }, NS));
+    });
+    return lg;
+  }
+
+  _createRadialGradient(id, stops, attrs, NS) {
+    const rg = this._createSVGElement("radialGradient", { id, ...attrs }, NS);
+    stops.forEach(([o, c]) => {
+      rg.append(this._createSVGElement("stop", { offset: this._pct(o), "stop-color": c }, NS));
+    });
+    return rg;
+  }
+
+  _pct(v) {
+    return (v * 100).toFixed(1) + "%";
+  }
+
+  _createFilterDropInner(id, strength, NS) {
+    const f = this._createSVGElement("filter", { id, x: "-20%", y: "-20%", width: "140%", height: "140%" }, NS);
+    f.append(this._createSVGElement("feDropShadow", {
+      dx: "0",
+      dy: (1.2 * strength).toFixed(2),
+      stdDeviation: (1.4 * strength).toFixed(2),
+      "flood-color": "rgba(0,0,0,.22)"
+    }, NS));
+    return f;
+  }
+
+  _createScrew(cx, cy, NS) {
+    const group = this._createSVGElement("g", {}, NS);
+    group.append(this._createSVGElement("circle", {
+      cx, cy, r: 14,
+      fill: "url(#screwGrad)",
+      stroke: "rgba(10,16,22,.45)",
+      "stroke-width": 2.2
+    }, NS));
+    group.append(this._createSVGElement("circle", {
+      cx, cy, r: 9,
+      fill: "rgba(255,255,255,.18)",
+      stroke: "rgba(10,16,22,.26)",
+      "stroke-width": 1.6
+    }, NS));
+    group.append(this._createSVGElement("rect", {
+      x: cx - 7,
+      y: cy - 1,
+      width: 14,
+      height: 2,
+      rx: 1,
+      fill: "rgba(10,16,22,.55)",
+      transform: `rotate(-18 ${cx} ${cy})`
+    }, NS));
+    group.append(this._createSVGElement("circle", {
+      cx: cx - 3.5,
+      cy: cy - 4,
+      r: 4,
+      fill: "rgba(255,255,255,.52)",
+      opacity: 0.75
+    }, NS));
+    return group;
+  }
+
+  _createBreaker(x, y, w, h, NS) {
+    const group = this._createSVGElement("g", {}, NS);
+
+    group.append(this._createRoundedRect(x, y, w, h, 3, {
+      fill: "url(#breakerBody)",
+      stroke: "rgba(255,255,255,.10)",
+      "stroke-width": 1
+    }, NS));
+
+    group.append(this._createRoundedRect(x + 1.2, y + 1.2, w - 2.4, h - 2.4, 3, {
+      fill: "none",
+      stroke: "rgba(0,0,0,.40)",
+      "stroke-width": 1,
+      opacity: 0.30
+    }, NS));
+
+    group.append(this._createRoundedRect(x + 6, y + 4, 16, h - 8, 2.5, {
+      fill: "rgba(18,24,30,.80)",
+      stroke: "rgba(255,255,255,.10)",
+      "stroke-width": 1
+    }, NS));
+
+    group.append(this._createRoundedRect(x + 6, y + 4, 16, h - 8, 2.5, {
+      fill: "url(#blueToggle)",
+      opacity: 0.85
+    }, NS));
+
+    group.append(this._createRoundedRect(x + w - 24, y + 4, 18, h - 8, 2, {
+      fill: "rgba(255,255,255,.06)"
+    }, NS));
+
+    for (let i = 0; i < 4; i++) {
+      group.append(this._createSVGElement("rect", {
+        x: x + w - 22 + i * 4.2,
+        y: y + 5,
+        width: 1.5,
+        height: h - 10,
+        fill: "rgba(255,255,255,.16)",
+        opacity: 0.50
+      }, NS));
+    }
+
+    group.append(this._createSVGElement("path", {
+      d: `M ${x+2} ${y+2} L ${x+w-2} ${y+2}`,
+      stroke: "rgba(255,255,255,.10)",
+      "stroke-width": 1
+    }, NS));
+
+    return group;
+  }
+
+  _createNumberScale(x, y, w, h, left, NS) {
+    const group = this._createSVGElement("g", {}, NS);
+    const steps = 8;
+
+    for (let i = 0; i <= steps; i++) {
+      const yy = y + (h / steps) * i;
+      group.append(this._createSVGElement("line", {
+        x1: x,
+        y1: yy,
+        x2: x + w,
+        y2: yy,
+        stroke: "rgba(0,0,0,.18)",
+        "stroke-width": 1
+      }, NS));
+    }
+
+    const numsLeft = [1,2,3,4,5,6,7,8];
+    const numsRight = [11,12,13,14,15,16,17,18];
+
+    for (let i = 0; i < steps; i++) {
+      const yy = y + (h / steps) * i + (h / steps) * 0.52;
+      const t = this._createSVGElement("text", {
+        x: left ? (x + 1) : (x + w - 1),
+        y: yy,
+        "text-anchor": left ? "start" : "end",
+        "dominant-baseline": "middle",
+        "font-size": 10,
+        fill: "rgba(0,0,0,.34)"
+      }, NS);
+      t.textContent = left ? numsLeft[i] : numsRight[i];
+      group.append(t);
+    }
+
+    return group;
+  }
+
+  _createVignette(defs, NS) {
+    const v = this._createSVGElement("path", {
+      d: "M60,60 h520 v520 h-520 z",
+      fill: "rgba(0,0,0,.00)"
+    }, NS);
+    v.setAttribute("filter", "url(#softBevel)");
+
+    const overlay = this._createSVGElement("rect", {
+      x: 60, y: 60, width: 520, height: 520, rx: 10, ry: 10,
+      fill: "rgba(0,0,0,.06)",
+      opacity: 0.18
+    }, NS);
+
+    const mask = this._createSVGElement("mask", { id: "fadeMask" }, NS);
+    const mrect = this._createSVGElement("rect", { x: 0, y: 0, width: 640, height: 640, fill: "white" }, NS);
+    mask.append(mrect);
+    defs.append(mask);
+
+    overlay.setAttribute("mask", "url(#fadeMask)");
+    overlay.setAttribute("opacity", "0.16");
+
+    const g2 = this._createSVGElement("g", {}, NS);
+    g2.append(overlay);
+
+    g2.append(this._createRoundedRect(60, 60, 520, 520, 10, {
+      fill: "none",
+      stroke: "rgba(0,0,0,.10)",
+      "stroke-width": 1.2,
+      opacity: 0.75
+    }, NS));
+
+    return g2;
   }
 
   _renderBreakerSwitch(number, state = 'off') {
@@ -3677,6 +3863,10 @@ class EnergyPanel extends HTMLElement {
           content.classList.toggle('active', content.id === `tab-${tabId}`);
         });
         
+        // Render breaker panel SVG if breaker tab is active
+        if (tabId === 'breakers') {
+          setTimeout(() => this._renderBreakerPanelSVG(), 0);
+        }
       });
     });
 
