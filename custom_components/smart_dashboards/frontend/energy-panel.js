@@ -2884,10 +2884,8 @@ class EnergyPanel extends HTMLElement {
 
   _renderBreakerPanel() {
     return `
-      <div class="empty-state">
-        <svg class="empty-state-icon" viewBox="0 0 24 24">${icons.flash}</svg>
-        <h3 class="empty-state-title">Breaker Panel</h3>
-        <p class="empty-state-desc">Breaker panel functionality coming soon.</p>
+      <div class="breaker-panel-container" style="padding: 20px;">
+        ${this._renderBreakerPanelCard()}
       </div>
     `;
   }
