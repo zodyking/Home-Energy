@@ -1585,41 +1585,146 @@ class EnergyPanel extends HTMLElement {
 
         .breaker-panel-card {
         width: min(900px, 94vw);
-        background: linear-gradient(135deg, #3d4756 0%, #2d3441 100%);
-        border: 2px solid rgba(0, 0, 0, 0.4);
-          border-radius: 12px;
-          padding: 20px;
+        background: 
+          radial-gradient(ellipse at 30% 20%, rgba(120, 130, 150, 0.3) 0%, transparent 50%),
+          linear-gradient(135deg, #4a5568 0%, #3d4756 30%, #2d3441 70%, #252a35 100%);
+        border: 3px solid rgba(0, 0, 0, 0.6);
+        border-top: 2px solid rgba(255, 255, 255, 0.15);
+        border-left: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 24px;
           box-shadow: 
-          0 8px 16px rgba(0, 0, 0, 0.4),
-          inset 0 1px 0 rgba(255, 255, 255, 0.1);
+          0 12px 24px rgba(0, 0, 0, 0.5),
+          0 4px 8px rgba(0, 0, 0, 0.3),
+          inset 0 2px 4px rgba(255, 255, 255, 0.08),
+          inset 0 -2px 4px rgba(0, 0, 0, 0.4);
         position: relative;
+        overflow: visible;
+        }
+
+        .breaker-panel-screw {
+          position: absolute;
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: linear-gradient(#d8d8d8, #bdbdbd);
+          border: 1px solid rgba(0, 0, 0, 0.25);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 2px rgba(0,0,0,0.2);
+          z-index: 10;
+        }
+
+        .breaker-panel-screw::after {
+          content: "";
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 10px;
+          height: 2px;
+          transform: translate(-50%, -50%);
+          background: rgba(0,0,0,0.35);
+          border-radius: 1px;
+        }
+
+        .breaker-panel-screw.top-center {
+          top: 8px;
+          left: 50%;
+          transform: translateX(-50%);
+        }
+
+        .breaker-panel-screw.bottom-center {
+          bottom: 8px;
+          left: 50%;
+          transform: translateX(-50%);
+        }
+
+        .breaker-panel-screw.left-1 {
+          left: 8px;
+          top: 20%;
+        }
+
+        .breaker-panel-screw.left-2 {
+          left: 8px;
+          top: 50%;
+          transform: translateY(-50%);
+        }
+
+        .breaker-panel-screw.left-3 {
+          left: 8px;
+          bottom: 20%;
+        }
+
+        .breaker-panel-screw.right-1 {
+          right: 8px;
+          top: 20%;
+        }
+
+        .breaker-panel-screw.right-2 {
+          right: 8px;
+          top: 50%;
+          transform: translateY(-50%);
+        }
+
+        .breaker-panel-screw.right-3 {
+          right: 8px;
+          bottom: 20%;
         }
 
         .breaker-panel-outer {
-        background: linear-gradient(135deg, #4a5568 0%, #3d4756 100%);
-        border: 1px solid rgba(0, 0, 0, 0.5);
-          border-radius: 8px;
-          padding: 16px;
+        background: 
+          radial-gradient(ellipse at 25% 25%, rgba(100, 110, 130, 0.4) 0%, transparent 60%),
+          linear-gradient(135deg, #5a6578 0%, #4a5568 40%, #3d4756 100%);
+        border: 2px solid rgba(0, 0, 0, 0.7);
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 6px;
+        padding: 18px;
         box-shadow: 
-          inset 0 2px 4px rgba(0, 0, 0, 0.3),
-          0 2px 4px rgba(0, 0, 0, 0.2);
+          inset 0 3px 6px rgba(0, 0, 0, 0.5),
+          inset 0 1px 0 rgba(255, 255, 255, 0.1),
+          0 2px 4px rgba(0, 0, 0, 0.3);
+        position: relative;
         }
 
         .breaker-panel-inner {
-        background: linear-gradient(180deg, #252a35 0%, #1a1f26 100%);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-          border-radius: 6px;
-        padding: 16px;
+        background: 
+          radial-gradient(ellipse at 50% 0%, rgba(40, 45, 55, 0.6) 0%, transparent 70%),
+          linear-gradient(180deg, #2d3441 0%, #252a35 30%, #1f252e 60%, #1a1f26 100%);
+        border: 2px solid rgba(0, 0, 0, 0.8);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        border-left: 1px solid rgba(255, 255, 255, 0.05);
+          border-radius: 4px;
+        padding: 20px;
         min-height: 400px;
+          box-shadow: 
+          inset 0 4px 8px rgba(0, 0, 0, 0.6),
+          inset 0 1px 0 rgba(255, 255, 255, 0.05),
+          0 1px 2px rgba(0, 0, 0, 0.4);
+        position: relative;
         }
 
         .breaker-panel-row {
           display: grid;
         grid-template-columns: 1fr auto 1fr;
-          gap: 12px;
+          gap: 14px;
         align-items: center;
-        padding: 8px 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        padding: 10px 0;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.4);
+        border-top: 1px solid rgba(255, 255, 255, 0.03);
+        position: relative;
+      }
+
+      .breaker-panel-row::before {
+        content: "";
+          position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        height: 1px;
+        background: linear-gradient(to right, 
+          transparent 0%, 
+          rgba(255, 255, 255, 0.08) 20%, 
+          rgba(255, 255, 255, 0.08) 80%, 
+          transparent 100%);
       }
 
       .breaker-panel-row:last-child {
@@ -1629,23 +1734,91 @@ class EnergyPanel extends HTMLElement {
       .breaker-label-left {
         text-align: right;
         padding-right: 12px;
-        font-size: 12px;
-          font-weight: 600;
-        color: rgba(255, 255, 255, 0.7);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+          display: flex;
+          flex-direction: column;
+        gap: 6px;
+        align-items: flex-end;
       }
 
       .breaker-label-right {
         text-align: left;
         padding-left: 12px;
-        font-size: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: flex-start;
+      }
+
+      .breaker-label-text {
+        font-size: 10px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.9);
+        background: 
+          linear-gradient(180deg, rgba(30, 35, 45, 0.9) 0%, rgba(20, 25, 35, 0.95) 100%);
+        border: 1px solid rgba(0, 0, 0, 0.7);
+        border-top: 1px solid rgba(255, 255, 255, 0.2);
+        border-left: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 2px;
+        padding: 5px 10px;
+        min-width: 130px;
+        text-align: center;
+        box-shadow: 
+          inset 0 2px 3px rgba(0, 0, 0, 0.5),
+          inset 0 1px 0 rgba(255, 255, 255, 0.15),
+          0 1px 1px rgba(0, 0, 0, 0.3);
+        font-family: 'Arial', 'Helvetica', sans-serif;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+      }
+
+      .breaker-label-text:focus {
+        outline: none;
+        border-color: rgba(90, 159, 212, 0.5);
+        box-shadow: 
+          inset 0 2px 3px rgba(0, 0, 0, 0.5),
+          inset 0 1px 0 rgba(255, 255, 255, 0.15),
+          0 1px 1px rgba(0, 0, 0, 0.3),
+          0 0 8px rgba(90, 159, 212, 0.3);
+      }
+
+      .breaker-color-picker-wrapper {
+        position: relative;
+          width: 100%;
+        max-width: 130px;
+      }
+
+      .breaker-color-picker-label {
+        font-size: 8px;
+        color: rgba(255, 255, 255, 0.5);
+        margin-bottom: 3px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
         font-weight: 600;
-        color: rgba(255, 255, 255, 0.7);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+      }
+
+      .breaker-color-input {
+        width: 100%;
+        height: 30px;
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        border-top: 1px solid rgba(255, 255, 255, 0.15);
+        border-left: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+        cursor: pointer;
+        background: rgba(20, 25, 35, 0.8);
+          box-shadow: 
+          inset 0 2px 3px rgba(0, 0, 0, 0.5),
+          inset 0 1px 0 rgba(255, 255, 255, 0.1),
+          0 1px 1px rgba(0, 0, 0, 0.3);
+          transition: all 0.2s ease;
+        }
+
+      .breaker-color-input:hover {
+        border-color: rgba(255, 255, 255, 0.25);
+          box-shadow: 
+          inset 0 2px 3px rgba(0, 0, 0, 0.5),
+          inset 0 1px 0 rgba(255, 255, 255, 0.1),
+          0 1px 1px rgba(0, 0, 0, 0.3),
+          0 0 8px rgba(90, 159, 212, 0.3);
       }
 
       .breaker-switch-container {
@@ -1655,15 +1828,22 @@ class EnergyPanel extends HTMLElement {
         }
 
       .breaker-switch {
-          width: 50px;
-          height: 80px;
-        background: linear-gradient(to bottom, #1a1f26 0%, #0f1318 100%);
-        border: 2px solid rgba(0, 0, 0, 0.6);
-          border-radius: 6px;
+          width: 52px;
+          height: 96px;
+        background: 
+          radial-gradient(ellipse at 50% 20%, rgba(40, 45, 55, 0.4) 0%, transparent 60%),
+          linear-gradient(to bottom, #2d3441 0%, #252a35 25%, #1f252e 50%, #1a1f26 75%, #151920 100%);
+        border: 2px solid rgba(0, 0, 0, 0.8);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 3px;
           position: relative;
-          box-shadow: 
-            inset 0 2px 4px rgba(0, 0, 0, 0.5),
-            0 2px 4px rgba(0, 0, 0, 0.3);
+            box-shadow: 
+            inset 0 4px 8px rgba(0, 0, 0, 0.7),
+            inset 0 1px 0 rgba(255, 255, 255, 0.12),
+            inset 0 -1px 2px rgba(0, 0, 0, 0.5),
+            0 2px 4px rgba(0, 0, 0, 0.5),
+            0 1px 0 rgba(255, 255, 255, 0.05);
         cursor: pointer;
           transition: all 0.2s ease;
         }
@@ -1671,34 +1851,66 @@ class EnergyPanel extends HTMLElement {
       .breaker-switch::before {
         content: "";
           position: absolute;
-        top: 4px;
+        top: 8px;
           left: 50%;
           transform: translateX(-50%);
-        width: 16px;
-        height: 16px;
-          border-radius: 3px;
+        width: 22px;
+        height: 24px;
+          border-radius: 2px;
         background: var(--breaker-color, #5a9fd4);
-          box-shadow: 
-          0 0 8px var(--breaker-color, #5a9fd4),
-            inset 0 1px 2px rgba(255, 255, 255, 0.2);
+            box-shadow: 
+          0 0 12px var(--breaker-color, #5a9fd4),
+          0 0 6px rgba(90, 159, 212, 0.7),
+          0 2px 4px rgba(0, 0, 0, 0.6),
+            inset 0 2px 4px rgba(255, 255, 255, 0.4),
+            inset 0 -2px 4px rgba(0, 0, 0, 0.4);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-bottom: 1px solid rgba(0, 0, 0, 0.3);
+      }
+
+      .breaker-switch::after {
+        content: "";
+          position: absolute;
+        top: 36px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 20px;
+        height: 3px;
+        background: linear-gradient(to right, 
+          transparent 0%, 
+          rgba(255, 255, 255, 0.15) 20%, 
+          rgba(255, 255, 255, 0.2) 50%, 
+          rgba(255, 255, 255, 0.15) 80%, 
+          transparent 100%);
+        border-radius: 1px;
+        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
       }
 
       .breaker-switch-number {
         position: absolute;
-        bottom: 4px;
+        bottom: 8px;
         left: 50%;
         transform: translateX(-50%);
-        font-size: 10px;
-        font-weight: 700;
-        color: rgba(255, 255, 255, 0.5);
+        font-size: 12px;
+        font-weight: 900;
+        color: rgba(255, 255, 255, 0.7);
+        text-shadow: 
+          0 1px 2px rgba(0, 0, 0, 0.9),
+          0 0 4px rgba(0, 0, 0, 0.5);
+        font-family: 'Arial', 'Helvetica', sans-serif;
+        letter-spacing: 0.5px;
       }
 
       .breaker-switch:hover {
         border-color: rgba(255, 255, 255, 0.2);
         box-shadow: 
-          inset 0 2px 4px rgba(0, 0, 0, 0.5),
-          0 2px 4px rgba(0, 0, 0, 0.3),
-          0 0 8px var(--breaker-color, #5a9fd4);
+          inset 0 4px 8px rgba(0, 0, 0, 0.7),
+          inset 0 1px 0 rgba(255, 255, 255, 0.12),
+          inset 0 -1px 2px rgba(0, 0, 0, 0.5),
+          0 2px 4px rgba(0, 0, 0, 0.5),
+          0 1px 0 rgba(255, 255, 255, 0.05),
+          0 0 16px var(--breaker-color, #5a9fd4);
+        transform: translateY(-1px);
         }
 
       @media (max-width: 500px) {
@@ -2914,24 +3126,30 @@ class EnergyPanel extends HTMLElement {
     const renderRow = (rowIndex, isDefault = false) => {
       const leftBreakerNum = rowIndex * 2 + 1;
       const rightBreakerNum = rowIndex * 2 + 2;
-      
-      return `
+
+    return `
         <div class="breaker-panel-row" data-row-index="${rowIndex}" data-is-default="${isDefault}">
           <div class="breaker-label-left" data-breaker-num="${leftBreakerNum}">
-            <input type="text" class="breaker-name-input" placeholder="Breaker ${leftBreakerNum}" value="" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 8px; color: rgba(255,255,255,0.7); font-size: 12px; width: 100%;">
-            <input type="color" class="breaker-color-input" value="#5a9fd4" style="margin-top: 4px; width: 100%; height: 24px; border: none; border-radius: 4px; cursor: pointer;">
-          </div>
+            <input type="text" class="breaker-name-input breaker-label-text" placeholder="Breaker ${leftBreakerNum}" value="" data-breaker-num="${leftBreakerNum}">
+            <div class="breaker-color-picker-wrapper">
+              <div class="breaker-color-picker-label">Color</div>
+              <input type="color" class="breaker-color-input" value="#5a9fd4" data-breaker-num="${leftBreakerNum}">
+            </div>
+                </div>
           <div class="breaker-switch-container">
             <div class="breaker-switch" data-breaker-num="${leftBreakerNum}" style="--breaker-color: #5a9fd4;">
               <div class="breaker-switch-number">${leftBreakerNum}</div>
-            </div>
+                    </div>
             <div class="breaker-switch" data-breaker-num="${rightBreakerNum}" style="--breaker-color: #5a9fd4;">
               <div class="breaker-switch-number">${rightBreakerNum}</div>
-            </div>
-          </div>
+                    </div>
+                  </div>
           <div class="breaker-label-right" data-breaker-num="${rightBreakerNum}">
-            <input type="text" class="breaker-name-input" placeholder="Breaker ${rightBreakerNum}" value="" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 8px; color: rgba(255,255,255,0.7); font-size: 12px; width: 100%;">
-            <input type="color" class="breaker-color-input" value="#5a9fd4" style="margin-top: 4px; width: 100%; height: 24px; border: none; border-radius: 4px; cursor: pointer;">
+            <input type="text" class="breaker-name-input breaker-label-text" placeholder="Breaker ${rightBreakerNum}" value="" data-breaker-num="${rightBreakerNum}">
+            <div class="breaker-color-picker-wrapper">
+              <div class="breaker-color-picker-label">Color</div>
+              <input type="color" class="breaker-color-input" value="#5a9fd4" data-breaker-num="${rightBreakerNum}">
+            </div>
           </div>
         </div>
       `;
@@ -2942,6 +3160,14 @@ class EnergyPanel extends HTMLElement {
     
     return `
       <div class="breaker-panel-card">
+        <div class="breaker-panel-screw top-center"></div>
+        <div class="breaker-panel-screw bottom-center"></div>
+        <div class="breaker-panel-screw left-1"></div>
+        <div class="breaker-panel-screw left-2"></div>
+        <div class="breaker-panel-screw left-3"></div>
+        <div class="breaker-panel-screw right-1"></div>
+        <div class="breaker-panel-screw right-2"></div>
+        <div class="breaker-panel-screw right-3"></div>
         <div class="breaker-panel-outer">
           <div class="breaker-panel-inner">
             ${defaultRowsHtml}
@@ -3546,33 +3772,28 @@ class EnergyPanel extends HTMLElement {
     if (addBreakerRowBtn) {
       addBreakerRowBtn.addEventListener('click', () => {
         this._breakerRows = (this._breakerRows || 6) + 1;
-        this._render();
+          this._render();
       });
     }
 
     // Attach breaker name and color input listeners
     this.shadowRoot.querySelectorAll('.breaker-name-input').forEach(input => {
       input.addEventListener('input', (e) => {
-        const breakerNum = e.target.closest('[data-breaker-num]')?.dataset.breakerNum;
+        const breakerNum = e.target.dataset.breakerNum;
         // Store name for later use
       });
     });
 
     this.shadowRoot.querySelectorAll('.breaker-color-input').forEach(input => {
-      input.addEventListener('change', (e) => {
-        const breakerNum = e.target.closest('[data-breaker-num]')?.dataset.breakerNum;
+      const updateColor = (e) => {
+        const breakerNum = e.target.dataset.breakerNum;
         const switchEl = this.shadowRoot.querySelector(`[data-breaker-num="${breakerNum}"].breaker-switch`);
         if (switchEl) {
           switchEl.style.setProperty('--breaker-color', e.target.value);
         }
-      });
-      input.addEventListener('input', (e) => {
-        const breakerNum = e.target.closest('[data-breaker-num]')?.dataset.breakerNum;
-        const switchEl = this.shadowRoot.querySelector(`[data-breaker-num="${breakerNum}"].breaker-switch`);
-        if (switchEl) {
-          switchEl.style.setProperty('--breaker-color', e.target.value);
-        }
-      });
+      };
+      input.addEventListener('change', updateColor);
+      input.addEventListener('input', updateColor);
     });
 
     // Tab switching
