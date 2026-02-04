@@ -22,6 +22,7 @@ class EnergyPanel extends HTMLElement {
     this._error = null;
     this._draggedRoomCard = null;
     this._breakerCount = 0;
+    this._breakerRows = 6; // Default 6 rows, can't remove but can add more
   }
 
   set hass(hass) {
@@ -1582,23 +1583,122 @@ class EnergyPanel extends HTMLElement {
           padding: 20px;
         }
 
-      .bp-card {
-        width: min(1200px, 94vw);
-        min-height: 800px;
-        aspect-ratio: 3/2;
-        border-radius: 22px;
-        padding: 26px;
-        background: transparent;
-        display: grid;
-        place-items: center;
-          overflow: hidden;
+        .breaker-panel-card {
+        width: min(900px, 94vw);
+        background: linear-gradient(135deg, #3d4756 0%, #2d3441 100%);
+        border: 2px solid rgba(0, 0, 0, 0.4);
+          border-radius: 12px;
+          padding: 20px;
+          box-shadow: 
+          0 8px 16px rgba(0, 0, 0, 0.4),
+          inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        position: relative;
+        }
+
+        .breaker-panel-outer {
+        background: linear-gradient(135deg, #4a5568 0%, #3d4756 100%);
+        border: 1px solid rgba(0, 0, 0, 0.5);
+          border-radius: 8px;
+          padding: 16px;
+        box-shadow: 
+          inset 0 2px 4px rgba(0, 0, 0, 0.3),
+          0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .breaker-panel-inner {
+        background: linear-gradient(180deg, #252a35 0%, #1a1f26 100%);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+          border-radius: 6px;
+        padding: 16px;
+        min-height: 400px;
+        }
+
+        .breaker-panel-row {
+          display: grid;
+        grid-template-columns: 1fr auto 1fr;
+          gap: 12px;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       }
 
-      .bp-card svg {
-        width: min(800px, 85%);
-        height: auto;
-        display: block;
-        filter: drop-shadow(0 26px 40px rgba(0,0,0,.14));
+      .breaker-panel-row:last-child {
+        border-bottom: none;
+      }
+
+      .breaker-label-left {
+        text-align: right;
+        padding-right: 12px;
+        font-size: 12px;
+          font-weight: 600;
+        color: rgba(255, 255, 255, 0.7);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .breaker-label-right {
+        text-align: left;
+        padding-left: 12px;
+        font-size: 12px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.7);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .breaker-switch-container {
+          display: flex;
+        gap: 8px;
+          align-items: center;
+        }
+
+      .breaker-switch {
+          width: 50px;
+          height: 80px;
+        background: linear-gradient(to bottom, #1a1f26 0%, #0f1318 100%);
+        border: 2px solid rgba(0, 0, 0, 0.6);
+          border-radius: 6px;
+          position: relative;
+          box-shadow: 
+            inset 0 2px 4px rgba(0, 0, 0, 0.5),
+            0 2px 4px rgba(0, 0, 0, 0.3);
+        cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+      .breaker-switch::before {
+        content: "";
+          position: absolute;
+        top: 4px;
+          left: 50%;
+          transform: translateX(-50%);
+        width: 16px;
+        height: 16px;
+          border-radius: 3px;
+        background: var(--breaker-color, #5a9fd4);
+          box-shadow: 
+          0 0 8px var(--breaker-color, #5a9fd4),
+            inset 0 1px 2px rgba(255, 255, 255, 0.2);
+      }
+
+      .breaker-switch-number {
+        position: absolute;
+        bottom: 4px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 10px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.5);
+      }
+
+      .breaker-switch:hover {
+        border-color: rgba(255, 255, 255, 0.2);
+        box-shadow: 
+          inset 0 2px 4px rgba(0, 0, 0, 0.5),
+          0 2px 4px rgba(0, 0, 0, 0.3),
+          0 0 8px var(--breaker-color, #5a9fd4);
         }
 
       @media (max-width: 500px) {
@@ -2780,11 +2880,6 @@ class EnergyPanel extends HTMLElement {
 
     this._attachSettingsEventListeners();
     initCustomSelects(this.shadowRoot);
-    
-    // Render breaker panel SVG if breaker tab is active
-    if (this._settingsTab === 'breakers') {
-      setTimeout(() => this._renderBreakerPanelSVG(), 0);
-    }
   }
 
   _renderBreakerPanel() {
@@ -2802,9 +2897,9 @@ class EnergyPanel extends HTMLElement {
       <div class="card">
         <div class="card-header">
           <h2 class="card-title">Breaker Panel</h2>
-          <button class="btn btn-secondary" id="add-breaker-pair-btn" ${(this._breakerCount || 0) >= 20 ? 'disabled' : ''}>
+          <button class="btn btn-secondary" id="add-breaker-row-btn">
             <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
-            Add Breaker Pair
+            Add Breaker Row
           </button>
         </div>
         <div class="breaker-panel-container">
@@ -2815,436 +2910,51 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderBreakerPanelCard() {
-    return `<div class="bp-card" id="breaker-panel-mount" aria-label="Breaker panel card"></div>`;
-  }
-
-  _renderBreakerPanelSVG() {
-    const mount = this.shadowRoot?.getElementById('breaker-panel-mount');
-    if (!mount) return;
-
-    const NS = "http://www.w3.org/2000/svg";
-
-    const svg = this._createSVGElement("svg", {
-      xmlns: NS,
-      viewBox: "0 0 800 800",
-      role: "img",
-      "aria-label": "Breaker panel"
-    }, NS);
+    const rows = this._breakerRows || 6;
+    const defaultRows = 6;
     
-    // Scale factor: 800/640 = 1.25
-    const scale = 1.25;
-    const scaleCoord = (v) => v * scale;
-
-    const defs = this._createSVGElement("defs", {}, NS);
-    defs.append(
-      this._createLinearGradient("metalOuter", [
-        [0, "#4a5568"],
-        [0.28, "#3d4756"],
-        [0.55, "#2d3441"],
-        [0.78, "#252a35"],
-        [1, "#3a4250"]
-      ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
-
-      this._createLinearGradient("metalOuterEdge", [
-        [0, "rgba(120,130,150,.50)"],
-        [0.45, "rgba(120,130,150,0)"],
-        [1, "rgba(0,0,0,.35)"]
-      ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
-
-      this._createRadialGradient("outerGlow", [
-        [0, "rgba(120,130,150,.40)"],
-        [0.55, "rgba(80,90,110,.15)"],
-        [1, "rgba(0,0,0,0)"]
-      ], { cx: "38%", cy: "18%", r: "90%" }, NS),
-
-      this._createLinearGradient("metalInset", [
-        [0, "#3d4756"],
-        [0.5, "#2d3441"],
-        [1, "#252a35"]
-      ], { x1: "0", y1: "0", x2: "1", y2: "1" }, NS),
-
-      this._createLinearGradient("doorMetal", [
-        [0, "#3a4250"],
-        [0.55, "#2d3441"],
-        [1, "#252a35"]
-      ], { x1: "0", y1: "0", x2: "1", y2: "1" }, NS),
-
-      this._createRadialGradient("doorSheen", [
-        [0, "rgba(120,130,150,.35)"],
-        [0.5, "rgba(80,90,110,.08)"],
-        [1, "rgba(0,0,0,0)"]
-      ], { cx: "42%", cy: "18%", r: "95%" }, NS),
-
-      this._createLinearGradient("stripMetal", [
-        [0, "#4a5568"],
-        [0.45, "#3d4756"],
-        [1, "#2d3441"]
-      ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
-
-      this._createLinearGradient("breakerBody", [
-        [0, "#1a1f26"],
-        [0.5, "#0f1318"],
-        [1, "#1b212a"]
-      ], { x1: "0", y1: "0", x2: "1", y2: "1" }, NS),
-
-      this._createRadialGradient("blueToggle", [
-        [0, "rgba(90,190,235,.45)"],
-        [0.55, "rgba(90,190,235,.14)"],
-        [1, "rgba(0,0,0,0)"]
-      ], { cx: "35%", cy: "35%", r: "85%" }, NS),
-
-      this._createLinearGradient("screwGrad", [
-        [0, "#d8d8d8"],
-        [1, "#bdbdbd"]
-      ], { x1: "0", y1: "0", x2: "0", y2: "1" }, NS),
-
-      this._createFilterDropInner("softBevel", 0.9, NS)
-    );
-    svg.append(defs);
-
-    const g = this._createSVGElement("g", {}, NS);
-    svg.append(g);
-
-    const panel = this._createRoundedRect(scaleCoord(60), scaleCoord(60), scaleCoord(520), scaleCoord(520), scaleCoord(10), {
-      fill: "url(#metalOuter)"
-    }, NS);
-    g.append(panel);
-
-    g.append(this._createRoundedRect(scaleCoord(60), scaleCoord(60), scaleCoord(520), scaleCoord(520), scaleCoord(10), {
-      fill: "none",
-      stroke: "rgba(10,16,22,.55)",
-      "stroke-width": scaleCoord(3.2)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(72), scaleCoord(72), scaleCoord(496), scaleCoord(496), scaleCoord(9), {
-      fill: "none",
-      stroke: "rgba(120,130,150,.40)",
-      "stroke-width": scaleCoord(2.2)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(76), scaleCoord(76), scaleCoord(488), scaleCoord(488), scaleCoord(8), {
-      fill: "none",
-      stroke: "rgba(10,16,22,.22)",
-      "stroke-width": scaleCoord(1.8)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(60), scaleCoord(60), scaleCoord(520), scaleCoord(520), scaleCoord(10), {
-      fill: "url(#outerGlow)",
-      opacity: 0.9
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(60), scaleCoord(60), scaleCoord(520), scaleCoord(520), scaleCoord(10), {
-      fill: "none",
-      stroke: "url(#metalOuterEdge)",
-      "stroke-width": scaleCoord(3)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(170), scaleCoord(140), scaleCoord(300), scaleCoord(360), scaleCoord(10), {
-      fill: "url(#metalInset)",
-      stroke: "rgba(10,16,22,.35)",
-      "stroke-width": scaleCoord(2.2)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(182), scaleCoord(152), scaleCoord(276), scaleCoord(336), scaleCoord(12), {
-      fill: "none",
-      stroke: "rgba(120,130,150,.25)",
-      "stroke-width": scaleCoord(1.8)
-    }, NS));
-
-    const door = this._createRoundedRect(scaleCoord(185), scaleCoord(155), scaleCoord(270), scaleCoord(330), scaleCoord(14), {
-      fill: "url(#doorMetal)",
-      stroke: "rgba(10,16,22,.42)",
-      "stroke-width": scaleCoord(2.2)
-    }, NS);
-    g.append(door);
-
-    g.append(this._createRoundedRect(scaleCoord(185), scaleCoord(155), scaleCoord(270), scaleCoord(330), scaleCoord(14), {
-      fill: "url(#doorSheen)",
-      opacity: 0.9
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(195), scaleCoord(168), scaleCoord(250), scaleCoord(304), scaleCoord(22), {
-      fill: "none",
-      stroke: "rgba(10,16,22,.32)",
-      "stroke-width": scaleCoord(2.0)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(202), scaleCoord(176), scaleCoord(236), scaleCoord(288), scaleCoord(20), {
-      fill: "none",
-      stroke: "rgba(120,130,150,.20)",
-      "stroke-width": scaleCoord(1.6)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(170), scaleCoord(140), scaleCoord(300), scaleCoord(360), scaleCoord(10), {
-      fill: "none",
-      stroke: "rgba(0,0,0,.10)",
-      "stroke-width": scaleCoord(1.2)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(286), scaleCoord(168), scaleCoord(68), scaleCoord(12), scaleCoord(3), {
-      fill: "rgba(60,70,85,.50)",
-      stroke: "rgba(40,45,55,.40)",
-      "stroke-width": scaleCoord(1.4)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(286), scaleCoord(460), scaleCoord(68), scaleCoord(12), scaleCoord(3), {
-      fill: "rgba(60,70,85,.50)",
-      stroke: "rgba(40,45,55,.40)",
-      "stroke-width": scaleCoord(1.4)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(472), scaleCoord(310), scaleCoord(12), scaleCoord(36), scaleCoord(3), {
-      fill: "rgba(55,70,85,.70)"
-    }, NS));
-
-    g.append(this._createSVGElement("path", {
-      d: `M${scaleCoord(180)} ${scaleCoord(498)} L${scaleCoord(460)} ${scaleCoord(498)}`,
-      stroke: "rgba(10,16,22,.14)",
-      "stroke-width": scaleCoord(1.2),
-      opacity: 0.8
-    }, NS));
-
-    const stripOuter = this._createRoundedRect(scaleCoord(244), scaleCoord(242), scaleCoord(152), scaleCoord(222), scaleCoord(7), {
-      fill: "url(#stripMetal)",
-      stroke: "rgba(10,16,22,.26)",
-      "stroke-width": scaleCoord(1.6)
-    }, NS);
-    g.append(stripOuter);
-
-    g.append(this._createRoundedRect(scaleCoord(248), scaleCoord(246), scaleCoord(144), scaleCoord(214), scaleCoord(6), {
-      fill: "none",
-      stroke: "rgba(120,130,150,.25)",
-      "stroke-width": scaleCoord(1.6)
-    }, NS));
-
-    g.append(this._createRoundedRect(scaleCoord(252), scaleCoord(250), scaleCoord(136), scaleCoord(206), scaleCoord(6), {
-      fill: "none",
-      stroke: "rgba(0,0,0,.10)",
-      "stroke-width": scaleCoord(1.2)
-    }, NS));
-
-    const leftColX = scaleCoord(258);
-    const rightColX = scaleCoord(323);
-    const topY = scaleCoord(258);
-    const rowH = scaleCoord(18);
-    const gap = scaleCoord(6);
-
-    for (let i = 0; i < 8; i++) {
-      const y = topY + i * (rowH + gap);
-      g.append(this._createBreaker(leftColX, y, scaleCoord(56), rowH, NS));
-      g.append(this._createBreaker(rightColX, y, scaleCoord(56), rowH, NS));
-    }
-
-    g.append(this._createNumberScale(scaleCoord(238), scaleCoord(258), scaleCoord(12), scaleCoord(210), true, NS));
-    g.append(this._createNumberScale(scaleCoord(404), scaleCoord(258), scaleCoord(12), scaleCoord(210), false, NS));
-
-    g.append(this._createScrew(scaleCoord(92), scaleCoord(92), NS));
-    g.append(this._createScrew(scaleCoord(548), scaleCoord(92), NS));
-    g.append(this._createScrew(scaleCoord(92), scaleCoord(548), NS));
-    g.append(this._createScrew(scaleCoord(548), scaleCoord(548), NS));
-
-    g.append(this._createVignette(defs, NS, scaleCoord));
-
-    mount.replaceChildren(svg);
+    const renderRow = (rowIndex, isDefault = false) => {
+      const leftBreakerNum = rowIndex * 2 + 1;
+      const rightBreakerNum = rowIndex * 2 + 2;
+      
+      return `
+        <div class="breaker-panel-row" data-row-index="${rowIndex}" data-is-default="${isDefault}">
+          <div class="breaker-label-left" data-breaker-num="${leftBreakerNum}">
+            <input type="text" class="breaker-name-input" placeholder="Breaker ${leftBreakerNum}" value="" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 8px; color: rgba(255,255,255,0.7); font-size: 12px; width: 100%;">
+            <input type="color" class="breaker-color-input" value="#5a9fd4" style="margin-top: 4px; width: 100%; height: 24px; border: none; border-radius: 4px; cursor: pointer;">
+          </div>
+          <div class="breaker-switch-container">
+            <div class="breaker-switch" data-breaker-num="${leftBreakerNum}" style="--breaker-color: #5a9fd4;">
+              <div class="breaker-switch-number">${leftBreakerNum}</div>
+            </div>
+            <div class="breaker-switch" data-breaker-num="${rightBreakerNum}" style="--breaker-color: #5a9fd4;">
+              <div class="breaker-switch-number">${rightBreakerNum}</div>
+            </div>
+          </div>
+          <div class="breaker-label-right" data-breaker-num="${rightBreakerNum}">
+            <input type="text" class="breaker-name-input" placeholder="Breaker ${rightBreakerNum}" value="" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 8px; color: rgba(255,255,255,0.7); font-size: 12px; width: 100%;">
+            <input type="color" class="breaker-color-input" value="#5a9fd4" style="margin-top: 4px; width: 100%; height: 24px; border: none; border-radius: 4px; cursor: pointer;">
+          </div>
+        </div>
+      `;
+    };
+    
+    const defaultRowsHtml = Array.from({ length: defaultRows }, (_, i) => renderRow(i, true)).join('');
+    const additionalRows = rows > defaultRows ? Array.from({ length: rows - defaultRows }, (_, i) => renderRow(i + defaultRows, false)).join('') : '';
+    
+    return `
+      <div class="breaker-panel-card">
+        <div class="breaker-panel-outer">
+          <div class="breaker-panel-inner">
+            ${defaultRowsHtml}
+            ${additionalRows}
+          </div>
+        </div>
+      </div>
+    `;
   }
 
-  _createSVGElement(name, attrs, NS) {
-    const n = document.createElementNS(NS, name);
-    if (attrs) {
-      for (const k in attrs) {
-        n.setAttribute(k, attrs[k]);
-      }
-    }
-    return n;
-  }
-
-  _createRoundedRect(x, y, w, h, r, attrs, NS) {
-    return this._createSVGElement("rect", { x, y, width: w, height: h, rx: r, ry: r, ...attrs }, NS);
-  }
-
-  _createLinearGradient(id, stops, attrs, NS) {
-    const lg = this._createSVGElement("linearGradient", { id, ...attrs }, NS);
-    stops.forEach(([o, c]) => {
-      lg.append(this._createSVGElement("stop", { offset: this._pct(o), "stop-color": c }, NS));
-    });
-    return lg;
-  }
-
-  _createRadialGradient(id, stops, attrs, NS) {
-    const rg = this._createSVGElement("radialGradient", { id, ...attrs }, NS);
-    stops.forEach(([o, c]) => {
-      rg.append(this._createSVGElement("stop", { offset: this._pct(o), "stop-color": c }, NS));
-    });
-    return rg;
-  }
-
-  _pct(v) {
-    return (v * 100).toFixed(1) + "%";
-  }
-
-  _createFilterDropInner(id, strength, NS) {
-    const f = this._createSVGElement("filter", { id, x: "-20%", y: "-20%", width: "140%", height: "140%" }, NS);
-    f.append(this._createSVGElement("feDropShadow", {
-      dx: "0",
-      dy: (1.2 * strength).toFixed(2),
-      stdDeviation: (1.4 * strength).toFixed(2),
-      "flood-color": "rgba(0,0,0,.22)"
-    }, NS));
-    return f;
-  }
-
-  _createScrew(cx, cy, NS) {
-    const group = this._createSVGElement("g", {}, NS);
-    const scale = 1.25;
-    // Main screw body - matching outlet card style (10px in original = 8px, scaled to 10px)
-    group.append(this._createSVGElement("circle", {
-      cx, cy, r: 5 * scale,
-      fill: "url(#screwGrad)",
-      stroke: "rgba(0,0,0,0.25)",
-      "stroke-width": scale
-    }, NS));
-    // Inner highlight - subtle top highlight
-    group.append(this._createSVGElement("ellipse", {
-      cx, cy: cy - 1.5 * scale,
-      rx: 4 * scale,
-      ry: 2 * scale,
-      fill: "rgba(255,255,255,0.7)",
-      opacity: 0.6
-    }, NS));
-    // Screw slot line - horizontal
-    group.append(this._createSVGElement("rect", {
-      x: cx - 5 * scale,
-      y: cy - scale,
-      width: 10 * scale,
-      height: 2 * scale,
-      rx: scale,
-      fill: "rgba(0,0,0,0.35)"
-    }, NS));
-    return group;
-  }
-
-  _createBreaker(x, y, w, h, NS) {
-    const group = this._createSVGElement("g", {}, NS);
-    const scale = 1.25;
-
-    group.append(this._createRoundedRect(x, y, w, h, 3 * scale, {
-      fill: "url(#breakerBody)",
-      stroke: "rgba(80,90,110,.20)",
-      "stroke-width": scale
-    }, NS));
-
-    group.append(this._createRoundedRect(x + 1.2 * scale, y + 1.2 * scale, w - 2.4 * scale, h - 2.4 * scale, 3 * scale, {
-      fill: "none",
-      stroke: "rgba(0,0,0,.40)",
-      "stroke-width": scale,
-      opacity: 0.30
-    }, NS));
-
-    group.append(this._createRoundedRect(x + 6 * scale, y + 4 * scale, 16 * scale, h - 8 * scale, 2.5 * scale, {
-      fill: "rgba(18,24,30,.80)",
-      stroke: "rgba(80,90,110,.20)",
-      "stroke-width": scale
-    }, NS));
-
-    group.append(this._createRoundedRect(x + 6 * scale, y + 4 * scale, 16 * scale, h - 8 * scale, 2.5 * scale, {
-      fill: "url(#blueToggle)",
-      opacity: 0.85
-    }, NS));
-
-    group.append(this._createRoundedRect(x + w - 24 * scale, y + 4 * scale, 18 * scale, h - 8 * scale, 2 * scale, {
-      fill: "rgba(80,90,110,.10)"
-    }, NS));
-
-    for (let i = 0; i < 4; i++) {
-      group.append(this._createSVGElement("rect", {
-        x: x + w - 22 * scale + i * 4.2 * scale,
-        y: y + 5 * scale,
-        width: 1.5 * scale,
-        height: h - 10 * scale,
-        fill: "rgba(120,130,150,.20)",
-        opacity: 0.50
-      }, NS));
-    }
-
-    group.append(this._createSVGElement("path", {
-      d: `M ${x+2*scale} ${y+2*scale} L ${x+w-2*scale} ${y+2*scale}`,
-      stroke: "rgba(80,90,110,.20)",
-      "stroke-width": scale
-    }, NS));
-
-    return group;
-  }
-
-  _createNumberScale(x, y, w, h, left, NS) {
-    const group = this._createSVGElement("g", {}, NS);
-    const steps = 8;
-    const scale = 1.25;
-
-    for (let i = 0; i <= steps; i++) {
-      const yy = y + (h / steps) * i;
-      group.append(this._createSVGElement("line", {
-        x1: x,
-        y1: yy,
-        x2: x + w,
-        y2: yy,
-        stroke: "rgba(0,0,0,.18)",
-        "stroke-width": scale
-      }, NS));
-    }
-
-    const numsLeft = [1,2,3,4,5,6,7,8];
-    const numsRight = [11,12,13,14,15,16,17,18];
-
-    for (let i = 0; i < steps; i++) {
-      const yy = y + (h / steps) * i + (h / steps) * 0.52;
-      const t = this._createSVGElement("text", {
-        x: left ? (x + scale) : (x + w - scale),
-        y: yy,
-        "text-anchor": left ? "start" : "end",
-        "dominant-baseline": "middle",
-        "font-size": 10 * scale,
-        fill: "rgba(0,0,0,.34)"
-      }, NS);
-      t.textContent = left ? numsLeft[i] : numsRight[i];
-      group.append(t);
-    }
-
-    return group;
-  }
-
-  _createVignette(defs, NS, scaleCoord) {
-    const v = this._createSVGElement("path", {
-      d: `M${scaleCoord(60)},${scaleCoord(60)} h${scaleCoord(520)} v${scaleCoord(520)} h${-scaleCoord(520)} z`,
-      fill: "rgba(0,0,0,.00)"
-    }, NS);
-    v.setAttribute("filter", "url(#softBevel)");
-
-    const overlay = this._createSVGElement("rect", {
-      x: scaleCoord(60), y: scaleCoord(60), width: scaleCoord(520), height: scaleCoord(520), rx: scaleCoord(10), ry: scaleCoord(10),
-      fill: "rgba(0,0,0,.06)",
-      opacity: 0.18
-    }, NS);
-
-    const mask = this._createSVGElement("mask", { id: "fadeMask" }, NS);
-    const mrect = this._createSVGElement("rect", { x: 0, y: 0, width: 800, height: 800, fill: "white" }, NS);
-    mask.append(mrect);
-    defs.append(mask);
-
-    overlay.setAttribute("mask", "url(#fadeMask)");
-    overlay.setAttribute("opacity", "0.16");
-
-    const g2 = this._createSVGElement("g", {}, NS);
-    g2.append(overlay);
-
-    g2.append(this._createRoundedRect(scaleCoord(60), scaleCoord(60), scaleCoord(520), scaleCoord(520), scaleCoord(10), {
-      fill: "none",
-      stroke: "rgba(0,0,0,.10)",
-      "stroke-width": scaleCoord(1.2),
-      opacity: 0.75
-    }, NS));
-
-    return g2;
-  }
+  // SVG code removed - using simplified HTML/CSS breaker panel instead
 
   _renderBreakerSwitch(number, state = 'off') {
     // state can be 'on', 'off', or 'tripped'
@@ -3834,15 +3544,38 @@ class EnergyPanel extends HTMLElement {
       addRoomBtn.addEventListener('click', () => this._addRoom());
     }
 
-    const addBreakerPairBtn = this.shadowRoot.querySelector('#add-breaker-pair-btn');
-    if (addBreakerPairBtn) {
-      addBreakerPairBtn.addEventListener('click', () => {
-        if ((this._breakerCount || 0) < 20) {
-          this._breakerCount = (this._breakerCount || 0) + 2;
-          this._render();
-        }
+    const addBreakerRowBtn = this.shadowRoot.querySelector('#add-breaker-row-btn');
+    if (addBreakerRowBtn) {
+      addBreakerRowBtn.addEventListener('click', () => {
+        this._breakerRows = (this._breakerRows || 6) + 1;
+        this._render();
       });
     }
+
+    // Attach breaker name and color input listeners
+    this.shadowRoot.querySelectorAll('.breaker-name-input').forEach(input => {
+      input.addEventListener('input', (e) => {
+        const breakerNum = e.target.closest('[data-breaker-num]')?.dataset.breakerNum;
+        // Store name for later use
+      });
+    });
+
+    this.shadowRoot.querySelectorAll('.breaker-color-input').forEach(input => {
+      input.addEventListener('change', (e) => {
+        const breakerNum = e.target.closest('[data-breaker-num]')?.dataset.breakerNum;
+        const switchEl = this.shadowRoot.querySelector(`[data-breaker-num="${breakerNum}"].breaker-switch`);
+        if (switchEl) {
+          switchEl.style.setProperty('--breaker-color', e.target.value);
+        }
+      });
+      input.addEventListener('input', (e) => {
+        const breakerNum = e.target.closest('[data-breaker-num]')?.dataset.breakerNum;
+        const switchEl = this.shadowRoot.querySelector(`[data-breaker-num="${breakerNum}"].breaker-switch`);
+        if (switchEl) {
+          switchEl.style.setProperty('--breaker-color', e.target.value);
+        }
+      });
+    });
 
     // Tab switching
     this.shadowRoot.querySelectorAll('.settings-tab').forEach(tab => {
@@ -3860,10 +3593,7 @@ class EnergyPanel extends HTMLElement {
           content.classList.toggle('active', content.id === `tab-${tabId}`);
         });
         
-        // Render breaker panel SVG if breaker tab is active
-        if (tabId === 'breakers') {
-          setTimeout(() => this._renderBreakerPanelSVG(), 0);
-        }
+        // Breaker tab is now handled by HTML rendering, no SVG needed
       });
     });
 
