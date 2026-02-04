@@ -122,7 +122,7 @@ class EnergyMonitor:
                     switch_entity = outlet.get("switch_entity")
                     if switch_entity:
                         state = self.hass.states.get(switch_entity)
-                        is_on = (state.state or "off").lower() in ("on",)
+                        is_on = state is not None and (state.state or "off").lower() in ("on",)
                         if is_on:
                             light_ents = outlet.get("light_entities") or []
                             for le in light_ents:
