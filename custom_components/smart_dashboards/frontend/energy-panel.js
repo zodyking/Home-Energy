@@ -21,6 +21,7 @@ class EnergyPanel extends HTMLElement {
     this._loading = true;
     this._error = null;
     this._draggedRoomCard = null;
+    this._breakerCount = 0;
   }
 
   set hass(hass) {
@@ -1575,6 +1576,238 @@ class EnergyPanel extends HTMLElement {
       }
 
       @media (max-width: 500px) {
+        /* Breaker Panel Card Styles */
+        .breaker-panel-container {
+          display: flex;
+          justify-content: center;
+          padding: 20px;
+        }
+
+        .breaker-panel-card {
+          position: relative;
+          width: 100%;
+          max-width: 600px;
+          background: linear-gradient(135deg, #d3d3d3 0%, #b0b0b0 100%);
+          border-radius: 12px;
+          border: 2px solid #b0b0b0;
+          box-shadow: 
+            0 8px 16px rgba(0, 0, 0, 0.3),
+            inset 0 2px 4px rgba(255, 255, 255, 0.2);
+          overflow: hidden;
+          padding: 20px;
+        }
+
+        .breaker-panel-screw {
+          position: absolute;
+          width: 12px;
+          height: 12px;
+          background: radial-gradient(circle at 30% 30%, #c8ccd0, #808488);
+          border-radius: 50%;
+          box-shadow: 
+            inset 0 0 0 1px rgba(255, 255, 255, 0.3),
+            inset 0 1px 2px rgba(255, 255, 255, 0.4),
+            0 1px 2px rgba(0, 0, 0, 0.3);
+          z-index: 10;
+        }
+
+        .breaker-panel-screw.top-left {
+          top: 8px;
+          left: 8px;
+        }
+
+        .breaker-panel-screw.top-right {
+          top: 8px;
+          right: 8px;
+        }
+
+        .breaker-panel-screw.bottom-left {
+          bottom: 8px;
+          left: 8px;
+        }
+
+        .breaker-panel-screw.bottom-right {
+          bottom: 8px;
+          right: 8px;
+        }
+
+        .breaker-panel-outer {
+          background: linear-gradient(135deg, #d3d3d3 0%, #b0b0b0 100%);
+          border-radius: 8px;
+          border: 1px solid rgba(0, 0, 0, 0.2);
+          box-shadow: 
+            inset 0 2px 4px rgba(0, 0, 0, 0.2),
+            0 2px 4px rgba(0, 0, 0, 0.1);
+          padding: 16px;
+        }
+
+        .breaker-panel-inner {
+          background: linear-gradient(180deg, #2a2a2a 0%, #1a1a1a 100%);
+          border-radius: 6px;
+          padding: 20px;
+          min-height: 200px;
+        }
+
+        .breaker-panel-empty-message {
+          text-align: center;
+          padding: 40px 20px;
+          color: rgba(255, 255, 255, 0.4);
+          font-size: 13px;
+        }
+
+        .breaker-panel-empty-message p {
+          margin: 0;
+        }
+
+        .breaker-panel-main {
+          margin-bottom: 16px;
+          padding: 12px;
+          background: #1a1a1a;
+          border-radius: 6px;
+          display: flex;
+          justify-content: center;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .breaker-main-switch {
+          width: 60px;
+          height: 30px;
+          background: linear-gradient(to bottom, #3a3a3a 0%, #2a2a2a 100%);
+          border-radius: 4px;
+          border: 2px solid #555;
+          position: relative;
+          box-shadow: 
+            inset 0 2px 4px rgba(0, 0, 0, 0.5),
+            0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .breaker-main-switch::before {
+          content: '';
+          position: absolute;
+          top: 50%;
+          left: 4px;
+          transform: translateY(-50%);
+          width: 20px;
+          height: 20px;
+          background: #4caf50;
+          border-radius: 2px;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .breaker-panel-grid {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .breaker-panel-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+        }
+
+        .breaker-slot {
+          position: relative;
+          padding: 8px;
+          background: #1a1a1a;
+          border-radius: 4px;
+          min-height: 100px;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .breaker-slot-number {
+          position: absolute;
+          left: 4px;
+          top: 4px;
+          font-size: 10px;
+          color: rgba(255, 255, 255, 0.4);
+          font-weight: 600;
+          z-index: 1;
+        }
+
+        .breaker-empty-slot {
+          width: 100%;
+          height: 80px;
+          background: #2a2a2a;
+          border: 1px dashed rgba(255, 255, 255, 0.1);
+          border-radius: 4px;
+          margin-top: 16px;
+        }
+
+        .breaker-switch {
+          margin-top: 16px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4px;
+        }
+
+        .breaker-switch-body {
+          width: 50px;
+          height: 80px;
+          background: linear-gradient(to bottom, #4a4a4a 0%, #2a2a2a 100%);
+          border: 2px solid #555;
+          border-radius: 6px;
+          position: relative;
+          box-shadow: 
+            inset 0 2px 4px rgba(0, 0, 0, 0.5),
+            0 2px 4px rgba(0, 0, 0, 0.3);
+          transition: all 0.2s ease;
+        }
+
+        .breaker-switch-body.on {
+          border-color: #4caf50;
+          box-shadow: 
+            inset 0 2px 4px rgba(0, 0, 0, 0.5),
+            0 0 8px rgba(76, 175, 80, 0.4);
+        }
+
+        .breaker-switch-body.tripped {
+          border-color: #f44336;
+          box-shadow: 
+            inset 0 2px 4px rgba(0, 0, 0, 0.5),
+            0 0 12px rgba(244, 67, 54, 0.7);
+          animation: breaker-trip-pulse 1s infinite;
+        }
+
+        @keyframes breaker-trip-pulse {
+          0%, 100% { 
+            box-shadow: 
+              inset 0 2px 4px rgba(0, 0, 0, 0.5),
+              0 0 12px rgba(244, 67, 54, 0.7);
+          }
+          50% { 
+            box-shadow: 
+              inset 0 2px 4px rgba(0, 0, 0, 0.5),
+              0 0 20px rgba(244, 67, 54, 1);
+          }
+        }
+
+        .breaker-switch-handle {
+          position: absolute;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 20px;
+          height: 20px;
+          background: #6a6a6a;
+          border-radius: 3px;
+          box-shadow: 
+            0 2px 4px rgba(0, 0, 0, 0.5),
+            inset 0 1px 2px rgba(255, 255, 255, 0.2);
+          transition: top 0.2s ease, background 0.2s ease;
+        }
+
+        .breaker-switch-handle.on {
+          background: #4caf50;
+        }
+
+        .breaker-switch-handle.off {
+          background: #6a6a6a;
+        }
+
+        .breaker-switch-handle.tripped {
+          background: #f44336;
+        }
+
         .device-card.stove-card,
         .device-card.microwave-card,
         .device-card.minisplit-card {
@@ -2766,7 +2999,82 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderBreakerSettings() {
-    return ``;
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Breaker Panel</h2>
+          <button class="btn btn-secondary" id="add-breaker-pair-btn" ${(this._breakerCount || 0) >= 20 ? 'disabled' : ''}>
+            <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
+            Add Breaker Pair
+          </button>
+        </div>
+        <div class="breaker-panel-container">
+          ${this._renderBreakerPanelCard()}
+        </div>
+      </div>
+    `;
+  }
+
+  _renderBreakerPanelCard() {
+    const breakerCount = this._breakerCount || 0;
+    const maxBreakers = 20;
+    // Only show rows for breakers that exist, plus one empty row if we have breakers
+    const rows = breakerCount > 0 ? Math.ceil(breakerCount / 2) : 0;
+
+    return `
+      <div class="breaker-panel-card">
+        <div class="breaker-panel-screw top-left"></div>
+        <div class="breaker-panel-screw top-right"></div>
+        <div class="breaker-panel-outer">
+          <div class="breaker-panel-inner">
+            <div class="breaker-panel-main">
+              <div class="breaker-main-switch"></div>
+            </div>
+            <div class="breaker-panel-grid">
+              ${rows === 0 ? `
+                <div class="breaker-panel-empty-message">
+                  <p>No breakers added yet. Click "Add Breaker Pair" to start.</p>
+                </div>
+              ` : Array.from({ length: rows }, (_, row) => {
+                const leftNum = row * 2 + 1;
+                const rightNum = row * 2 + 2;
+                const leftHasBreaker = leftNum <= breakerCount;
+                const rightHasBreaker = rightNum <= breakerCount;
+                
+                return `
+                  <div class="breaker-panel-row">
+                    <div class="breaker-slot">
+                      <div class="breaker-slot-number">${leftNum}</div>
+                      ${leftHasBreaker ? this._renderBreakerSwitch(leftNum, 'off') : '<div class="breaker-empty-slot"></div>'}
+                    </div>
+                    <div class="breaker-slot">
+                      <div class="breaker-slot-number">${rightNum}</div>
+                      ${rightHasBreaker ? this._renderBreakerSwitch(rightNum, 'off') : '<div class="breaker-empty-slot"></div>'}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="breaker-panel-screw bottom-left"></div>
+        <div class="breaker-panel-screw bottom-right"></div>
+      </div>
+    `;
+  }
+
+  _renderBreakerSwitch(number, state = 'off') {
+    // state can be 'on', 'off', or 'tripped'
+    const switchPosition = state === 'on' ? '8px' : state === 'tripped' ? '30px' : '52px';
+    const switchColor = state === 'on' ? '#4caf50' : state === 'tripped' ? '#f44336' : '#6a6a6a';
+    
+    return `
+      <div class="breaker-switch" data-breaker-number="${number}">
+        <div class="breaker-switch-body ${state}">
+          <div class="breaker-switch-handle ${state}" style="top: ${switchPosition}; background: ${switchColor};"></div>
+        </div>
+      </div>
+    `;
   }
 
   _getAllOutlets() {
@@ -3341,6 +3649,16 @@ class EnergyPanel extends HTMLElement {
 
     if (addRoomBtn) {
       addRoomBtn.addEventListener('click', () => this._addRoom());
+    }
+
+    const addBreakerPairBtn = this.shadowRoot.querySelector('#add-breaker-pair-btn');
+    if (addBreakerPairBtn) {
+      addBreakerPairBtn.addEventListener('click', () => {
+        if ((this._breakerCount || 0) < 20) {
+          this._breakerCount = (this._breakerCount || 0) + 2;
+          this._render();
+        }
+      });
     }
 
     // Tab switching
