@@ -5146,11 +5146,6 @@ class EnergyPanel extends HTMLElement {
       }
     });
 
-    // Get panel size
-    const panelSizeInput = this.shadowRoot.querySelector('.breaker-panel-size-input');
-    const panelSize = panelSizeInput ? parseInt(panelSizeInput.value) : 20;
-    const validPanelSize = panelSize >= 2 && panelSize <= 40 && panelSize % 2 === 0 ? panelSize : 20;
-
     const config = {
       rooms: rooms,
       breaker_panel_size: validPanelSize,
