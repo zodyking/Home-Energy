@@ -1575,9 +1575,8 @@ class EnergyPanel extends HTMLElement {
         border-radius: 0 0 6px 6px;
       }
 
-      @media (max-width: 500px) {
-        /* Breaker Panel Card Styles */
-        .breaker-panel-container {
+      /* Breaker Panel Card Styles */
+      .breaker-panel-container {
           display: flex;
           justify-content: center;
           padding: 20px;
@@ -1808,6 +1807,7 @@ class EnergyPanel extends HTMLElement {
           background: #f44336;
         }
 
+      @media (max-width: 500px) {
         .device-card.stove-card,
         .device-card.microwave-card,
         .device-card.minisplit-card {
