@@ -586,6 +586,267 @@ class EnergyPanel extends HTMLElement {
         text-align: right;
       }
 
+      /* Realistic Breaker Panel Styles */
+      .breaker-panel-container {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 20px;
+        background: linear-gradient(135deg, #a8d5e2 0%, #7fb8d1 100%);
+        min-height: 100vh;
+      }
+
+      .breaker-panel-wrapper {
+        position: relative;
+        width: 100%;
+        max-width: 600px;
+        background: #d3d3d3;
+        border-radius: 12px;
+        box-shadow: 
+          0 8px 16px rgba(0, 0, 0, 0.3),
+          inset 0 2px 4px rgba(255, 255, 255, 0.2);
+        overflow: hidden;
+        border: 2px solid #b0b0b0;
+      }
+
+      .breaker-panel-door {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 100%;
+        background: #d3d3d3;
+        border-radius: 12px;
+        z-index: 10;
+        transition: transform 0.5s ease;
+        transform-origin: left;
+        cursor: pointer;
+      }
+
+      .breaker-panel-wrapper.door-open .breaker-panel-door {
+        transform: rotateY(-90deg);
+      }
+
+      .breaker-panel-door-label {
+        padding: 16px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .breaker-panel-danger-header {
+        background: white;
+        padding: 8px 12px;
+        border-radius: 4px;
+        margin-bottom: 12px;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      }
+
+      .breaker-panel-danger-text {
+        display: block;
+        font-size: 14px;
+        font-weight: 700;
+        color: #d32f2f;
+        letter-spacing: 1px;
+      }
+
+      .breaker-panel-high-voltage {
+        display: block;
+        font-size: 10px;
+        color: #000;
+        font-weight: 600;
+        margin-top: 2px;
+      }
+
+      .breaker-panel-warning-icon {
+        font-size: 32px;
+        margin: 8px 0;
+      }
+
+      .breaker-panel-circuit-label-grid {
+        margin-top: auto;
+        width: 100%;
+        padding: 8px;
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 4px;
+      }
+
+      .breaker-panel-label-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+
+      .breaker-panel-label-cell {
+        text-align: center;
+        font-size: 11px;
+        color: #333;
+        padding: 2px;
+        border-bottom: 1px solid #ddd;
+      }
+
+      .breaker-panel-body {
+        padding: 20px;
+        background: #2a2a2a;
+        min-height: 400px;
+      }
+
+      .breaker-panel-main-breaker {
+        margin-bottom: 16px;
+        padding: 12px;
+        background: #1a1a1a;
+        border-radius: 6px;
+        display: flex;
+        justify-content: center;
+      }
+
+      .breaker-panel-main-switch {
+        width: 60px;
+        height: 30px;
+        background: #3a3a3a;
+        border-radius: 4px;
+        border: 2px solid #555;
+        position: relative;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+      }
+
+      .breaker-panel-main-switch::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 4px;
+        transform: translateY(-50%);
+        width: 20px;
+        height: 20px;
+        background: #4caf50;
+        border-radius: 2px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      .breaker-panel-breakers-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .breaker-panel-breaker-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .breaker-panel-slot {
+        position: relative;
+        padding: 8px;
+        background: #1a1a1a;
+        border-radius: 4px;
+        min-height: 80px;
+      }
+
+      .breaker-panel-slot-number {
+        position: absolute;
+        left: 4px;
+        top: 4px;
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.5);
+        font-weight: 600;
+      }
+
+      .breaker-panel-empty-slot {
+        width: 100%;
+        height: 50px;
+        background: #2a2a2a;
+        border: 1px dashed rgba(255, 255, 255, 0.2);
+        border-radius: 4px;
+        margin-top: 16px;
+      }
+
+      .breaker-panel-switch {
+        margin-top: 16px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .breaker-panel-switch-body {
+        width: 50px;
+        height: 80px;
+        background: linear-gradient(to bottom, #4a4a4a 0%, #2a2a2a 100%);
+        border: 2px solid var(--breaker-color, #555);
+        border-radius: 6px;
+        position: relative;
+        box-shadow: 
+          inset 0 2px 4px rgba(0, 0, 0, 0.5),
+          0 2px 4px rgba(0, 0, 0, 0.3);
+        transition: all 0.2s ease;
+      }
+
+      .breaker-panel-switch-body.warning {
+        border-color: #ff9800;
+        box-shadow: 0 0 8px rgba(255, 152, 0, 0.5);
+      }
+
+      .breaker-panel-switch-body.tripped {
+        border-color: #f44336;
+        box-shadow: 0 0 12px rgba(244, 67, 54, 0.7);
+        animation: breaker-trip-pulse 1s infinite;
+      }
+
+      @keyframes breaker-trip-pulse {
+        0%, 100% { box-shadow: 0 0 12px rgba(244, 67, 54, 0.7); }
+        50% { box-shadow: 0 0 20px rgba(244, 67, 54, 1); }
+      }
+
+      .breaker-panel-switch-handle {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 20px;
+        height: 20px;
+        background: #6a6a6a;
+        border-radius: 3px;
+        box-shadow: 
+          0 2px 4px rgba(0, 0, 0, 0.5),
+          inset 0 1px 2px rgba(255, 255, 255, 0.2);
+        transition: top 0.2s ease;
+      }
+
+      .breaker-panel-switch-handle.on {
+        top: 8px;
+        background: #4caf50;
+      }
+
+      .breaker-panel-switch-handle.off {
+        top: 52px;
+        background: #6a6a6a;
+      }
+
+      .breaker-panel-switch-handle.tripped {
+        top: 30px;
+        background: #f44336;
+      }
+
+      .breaker-panel-switch-label {
+        font-size: 9px;
+        color: rgba(255, 255, 255, 0.8);
+        text-align: center;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 500;
+      }
+
+      .breaker-panel-switch-watts {
+        font-size: 8px;
+        color: rgba(255, 255, 255, 0.6);
+        font-variant-numeric: tabular-nums;
+      }
+
       .room-stats {
         text-align: right;
       }
@@ -2621,6 +2882,7 @@ class EnergyPanel extends HTMLElement {
   _renderBreakerPanel() {
     const breakerLines = this._config?.breaker_lines || [];
     const breakerData = this._breakerData?.breaker_lines || [];
+    const panelSize = this._config?.breaker_panel_size || 20;
 
     if (breakerLines.length === 0) {
       return `
@@ -2632,62 +2894,106 @@ class EnergyPanel extends HTMLElement {
       `;
     }
 
-    return `
-      <div class="breakers-grid">
-        ${breakerLines.map(breaker => {
-          const data = breakerData.find(b => b.id === breaker.id) || {
-            total_watts: 0,
-            total_day_wh: 0,
-            max_load: breaker.max_load || 2400,
-            outlets: [],
-          };
-          const percentage = data.max_load > 0 ? Math.min((data.total_watts / data.max_load) * 100, 100) : 0;
-          const isNearThreshold = breaker.threshold > 0 && data.total_watts >= breaker.threshold;
-          const isAtMax = data.max_load > 0 && data.total_watts >= data.max_load;
-          const outlets = data.outlets || [];
+    // Create a map of breaker number to breaker config
+    const breakerMap = new Map();
+    breakerLines.forEach(breaker => {
+      const data = breakerData.find(b => b.id === breaker.id) || {
+        total_watts: 0,
+        total_day_wh: 0,
+        max_load: breaker.max_load || 2400,
+        outlets: [],
+      };
+      const number = breaker.number || 1;
+      breakerMap.set(number, { breaker, data });
+    });
 
-          return `
-            <div class="breaker-card" data-breaker-id="${breaker.id}" style="border-left: 4px solid ${breaker.color || '#03a9f4'}">
-              <div class="breaker-header">
-                <div class="breaker-info">
-                  <h3 class="breaker-name">${breaker.name}</h3>
-                  <div class="breaker-meta">
-                    <span>${breaker.outlet_ids?.length || 0} outlets</span>
-                  </div>
-                </div>
-                <div class="breaker-stats">
-                  <div class="breaker-total-watts ${isAtMax ? 'over-threshold' : ''}">${data.total_watts.toFixed(1)} W</div>
-                  <div class="breaker-total-day">${(data.total_day_wh / 1000).toFixed(2)} kWh today</div>
-                </div>
+    // Calculate rows (each row has 2 breakers)
+    const rows = Math.ceil(panelSize / 2);
+    
+    // Create breaker slots array
+    const breakerSlots = [];
+    for (let i = 1; i <= panelSize; i++) {
+      const breakerInfo = breakerMap.get(i);
+      breakerSlots.push({
+        number: i,
+        breaker: breakerInfo?.breaker,
+        data: breakerInfo?.data,
+      });
+    }
+
+    return `
+      <div class="breaker-panel-container">
+        <div class="breaker-panel-wrapper">
+          <div class="breaker-panel-door">
+            <div class="breaker-panel-door-label">
+              <div class="breaker-panel-danger-header">
+                <span class="breaker-panel-danger-text">DANGER</span>
+                <span class="breaker-panel-high-voltage">High Voltage</span>
               </div>
-              <div class="breaker-content">
-                <div class="breaker-progress-info">
-                  <span class="progress-label">${data.total_watts.toFixed(1)}W / ${data.max_load}W</span>
-                  <span class="progress-percentage">${percentage.toFixed(1)}%</span>
-                </div>
-                <div class="breaker-progress-bar">
-                  <div class="breaker-progress-fill" style="width: ${percentage}%; background: ${breaker.color || '#03a9f4'}"></div>
-                  ${breaker.threshold > 0 && data.max_load > 0 && (breaker.threshold / data.max_load) * 100 > 0 ? `
-                    <div class="breaker-threshold-indicator" style="left: ${(breaker.threshold / data.max_load) * 100}%">
-                      <span class="threshold-label">Warning: ${breaker.threshold}W</span>
+              <div class="breaker-panel-warning-icon">⚠️</div>
+              <div class="breaker-panel-circuit-label-grid">
+                ${Array.from({ length: rows }, (_, row) => {
+                  const leftNum = row * 2 + 1;
+                  const rightNum = row * 2 + 2;
+                  return `
+                    <div class="breaker-panel-label-row">
+                      <div class="breaker-panel-label-cell">${leftNum}</div>
+                      <div class="breaker-panel-label-cell">${rightNum <= panelSize ? rightNum : ''}</div>
                     </div>
-                  ` : ''}
-                </div>
-                ${outlets.length > 0 ? `
-                  <div class="breaker-outlets-list">
-                    ${outlets.map(outlet => `
-                      <div class="breaker-outlet-item">
-                        <span class="breaker-outlet-name">${outlet.name}</span>
-                        <span class="breaker-outlet-percentage">${outlet.percentage.toFixed(1)}%</span>
-                        <span class="breaker-outlet-watts">${outlet.total_watts.toFixed(1)}W</span>
-                      </div>
-                    `).join('')}
-                  </div>
-                ` : ''}
+                  `;
+                }).join('')}
               </div>
             </div>
-          `;
-        }).join('')}
+          </div>
+          <div class="breaker-panel-body">
+            <div class="breaker-panel-main-breaker">
+              <div class="breaker-panel-main-switch"></div>
+            </div>
+            <div class="breaker-panel-breakers-grid">
+              ${Array.from({ length: rows }, (_, row) => {
+                const leftSlot = breakerSlots[row * 2];
+                const rightSlot = breakerSlots[row * 2 + 1];
+                return `
+                  <div class="breaker-panel-breaker-row">
+                    <div class="breaker-panel-slot">
+                      <div class="breaker-panel-slot-number">${leftSlot.number}</div>
+                      ${leftSlot.breaker ? this._renderBreakerSwitch(leftSlot.breaker, leftSlot.data) : '<div class="breaker-panel-empty-slot"></div>'}
+                    </div>
+                    ${rightSlot ? `
+                      <div class="breaker-panel-slot">
+                        <div class="breaker-panel-slot-number">${rightSlot.number}</div>
+                        ${rightSlot.breaker ? this._renderBreakerSwitch(rightSlot.breaker, rightSlot.data) : '<div class="breaker-panel-empty-slot"></div>'}
+                      </div>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderBreakerSwitch(breaker, data) {
+    const percentage = data.max_load > 0 ? Math.min((data.total_watts / data.max_load) * 100, 100) : 0;
+    const isOn = data.total_watts > 0 || percentage > 0;
+    const isAtMax = data.max_load > 0 && data.total_watts >= data.max_load;
+    const isNearThreshold = breaker.threshold > 0 && data.total_watts >= breaker.threshold;
+    
+    // Determine switch state: 'on' (up), 'off' (down), or 'tripped' (middle)
+    let switchState = isOn ? 'on' : 'off';
+    if (isAtMax) {
+      switchState = 'tripped';
+    }
+
+    return `
+      <div class="breaker-panel-switch" data-breaker-id="${breaker.id}" style="--breaker-color: ${breaker.color || '#03a9f4'}">
+        <div class="breaker-panel-switch-body ${switchState} ${isAtMax ? 'tripped' : ''} ${isNearThreshold ? 'warning' : ''}" style="border-color: ${breaker.color || '#03a9f4'}">
+          <div class="breaker-panel-switch-handle ${switchState}"></div>
+        </div>
+        <div class="breaker-panel-switch-label">${breaker.name}</div>
+        <div class="breaker-panel-switch-watts">${data.total_watts.toFixed(0)}W</div>
       </div>
     `;
   }
@@ -2739,6 +3045,14 @@ class EnergyPanel extends HTMLElement {
   }
 
   _updateBreakerDisplay() {
+    // Add door toggle handler
+    const door = this.shadowRoot.querySelector('.breaker-panel-door');
+    const wrapper = this.shadowRoot.querySelector('.breaker-panel-wrapper');
+    if (door && wrapper) {
+      door.addEventListener('click', () => {
+        wrapper.classList.toggle('door-open');
+      });
+    }
     if (!this._breakerData || this._showSettings || this._dashboardView !== 'breakers') return;
 
     const breakerLines = this._config?.breaker_lines || [];
@@ -2748,46 +3062,38 @@ class EnergyPanel extends HTMLElement {
       const data = breakerData.find(b => b.id === breaker.id);
       if (!data) return;
 
-      const breakerCard = this.shadowRoot.querySelector(`.breaker-card[data-breaker-id="${breaker.id}"]`);
-      if (!breakerCard) return;
+      const breakerSwitch = this.shadowRoot.querySelector(`.breaker-panel-switch[data-breaker-id="${breaker.id}"]`);
+      if (!breakerSwitch) return;
 
-      const totalWattsEl = breakerCard.querySelector('.breaker-total-watts');
-      const totalDayEl = breakerCard.querySelector('.breaker-total-day');
-      const progressLabel = breakerCard.querySelector('.progress-label');
-      const progressFill = breakerCard.querySelector('.breaker-progress-fill');
-      const progressPercentage = breakerCard.querySelector('.progress-percentage');
-
-      if (totalWattsEl) {
-        totalWattsEl.textContent = `${data.total_watts.toFixed(1)} W`;
-        totalWattsEl.classList.toggle('over-threshold', data.max_load > 0 && data.total_watts >= data.max_load);
+      // Update watts display
+      const wattsEl = breakerSwitch.querySelector('.breaker-panel-switch-watts');
+      if (wattsEl) {
+        wattsEl.textContent = `${data.total_watts.toFixed(0)}W`;
       }
-      if (totalDayEl) totalDayEl.textContent = `${(data.total_day_wh / 1000).toFixed(2)} kWh today`;
-      if (progressLabel) progressLabel.textContent = `${data.total_watts.toFixed(1)}W / ${data.max_load}W`;
-      if (progressFill) {
+
+      // Update switch state
+      const switchBody = breakerSwitch.querySelector('.breaker-panel-switch-body');
+      const switchHandle = breakerSwitch.querySelector('.breaker-panel-switch-handle');
+      if (switchBody && switchHandle) {
         const percentage = data.max_load > 0 ? Math.min((data.total_watts / data.max_load) * 100, 100) : 0;
-        progressFill.style.width = `${percentage}%`;
-      }
-      if (progressPercentage) {
-        const percentage = data.max_load > 0 ? Math.min((data.total_watts / data.max_load) * 100, 100) : 0;
-        progressPercentage.textContent = `${percentage.toFixed(1)}%`;
-      }
+        const isAtMax = data.max_load > 0 && data.total_watts >= data.max_load;
+        const isNearThreshold = breaker.threshold > 0 && data.total_watts >= breaker.threshold;
+        const isOn = data.total_watts > 0 || percentage > 0;
 
-      // Update outlet list
-      const outletsList = breakerCard.querySelector('.breaker-outlets-list');
-      if (outletsList && data.outlets) {
-        const outletItems = outletsList.querySelectorAll('.breaker-outlet-item');
-        data.outlets.forEach((outlet, index) => {
-          const item = outletItems[index];
-          if (item) {
-            const nameEl = item.querySelector('.breaker-outlet-name');
-            const percentageEl = item.querySelector('.breaker-outlet-percentage');
-            const wattsEl = item.querySelector('.breaker-outlet-watts');
-            
-            if (nameEl) nameEl.textContent = outlet.name;
-            if (percentageEl) percentageEl.textContent = `${outlet.percentage.toFixed(1)}%`;
-            if (wattsEl) wattsEl.textContent = `${outlet.total_watts.toFixed(1)}W`;
-          }
-        });
+        // Remove all state classes
+        switchBody.classList.remove('on', 'off', 'tripped', 'warning');
+        switchHandle.classList.remove('on', 'off', 'tripped');
+
+        // Set new state
+        if (isAtMax) {
+          switchBody.classList.add('tripped');
+          switchHandle.classList.add('tripped');
+        } else if (isNearThreshold) {
+          switchBody.classList.add('warning');
+          switchHandle.classList.add(isOn ? 'on' : 'off');
+        } else {
+          switchHandle.classList.add(isOn ? 'on' : 'off');
+        }
       }
     });
   }
@@ -3117,10 +3423,23 @@ class EnergyPanel extends HTMLElement {
 
   _renderBreakerSettings() {
     const breakerLines = this._config?.breaker_lines || [];
+    const panelSize = this._config?.breaker_panel_size || 20; // Default to 20 breakers
 
     return `
       <div class="card">
         <div class="card-header">
+          <h2 class="card-title">Breaker Panel Configuration</h2>
+        </div>
+        <div style="padding: 16px; border-bottom: 1px solid var(--card-border);">
+          <div class="form-group">
+            <label class="form-label">Panel Size (Number of Breakers)</label>
+            <input type="number" class="form-input breaker-panel-size-input" value="${panelSize}" min="2" max="40" step="2" placeholder="20" style="max-width: 150px;">
+            <div style="font-size: 11px; color: var(--secondary-text-color); margin-top: 4px;">
+              Must be a multiple of 2 (e.g., 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, etc.)
+            </div>
+          </div>
+        </div>
+        <div class="card-header" style="border-top: 1px solid var(--card-border);">
           <h2 class="card-title">Breaker Lines</h2>
           <button class="btn btn-secondary" id="add-breaker-btn">
             <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
@@ -3132,7 +3451,7 @@ class EnergyPanel extends HTMLElement {
             <p style="color: var(--secondary-text-color); text-align: center; padding: 20px;">
               No breaker lines configured. Add a breaker line to start monitoring circuit loads.
             </p>
-          ` : breakerLines.map((breaker, i) => this._renderBreakerSettingsCard(breaker, i)).join('')}
+          ` : breakerLines.map((breaker, i) => this._renderBreakerSettingsCard(breaker, i, panelSize)).join('')}
         </div>
       </div>
     `;
@@ -3172,14 +3491,19 @@ class EnergyPanel extends HTMLElement {
     return allOutlets.filter(outlet => !assignedOutletIds.has(outlet.id));
   }
 
-  _renderBreakerSettingsCard(breaker, index) {
+  _renderBreakerSettingsCard(breaker, index, panelSize = 20) {
     const allOutlets = this._getAllOutlets();
     const assignedOutlets = allOutlets.filter(o => breaker.outlet_ids?.includes(o.id));
+    const breakerNumber = breaker.number || (index + 1);
 
     return `
       <div class="breaker-settings-card" data-breaker-index="${index}">
         <div class="breaker-settings-header">
           <div class="breaker-settings-name-color">
+            <div class="form-group" style="margin: 0; margin-right: 12px;">
+              <label class="form-label" style="margin-bottom: 4px; font-size: 10px;">Number</label>
+              <input type="number" class="form-input breaker-number-input" value="${breakerNumber}" min="1" max="${panelSize}" step="1" style="width: 70px;" placeholder="1">
+            </div>
             <input type="text" class="form-input breaker-name-input" value="${breaker.name}" placeholder="Breaker name" style="max-width: 200px;">
             <input type="color" class="breaker-color-input" value="${breaker.color || '#03a9f4'}" title="Breaker color">
           </div>
@@ -4529,17 +4853,28 @@ class EnergyPanel extends HTMLElement {
     const noItems = list.querySelector('p');
     if (noItems) noItems.remove();
 
+    const breakerLines = this._config?.breaker_lines || [];
+    const panelSize = this._config?.breaker_panel_size || 20;
+    
+    // Find next available number
+    const usedNumbers = new Set(breakerLines.map(b => b.number || 0));
+    let nextNumber = 1;
+    while (usedNumbers.has(nextNumber) && nextNumber <= panelSize) {
+      nextNumber++;
+    }
+
     const index = list.querySelectorAll('.breaker-settings-card').length;
     const newBreaker = {
       id: `breaker_${Date.now()}`,
       name: `Breaker ${index + 1}`,
+      number: nextNumber,
       color: '#03a9f4',
       max_load: 2400,
       threshold: 0,
       outlet_ids: [],
     };
 
-    const html = this._renderBreakerSettingsCard(newBreaker, index);
+    const html = this._renderBreakerSettingsCard(newBreaker, index, panelSize);
     list.insertAdjacentHTML('beforeend', html);
     this._attachBreakerEventListeners();
   }
@@ -4760,11 +5095,18 @@ class EnergyPanel extends HTMLElement {
     const ttsMicrowaveCut = this.shadowRoot.querySelector('#tts-microwave-cut')?.value || '{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off.';
     const ttsMicrowaveRestore = this.shadowRoot.querySelector('#tts-microwave-restore')?.value || '{prefix} Microwave is off. Stove power restored.';
 
+    // Get panel size
+    const panelSizeInput = this.shadowRoot.querySelector('.breaker-panel-size-input');
+    const panelSize = panelSizeInput ? parseInt(panelSizeInput.value) : 20;
+    // Validate panel size is multiple of 2
+    const validPanelSize = panelSize >= 2 && panelSize <= 40 && panelSize % 2 === 0 ? panelSize : 20;
+
     // Collect breaker lines
     const breakerCards = this.shadowRoot.querySelectorAll('.breaker-settings-card');
     const breakerLines = [];
     breakerCards.forEach(card => {
       const nameInput = card.querySelector('.breaker-name-input');
+      const numberInput = card.querySelector('.breaker-number-input');
       const colorInput = card.querySelector('.breaker-color-input');
       const maxLoadInput = card.querySelector('.breaker-max-load');
       const thresholdInput = card.querySelector('.breaker-threshold');
@@ -4776,6 +5118,7 @@ class EnergyPanel extends HTMLElement {
         breakerLines.push({
           id: nameInput.value.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
           name: nameInput.value,
+          number: parseInt(numberInput?.value) || 1,
           color: colorInput?.value || '#03a9f4',
           max_load: parseInt(maxLoadInput?.value) || 2400,
           threshold: parseInt(thresholdInput?.value) || 0,
@@ -4784,8 +5127,14 @@ class EnergyPanel extends HTMLElement {
       }
     });
 
+    // Get panel size
+    const panelSizeInput = this.shadowRoot.querySelector('.breaker-panel-size-input');
+    const panelSize = panelSizeInput ? parseInt(panelSizeInput.value) : 20;
+    const validPanelSize = panelSize >= 2 && panelSize <= 40 && panelSize % 2 === 0 ? panelSize : 20;
+
     const config = {
       rooms: rooms,
+      breaker_panel_size: validPanelSize,
       breaker_lines: breakerLines,
       tts_settings: {
         language: ttsLanguage,
