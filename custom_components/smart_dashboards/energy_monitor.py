@@ -190,7 +190,6 @@ class EnergyMonitor:
 
                 # Check outlet warning threshold (combined plugs)
                 if outlet_threshold > 0 and outlet_total_watts > outlet_threshold:
-                    await self.config_manager.async_increment_warning(room_id)
                     await self._send_outlet_alert(
                         room_id=room_id,
                         room_name=room_name,
@@ -204,7 +203,6 @@ class EnergyMonitor:
 
             # Check room threshold
             if room_threshold > 0 and room_total_watts > room_threshold:
-                await self.config_manager.async_increment_warning(room_id)
                 await self._send_room_alert(
                     room_id=room_id,
                     room_name=room_name,
@@ -332,7 +330,9 @@ class EnergyMonitor:
         return list(dict.fromkeys(entities))
 
     def _get_light_restore_data(self, entity_ids: list[str]) -> dict[str, dict]:
-        """Get current light state for restore after warning loop."""
+        """Get current light state for restore after warning loop.
+        Stores only the mode-appropriate attribute: RGB mode -> rgb_color,
+        temp mode -> color_temp_kelvin. Never both (one restore call per light)."""
         restore: dict[str, dict] = {}
         for eid in entity_ids:
             state = self.hass.states.get(eid)
@@ -341,9 +341,20 @@ class EnergyMonitor:
             attrs = state.attributes or {}
             is_on = (state.state or "off").lower() == "on"
             data: dict = {"was_on": is_on}
-            if "rgb_color" in attrs:
+            color_mode = (attrs.get("color_mode") or "").lower()
+            # RGB mode: store rgb_color only
+            if color_mode in ("rgb", "hs", "xy") and "rgb_color" in attrs:
                 data["rgb_color"] = list(attrs["rgb_color"])
-            if "color_temp_kelvin" in attrs:
+            # Temp mode: store color_temp_kelvin or color_temp only
+            elif color_mode == "color_temp":
+                if "color_temp_kelvin" in attrs:
+                    data["color_temp_kelvin"] = attrs["color_temp_kelvin"]
+                elif "color_temp" in attrs:
+                    data["color_temp"] = attrs["color_temp"]
+            # Fallback when color_mode missing: prefer rgb if present, else temp
+            elif "rgb_color" in attrs:
+                data["rgb_color"] = list(attrs["rgb_color"])
+            elif "color_temp_kelvin" in attrs:
                 data["color_temp_kelvin"] = attrs["color_temp_kelvin"]
             elif "color_temp" in attrs:
                 data["color_temp"] = attrs["color_temp"]
@@ -366,7 +377,7 @@ class EnergyMonitor:
                     {"entity_id": entity_ids, "rgb_color": rgb_color},
                     blocking=True,
                 )
-                await asyncio.sleep(1)
+                await asyncio.sleep(2)
                 if tts_task.done():
                     break
                 await self.hass.services.async_call(
@@ -375,7 +386,7 @@ class EnergyMonitor:
                     {"entity_id": entity_ids, "color_temp_kelvin": temp_kelvin},
                     blocking=True,
                 )
-                await asyncio.sleep(1)
+                await asyncio.sleep(2)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -478,8 +489,9 @@ class EnergyMonitor:
         if last_alert and (now - last_alert).total_seconds() < ALERT_COOLDOWN:
             return  # Still in cooldown
 
-        # Update last alert time
+        # Update last alert time and count (only when TTS is actually sent)
         self._last_room_alerts[room_id] = now
+        await self.config_manager.async_increment_warning(room_id)
 
         # Format message with prefix
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
@@ -524,8 +536,9 @@ class EnergyMonitor:
         if last_alert and (now - last_alert).total_seconds() < ALERT_COOLDOWN:
             return  # Still in cooldown
 
-        # Update last alert time
+        # Update last alert time and count (only when TTS is actually sent)
         self._last_outlet_alerts[alert_key] = now
+        await self.config_manager.async_increment_warning(room_id)
 
         # Format message with prefix
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
