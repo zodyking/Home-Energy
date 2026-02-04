@@ -2766,16 +2766,7 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderBreakerSettings() {
-    return `
-      <div class="card">
-        <div class="card-header">
-          <h2 class="card-title">Breaker Settings</h2>
-        </div>
-        <div style="padding: 20px; text-align: center;">
-          <p style="color: var(--secondary-text-color);">Breaker settings coming soon.</p>
-        </div>
-      </div>
-    `;
+    return ``;
   }
 
   _getAllOutlets() {
