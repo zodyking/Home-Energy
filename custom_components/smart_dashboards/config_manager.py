@@ -161,6 +161,7 @@ class ConfigManager:
                     "responsive_light_warnings": bool(room.get("responsive_light_warnings", False)),
                     "responsive_light_color": _validate_rgb(room.get("responsive_light_color")),
                     "responsive_light_temp": max(2000, min(6500, int(room.get("responsive_light_temp", 6500)))),
+                    "responsive_light_interval": max(0.1, min(10.0, float(room.get("responsive_light_interval", 1.5)))),
                     "outlets": [],
                 }
                 for outlet in room.get("outlets", []):
