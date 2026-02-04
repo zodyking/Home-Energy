@@ -15,6 +15,17 @@ from .const import CONFIG_FILE, DEFAULT_CONFIG, DOMAIN, DEFAULT_TTS_VOLUME
 _LOGGER = logging.getLogger(__name__)
 
 
+def _validate_rgb(val: Any) -> list[int]:
+    """Validate and return RGB list [r, g, b] 0-255."""
+    if isinstance(val, list) and len(val) >= 3:
+        return [
+            max(0, min(255, int(val[0]) if val[0] is not None else 0)),
+            max(0, min(255, int(val[1]) if val[1] is not None else 0)),
+            max(0, min(255, int(val[2]) if val[2] is not None else 0)),
+        ]
+    return [245, 0, 0]
+
+
 def _load_json_file(path: str) -> dict | None:
     """Load JSON file (run in executor to avoid blocking event loop)."""
     if not os.path.exists(path):
@@ -147,6 +158,9 @@ class ConfigManager:
                     "media_player": room.get("media_player"),
                     "threshold": int(room.get("threshold", 0)),
                     "volume": float(room.get("volume", 0.7)),
+                    "responsive_light_warnings": bool(room.get("responsive_light_warnings", False)),
+                    "responsive_light_color": _validate_rgb(room.get("responsive_light_color")),
+                    "responsive_light_temp": max(2000, min(6500, int(room.get("responsive_light_temp", 6500)))),
                     "outlets": [],
                 }
                 for outlet in room.get("outlets", []):

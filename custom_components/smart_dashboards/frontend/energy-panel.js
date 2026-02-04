@@ -255,7 +255,6 @@ class EnergyPanel extends HTMLElement {
           if (lightLabel) lightLabel.textContent = isOn ? 'ON' : 'OFF';
           if (lightWattsDisplay) {
             lightWattsDisplay.textContent = `${totalWatts.toFixed(1)} W`;
-            lightWattsDisplay.classList.toggle('off', totalWatts <= 0);
           }
           if (lightSwitchPlate) lightSwitchPlate.classList.toggle('active', isOn);
           deviceCard.classList.toggle('light-on', isOn);
@@ -1071,39 +1070,29 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: center;
-        position: relative;
-        padding-top: 20px;
-        padding-bottom: 20px;
-      }
-
-      .outlet-card.outlet-face.light-outlet .plate-screw {
-        position: absolute;
-        left: 50%;
-        transform: translateX(-50%);
-        margin: 0;
       }
 
       .outlet-card.outlet-face.light-outlet .plate-screw:first-of-type {
-        top: 6px;
+        margin: 4px auto 16px;
       }
 
       .outlet-card.outlet-face.light-outlet .plate-screw:last-of-type {
-        bottom: 6px;
+        margin: 16px auto 4px;
       }
 
       .outlet-card.outlet-face.light-outlet .light-switch-plate {
         width: 48px;
         height: 56px;
+        flex: 0 0 auto;
+        margin: auto 0;
         background: linear-gradient(#efefef, #dedede);
         border: 1px solid rgba(0, 0, 0, 0.22);
         border-radius: 8px;
         padding: 6px 8px;
-        margin: 24px auto 8px;
         box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.65);
         display: flex;
         align-items: center;
         justify-content: center;
-        flex: 0 0 auto;
       }
 
       .outlet-card.outlet-face.light-outlet .light-switch-plate.active {
@@ -1148,12 +1137,10 @@ class EnergyPanel extends HTMLElement {
         font-variant-numeric: tabular-nums;
       }
 
-      .outlet-card.outlet-face.light-outlet .outlet-total.light-watts-display.off {
-        color: rgba(0,0,0,0.5);
-      }
-
-      .outlet-card.outlet-face.light-outlet .outlet-meta {
-        margin-top: 4px;
+      .outlet-card.outlet-face.light-outlet .outlet-meta.light-outlet-meta {
+        margin-top: 5px;
+        padding-top: 4px;
+        border-top: 1px solid rgba(0,0,0,0.10);
       }
 
       .add-device-dropdown {
@@ -2497,11 +2484,8 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
           <div class="center-screw plate-screw" aria-hidden="true"></div>
-          <div class="outlet-meta">
-            <div class="outlet-total light-watts-display ${totalWatts > 0 ? '' : 'off'}">${totalWatts.toFixed(1)} W</div>
-            <div class="outlet-threshold">
-              <span class="threshold-badge">—</span>
-            </div>
+          <div class="outlet-meta light-outlet-meta">
+            <div class="outlet-total light-watts-display">${totalWatts.toFixed(1)} W</div>
           </div>
         </div>
       </div>
@@ -3238,6 +3222,53 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _roomHasResponsiveLightEligibility(room) {
+    const outlets = room.outlets || [];
+    const hasOutletWithThreshold = outlets.some(o => {
+      const t = o.type || 'outlet';
+      const th = o.threshold || 0;
+      return (t === 'outlet' || t === 'single_outlet' || t === 'minisplit') && th > 0;
+    });
+    const hasWrgbLight = outlets.some(o => {
+      if ((o.type || '') !== 'light') return false;
+      const ents = o.light_entities || [];
+      return ents.some(e => (typeof e === 'object' && e?.wrgb) || false);
+    });
+    return hasOutletWithThreshold && hasWrgbLight;
+  }
+
+  _renderResponsiveLightWarnings(room, index) {
+    const eligible = this._roomHasResponsiveLightEligibility(room);
+    const enabled = eligible && room.responsive_light_warnings === true;
+    const rgb = room.responsive_light_color || [245, 0, 0];
+    const rgbHex = '#' + [rgb[0], rgb[1], rgb[2]].map(x => Math.round(Math.min(255, Math.max(0, x))).toString(16).padStart(2, '0')).join('');
+    const tempK = room.responsive_light_temp ?? 6500;
+    return `
+      <div class="form-group responsive-light-section" style="margin-bottom: 16px; padding: 12px; background: var(--panel-accent-dim); border-radius: 8px;">
+        <div class="toggle-row ${!eligible ? 'toggle-disabled' : ''}">
+          <label class="toggle-switch">
+            <input type="checkbox" class="responsive-light-warnings-toggle" ${enabled ? 'checked' : ''} ${!eligible ? 'disabled' : ''}>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-label">Responsive light warnings</span>
+        </div>
+        ${!eligible ? '<div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 6px;">Requires at least one outlet with threshold and one light device with a smart WRGB light.</div>' : ''}
+        ${eligible && enabled ? `
+          <div class="responsive-light-pickers" style="margin-top: 12px; display: flex; gap: 16px; flex-wrap: wrap;">
+            <div class="form-group">
+              <label class="form-label">Warning color (RGB)</label>
+              <input type="color" class="responsive-light-color-picker" value="${rgbHex}" title="Color when threshold exceeded">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Rest color (Kelvin)</label>
+              <input type="number" class="form-input responsive-light-temp-picker" value="${tempK}" min="2000" max="6500" step="100" placeholder="6500" style="width: 90px;" title="Color temp when alternating">
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
   _renderRoomSettings(room, index, mediaPlayers, powerSensors) {
     return `
       <div class="room-settings-card" data-room-index="${index}" draggable="false">
@@ -3255,6 +3286,7 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <div class="room-settings-body" id="room-body-${index}" style="display: none;">
+          ${this._renderResponsiveLightWarnings(room, index)}
           <div class="grid-2" style="margin-bottom: 12px;">
             <div class="form-group">
               <label class="form-label">Media Player</label>
@@ -3347,25 +3379,22 @@ class EnergyPanel extends HTMLElement {
 
     const lightRowsHtml = lightEntityRows.map((row, idx) => `
       <div class="light-entity-row" data-row-index="${idx}">
-        <div class="light-field">
-          <label class="form-label">Light</label>
+        <div class="light-field-inline">
+          <span class="light-label">Entity</span>
           ${this._renderEntityAutocomplete(row.entity_id || '', 'light', roomIndex, 'light-entity-select', 'light.bathroom_light')}
         </div>
-        <div class="light-field">
-          <label class="form-label">W</label>
+        <div class="light-field-inline">
+          <span class="light-label">Max Power</span>
           <input type="number" class="form-input light-entity-watts" value="${row.watts}" min="0" max="500" step="1" placeholder="0" title="Running power when on">
         </div>
-        <div class="light-field">
-          <label class="form-label">WRGB</label>
+        <div class="light-field-inline">
+          <span class="light-label">Is this a smart WRGB light?</span>
           <label class="toggle-switch">
             <input type="checkbox" class="light-entity-wrgb-toggle" ${row.wrgb ? 'checked' : ''} title="WRGB (White/Red/Green/Blue) light">
             <span class="toggle-slider"></span>
           </label>
         </div>
-        <div class="light-field light-field-remove">
-          <label class="form-label">&nbsp;</label>
-          <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
-        </div>
+        <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
       </div>
     `).join('');
 
@@ -3819,6 +3848,15 @@ class EnergyPanel extends HTMLElement {
 
     // Area selectors - filter outlets when area changes
 
+    // Responsive light warnings toggle
+    this.shadowRoot.querySelectorAll('.responsive-light-warnings-toggle').forEach(toggle => {
+      toggle.addEventListener('change', (e) => {
+        const section = e.target.closest('.responsive-light-section');
+        const pickers = section?.querySelector('.responsive-light-pickers');
+        if (pickers) pickers.style.display = e.target.checked ? 'flex' : 'none';
+      });
+    });
+
     // Room volume sliders
     this.shadowRoot.querySelectorAll('.room-volume').forEach(slider => {
       slider.addEventListener('input', (e) => {
@@ -4161,25 +4199,22 @@ class EnergyPanel extends HTMLElement {
         row.className = 'light-entity-row';
         const acHtml = this._renderEntityAutocomplete('', 'light', roomIndex, 'light-entity-select', 'light.bathroom_light');
         row.innerHTML = `
-          <div class="light-field">
-            <label class="form-label">Light</label>
+          <div class="light-field-inline">
+            <span class="light-label">Entity</span>
             ${acHtml}
           </div>
-          <div class="light-field">
-            <label class="form-label">W</label>
+          <div class="light-field-inline">
+            <span class="light-label">Max Power</span>
             <input type="number" class="form-input light-entity-watts" value="0" min="0" max="500" step="1" placeholder="0" title="Running power when on">
           </div>
-          <div class="light-field">
-            <label class="form-label">WRGB</label>
+          <div class="light-field-inline">
+            <span class="light-label">Is this a smart WRGB light?</span>
             <label class="toggle-switch">
               <input type="checkbox" class="light-entity-wrgb-toggle" title="WRGB (White/Red/Green/Blue) light">
               <span class="toggle-slider"></span>
             </label>
           </div>
-          <div class="light-field light-field-remove">
-            <label class="form-label">&nbsp;</label>
-            <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
-          </div>
+          <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
         `;
         row.querySelector('.light-entity-remove-btn').addEventListener('click', () => row.remove());
         lightEntityRows.appendChild(row);
@@ -4664,12 +4699,28 @@ class EnergyPanel extends HTMLElement {
 
       const roomName = nameInput?.value?.trim();
       if (roomName) {
+        const responsiveToggle = card.querySelector('.responsive-light-warnings-toggle');
+        const responsiveColor = card.querySelector('.responsive-light-color-picker');
+        const responsiveTemp = card.querySelector('.responsive-light-temp-picker');
+        let rgb = [245, 0, 0];
+        if (responsiveColor?.value) {
+          const hex = responsiveColor.value;
+          rgb = [
+            parseInt(hex.slice(1, 3), 16),
+            parseInt(hex.slice(3, 5), 16),
+            parseInt(hex.slice(5, 7), 16),
+          ];
+        }
+        const tempK = parseInt(responsiveTemp?.value, 10) || 6500;
         rooms.push({
           id: roomName.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
           name: roomName,
           media_player: mediaPlayerSelect?.value || null,
           threshold: parseInt(thresholdInput?.value) || 0,
           volume: parseFloat(volumeSlider?.value) || 0.7,
+          responsive_light_warnings: responsiveToggle?.checked === true && !responsiveToggle.disabled,
+          responsive_light_color: rgb,
+          responsive_light_temp: tempK,
           outlets: outlets,
         });
       }

@@ -188,33 +188,43 @@ export const sharedStyles = `
 
   .light-entity-row {
     display: flex;
-    align-items: flex-end;
-    gap: 12px;
-    margin-bottom: 12px;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
     flex-wrap: nowrap;
   }
 
-  .light-entity-row .light-field {
+  .light-entity-row .light-field-inline {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    align-items: center;
+    gap: 6px;
     flex: 1;
     min-width: 0;
   }
 
-  .light-entity-row .light-field:first-child {
+  .light-entity-row .light-field-inline:first-child {
     flex: 2;
-    min-width: 140px;
+    min-width: 120px;
   }
 
-  .light-entity-row .light-field .light-entity-watts {
-    width: 100%;
-    max-width: 70px;
+  .light-entity-row .light-label {
+    font-size: 11px;
+    color: var(--secondary-text-color);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
-  .light-entity-row .light-field-remove {
+  .light-entity-row .light-field-inline input,
+  .light-entity-row .light-field-inline .entity-datalist-input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .light-entity-row .light-entity-watts {
+    width: 60px;
     flex: 0 0 auto;
-    align-items: center;
   }
 
   .light-entity-row .light-entity-remove-btn {

@@ -152,6 +152,7 @@ class EnergyMonitor:
                         await self._handle_plug_shutoff(
                             room_id=room_id,
                             room_name=room_name,
+                            room=room,
                             outlet_name=outlet_name,
                             plug_name="Plug 1",
                             switch_entity=plug1_switch,
@@ -176,6 +177,7 @@ class EnergyMonitor:
                         await self._handle_plug_shutoff(
                             room_id=room_id,
                             room_name=room_name,
+                            room=room,
                             outlet_name=outlet_name,
                             plug_name="Plug 2",
                             switch_entity=plug2_switch,
@@ -192,6 +194,7 @@ class EnergyMonitor:
                     await self._send_outlet_alert(
                         room_id=room_id,
                         room_name=room_name,
+                        room=room,
                         outlet_name=outlet_name,
                         current_watts=outlet_total_watts,
                         media_player=media_player,
@@ -205,6 +208,7 @@ class EnergyMonitor:
                 await self._send_room_alert(
                     room_id=room_id,
                     room_name=room_name,
+                    room=room,
                     current_watts=room_total_watts,
                     media_player=media_player,
                     volume=room_volume,
@@ -252,6 +256,7 @@ class EnergyMonitor:
         self,
         room_id: str,
         room_name: str,
+        room: dict,
         outlet_name: str,
         plug_name: str,
         switch_entity: str,
@@ -283,7 +288,7 @@ class EnergyMonitor:
                 room_name, outlet_name, plug_name,
             )
             
-            # Send TTS message
+            # Send TTS message (with optional responsive light loop)
             if media_player:
                 prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                 msg_template = tts_settings.get("shutoff_msg", DEFAULT_SHUTOFF_MSG)
@@ -293,13 +298,8 @@ class EnergyMonitor:
                     outlet_name=outlet_name,
                     plug=plug_name,
                 )
-                
-                await async_send_tts(
-                    self.hass,
-                    media_player=media_player,
-                    message=message,
-                    language=tts_settings.get("language"),
-                    volume=volume,
+                await self._async_send_tts_with_lights(
+                    room, media_player, message, volume, tts_settings
                 )
             
             # Wait 5 seconds
@@ -320,10 +320,149 @@ class EnergyMonitor:
         finally:
             self._shutoff_pending[shutoff_key] = False
 
+    def _get_wrgb_light_entities(self, room: dict) -> list[str]:
+        """Get all WRGB light entity IDs for a room."""
+        entities: list[str] = []
+        for outlet in room.get("outlets", []):
+            if outlet.get("type") != "light":
+                continue
+            for le in outlet.get("light_entities") or []:
+                if isinstance(le, dict) and le.get("wrgb") and le.get("entity_id", "").startswith("light."):
+                    entities.append(le["entity_id"])
+        return list(dict.fromkeys(entities))
+
+    def _get_light_restore_data(self, entity_ids: list[str]) -> dict[str, dict]:
+        """Get current light state for restore after warning loop."""
+        restore: dict[str, dict] = {}
+        for eid in entity_ids:
+            state = self.hass.states.get(eid)
+            if state is None:
+                continue
+            attrs = state.attributes or {}
+            is_on = (state.state or "off").lower() == "on"
+            data: dict = {"was_on": is_on}
+            if "rgb_color" in attrs:
+                data["rgb_color"] = list(attrs["rgb_color"])
+            if "color_temp_kelvin" in attrs:
+                data["color_temp_kelvin"] = attrs["color_temp_kelvin"]
+            elif "color_temp" in attrs:
+                data["color_temp"] = attrs["color_temp"]
+            restore[eid] = data
+        return restore
+
+    async def _async_light_warning_loop(
+        self,
+        entity_ids: list[str],
+        rgb_color: list[int],
+        temp_kelvin: int,
+        tts_task: asyncio.Task,
+    ) -> None:
+        """Loop light color/temp changes until TTS task completes."""
+        try:
+            while not tts_task.done():
+                await self.hass.services.async_call(
+                    "light",
+                    "turn_on",
+                    {"entity_id": entity_ids, "rgb_color": rgb_color},
+                    blocking=True,
+                )
+                await asyncio.sleep(1)
+                if tts_task.done():
+                    break
+                await self.hass.services.async_call(
+                    "light",
+                    "turn_on",
+                    {"entity_id": entity_ids, "color_temp_kelvin": temp_kelvin},
+                    blocking=True,
+                )
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            _LOGGER.error("Light warning loop error: %s", e)
+
+    async def _async_restore_lights(
+        self,
+        entity_ids: list[str],
+        restore_data: dict[str, dict],
+    ) -> None:
+        """Restore lights to their pre-warning state."""
+        for eid in entity_ids:
+            data = restore_data.get(eid)
+            if not data:
+                continue
+            try:
+                was_on = data.get("was_on", True)
+                if not was_on:
+                    await self.hass.services.async_call(
+                        "light", "turn_off", {"entity_id": eid}, blocking=True
+                    )
+                    continue
+                # Restore color/temp for lights that were on
+                restore_attrs = {k: v for k, v in data.items() if k != "was_on" and v is not None}
+                await self.hass.services.async_call(
+                    "light",
+                    "turn_on",
+                    {"entity_id": eid, **restore_attrs} if restore_attrs else {"entity_id": eid},
+                    blocking=True,
+                )
+            except Exception as e:
+                _LOGGER.warning("Failed to restore light %s: %s", eid, e)
+
+    async def _async_send_tts_with_lights(
+        self,
+        room: dict,
+        media_player: str | None,
+        message: str,
+        volume: float,
+        tts_settings: dict,
+    ) -> None:
+        """Send TTS and optionally run responsive light loop if enabled for room."""
+        if not media_player:
+            return
+        wrgb_lights = self._get_wrgb_light_entities(room) if room.get("responsive_light_warnings") else []
+        rgb = room.get("responsive_light_color") or [245, 0, 0]
+        temp_k = int(room.get("responsive_light_temp", 6500))
+        if wrgb_lights:
+            restore_data = self._get_light_restore_data(wrgb_lights)
+            tts_task = asyncio.create_task(
+                async_send_tts(
+                    self.hass,
+                    media_player=media_player,
+                    message=message,
+                    language=tts_settings.get("language"),
+                    volume=volume,
+                )
+            )
+            light_task = asyncio.create_task(
+                self._async_light_warning_loop(wrgb_lights, rgb, temp_k, tts_task)
+            )
+            await asyncio.gather(tts_task, light_task)
+            await self._async_restore_lights(wrgb_lights, restore_data)
+        else:
+            await async_send_tts(
+                self.hass,
+                media_player=media_player,
+                message=message,
+                language=tts_settings.get("language"),
+                volume=volume,
+            )
+
+    def _get_room_for_breaker(self, breaker_id: str) -> dict | None:
+        """Get first room with responsive lights and outlets on this breaker."""
+        outlets = self.config_manager.get_outlets_for_breaker(breaker_id)
+        room_ids = list(dict.fromkeys(o["room_id"] for o in outlets))
+        for room in self.config_manager.energy_config.get("rooms", []):
+            if room.get("id") in room_ids and room.get("responsive_light_warnings"):
+                if self._get_wrgb_light_entities(room):
+                    return room
+        return None
+
     async def _send_room_alert(
         self,
         room_id: str,
         room_name: str,
+        room: dict,
         current_watts: float,
         media_player: str | None,
         volume: float,
@@ -352,12 +491,8 @@ class EnergyMonitor:
         )
 
         try:
-            await async_send_tts(
-                self.hass,
-                media_player=media_player,
-                message=message,
-                language=tts_settings.get("language"),
-                volume=volume,
+            await self._async_send_tts_with_lights(
+                room, media_player, message, volume, tts_settings
             )
             _LOGGER.warning(
                 "Room threshold alert: %s - %dW",
@@ -371,6 +506,7 @@ class EnergyMonitor:
         self,
         room_id: str,
         room_name: str,
+        room: dict,
         outlet_name: str,
         current_watts: float,
         media_player: str | None,
@@ -402,12 +538,8 @@ class EnergyMonitor:
         )
 
         try:
-            await async_send_tts(
-                self.hass,
-                media_player=media_player,
-                message=message,
-                language=tts_settings.get("language"),
-                volume=volume,
+            await self._async_send_tts_with_lights(
+                room, media_player, message, volume, tts_settings
             )
             _LOGGER.warning(
                 "Outlet threshold alert: %s %s - %dW",
@@ -440,12 +572,20 @@ class EnergyMonitor:
                 if outlet.get("plug2_entity"):
                     breaker_total_watts += self._get_power_value(outlet["plug2_entity"])
             
-            # Check if we need a media player (use first room's media player or find one)
+            # Get room for responsive lights (first room with outlets on this breaker and responsive lights)
+            # Fallback: first room with media_player
+            room_for_lights = self._get_room_for_breaker(breaker_id)
             media_player = None
-            for room in energy_config.get("rooms", []):
-                if room.get("media_player"):
-                    media_player = room["media_player"]
-                    break
+            volume = tts_settings.get("volume", 0.7)
+            if room_for_lights:
+                media_player = room_for_lights.get("media_player")
+                volume = float(room_for_lights.get("volume", 0.7))
+            if not media_player:
+                for room in energy_config.get("rooms", []):
+                    if room.get("media_player"):
+                        media_player = room["media_player"]
+                        room_for_lights = room if room_for_lights is None else room_for_lights
+                        break
             
             # Check warning threshold (near max)
             if threshold > 0 and breaker_total_watts >= threshold:
@@ -463,13 +603,18 @@ class EnergyMonitor:
                     )
                     
                     if media_player:
-                        await async_send_tts(
-                            self.hass,
-                            media_player=media_player,
-                            message=message,
-                            language=tts_settings.get("language"),
-                            volume=tts_settings.get("volume", 0.7),
-                        )
+                        if room_for_lights:
+                            await self._async_send_tts_with_lights(
+                                room_for_lights, media_player, message, volume, tts_settings
+                            )
+                        else:
+                            await async_send_tts(
+                                self.hass,
+                                media_player=media_player,
+                                message=message,
+                                language=tts_settings.get("language"),
+                                volume=volume,
+                            )
                     _LOGGER.warning("Breaker warning: %s - %dW", breaker_name, int(breaker_total_watts))
             
             # Check shutoff threshold (at max)
@@ -488,7 +633,7 @@ class EnergyMonitor:
                 self._last_breaker_shutoffs[breaker_id] = now
                 
                 try:
-                    # Send TTS message
+                    # Send TTS message (with optional responsive light loop)
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg_template = tts_settings.get("breaker_shutoff_msg", DEFAULT_BREAKER_SHUTOFF_MSG)
                     message = msg_template.format(
@@ -497,13 +642,18 @@ class EnergyMonitor:
                     )
                     
                     if media_player:
-                        await async_send_tts(
-                            self.hass,
-                            media_player=media_player,
-                            message=message,
-                            language=tts_settings.get("language"),
-                            volume=tts_settings.get("volume", 0.7),
-                        )
+                        if room_for_lights:
+                            await self._async_send_tts_with_lights(
+                                room_for_lights, media_player, message, volume, tts_settings
+                            )
+                        else:
+                            await async_send_tts(
+                                self.hass,
+                                media_player=media_player,
+                                message=message,
+                                language=tts_settings.get("language"),
+                                volume=volume,
+                            )
                     
                     # Turn off ALL switches for all outlets on this breaker
                     switch_entities = []
@@ -610,10 +760,9 @@ class EnergyMonitor:
                             msg_template = tts_settings.get(
                                 "microwave_cut_power_msg", DEFAULT_MICROWAVE_CUT_MSG
                             )
-                            await async_send_tts(
-                                self.hass, media_player=media_player,
-                                message=msg_template.format(prefix=prefix),
-                                language=tts_settings.get("language"), volume=volume,
+                            message = msg_template.format(prefix=prefix)
+                            await self._async_send_tts_with_lights(
+                                room, media_player, message, volume, tts_settings
                             )
                         _LOGGER.warning("Stove power cut: microwave is on (shared breaker)")
                     except Exception as e:
@@ -631,10 +780,9 @@ class EnergyMonitor:
                         msg_template = tts_settings.get(
                             "microwave_restore_power_msg", DEFAULT_MICROWAVE_RESTORE_MSG
                         )
-                        await async_send_tts(
-                            self.hass, media_player=media_player,
-                            message=msg_template.format(prefix=prefix),
-                            language=tts_settings.get("language"), volume=volume,
+                        message = msg_template.format(prefix=prefix)
+                        await self._async_send_tts_with_lights(
+                            room, media_player, message, volume, tts_settings
                         )
                     self._stove_powered_off_by_microwave[key] = False
                     self._stove_state[key] = "on"
@@ -744,13 +892,12 @@ class EnergyMonitor:
                                 if media_player:
                                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                                     msg_template = tts_settings.get("stove_15min_warn_msg", DEFAULT_STOVE_15MIN_WARN_MSG)
-                                    await async_send_tts(
-                                        self.hass, media_player=media_player,
-                                        message=msg_template.format(
-                                            prefix=prefix, cooking_time_minutes=cooking_time_minutes,
-                                            final_warning_seconds=final_warning_sec,
-                                        ),
-                                        language=tts_settings.get("language"), volume=volume,
+                                    message = msg_template.format(
+                                        prefix=prefix, cooking_time_minutes=cooking_time_minutes,
+                                        final_warning_seconds=final_warning_sec,
+                                    )
+                                    await self._async_send_tts_with_lights(
+                                        room, media_player, message, volume, tts_settings
                                     )
                                 self._stove_15min_warn_sent[key] = True
                                 _LOGGER.warning("Stove cooking-time warning - starting %ds countdown", final_warning_sec)
@@ -790,9 +937,9 @@ class EnergyMonitor:
                                     if media_player:
                                         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                                         msg_template = tts_settings.get("stove_auto_off_msg", DEFAULT_STOVE_AUTO_OFF_MSG)
-                                        await async_send_tts(
-                                            self.hass, media_player=media_player, message=msg_template.format(prefix=prefix),
-                                            language=tts_settings.get("language"), volume=volume,
+                                        message = msg_template.format(prefix=prefix)
+                                        await self._async_send_tts_with_lights(
+                                            room, media_player, message, volume, tts_settings
                                         )
                                     _LOGGER.warning("Stove automatically turned off for safety")
                                 except Exception as e:
