@@ -1802,109 +1802,39 @@ class EnergyPanel extends HTMLElement {
         letter-spacing: 0.5px;
       }
 
-      .breaker-settings-wrapper {
-          display: flex;
-        align-items: center;
-        gap: 6px;
+      .breaker-open-settings-btn {
         width: 100%;
-        justify-content: flex-end;
-      }
-
-      .breaker-label-right .breaker-settings-wrapper {
-        justify-content: flex-start;
-      }
-
-      .breaker-sensor-link-btn,
-      .breaker-threshold-btn {
-        padding: 4px 8px;
-        font-size: 9px;
+        padding: 8px 12px;
+        font-size: 10px;
+        font-weight: 600;
         background: rgba(30, 35, 45, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.6);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 3px;
-        color: rgba(255, 255, 255, 0.7);
+        color: rgba(255, 255, 255, 0.8);
         cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
         transition: all 0.2s ease;
         box-shadow: 
           inset 0 1px 2px rgba(0, 0, 0, 0.4),
           0 1px 1px rgba(0, 0, 0, 0.2);
       }
 
-      .breaker-sensor-link-btn:hover,
-      .breaker-threshold-btn:hover {
+      .breaker-open-settings-btn:hover {
         background: rgba(40, 45, 55, 0.9);
         border-color: rgba(90, 159, 212, 0.4);
-        color: rgba(255, 255, 255, 0.9);
+        color: rgba(255, 255, 255, 1);
         box-shadow: 
           inset 0 1px 2px rgba(0, 0, 0, 0.4),
           0 1px 1px rgba(0, 0, 0, 0.2),
-          0 0 6px rgba(90, 159, 212, 0.3);
-      }
-
-      .breaker-sensor-link-btn svg,
-      .breaker-threshold-btn svg {
-        width: 12px;
-        height: 12px;
-        opacity: 0.8;
-      }
-
-      .breaker-switch-toggle {
-          position: relative;
-        display: inline-block;
-        width: 36px;
-        height: 18px;
-        cursor: pointer;
-      }
-
-      .breaker-switch-toggle input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-      }
-
-      .breaker-switch-slider {
-          position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: rgba(40, 45, 55, 0.8);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        border-radius: 18px;
-        transition: 0.3s;
-        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
-      }
-
-      .breaker-switch-slider:before {
-        position: absolute;
-        content: "";
-        height: 14px;
-        width: 14px;
-        left: 2px;
-        bottom: 1px;
-        background-color: rgba(200, 200, 200, 0.9);
-        border-radius: 50%;
-        transition: 0.3s;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-      }
-
-      .breaker-switch-toggle input:checked + .breaker-switch-slider {
-        background-color: rgba(90, 159, 212, 0.6);
-        border-color: rgba(90, 159, 212, 0.4);
-      }
-
-      .breaker-switch-toggle input:checked + .breaker-switch-slider:before {
-        transform: translateX(18px);
-        background-color: rgba(90, 159, 212, 1);
-        box-shadow: 0 0 6px rgba(90, 159, 212, 0.6);
+          0 0 8px rgba(90, 159, 212, 0.3);
+        transform: translateY(-1px);
       }
 
       .breaker-row-delete-btn {
-        position: absolute;
+          position: absolute;
         top: 8px;
         right: 8px;
         width: 24px;
@@ -1950,7 +1880,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-tag-modal.active {
-        display: flex;
+          display: flex;
       }
 
       .breaker-tag-modal-content {
@@ -2008,8 +1938,8 @@ class EnergyPanel extends HTMLElement {
       .breaker-tag-modal-form {
         display: flex;
         flex-direction: column;
-        gap: 12px;
-      }
+          gap: 12px;
+        }
 
       .breaker-tag-modal-field {
         display: flex;
@@ -2241,14 +2171,16 @@ class EnergyPanel extends HTMLElement {
         text-transform: uppercase;
         letter-spacing: 1px;
         transition: all 0.3s ease;
+        width: 50%;
+        text-align: center;
       }
 
       .breaker-switch-label:first-of-type {
-        left: 50px;
+        left: 0;
       }
 
       .breaker-switch-label-off {
-        right: 50px;
+        right: 0;
         left: auto;
       }
 
@@ -3511,20 +3443,9 @@ class EnergyPanel extends HTMLElement {
                 <span class="breaker-tag-number">${String(leftBreakerNum).padStart(2, '0')}</span>
             </div>
                 </div>
-            <div class="breaker-settings-wrapper">
-              <button class="breaker-sensor-link-btn" data-breaker-num="${leftBreakerNum}" title="Link sensors">
-                <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                Link
-              </button>
-              <label class="breaker-switch-toggle">
-                <input type="checkbox" class="breaker-onoff-switch" data-breaker-num="${leftBreakerNum}">
-                <span class="breaker-switch-slider"></span>
-              </label>
-              <button class="breaker-threshold-btn" data-breaker-num="${leftBreakerNum}" title="Threshold settings">
-                <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-                Thresholds
-              </button>
-                    </div>
+            <button class="breaker-open-settings-btn" data-breaker-num="${leftBreakerNum}" title="Open settings">
+              Open Settings
+            </button>
                     </div>
           <div class="breaker-switch-container">
             <div class="breaker-switch" data-breaker-num="${leftBreakerNum}">
@@ -3545,20 +3466,9 @@ class EnergyPanel extends HTMLElement {
         </div>
               <input type="text" class="breaker-name-input breaker-label-text" placeholder="Breaker ${rightBreakerNum}" value="" data-breaker-num="${rightBreakerNum}">
             </div>
-            <div class="breaker-settings-wrapper">
-              <button class="breaker-sensor-link-btn" data-breaker-num="${rightBreakerNum}" title="Link sensors">
-                <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                Link
-              </button>
-              <label class="breaker-switch-toggle">
-                <input type="checkbox" class="breaker-onoff-switch" data-breaker-num="${rightBreakerNum}">
-                <span class="breaker-switch-slider"></span>
-              </label>
-              <button class="breaker-threshold-btn" data-breaker-num="${rightBreakerNum}" title="Threshold settings">
-                <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-                Thresholds
-              </button>
-            </div>
+            <button class="breaker-open-settings-btn" data-breaker-num="${rightBreakerNum}" title="Open settings">
+              Open Settings
+            </button>
           </div>
         </div>
       `;
@@ -4294,32 +4204,13 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
-    // Sensor link button
-    this.shadowRoot.querySelectorAll('.breaker-sensor-link-btn').forEach(btn => {
+    // Open Settings button
+    this.shadowRoot.querySelectorAll('.breaker-open-settings-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const breakerNum = btn.dataset.breakerNum;
-        // TODO: Open sensor linking dialog
-        console.log('Link sensors for breaker', breakerNum);
-      });
-    });
-
-    // On/off switch toggle
-    this.shadowRoot.querySelectorAll('.breaker-onoff-switch').forEach(toggle => {
-      toggle.addEventListener('change', (e) => {
-        const breakerNum = toggle.dataset.breakerNum;
-        // TODO: Handle on/off state
-        console.log('On/off switch for breaker', breakerNum, e.target.checked);
-      });
-    });
-
-    // Threshold button
-    this.shadowRoot.querySelectorAll('.breaker-threshold-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const breakerNum = btn.dataset.breakerNum;
-        // TODO: Open threshold settings dialog
-        console.log('Threshold settings for breaker', breakerNum);
+        // TODO: Open settings dialog/modal for this breaker
+        console.log('Open settings for breaker', breakerNum);
       });
     });
 
