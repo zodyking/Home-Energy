@@ -1713,6 +1713,41 @@ class EnergyPanel extends HTMLElement {
         position: relative;
       }
 
+      @media (max-width: 768px) {
+        .breaker-panel-row {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+
+        .breaker-switch-container {
+          order: 2;
+          display: flex;
+          justify-content: center;
+          gap: 12px;
+        }
+
+        .breaker-label-left,
+        .breaker-label-right {
+          order: 1;
+          width: 100%;
+          padding: 0;
+          align-items: stretch;
+        }
+
+        .breaker-panel-card {
+          min-width: auto;
+          width: 100%;
+        }
+
+        .breaker-panel-outer {
+          padding: 12px;
+        }
+
+        .breaker-panel-inner {
+          padding: 12px;
+        }
+      }
+
       .breaker-panel-row::before {
         content: "";
           position: absolute;
@@ -1735,8 +1770,8 @@ class EnergyPanel extends HTMLElement {
         text-align: right;
         padding-right: 12px;
           display: flex;
-        flex-direction: column;
-        gap: 8px;
+          flex-direction: column;
+          gap: 8px;
         align-items: flex-end;
       }
 
@@ -1805,8 +1840,8 @@ class EnergyPanel extends HTMLElement {
       .breaker-open-settings-btn {
         width: 100%;
         padding: 8px 12px;
-        font-size: 10px;
-        font-weight: 600;
+          font-size: 10px;
+          font-weight: 600;
         background: rgba(30, 35, 45, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.6);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
@@ -1871,7 +1906,7 @@ class EnergyPanel extends HTMLElement {
         position: fixed;
         top: 0;
         left: 0;
-        width: 100%;
+          width: 100%;
         height: 100%;
         background: rgba(0, 0, 0, 0.7);
         z-index: 10000;
@@ -1899,7 +1934,7 @@ class EnergyPanel extends HTMLElement {
       .breaker-tag-modal-header {
         display: flex;
         justify-content: space-between;
-        align-items: center;
+          align-items: center;
         margin-bottom: 16px;
         padding-bottom: 12px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
@@ -1973,7 +2008,7 @@ class EnergyPanel extends HTMLElement {
       .breaker-tag-modal-number-input:focus {
         outline: none;
         border-color: rgba(90, 159, 212, 0.5);
-        box-shadow: 
+          box-shadow: 
           inset 0 1px 2px rgba(0, 0, 0, 0.4),
           0 0 8px rgba(90, 159, 212, 0.3);
       }
@@ -2030,6 +2065,167 @@ class EnergyPanel extends HTMLElement {
         background: rgba(90, 159, 212, 0.8);
       }
 
+      .breaker-settings-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 10001;
+          align-items: center;
+        justify-content: center;
+      }
+
+      .breaker-settings-modal.active {
+        display: flex;
+      }
+
+      .breaker-settings-modal-content {
+        background: linear-gradient(180deg, #2d3441 0%, #1f252e 100%);
+        border: 2px solid rgba(0, 0, 0, 0.8);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        padding: 20px;
+        min-width: 400px;
+        max-width: 90vw;
+        max-height: 90vh;
+        overflow-y: auto;
+          box-shadow: 
+          inset 0 2px 4px rgba(0, 0, 0, 0.6),
+          0 4px 12px rgba(0, 0, 0, 0.8);
+      }
+
+      .breaker-settings-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .breaker-settings-modal-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.9);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .breaker-settings-modal-close {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: rgba(200, 50, 50, 0.8);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        color: white;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+          transition: all 0.2s ease;
+        }
+
+      .breaker-settings-modal-close:hover {
+        background: rgba(220, 70, 70, 1);
+        transform: scale(1.1);
+      }
+
+      .breaker-settings-modal-form {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .breaker-settings-modal-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .breaker-settings-modal-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.8);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .breaker-settings-modal-input {
+        padding: 8px 12px;
+        background: rgba(20, 25, 35, 0.8);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 4px;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 13px;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+        transition: all 0.2s ease;
+      }
+
+      .breaker-settings-modal-input:focus {
+        outline: none;
+        border-color: rgba(90, 159, 212, 0.5);
+          box-shadow: 
+          inset 0 1px 2px rgba(0, 0, 0, 0.4),
+          0 0 8px rgba(90, 159, 212, 0.3);
+      }
+
+      .breaker-settings-modal-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .breaker-settings-modal-btn {
+        flex: 1;
+        padding: 10px 16px;
+        background: rgba(40, 45, 55, 0.8);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 4px;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        transition: all 0.2s ease;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+      }
+
+      .breaker-settings-modal-btn:hover {
+        background: rgba(50, 55, 65, 0.9);
+        border-color: rgba(90, 159, 212, 0.4);
+          box-shadow: 
+          inset 0 1px 2px rgba(0, 0, 0, 0.4),
+          0 0 6px rgba(90, 159, 212, 0.3);
+      }
+
+      .breaker-settings-modal-btn.primary {
+        background: rgba(90, 159, 212, 0.6);
+      }
+
+      .breaker-settings-modal-btn.primary:hover {
+        background: rgba(90, 159, 212, 0.8);
+      }
+
+      @media (max-width: 768px) {
+        .breaker-settings-modal-content {
+          min-width: auto;
+          width: 95vw;
+          padding: 16px;
+        }
+      }
+
       .breaker-label-text {
         font-size: 10px;
         font-weight: 700;
@@ -2043,7 +2239,7 @@ class EnergyPanel extends HTMLElement {
         padding: 5px 10px;
         min-width: 130px;
         text-align: center;
-          box-shadow: 
+            box-shadow: 
           inset 0 2px 3px rgba(0, 0, 0, 0.5),
           inset 0 1px 0 rgba(255, 255, 255, 0.15),
           0 1px 1px rgba(0, 0, 0, 0.3);
@@ -3424,6 +3620,58 @@ class EnergyPanel extends HTMLElement {
     return null;
   }
 
+  _openBreakerSettingsModal(breakerNum) {
+    const modal = this.shadowRoot.getElementById('breaker-settings-modal');
+    if (!modal) return;
+
+    // Get current breaker settings (TODO: load from config)
+    const breakerSettings = this._config?.breakers?.[breakerNum] || {};
+    const consumptionSensor = breakerSettings.consumption_sensor || '';
+    const switchSensor = breakerSettings.switch_sensor || '';
+    const warningThreshold = breakerSettings.warning_threshold || 0;
+    const shutoffThreshold = breakerSettings.shutoff_threshold || 0;
+
+    // Set breaker number in modal
+    modal.dataset.breakerNum = breakerNum;
+
+    // Populate consumption sensor field
+    const consumptionContainer = this.shadowRoot.getElementById('breaker-settings-consumption-sensor-container');
+    if (consumptionContainer) {
+      consumptionContainer.innerHTML = this._renderEntityAutocomplete(
+        consumptionSensor,
+        'sensor',
+        0, // roomIndex - using 0 as default, could be improved
+        'breaker-consumption-sensor',
+        'sensor.kitchen_power'
+      );
+    }
+
+    // Populate switch sensor field
+    const switchContainer = this.shadowRoot.getElementById('breaker-settings-switch-sensor-container');
+    if (switchContainer) {
+      switchContainer.innerHTML = this._renderEntityAutocomplete(
+        switchSensor,
+        'switch',
+        0, // roomIndex - using 0 as default, could be improved
+        'breaker-switch-sensor',
+        'switch.kitchen_outlet'
+      );
+    }
+
+    // Populate threshold fields
+    const warningInput = this.shadowRoot.getElementById('breaker-settings-warning-threshold');
+    if (warningInput) warningInput.value = warningThreshold;
+
+    const shutoffInput = this.shadowRoot.getElementById('breaker-settings-shutoff-threshold');
+    if (shutoffInput) shutoffInput.value = shutoffThreshold;
+
+    // Initialize entity autocompletes
+    this._initEntityAutocompletes(modal);
+
+    // Show modal
+    modal.classList.add('active');
+  }
+
   _renderBreakerPanelCard() {
     const rows = this._breakerRows || 6;
     const defaultRows = 6;
@@ -3511,6 +3759,40 @@ class EnergyPanel extends HTMLElement {
               <div class="breaker-tag-modal-actions">
                 <button class="breaker-tag-modal-btn" id="breaker-tag-modal-cancel">Cancel</button>
                 <button class="breaker-tag-modal-btn primary" id="breaker-tag-modal-save">Save</button>
+            </div>
+          </div>
+        </div>
+        <div class="breaker-settings-modal" id="breaker-settings-modal">
+          <div class="breaker-settings-modal-content">
+            <div class="breaker-settings-modal-header">
+              <div class="breaker-settings-modal-title">Breaker Settings</div>
+              <button class="breaker-settings-modal-close" id="breaker-settings-modal-close">×</button>
+            </div>
+            <div class="breaker-settings-modal-form">
+              <div class="breaker-settings-modal-field">
+                <label class="breaker-settings-modal-label">Power Consumption Sensor</label>
+                <div id="breaker-settings-consumption-sensor-container"></div>
+                <div style="font-size: 10px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Sensor entity for power consumption monitoring</div>
+              </div>
+              <div class="breaker-settings-modal-field">
+                <label class="breaker-settings-modal-label">Switch Sensor</label>
+                <div id="breaker-settings-switch-sensor-container"></div>
+                <div style="font-size: 10px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Switch entity for on/off control</div>
+              </div>
+              <div class="breaker-settings-modal-field">
+                <label class="breaker-settings-modal-label">Warning Threshold (W)</label>
+                <input type="number" class="breaker-settings-modal-input" id="breaker-settings-warning-threshold" min="0" step="1" placeholder="0">
+                <div style="font-size: 10px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Warning when power exceeds this value</div>
+              </div>
+              <div class="breaker-settings-modal-field">
+                <label class="breaker-settings-modal-label">Shutoff Threshold (W)</label>
+                <input type="number" class="breaker-settings-modal-input" id="breaker-settings-shutoff-threshold" min="0" step="1" placeholder="0">
+                <div style="font-size: 10px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Automatically shut off when power exceeds this value</div>
+              </div>
+              <div class="breaker-settings-modal-actions">
+                <button class="breaker-settings-modal-btn" id="breaker-settings-modal-cancel">Cancel</button>
+                <button class="breaker-settings-modal-btn primary" id="breaker-settings-modal-save">Save</button>
+              </div>
             </div>
           </div>
         </div>
@@ -4158,6 +4440,41 @@ class EnergyPanel extends HTMLElement {
     if (modalClose) modalClose.addEventListener('click', closeModal);
     if (modalCancel) modalCancel.addEventListener('click', closeModal);
 
+    // Breaker settings modal close and cancel
+    const settingsModalClose = this.shadowRoot.getElementById('breaker-settings-modal-close');
+    const settingsModalCancel = this.shadowRoot.getElementById('breaker-settings-modal-cancel');
+    const closeSettingsModal = () => {
+      const modal = this.shadowRoot.getElementById('breaker-settings-modal');
+      if (modal) modal.classList.remove('active');
+    };
+    if (settingsModalClose) settingsModalClose.addEventListener('click', closeSettingsModal);
+    if (settingsModalCancel) settingsModalCancel.addEventListener('click', closeSettingsModal);
+
+    // Breaker settings modal save
+    const settingsModalSave = this.shadowRoot.getElementById('breaker-settings-modal-save');
+    if (settingsModalSave) {
+      settingsModalSave.addEventListener('click', () => {
+        const modal = this.shadowRoot.getElementById('breaker-settings-modal');
+        const breakerNum = modal?.dataset.breakerNum;
+        if (breakerNum) {
+          const consumptionSensor = this.shadowRoot.querySelector('#breaker-settings-consumption-sensor-container .entity-datalist-input')?.value?.trim() || '';
+          const switchSensor = this.shadowRoot.querySelector('#breaker-settings-switch-sensor-container .entity-datalist-input')?.value?.trim() || '';
+          const warningThreshold = parseInt(this.shadowRoot.getElementById('breaker-settings-warning-threshold')?.value, 10) || 0;
+          const shutoffThreshold = parseInt(this.shadowRoot.getElementById('breaker-settings-shutoff-threshold')?.value, 10) || 0;
+          
+          // Store settings (TODO: save to config)
+          console.log('Save breaker settings:', {
+            breakerNum,
+            consumptionSensor,
+            switchSensor,
+            warningThreshold,
+            shutoffThreshold
+          });
+        }
+        closeSettingsModal();
+      });
+    }
+
     // Modal save
     const modalSave = this.shadowRoot.getElementById('breaker-tag-modal-save');
     if (modalSave) {
@@ -4209,8 +4526,7 @@ class EnergyPanel extends HTMLElement {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const breakerNum = btn.dataset.breakerNum;
-        // TODO: Open settings dialog/modal for this breaker
-        console.log('Open settings for breaker', breakerNum);
+        this._openBreakerSettingsModal(breakerNum);
       });
     });
 
