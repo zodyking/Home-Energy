@@ -1738,62 +1738,6 @@ class EnergyPanel extends HTMLElement {
         .breaker-panel-card {
           width: min(98vw, 100%);
           max-width: 98vw;
-          padding: clamp(8px, 2vw, 16px);
-        }
-
-        .breaker-panel-outer {
-          padding: clamp(6px, 1.5vw, 12px);
-        }
-
-        .breaker-panel-inner {
-          padding: clamp(8px, 2vw, 16px);
-          min-height: clamp(250px, 60vh, 300px);
-        }
-
-        .breaker-panel-row {
-          gap: clamp(4px, 1vw, 8px);
-          padding: clamp(4px, 1vw, 8px) 0;
-        }
-
-        .breaker-switch {
-          width: clamp(70px, 12vw, 90px);
-          height: clamp(28px, 5vw, 36px);
-        }
-
-        .breaker-switch-handle {
-          width: clamp(18px, 3.5vw, 24px);
-          height: clamp(18px, 3.5vw, 24px);
-        }
-
-        .breaker-label-text {
-          font-size: clamp(7px, 1vw, 8px);
-          padding: clamp(3px, 0.6vw, 4px) clamp(6px, 1.2vw, 8px);
-          min-width: clamp(80px, 12vw, 100px);
-        }
-
-        .breaker-open-settings-btn {
-          padding: clamp(4px, 0.8vw, 6px) clamp(8px, 1.5vw, 10px);
-          font-size: clamp(7px, 1vw, 8px);
-        }
-
-        .breaker-color-tag {
-          width: clamp(16px, 3vw, 20px);
-          height: clamp(16px, 3vw, 20px);
-        }
-
-        .breaker-label-text {
-          padding-left: clamp(16px, 3vw, 20px);
-        }
-
-        .breaker-label-right .breaker-label-text {
-          padding-right: clamp(16px, 3vw, 20px);
-        }
-      }
-
-      @media (max-width: 375px) {
-        .breaker-panel-card {
-          width: 100vw;
-          max-width: 100vw;
           padding: clamp(6px, 1.5vw, 12px);
         }
 
@@ -1803,33 +1747,43 @@ class EnergyPanel extends HTMLElement {
 
         .breaker-panel-inner {
           padding: clamp(6px, 1.5vw, 12px);
-          min-height: clamp(200px, 55vh, 250px);
+          min-height: clamp(250px, 60vh, 300px);
         }
 
         .breaker-panel-row {
           gap: clamp(3px, 0.8vw, 6px);
           padding: clamp(3px, 0.8vw, 6px) 0;
+          grid-template-columns: 1fr auto 1fr;
         }
 
         .breaker-switch {
-          width: clamp(60px, 10vw, 70px);
-          height: clamp(24px, 4.5vw, 28px);
+          width: clamp(60px, 10vw, 75px);
+          height: clamp(24px, 4.5vw, 30px);
         }
 
         .breaker-switch-handle {
-          width: clamp(16px, 3vw, 18px);
-          height: clamp(16px, 3vw, 18px);
+          width: clamp(16px, 3vw, 20px);
+          height: clamp(16px, 3vw, 20px);
           left: clamp(4px, 0.8vw, 6px);
         }
 
         .breaker-switch.on .breaker-switch-handle {
-          left: calc(100% - clamp(22px, 4vw, 26px));
+          left: calc(100% - clamp(22px, 4vw, 28px));
+        }
+
+        .breaker-switch-right .breaker-switch-handle {
+          right: clamp(4px, 0.8vw, 6px);
+        }
+
+        .breaker-switch-right.on .breaker-switch-handle {
+          left: clamp(4px, 0.8vw, 6px);
+          right: auto;
         }
 
         .breaker-label-text {
           font-size: clamp(6px, 0.9vw, 7px);
-          padding: clamp(2px, 0.5vw, 3px) clamp(5px, 1vw, 6px);
-          min-width: clamp(70px, 10vw, 80px);
+          padding: clamp(2px, 0.5vw, 3px) clamp(4px, 0.8vw, 6px);
+          min-width: clamp(70px, 10vw, 85px);
         }
 
         .breaker-open-settings-btn {
@@ -1838,16 +1792,89 @@ class EnergyPanel extends HTMLElement {
         }
 
         .breaker-color-tag {
-          width: clamp(14px, 2.5vw, 16px);
-          height: clamp(14px, 2.5vw, 16px);
+          width: clamp(14px, 2.5vw, 18px);
+          height: clamp(14px, 2.5vw, 18px);
         }
 
         .breaker-label-text {
-          padding-left: clamp(14px, 2.5vw, 16px);
+          padding-left: clamp(14px, 2.5vw, 18px);
         }
 
         .breaker-label-right .breaker-label-text {
-          padding-right: clamp(14px, 2.5vw, 16px);
+          padding-left: clamp(14px, 2.5vw, 18px);
+          padding-right: 0;
+        }
+      }
+
+      @media (max-width: 375px) {
+        .breaker-panel-card {
+          width: 100vw;
+          max-width: 100vw;
+          padding: clamp(4px, 1.2vw, 8px);
+        }
+
+        .breaker-panel-outer {
+          padding: clamp(3px, 1vw, 6px);
+        }
+
+        .breaker-panel-inner {
+          padding: clamp(4px, 1.2vw, 8px);
+          min-height: clamp(200px, 55vh, 250px);
+        }
+
+        .breaker-panel-row {
+          gap: clamp(2px, 0.6vw, 4px);
+          padding: clamp(2px, 0.6vw, 4px) 0;
+          grid-template-columns: 1fr auto 1fr;
+        }
+
+        .breaker-switch {
+          width: clamp(50px, 8.5vw, 60px);
+          height: clamp(20px, 4vw, 24px);
+        }
+
+        .breaker-switch-handle {
+          width: clamp(14px, 2.5vw, 16px);
+          height: clamp(14px, 2.5vw, 16px);
+          left: clamp(3px, 0.6vw, 4px);
+        }
+
+        .breaker-switch.on .breaker-switch-handle {
+          left: calc(100% - clamp(18px, 3.5vw, 22px));
+        }
+
+        .breaker-switch-right .breaker-switch-handle {
+          right: clamp(3px, 0.6vw, 4px);
+        }
+
+        .breaker-switch-right.on .breaker-switch-handle {
+          left: clamp(3px, 0.6vw, 4px);
+          right: auto;
+        }
+
+        .breaker-label-text {
+          font-size: clamp(5px, 0.8vw, 6px);
+          padding: clamp(2px, 0.4vw, 2px) clamp(3px, 0.6vw, 4px);
+          min-width: clamp(60px, 8vw, 70px);
+        }
+
+        .breaker-open-settings-btn {
+          padding: clamp(2px, 0.5vw, 3px) clamp(4px, 1vw, 6px);
+          font-size: clamp(5px, 0.8vw, 6px);
+        }
+
+        .breaker-color-tag {
+          width: clamp(12px, 2vw, 14px);
+          height: clamp(12px, 2vw, 14px);
+        }
+
+        .breaker-label-text {
+          padding-left: clamp(12px, 2vw, 14px);
+        }
+
+        .breaker-label-right .breaker-label-text {
+          padding-left: clamp(12px, 2vw, 14px);
+          padding-right: 0;
         }
       }
 
@@ -1879,12 +1906,13 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-label-right {
-        text-align: left;
+        text-align: right;
         padding-left: clamp(8px, 1.8vw, 12px);
+        padding-right: 0;
         display: flex;
         flex-direction: column;
         gap: clamp(6px, 1.2vw, 8px);
-        align-items: flex-start;
+        align-items: flex-end;
       }
 
       .breaker-label-with-tag {
@@ -1903,7 +1931,8 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-label-right .breaker-label-with-tag {
-        flex-direction: row;
+        flex-direction: row-reverse;
+        justify-content: flex-end;
       }
 
       .breaker-color-tag {
@@ -1938,8 +1967,9 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-label-right .breaker-label-text {
-        padding-left: 0;
-        padding-right: clamp(20px, 3.5vw, 28px);
+        padding-left: clamp(20px, 3.5vw, 28px);
+        padding-right: 0;
+        text-align: right;
       }
 
       .breaker-color-tag:hover {
@@ -3797,6 +3827,7 @@ class EnergyPanel extends HTMLElement {
   }
 
   _openBreakerSettingsModal(breakerNum) {
+    console.log('_openBreakerSettingsModal called with breakerNum:', breakerNum);
     const modal = this.shadowRoot.getElementById('breaker-settings-modal');
     if (!modal) {
       console.error('Breaker settings modal not found in DOM');
@@ -3807,6 +3838,8 @@ class EnergyPanel extends HTMLElement {
       console.error('Breaker number not provided');
       return;
     }
+
+    console.log('Opening breaker settings modal for breaker:', breakerNum);
 
     // Get current breaker settings (TODO: load from config)
     const breakerSettings = this._config?.breakers?.[breakerNum] || {};
@@ -3876,6 +3909,17 @@ class EnergyPanel extends HTMLElement {
 
     // Show modal
     modal.classList.add('active');
+    console.log('Modal should now be visible. Modal classes:', modal.className);
+    
+    // Double-check modal is visible
+    setTimeout(() => {
+      const isVisible = modal.classList.contains('active');
+      console.log('Modal visibility check after 100ms:', isVisible);
+      if (!isVisible) {
+        console.error('Modal did not become visible! Forcing active class.');
+        modal.classList.add('active');
+      }
+    }, 100);
   }
 
   _renderBreakerPanelCard() {
@@ -3897,7 +3941,7 @@ class EnergyPanel extends HTMLElement {
                 <span class="breaker-tag-number">${String(leftBreakerNum).padStart(2, '0')}</span>
             </div>
                 </div>
-            <button class="breaker-open-settings-btn" data-breaker-num="${leftBreakerNum}" title="Open settings">
+            <button type="button" class="breaker-open-settings-btn" data-breaker-num="${leftBreakerNum}" title="Open settings">
               Open Settings
             </button>
                     </div>
@@ -3920,7 +3964,7 @@ class EnergyPanel extends HTMLElement {
         </div>
               <input type="text" class="breaker-name-input breaker-label-text" placeholder="Breaker ${rightBreakerNum}" value="" data-breaker-num="${rightBreakerNum}">
             </div>
-            <button class="breaker-open-settings-btn" data-breaker-num="${rightBreakerNum}" title="Open settings">
+            <button type="button" class="breaker-open-settings-btn" data-breaker-num="${rightBreakerNum}" title="Open settings">
               Open Settings
             </button>
           </div>
@@ -4621,6 +4665,12 @@ class EnergyPanel extends HTMLElement {
     this.shadowRoot.querySelectorAll('.breaker-color-tag').forEach(tag => {
       tag.addEventListener('click', (e) => {
         e.stopPropagation();
+        e.preventDefault();
+        // Close breaker settings modal if open
+        const settingsModal = this.shadowRoot.getElementById('breaker-settings-modal');
+        if (settingsModal) {
+          settingsModal.classList.remove('active');
+        }
         const breakerNum = tag.dataset.breakerNum;
         const modal = this.shadowRoot.getElementById('breaker-tag-modal');
         const numberInput = this.shadowRoot.getElementById('breaker-tag-number-input');
@@ -4731,16 +4781,31 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
-    // Open Settings button
+    // Open Settings button - remove old listeners first to prevent duplicates
     this.shadowRoot.querySelectorAll('.breaker-open-settings-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      // Clone the button to remove all event listeners
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      
+      // Add fresh event listener
+      newBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         e.preventDefault();
-        const breakerNum = btn.dataset.breakerNum;
+        e.stopImmediatePropagation();
+        
+        // Close color tag modal if open
+        const tagModal = this.shadowRoot.getElementById('breaker-tag-modal');
+        if (tagModal) {
+          tagModal.classList.remove('active');
+        }
+        
+        const breakerNum = newBtn.dataset.breakerNum;
+        console.log('Open Settings clicked for breaker:', breakerNum);
+        
         if (breakerNum) {
           this._openBreakerSettingsModal(breakerNum);
         } else {
-          console.error('Breaker number not found in button dataset');
+          console.error('Breaker number not found in button dataset. Button:', newBtn);
         }
       });
     });
