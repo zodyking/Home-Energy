@@ -1580,7 +1580,7 @@ class EnergyPanel extends HTMLElement {
       .breaker-panel-container {
           display: flex;
           justify-content: center;
-          padding: 20px;
+          padding: clamp(12px, 2.8vw, 20px);
         }
 
         .breaker-panel-card {
@@ -1588,11 +1588,11 @@ class EnergyPanel extends HTMLElement {
         background: 
           radial-gradient(ellipse at 30% 20%, rgba(120, 130, 150, 0.3) 0%, transparent 50%),
           linear-gradient(135deg, #4a5568 0%, #3d4756 30%, #2d3441 70%, #252a35 100%);
-        border: 3px solid rgba(0, 0, 0, 0.6);
-        border-top: 2px solid rgba(255, 255, 255, 0.15);
-        border-left: 2px solid rgba(255, 255, 255, 0.1);
-        border-radius: 8px;
-        padding: 24px;
+        border: clamp(2px, 0.4vw, 3px) solid rgba(0, 0, 0, 0.6);
+        border-top: clamp(1px, 0.3vw, 2px) solid rgba(255, 255, 255, 0.15);
+        border-left: clamp(1px, 0.3vw, 2px) solid rgba(255, 255, 255, 0.1);
+        border-radius: clamp(6px, 1.2vw, 8px);
+        padding: clamp(16px, 3.5vw, 24px);
           box-shadow: 
           0 12px 24px rgba(0, 0, 0, 0.5),
           0 4px 8px rgba(0, 0, 0, 0.3),
@@ -1604,8 +1604,8 @@ class EnergyPanel extends HTMLElement {
 
         .breaker-panel-screw {
           position: absolute;
-          width: 10px;
-          height: 10px;
+          width: clamp(7px, 1.3vw, 10px);
+          height: clamp(7px, 1.3vw, 10px);
           border-radius: 50%;
           background: linear-gradient(#d8d8d8, #bdbdbd);
           border: 1px solid rgba(0, 0, 0, 0.25);
@@ -1618,54 +1618,54 @@ class EnergyPanel extends HTMLElement {
           position: absolute;
           left: 50%;
           top: 50%;
-          width: 10px;
-          height: 2px;
+          width: clamp(7px, 1.3vw, 10px);
+          height: clamp(1px, 0.3vw, 2px);
           transform: translate(-50%, -50%);
           background: rgba(0,0,0,0.35);
-          border-radius: 1px;
+          border-radius: clamp(0.5px, 0.15vw, 1px);
         }
 
         .breaker-panel-screw.top-center {
-          top: 8px;
+          top: clamp(6px, 1.2vw, 8px);
           left: 50%;
           transform: translateX(-50%);
         }
 
         .breaker-panel-screw.bottom-center {
-          bottom: 8px;
+          bottom: clamp(6px, 1.2vw, 8px);
           left: 50%;
           transform: translateX(-50%);
         }
 
         .breaker-panel-screw.left-1 {
-          left: 8px;
+          left: clamp(6px, 1.2vw, 8px);
           top: 20%;
         }
 
         .breaker-panel-screw.left-2 {
-          left: 8px;
+          left: clamp(6px, 1.2vw, 8px);
           top: 50%;
           transform: translateY(-50%);
         }
 
         .breaker-panel-screw.left-3 {
-          left: 8px;
+          left: clamp(6px, 1.2vw, 8px);
           bottom: 20%;
         }
 
         .breaker-panel-screw.right-1 {
-          right: 8px;
+          right: clamp(6px, 1.2vw, 8px);
           top: 20%;
         }
 
         .breaker-panel-screw.right-2 {
-          right: 8px;
+          right: clamp(6px, 1.2vw, 8px);
           top: 50%;
           transform: translateY(-50%);
         }
 
         .breaker-panel-screw.right-3 {
-          right: 8px;
+          right: clamp(6px, 1.2vw, 8px);
           bottom: 20%;
         }
 
@@ -1673,11 +1673,11 @@ class EnergyPanel extends HTMLElement {
         background: 
           radial-gradient(ellipse at 25% 25%, rgba(100, 110, 130, 0.4) 0%, transparent 60%),
           linear-gradient(135deg, #5a6578 0%, #4a5568 40%, #3d4756 100%);
-        border: 2px solid rgba(0, 0, 0, 0.7);
+        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.7);
         border-top: 1px solid rgba(255, 255, 255, 0.12);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 6px;
-        padding: 18px;
+          border-radius: clamp(4px, 0.8vw, 6px);
+        padding: clamp(10px, 2.5vw, 18px);
           box-shadow: 
           inset 0 3px 6px rgba(0, 0, 0, 0.5),
           inset 0 1px 0 rgba(255, 255, 255, 0.1),
@@ -1689,12 +1689,12 @@ class EnergyPanel extends HTMLElement {
         background: 
           radial-gradient(ellipse at 50% 0%, rgba(40, 45, 55, 0.6) 0%, transparent 70%),
           linear-gradient(180deg, #2d3441 0%, #252a35 30%, #1f252e 60%, #1a1f26 100%);
-        border: 2px solid rgba(0, 0, 0, 0.8);
+        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.8);
         border-top: 1px solid rgba(255, 255, 255, 0.08);
         border-left: 1px solid rgba(255, 255, 255, 0.05);
-          border-radius: 4px;
-          padding: 20px;
-        min-height: 400px;
+          border-radius: clamp(3px, 0.6vw, 4px);
+          padding: clamp(12px, 2.8vw, 20px);
+        min-height: clamp(300px, 50vw, 400px);
           box-shadow: 
           inset 0 4px 8px rgba(0, 0, 0, 0.6),
           inset 0 1px 0 rgba(255, 255, 255, 0.05),
@@ -1705,9 +1705,9 @@ class EnergyPanel extends HTMLElement {
         .breaker-panel-row {
           display: grid;
         grid-template-columns: 1fr auto 1fr;
-          gap: 14px;
+          gap: clamp(10px, 2vw, 14px);
         align-items: center;
-        padding: 10px 0;
+        padding: clamp(8px, 1.5vw, 10px) 0;
         border-bottom: 1px solid rgba(0, 0, 0, 0.4);
         border-top: 1px solid rgba(255, 255, 255, 0.03);
         position: relative;
@@ -1715,22 +1715,21 @@ class EnergyPanel extends HTMLElement {
 
       @media (max-width: 768px) {
         .breaker-panel-card {
-          transform: scale(0.85);
-          transform-origin: top center;
+          width: min(95vw, 100%);
+          max-width: 95vw;
         }
-      }
 
-      @media (max-width: 600px) {
-        .breaker-panel-card {
-          transform: scale(0.7);
-          transform-origin: top center;
+        .breaker-panel-outer {
+          padding: clamp(8px, 2vw, 18px);
         }
-      }
 
-      @media (max-width: 480px) {
-        .breaker-panel-card {
-          transform: scale(0.6);
-          transform-origin: top center;
+        .breaker-panel-inner {
+          padding: clamp(10px, 2.5vw, 20px);
+        }
+
+        .breaker-panel-row {
+          gap: clamp(8px, 1.5vw, 14px);
+          padding: clamp(6px, 1.2vw, 10px) 0;
         }
       }
 
@@ -1754,26 +1753,26 @@ class EnergyPanel extends HTMLElement {
 
       .breaker-label-left {
         text-align: right;
-        padding-right: 12px;
+        padding-right: clamp(8px, 1.8vw, 12px);
           display: flex;
           flex-direction: column;
-          gap: 8px;
+          gap: clamp(6px, 1.2vw, 8px);
         align-items: flex-end;
       }
 
       .breaker-label-right {
         text-align: left;
-        padding-left: 12px;
+        padding-left: clamp(8px, 1.8vw, 12px);
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: clamp(6px, 1.2vw, 8px);
         align-items: flex-start;
       }
 
       .breaker-label-with-tag {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: clamp(4px, 1vw, 6px);
         width: 100%;
       }
 
@@ -1791,8 +1790,8 @@ class EnergyPanel extends HTMLElement {
 
       .breaker-color-tag {
           position: absolute;
-        width: 28px;
-        height: 28px;
+        width: clamp(20px, 3.5vw, 28px);
+        height: clamp(20px, 3.5vw, 28px);
         top: 0;
         left: 0;
         clip-path: polygon(0 0, 100% 0, 0 100%);
@@ -1802,7 +1801,7 @@ class EnergyPanel extends HTMLElement {
         cursor: pointer;
         z-index: 10;
         transition: all 0.2s ease;
-        border-top-left-radius: 2px;
+        border-top-left-radius: clamp(1px, 0.3vw, 2px);
       }
 
       .breaker-label-right .breaker-color-tag {
@@ -1817,12 +1816,12 @@ class EnergyPanel extends HTMLElement {
 
       .breaker-label-text {
         position: relative;
-        padding-left: 28px;
+        padding-left: clamp(20px, 3.5vw, 28px);
       }
 
       .breaker-label-right .breaker-label-text {
         padding-left: 0;
-        padding-right: 28px;
+        padding-right: clamp(20px, 3.5vw, 28px);
       }
 
       .breaker-color-tag:hover {
@@ -1836,15 +1835,15 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-tag-number {
-        font-size: 9px;
+        font-size: clamp(7px, 1.1vw, 9px);
         font-weight: 700;
         color: rgba(255, 255, 255, 1);
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
         font-family: 'Courier New', monospace;
-        letter-spacing: 0.3px;
-        position: absolute;
-        top: 2px;
-        left: 2px;
+        letter-spacing: clamp(0.2px, 0.04vw, 0.3px);
+          position: absolute;
+        top: clamp(1px, 0.3vw, 2px);
+        left: clamp(1px, 0.3vw, 2px);
         line-height: 1;
       }
 
@@ -1855,18 +1854,18 @@ class EnergyPanel extends HTMLElement {
 
       .breaker-open-settings-btn {
         width: 100%;
-        padding: 8px 12px;
-          font-size: 10px;
+        padding: clamp(6px, 1.2vw, 8px) clamp(10px, 1.8vw, 12px);
+          font-size: clamp(8px, 1.2vw, 10px);
           font-weight: 600;
         background: rgba(30, 35, 45, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.6);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 3px;
+        border-radius: clamp(2px, 0.4vw, 3px);
         color: rgba(255, 255, 255, 0.8);
         cursor: pointer;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
         transition: all 0.2s ease;
         box-shadow: 
           inset 0 1px 2px rgba(0, 0, 0, 0.4),
@@ -1886,18 +1885,18 @@ class EnergyPanel extends HTMLElement {
 
       .breaker-row-delete-btn {
           position: absolute;
-        top: 8px;
-        right: 8px;
-        width: 24px;
-        height: 24px;
+        top: clamp(6px, 1.2vw, 8px);
+        right: clamp(6px, 1.2vw, 8px);
+        width: clamp(18px, 3.5vw, 24px);
+        height: clamp(18px, 3.5vw, 24px);
         border-radius: 50%;
         background: rgba(200, 50, 50, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.6);
         color: white;
-        font-size: 18px;
+        font-size: clamp(14px, 2.5vw, 18px);
         font-weight: bold;
         cursor: pointer;
-        display: flex;
+          display: flex;
         align-items: center;
         justify-content: center;
         line-height: 1;
@@ -1936,12 +1935,12 @@ class EnergyPanel extends HTMLElement {
 
       .breaker-tag-modal-content {
         background: linear-gradient(180deg, #2d3441 0%, #1f252e 100%);
-        border: 2px solid rgba(0, 0, 0, 0.8);
+        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.8);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 8px;
-        padding: 20px;
-        min-width: 280px;
+        border-radius: clamp(6px, 1.2vw, 8px);
+        padding: clamp(12px, 2.8vw, 20px);
+        min-width: clamp(240px, 40vw, 280px);
         box-shadow: 
           inset 0 2px 4px rgba(0, 0, 0, 0.6),
           0 4px 12px rgba(0, 0, 0, 0.8);
@@ -1951,27 +1950,27 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         justify-content: space-between;
           align-items: center;
-        margin-bottom: 16px;
-        padding-bottom: 12px;
+        margin-bottom: clamp(12px, 2.2vw, 16px);
+        padding-bottom: clamp(8px, 1.8vw, 12px);
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       }
 
       .breaker-tag-modal-title {
-        font-size: 14px;
+        font-size: clamp(12px, 2vw, 14px);
         font-weight: 700;
         color: rgba(255, 255, 255, 0.9);
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
       }
 
       .breaker-tag-modal-close {
-        width: 24px;
-        height: 24px;
+        width: clamp(18px, 3.5vw, 24px);
+        height: clamp(18px, 3.5vw, 24px);
         border-radius: 50%;
         background: rgba(200, 50, 50, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.6);
         color: white;
-        font-size: 16px;
+        font-size: clamp(12px, 2.2vw, 16px);
         font-weight: bold;
         cursor: pointer;
         display: flex;
@@ -1989,32 +1988,32 @@ class EnergyPanel extends HTMLElement {
       .breaker-tag-modal-form {
           display: flex;
           flex-direction: column;
-          gap: 12px;
+          gap: clamp(10px, 1.8vw, 12px);
         }
 
       .breaker-tag-modal-field {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: clamp(4px, 1vw, 6px);
       }
 
       .breaker-tag-modal-label {
-          font-size: 10px;
+          font-size: clamp(8px, 1.2vw, 10px);
           font-weight: 600;
         color: rgba(255, 255, 255, 0.7);
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
       }
 
       .breaker-tag-modal-number-input {
-        padding: 8px 12px;
+        padding: clamp(6px, 1.2vw, 8px) clamp(10px, 1.8vw, 12px);
         background: rgba(20, 25, 35, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.6);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 4px;
+        border-radius: clamp(3px, 0.6vw, 4px);
         color: rgba(255, 255, 255, 0.9);
-        font-size: 14px;
+        font-size: clamp(12px, 2vw, 14px);
         font-weight: 700;
         font-family: 'Courier New', monospace;
         text-align: center;
@@ -2031,11 +2030,11 @@ class EnergyPanel extends HTMLElement {
 
       .breaker-tag-modal-color-input {
           width: 100%;
-        height: 40px;
+        height: clamp(30px, 5.5vw, 40px);
         border: 1px solid rgba(0, 0, 0, 0.6);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 4px;
+          border-radius: clamp(3px, 0.6vw, 4px);
         cursor: pointer;
         background: rgba(20, 25, 35, 0.8);
         box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -2043,24 +2042,24 @@ class EnergyPanel extends HTMLElement {
 
       .breaker-tag-modal-actions {
           display: flex;
-        gap: 8px;
-        margin-top: 8px;
+        gap: clamp(6px, 1.2vw, 8px);
+        margin-top: clamp(6px, 1.2vw, 8px);
       }
 
       .breaker-tag-modal-btn {
         flex: 1;
-        padding: 8px 16px;
+        padding: clamp(6px, 1.2vw, 8px) clamp(12px, 2.2vw, 16px);
         background: rgba(40, 45, 55, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.6);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 4px;
+        border-radius: clamp(3px, 0.6vw, 4px);
         color: rgba(255, 255, 255, 0.9);
-        font-size: 11px;
+        font-size: clamp(9px, 1.5vw, 11px);
         font-weight: 600;
         cursor: pointer;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
           transition: all 0.2s ease;
         box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
         }
@@ -2086,7 +2085,7 @@ class EnergyPanel extends HTMLElement {
         position: fixed;
         top: 0;
         left: 0;
-        width: 100%;
+          width: 100%;
         height: 100%;
         background: rgba(0, 0, 0, 0.7);
         z-index: 10001;
@@ -2095,17 +2094,17 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-settings-modal.active {
-        display: flex;
+          display: flex;
       }
 
       .breaker-settings-modal-content {
         background: linear-gradient(180deg, #2d3441 0%, #1f252e 100%);
-        border: 2px solid rgba(0, 0, 0, 0.8);
+        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.8);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 8px;
-        padding: 20px;
-        min-width: 400px;
+        border-radius: clamp(6px, 1.2vw, 8px);
+        padding: clamp(12px, 2.8vw, 20px);
+        min-width: clamp(300px, 50vw, 400px);
         max-width: 90vw;
         max-height: 90vh;
         overflow-y: auto;
@@ -2117,28 +2116,28 @@ class EnergyPanel extends HTMLElement {
       .breaker-settings-modal-header {
         display: flex;
         justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-        padding-bottom: 12px;
+          align-items: center;
+        margin-bottom: clamp(12px, 2.8vw, 20px);
+        padding-bottom: clamp(8px, 1.8vw, 12px);
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       }
 
       .breaker-settings-modal-title {
-        font-size: 16px;
+        font-size: clamp(14px, 2.2vw, 16px);
         font-weight: 700;
         color: rgba(255, 255, 255, 0.9);
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
       }
 
       .breaker-settings-modal-close {
-        width: 24px;
-        height: 24px;
+        width: clamp(18px, 3.5vw, 24px);
+        height: clamp(18px, 3.5vw, 24px);
         border-radius: 50%;
         background: rgba(200, 50, 50, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.6);
         color: white;
-        font-size: 16px;
+        font-size: clamp(12px, 2.2vw, 16px);
         font-weight: bold;
         cursor: pointer;
         display: flex;
@@ -2156,32 +2155,32 @@ class EnergyPanel extends HTMLElement {
       .breaker-settings-modal-form {
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: clamp(12px, 2.2vw, 16px);
       }
 
       .breaker-settings-modal-field {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: clamp(4px, 1vw, 6px);
       }
 
       .breaker-settings-modal-label {
-        font-size: 11px;
+        font-size: clamp(9px, 1.5vw, 11px);
         font-weight: 600;
         color: rgba(255, 255, 255, 0.8);
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
       }
 
       .breaker-settings-modal-input {
-        padding: 8px 12px;
+        padding: clamp(6px, 1.2vw, 8px) clamp(10px, 1.8vw, 12px);
         background: rgba(20, 25, 35, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.6);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 4px;
+        border-radius: clamp(3px, 0.6vw, 4px);
         color: rgba(255, 255, 255, 0.9);
-        font-size: 13px;
+        font-size: clamp(11px, 1.8vw, 13px);
         box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
         transition: all 0.2s ease;
       }
@@ -2196,27 +2195,27 @@ class EnergyPanel extends HTMLElement {
 
       .breaker-settings-modal-actions {
         display: flex;
-        gap: 8px;
-        margin-top: 8px;
+        gap: clamp(6px, 1.2vw, 8px);
+        margin-top: clamp(6px, 1.2vw, 8px);
       }
 
       .breaker-settings-modal-btn {
         flex: 1;
-        padding: 10px 16px;
+        padding: clamp(8px, 1.5vw, 10px) clamp(12px, 2.2vw, 16px);
         background: rgba(40, 45, 55, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.6);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 4px;
+        border-radius: clamp(3px, 0.6vw, 4px);
         color: rgba(255, 255, 255, 0.9);
-        font-size: 12px;
+        font-size: clamp(10px, 1.8vw, 12px);
         font-weight: 600;
         cursor: pointer;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
-        transition: all 0.2s ease;
+        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
+          transition: all 0.2s ease;
         box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
-      }
+        }
 
       .breaker-settings-modal-btn:hover {
         background: rgba(50, 55, 65, 0.9);
@@ -2238,12 +2237,12 @@ class EnergyPanel extends HTMLElement {
         .breaker-settings-modal-content {
           min-width: auto;
           width: 95vw;
-          padding: 16px;
+          padding: clamp(10px, 2.2vw, 16px);
         }
       }
 
       .breaker-label-text {
-        font-size: 10px;
+        font-size: clamp(8px, 1.2vw, 10px);
         font-weight: 700;
         color: rgba(255, 255, 255, 0.9);
         background: 
@@ -2251,16 +2250,16 @@ class EnergyPanel extends HTMLElement {
         border: 1px solid rgba(0, 0, 0, 0.7);
         border-top: 1px solid rgba(255, 255, 255, 0.2);
         border-left: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 2px;
-        padding: 5px 10px;
-        min-width: 130px;
+        border-radius: clamp(1px, 0.2vw, 2px);
+        padding: clamp(4px, 0.8vw, 5px) clamp(8px, 1.5vw, 10px);
+        min-width: clamp(100px, 15vw, 130px);
         text-align: center;
             box-shadow: 
           inset 0 2px 3px rgba(0, 0, 0, 0.5),
           inset 0 1px 0 rgba(255, 255, 255, 0.15),
           0 1px 1px rgba(0, 0, 0, 0.3);
         font-family: 'Arial', 'Helvetica', sans-serif;
-        letter-spacing: 0.3px;
+        letter-spacing: clamp(0.2px, 0.04vw, 0.3px);
         text-transform: uppercase;
       }
 
@@ -2277,25 +2276,25 @@ class EnergyPanel extends HTMLElement {
       .breaker-color-picker-wrapper {
         position: relative;
           width: 100%;
-        max-width: 130px;
+        max-width: clamp(100px, 15vw, 130px);
       }
 
       .breaker-color-picker-label {
-        font-size: 8px;
+        font-size: clamp(7px, 1.1vw, 8px);
         color: rgba(255, 255, 255, 0.5);
-        margin-bottom: 3px;
+        margin-bottom: clamp(2px, 0.5vw, 3px);
         text-transform: uppercase;
-        letter-spacing: 0.8px;
+        letter-spacing: clamp(0.5px, 0.12vw, 0.8px);
         font-weight: 600;
       }
 
       .breaker-color-input {
         width: 100%;
-        height: 30px;
+        height: clamp(24px, 4.5vw, 30px);
         border: 1px solid rgba(0, 0, 0, 0.6);
         border-top: 1px solid rgba(255, 255, 255, 0.15);
         border-left: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 3px;
+        border-radius: clamp(2px, 0.5vw, 3px);
         cursor: pointer;
         background: rgba(20, 25, 35, 0.8);
             box-shadow: 
@@ -2316,20 +2315,20 @@ class EnergyPanel extends HTMLElement {
 
       .breaker-switch-container {
           display: flex;
-        gap: 8px;
+        gap: clamp(6px, 1.2vw, 8px);
           align-items: center;
         }
 
       .breaker-switch {
-        width: 120px;
-        height: 48px;
+        width: clamp(90px, 15vw, 120px);
+        height: clamp(36px, 6vw, 48px);
         background: 
           radial-gradient(ellipse at 50% 50%, rgba(40, 45, 55, 0.3) 0%, transparent 70%),
           linear-gradient(to right, #2d3441 0%, #252a35 30%, #1f252e 50%, #252a35 70%, #2d3441 100%);
-        border: 2px solid rgba(0, 0, 0, 0.8);
+        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.8);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 4px;
+        border-radius: clamp(2px, 0.5vw, 4px);
         position: relative;
         box-shadow: 
           inset 0 2px 4px rgba(0, 0, 0, 0.7),
@@ -2344,15 +2343,15 @@ class EnergyPanel extends HTMLElement {
 
         .breaker-switch-handle {
           position: absolute;
-        left: 8px;
+        left: clamp(6px, 1vw, 8px);
         top: 50%;
         transform: translateY(-50%);
-        width: 32px;
-        height: 32px;
-          border-radius: 3px;
+        width: clamp(24px, 4vw, 32px);
+        height: clamp(24px, 4vw, 32px);
+          border-radius: clamp(2px, 0.4vw, 3px);
         background: 
           linear-gradient(135deg, #4a5568 0%, #3d4756 50%, #2d3441 100%);
-        border: 2px solid rgba(0, 0, 0, 0.6);
+        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.6);
         border-top: 1px solid rgba(255, 255, 255, 0.2);
         border-left: 1px solid rgba(255, 255, 255, 0.15);
           box-shadow: 
@@ -2363,7 +2362,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-switch.on .breaker-switch-handle {
-        left: calc(100% - 40px);
+        left: calc(100% - clamp(30px, 5vw, 40px));
         background: 
           linear-gradient(135deg, #5a9fd4 0%, #4a8fc4 50%, #3a7fb4 100%);
         box-shadow: 
@@ -2377,11 +2376,11 @@ class EnergyPanel extends HTMLElement {
         position: absolute;
         top: 50%;
         transform: translateY(-50%);
-        font-size: 10px;
+        font-size: clamp(8px, 1.2vw, 10px);
         font-weight: 700;
         color: rgba(255, 255, 255, 0.3);
         text-transform: uppercase;
-        letter-spacing: 1px;
+        letter-spacing: clamp(0.5px, 0.15vw, 1px);
         transition: all 0.3s ease;
         width: 50%;
         text-align: center;
