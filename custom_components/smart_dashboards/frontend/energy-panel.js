@@ -1599,7 +1599,8 @@ class EnergyPanel extends HTMLElement {
           inset 0 2px 4px rgba(255, 255, 255, 0.08),
           inset 0 -2px 4px rgba(0, 0, 0, 0.4);
         position: relative;
-        overflow: visible;
+        overflow-x: hidden;
+        overflow-y: visible;
         }
 
         .breaker-panel-screw {
@@ -1730,6 +1731,123 @@ class EnergyPanel extends HTMLElement {
         .breaker-panel-row {
           gap: clamp(8px, 1.5vw, 14px);
           padding: clamp(6px, 1.2vw, 10px) 0;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .breaker-panel-card {
+          width: min(98vw, 100%);
+          max-width: 98vw;
+          padding: clamp(8px, 2vw, 16px);
+        }
+
+        .breaker-panel-outer {
+          padding: clamp(6px, 1.5vw, 12px);
+        }
+
+        .breaker-panel-inner {
+          padding: clamp(8px, 2vw, 16px);
+          min-height: clamp(250px, 60vh, 300px);
+        }
+
+        .breaker-panel-row {
+          gap: clamp(4px, 1vw, 8px);
+          padding: clamp(4px, 1vw, 8px) 0;
+        }
+
+        .breaker-switch {
+          width: clamp(70px, 12vw, 90px);
+          height: clamp(28px, 5vw, 36px);
+        }
+
+        .breaker-switch-handle {
+          width: clamp(18px, 3.5vw, 24px);
+          height: clamp(18px, 3.5vw, 24px);
+        }
+
+        .breaker-label-text {
+          font-size: clamp(7px, 1vw, 8px);
+          padding: clamp(3px, 0.6vw, 4px) clamp(6px, 1.2vw, 8px);
+          min-width: clamp(80px, 12vw, 100px);
+        }
+
+        .breaker-open-settings-btn {
+          padding: clamp(4px, 0.8vw, 6px) clamp(8px, 1.5vw, 10px);
+          font-size: clamp(7px, 1vw, 8px);
+        }
+
+        .breaker-color-tag {
+          width: clamp(16px, 3vw, 20px);
+          height: clamp(16px, 3vw, 20px);
+        }
+
+        .breaker-label-text {
+          padding-left: clamp(16px, 3vw, 20px);
+        }
+
+        .breaker-label-right .breaker-label-text {
+          padding-right: clamp(16px, 3vw, 20px);
+        }
+      }
+
+      @media (max-width: 375px) {
+        .breaker-panel-card {
+          width: 100vw;
+          max-width: 100vw;
+          padding: clamp(6px, 1.5vw, 12px);
+        }
+
+        .breaker-panel-outer {
+          padding: clamp(4px, 1.2vw, 8px);
+        }
+
+        .breaker-panel-inner {
+          padding: clamp(6px, 1.5vw, 12px);
+          min-height: clamp(200px, 55vh, 250px);
+        }
+
+        .breaker-panel-row {
+          gap: clamp(3px, 0.8vw, 6px);
+          padding: clamp(3px, 0.8vw, 6px) 0;
+        }
+
+        .breaker-switch {
+          width: clamp(60px, 10vw, 70px);
+          height: clamp(24px, 4.5vw, 28px);
+        }
+
+        .breaker-switch-handle {
+          width: clamp(16px, 3vw, 18px);
+          height: clamp(16px, 3vw, 18px);
+          left: clamp(4px, 0.8vw, 6px);
+        }
+
+        .breaker-switch.on .breaker-switch-handle {
+          left: calc(100% - clamp(22px, 4vw, 26px));
+        }
+
+        .breaker-label-text {
+          font-size: clamp(6px, 0.9vw, 7px);
+          padding: clamp(2px, 0.5vw, 3px) clamp(5px, 1vw, 6px);
+          min-width: clamp(70px, 10vw, 80px);
+        }
+
+        .breaker-open-settings-btn {
+          padding: clamp(3px, 0.6vw, 4px) clamp(6px, 1.2vw, 8px);
+          font-size: clamp(6px, 0.9vw, 7px);
+        }
+
+        .breaker-color-tag {
+          width: clamp(14px, 2.5vw, 16px);
+          height: clamp(14px, 2.5vw, 16px);
+        }
+
+        .breaker-label-text {
+          padding-left: clamp(14px, 2.5vw, 16px);
+        }
+
+        .breaker-label-right .breaker-label-text {
+          padding-right: clamp(14px, 2.5vw, 16px);
         }
       }
 
@@ -2395,24 +2513,51 @@ class EnergyPanel extends HTMLElement {
         left: auto;
       }
 
-      .breaker-switch-right {
-        transform: scaleX(-1);
-      }
-
+      /* Right switch: reversed positioning without text flipping */
       .breaker-switch-right .breaker-switch-handle {
-        transform: translateY(-50%) scaleX(-1);
+        left: auto;
+        right: clamp(6px, 1vw, 8px);
+        transform: translateY(-50%);
       }
 
-      .breaker-switch-right .breaker-switch-label {
-        transform: translateY(-50%) scaleX(-1);
+      .breaker-switch-right.on .breaker-switch-handle {
+        right: auto;
+        left: clamp(6px, 1vw, 8px);
+        background: 
+          linear-gradient(135deg, #5a9fd4 0%, #4a8fc4 50%, #3a7fb4 100%);
+        box-shadow: 
+          inset 0 2px 4px rgba(0, 0, 0, 0.4),
+          inset 0 1px 0 rgba(255, 255, 255, 0.3),
+          0 2px 4px rgba(0, 0, 0, 0.5),
+          0 0 8px rgba(90, 159, 212, 0.5);
       }
 
-      .breaker-switch.on .breaker-switch-label:first-of-type {
+      /* Right switch labels: OFF on left, ON on right */
+      .breaker-switch-right .breaker-switch-label-off {
+        left: 0;
+        right: auto;
+      }
+
+      .breaker-switch-right .breaker-switch-label:not(.breaker-switch-label-off) {
+        right: 0;
+        left: auto;
+      }
+
+      .breaker-switch-left.on .breaker-switch-label:first-of-type {
         color: rgba(90, 159, 212, 0.9);
         text-shadow: 0 0 4px rgba(90, 159, 212, 0.5);
       }
 
-      .breaker-switch:not(.on) .breaker-switch-label-off {
+      .breaker-switch-right.on .breaker-switch-label:not(.breaker-switch-label-off) {
+        color: rgba(90, 159, 212, 0.9);
+        text-shadow: 0 0 4px rgba(90, 159, 212, 0.5);
+      }
+
+      .breaker-switch-left:not(.on) .breaker-switch-label-off {
+        color: rgba(255, 255, 255, 0.5);
+      }
+
+      .breaker-switch-right:not(.on) .breaker-switch-label-off {
         color: rgba(255, 255, 255, 0.5);
       }
 
@@ -2425,6 +2570,10 @@ class EnergyPanel extends HTMLElement {
           0 2px 4px rgba(0, 0, 0, 0.5),
           0 1px 0 rgba(255, 255, 255, 0.05),
           0 0 12px rgba(90, 159, 212, 0.3);
+        transform: translateY(-1px);
+        }
+
+      .breaker-switch-right:hover {
         transform: translateY(-1px);
         }
 
@@ -3649,7 +3798,15 @@ class EnergyPanel extends HTMLElement {
 
   _openBreakerSettingsModal(breakerNum) {
     const modal = this.shadowRoot.getElementById('breaker-settings-modal');
-    if (!modal) return;
+    if (!modal) {
+      console.error('Breaker settings modal not found in DOM');
+      return;
+    }
+
+    if (!breakerNum) {
+      console.error('Breaker number not provided');
+      return;
+    }
 
     // Get current breaker settings (TODO: load from config)
     const breakerSettings = this._config?.breakers?.[breakerNum] || {};
@@ -3661,6 +3818,12 @@ class EnergyPanel extends HTMLElement {
     // Set breaker number in modal
     modal.dataset.breakerNum = breakerNum;
 
+    // Update modal title to show breaker number
+    const modalTitle = modal.querySelector('.breaker-settings-modal-title');
+    if (modalTitle) {
+      modalTitle.textContent = `Breaker ${String(breakerNum).padStart(2, '0')} Settings`;
+    }
+
     // Populate consumption sensor field
     const consumptionContainer = this.shadowRoot.getElementById('breaker-settings-consumption-sensor-container');
     if (consumptionContainer) {
@@ -3671,6 +3834,8 @@ class EnergyPanel extends HTMLElement {
         'breaker-consumption-sensor',
         'sensor.kitchen_power'
       );
+    } else {
+      console.error('Consumption sensor container not found');
     }
 
     // Populate switch sensor field
@@ -3683,17 +3848,31 @@ class EnergyPanel extends HTMLElement {
         'breaker-switch-sensor',
         'switch.kitchen_outlet'
       );
+    } else {
+      console.error('Switch sensor container not found');
     }
 
     // Populate threshold fields
     const warningInput = this.shadowRoot.getElementById('breaker-settings-warning-threshold');
-    if (warningInput) warningInput.value = warningThreshold;
+    if (warningInput) {
+      warningInput.value = warningThreshold;
+    } else {
+      console.error('Warning threshold input not found');
+    }
 
     const shutoffInput = this.shadowRoot.getElementById('breaker-settings-shutoff-threshold');
-    if (shutoffInput) shutoffInput.value = shutoffThreshold;
+    if (shutoffInput) {
+      shutoffInput.value = shutoffThreshold;
+    } else {
+      console.error('Shutoff threshold input not found');
+    }
 
     // Initialize entity autocompletes
-    this._initEntityAutocompletes(modal);
+    try {
+      this._initEntityAutocompletes(modal);
+    } catch (error) {
+      console.error('Error initializing entity autocompletes:', error);
+    }
 
     // Show modal
     modal.classList.add('active');
@@ -3730,8 +3909,8 @@ class EnergyPanel extends HTMLElement {
                   </div>
             <div class="breaker-switch breaker-switch-right" data-breaker-num="${rightBreakerNum}">
               <div class="breaker-switch-handle"></div>
-              <div class="breaker-switch-label">ON</div>
               <div class="breaker-switch-label breaker-switch-label-off">OFF</div>
+              <div class="breaker-switch-label">ON</div>
             </div>
           </div>
           <div class="breaker-label-right" data-breaker-num="${rightBreakerNum}">
@@ -4556,8 +4735,13 @@ class EnergyPanel extends HTMLElement {
     this.shadowRoot.querySelectorAll('.breaker-open-settings-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
+        e.preventDefault();
         const breakerNum = btn.dataset.breakerNum;
-        this._openBreakerSettingsModal(breakerNum);
+        if (breakerNum) {
+          this._openBreakerSettingsModal(breakerNum);
+        } else {
+          console.error('Breaker number not found in button dataset');
+        }
       });
     });
 
