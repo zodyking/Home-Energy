@@ -1778,7 +1778,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-label-with-tag {
-        position: relative;
+          position: relative;
       }
 
       .breaker-label-left .breaker-label-with-tag {
@@ -1790,7 +1790,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-color-tag {
-        position: absolute;
+          position: absolute;
         width: 28px;
         height: 28px;
         top: 0;
@@ -1987,8 +1987,8 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-tag-modal-form {
-        display: flex;
-        flex-direction: column;
+          display: flex;
+          flex-direction: column;
           gap: 12px;
         }
 
@@ -3925,6 +3925,10 @@ class EnergyPanel extends HTMLElement {
           <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name" style="max-width: 180px;">
           <div style="display: flex; gap: 8px;">
             <button class="btn btn-secondary toggle-room-btn" data-index="${index}">Edit</button>
+            <button class="btn btn-primary room-save-btn" data-index="${index}" title="Save this room">
+              <svg class="btn-icon" viewBox="0 0 24 24" style="width: 14px; height: 14px;">${icons.check}</svg>
+              Save
+            </button>
             <button class="icon-btn danger remove-room-btn" data-index="${index}">
               <svg viewBox="0 0 24 24">${icons.delete}</svg>
             </button>
@@ -4599,6 +4603,14 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
+    // Room save buttons
+    this.shadowRoot.querySelectorAll('.room-save-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const roomIndex = parseInt(btn.dataset.index);
+        await this._saveSingleRoom(roomIndex);
+      });
+    });
+
     // Room card drag-and-drop for reordering
     this._attachRoomDragListeners();
 
@@ -5109,6 +5121,8 @@ class EnergyPanel extends HTMLElement {
     const rooms = [];
 
     roomCards.forEach((card) => {
+      const roomIndex = parseInt(card.dataset.roomIndex);
+      const originalRoom = this._config?.rooms?.[roomIndex];
       const nameInput = card.querySelector('.room-name-input');
       const mediaPlayerSelect = card.querySelector('.room-media-player');
       const thresholdInput = card.querySelector('.room-threshold');
@@ -5222,10 +5236,16 @@ class EnergyPanel extends HTMLElement {
         }
         const tempK = parseInt(responsiveTemp?.value, 10) || 6500;
         const interval = parseFloat(responsiveInterval?.value) || 1.5;
+        // Preserve existing values if not explicitly set
+        const mediaPlayerValue = mediaPlayerSelect?.value;
+        const mediaPlayer = mediaPlayerValue !== undefined && mediaPlayerValue !== '' 
+          ? mediaPlayerValue 
+          : (originalRoom?.media_player || null);
+        
         rooms.push({
           id: roomName.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
           name: roomName,
-          media_player: mediaPlayerSelect?.value || null,
+          media_player: mediaPlayer,
           threshold: parseInt(thresholdInput?.value) || 0,
           volume: parseFloat(volumeSlider?.value) || 0.7,
           responsive_light_warnings: responsiveToggle?.checked === true && !responsiveToggle.disabled,
@@ -5280,14 +5300,201 @@ class EnergyPanel extends HTMLElement {
       this._config = config;
       showToast(this.shadowRoot, 'Settings saved!', 'success');
       
+      // Refresh the same page instead of going back to dashboard
       setTimeout(() => {
-        this._showSettings = false;
         this._render();
         this._startRefresh();
       }, 500);
     } catch (e) {
       console.error('Failed to save settings:', e);
       showToast(this.shadowRoot, 'Failed to save settings', 'error');
+    }
+  }
+
+  async _saveSingleRoom(roomIndex) {
+    const roomCards = this.shadowRoot.querySelectorAll('.room-settings-card');
+    const card = Array.from(roomCards).find(c => parseInt(c.dataset.roomIndex) === roomIndex);
+    if (!card) return;
+
+    const originalRoom = this._config?.rooms?.[roomIndex];
+    const nameInput = card.querySelector('.room-name-input');
+    const mediaPlayerSelect = card.querySelector('.room-media-player');
+    const thresholdInput = card.querySelector('.room-threshold');
+    const volumeSlider = card.querySelector('.room-volume');
+    const outletItems = card.querySelectorAll('.outlet-settings-item');
+
+    const outlets = [];
+    outletItems.forEach(item => {
+      const outletName = item.querySelector('.outlet-name')?.value;
+      const plug1 = item.querySelector('.outlet-plug1')?.value;
+      const plug2Select = item.querySelector('.outlet-plug2');
+      const plug2 = plug2Select?.value;
+      const plug1Switch = item.querySelector('.outlet-plug1-switch')?.value;
+      const plug2SwitchSelect = item.querySelector('.outlet-plug2-switch');
+      const plug2Switch = plug2SwitchSelect?.value;
+      const outletThreshold = parseInt(item.querySelector('.outlet-threshold')?.value) || 0;
+      const plug1ShutoffInput = item.querySelector('.outlet-plug1-shutoff');
+      const plug1Shutoff = plug1ShutoffInput ? (parseInt(plug1ShutoffInput.value) || 0) : 0;
+      const plug2ShutoffInput = item.querySelector('.outlet-plug2-shutoff');
+      const plug2Shutoff = plug2ShutoffInput ? (parseInt(plug2ShutoffInput.value) || 0) : 0;
+      const isSingleOutlet = !plug2Select;
+      const deviceTypeFromItem = item.dataset.deviceType;
+      const isStove = deviceTypeFromItem === 'stove';
+      const isMicrowave = deviceTypeFromItem === 'microwave';
+      const isLight = deviceTypeFromItem === 'light';
+
+      if (outletName) {
+        const device = {
+          name: outletName,
+          plug1_entity: plug1 || null,
+          threshold: outletThreshold,
+        };
+        if (isStove) {
+          device.type = 'stove';
+          device.plug2_entity = null;
+          device.plug1_switch = plug1Switch || null;
+          device.plug2_switch = null;
+          device.plug1_shutoff = 0;
+          device.plug2_shutoff = 0;
+          device.stove_safety_enabled = item.querySelector('.stove-safety-enabled')?.checked !== false;
+          device.stove_power_threshold = parseInt(item.querySelector('.stove-power-threshold')?.value) || 100;
+          device.cooking_time_minutes = parseInt(item.querySelector('.stove-cooking-time')?.value) || 15;
+          device.final_warning_seconds = parseInt(item.querySelector('.stove-final-warning')?.value) || 30;
+          device.presence_sensor = item.querySelector('.stove-presence-sensor')?.value || null;
+        } else if (isMicrowave) {
+          device.type = 'microwave';
+          device.plug2_entity = null;
+          device.plug1_switch = null;
+          device.plug2_switch = null;
+          device.plug1_shutoff = 0;
+          device.plug2_shutoff = 0;
+          const mwSafetyCheck = item.querySelector('.microwave-safety-enabled');
+          device.microwave_safety_enabled = mwSafetyCheck && !mwSafetyCheck.disabled && mwSafetyCheck.checked;
+          device.microwave_power_threshold = parseInt(item.querySelector('.microwave-power-threshold')?.value) || 50;
+        } else if (isLight) {
+          device.type = 'light';
+          device.plug1_entity = null;
+          device.plug2_entity = null;
+          device.plug1_switch = null;
+          device.plug2_switch = null;
+          device.plug1_shutoff = 0;
+          device.plug2_shutoff = 0;
+          const switchVal = item.querySelector('.light-switch-entity')?.value || null;
+          device.switch_entity = (switchVal && switchVal.startsWith('switch.')) ? switchVal : null;
+          const lightRows = item.querySelectorAll('.light-entity-row');
+          const lightEntities = [];
+          lightRows.forEach(row => {
+            const input = row.querySelector('.entity-datalist-input.light-entity-select') || row.querySelector('input.light-entity-select');
+            const entityId = input?.value?.trim?.() || '';
+            const watts = parseInt(row.querySelector('.light-entity-watts')?.value, 10) || 0;
+            const wrgb = row.querySelector('.light-entity-wrgb-toggle')?.checked || false;
+            if (entityId && entityId.startsWith('light.')) {
+              lightEntities.push({ entity_id: entityId, watts: Math.max(0, watts), wrgb });
+            }
+          });
+          device.light_entities = lightEntities;
+        } else if (deviceTypeFromItem === 'minisplit') {
+          device.type = 'minisplit';
+          device.plug2_entity = null;
+          device.plug1_switch = plug1Switch || null;
+          device.plug2_switch = null;
+          device.plug1_shutoff = plug1Shutoff;
+          device.plug2_shutoff = 0;
+        } else {
+          device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
+          device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
+          device.plug1_switch = plug1Switch || null;
+          device.plug2_switch = isSingleOutlet ? null : (plug2Switch || null);
+          device.plug1_shutoff = plug1Shutoff;
+          device.plug2_shutoff = isSingleOutlet ? 0 : plug2Shutoff;
+        }
+        outlets.push(device);
+      }
+    });
+
+    const roomName = nameInput?.value?.trim();
+    if (!roomName) {
+      showToast(this.shadowRoot, 'Room name is required', 'error');
+      return;
+    }
+
+    const responsiveToggle = card.querySelector('.responsive-light-warnings-toggle');
+    const responsiveColor = card.querySelector('.responsive-light-color-picker');
+    const responsiveTemp = card.querySelector('.responsive-light-temp-picker');
+    const responsiveInterval = card.querySelector('.responsive-light-interval-picker');
+    let rgb = [245, 0, 0];
+    if (responsiveColor?.value) {
+      const hex = responsiveColor.value;
+      rgb = [
+        parseInt(hex.slice(1, 3), 16),
+        parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16),
+      ];
+    }
+    const tempK = parseInt(responsiveTemp?.value, 10) || 6500;
+    const interval = parseFloat(responsiveInterval?.value) || 1.5;
+
+    // Preserve existing values if not explicitly set
+    const mediaPlayerValue = mediaPlayerSelect?.value;
+    const mediaPlayer = mediaPlayerValue !== undefined && mediaPlayerValue !== '' 
+      ? mediaPlayerValue 
+      : (originalRoom?.media_player || null);
+
+    const updatedRoom = {
+      id: roomName.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
+      name: roomName,
+      media_player: mediaPlayer,
+      threshold: parseInt(thresholdInput?.value) || 0,
+      volume: parseFloat(volumeSlider?.value) || 0.7,
+      responsive_light_warnings: responsiveToggle?.checked === true && !responsiveToggle.disabled,
+      responsive_light_color: rgb,
+      responsive_light_temp: tempK,
+      responsive_light_interval: interval,
+      outlets: outlets,
+    };
+
+    // Get all rooms - use existing config and update just this one
+    const allRooms = [...(this._config?.rooms || [])];
+    
+    // Update the room at the specified index
+    if (allRooms.length > roomIndex) {
+      allRooms[roomIndex] = updatedRoom;
+    } else {
+      // If room doesn't exist yet, pad with nulls and add it
+      while (allRooms.length < roomIndex) {
+        allRooms.push(null);
+      }
+      allRooms[roomIndex] = updatedRoom;
+    }
+    
+    // Filter out null entries
+    const filteredRooms = allRooms.filter(r => r !== null);
+
+    // Get TTS settings from current config
+    const ttsSettings = this._config?.tts_settings || {};
+
+    const config = {
+      rooms: filteredRooms,
+      tts_settings: ttsSettings,
+    };
+
+    try {
+      await this._hass.callWS({
+        type: 'smart_dashboards/save_energy',
+        config: config,
+      });
+
+      this._config = config;
+      showToast(this.shadowRoot, 'Room saved!', 'success');
+      
+      // Refresh the page to show updated data
+      setTimeout(() => {
+        this._render();
+        this._startRefresh();
+      }, 500);
+    } catch (e) {
+      console.error('Failed to save room:', e);
+      showToast(this.shadowRoot, 'Failed to save room', 'error');
     }
   }
 }
