@@ -1714,37 +1714,23 @@ class EnergyPanel extends HTMLElement {
       }
 
       @media (max-width: 768px) {
-        .breaker-panel-row {
-          grid-template-columns: 1fr;
-          gap: 12px;
-        }
-
-        .breaker-switch-container {
-          order: 2;
-          display: flex;
-          justify-content: center;
-          gap: 12px;
-        }
-
-        .breaker-label-left,
-        .breaker-label-right {
-          order: 1;
-          width: 100%;
-          padding: 0;
-          align-items: stretch;
-        }
-
         .breaker-panel-card {
-          min-width: auto;
-          width: 100%;
+          transform: scale(0.85);
+          transform-origin: top center;
         }
+      }
 
-        .breaker-panel-outer {
-          padding: 12px;
+      @media (max-width: 600px) {
+        .breaker-panel-card {
+          transform: scale(0.7);
+          transform-origin: top center;
         }
+      }
 
-        .breaker-panel-inner {
-          padding: 12px;
+      @media (max-width: 480px) {
+        .breaker-panel-card {
+          transform: scale(0.6);
+          transform-origin: top center;
         }
       }
 
@@ -1791,31 +1777,52 @@ class EnergyPanel extends HTMLElement {
         width: 100%;
       }
 
+      .breaker-label-with-tag {
+        position: relative;
+      }
+
       .breaker-label-left .breaker-label-with-tag {
         flex-direction: row;
       }
 
       .breaker-label-right .breaker-label-with-tag {
-        flex-direction: row-reverse;
+        flex-direction: row;
       }
 
       .breaker-color-tag {
+        position: absolute;
         width: 28px;
         height: 28px;
-        border-radius: 3px;
-        border: 2px solid rgba(0, 0, 0, 0.5);
-        border-top: 1px solid rgba(255, 255, 255, 0.2);
-        border-left: 1px solid rgba(255, 255, 255, 0.15);
+        top: 0;
+        left: 0;
+        clip-path: polygon(0 0, 100% 0, 0 100%);
         display: flex;
-        align-items: center;
-          justify-content: center;
+        align-items: flex-start;
+        justify-content: flex-start;
         cursor: pointer;
-        box-shadow: 
-          inset 0 1px 2px rgba(0, 0, 0, 0.4),
-          inset 0 1px 0 rgba(255, 255, 255, 0.15),
-          0 1px 2px rgba(0, 0, 0, 0.3);
+        z-index: 10;
         transition: all 0.2s ease;
-        flex-shrink: 0;
+        border-top-left-radius: 2px;
+      }
+
+      .breaker-label-right .breaker-color-tag {
+        left: auto;
+        right: 0;
+        clip-path: polygon(0 0, 100% 0, 100% 100%);
+        border-top-left-radius: 0;
+        border-top-right-radius: 2px;
+        align-items: flex-start;
+        justify-content: flex-end;
+      }
+
+      .breaker-label-text {
+        position: relative;
+        padding-left: 28px;
+      }
+
+      .breaker-label-right .breaker-label-text {
+        padding-left: 0;
+        padding-right: 28px;
       }
 
       .breaker-color-tag:hover {
@@ -1829,12 +1836,21 @@ class EnergyPanel extends HTMLElement {
       }
 
       .breaker-tag-number {
-        font-size: 11px;
+        font-size: 9px;
         font-weight: 700;
-        color: rgba(255, 255, 255, 0.95);
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        color: rgba(255, 255, 255, 1);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
         font-family: 'Courier New', monospace;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.3px;
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        line-height: 1;
+      }
+
+      .breaker-label-right .breaker-tag-number {
+        left: auto;
+        right: 2px;
       }
 
       .breaker-open-settings-btn {
@@ -2371,13 +2387,25 @@ class EnergyPanel extends HTMLElement {
         text-align: center;
       }
 
-      .breaker-switch-label:first-of-type {
+      .breaker-switch-left .breaker-switch-label:first-of-type {
         left: 0;
       }
 
-      .breaker-switch-label-off {
+      .breaker-switch-left .breaker-switch-label-off {
         right: 0;
         left: auto;
+      }
+
+      .breaker-switch-right {
+        transform: scaleX(-1);
+      }
+
+      .breaker-switch-right .breaker-switch-handle {
+        transform: translateY(-50%) scaleX(-1);
+      }
+
+      .breaker-switch-right .breaker-switch-label {
+        transform: translateY(-50%) scaleX(-1);
       }
 
       .breaker-switch.on .breaker-switch-label:first-of-type {
@@ -3696,12 +3724,12 @@ class EnergyPanel extends HTMLElement {
             </button>
                     </div>
           <div class="breaker-switch-container">
-            <div class="breaker-switch" data-breaker-num="${leftBreakerNum}">
+            <div class="breaker-switch breaker-switch-left" data-breaker-num="${leftBreakerNum}">
               <div class="breaker-switch-handle"></div>
               <div class="breaker-switch-label">ON</div>
               <div class="breaker-switch-label breaker-switch-label-off">OFF</div>
                   </div>
-            <div class="breaker-switch" data-breaker-num="${rightBreakerNum}">
+            <div class="breaker-switch breaker-switch-right" data-breaker-num="${rightBreakerNum}">
               <div class="breaker-switch-handle"></div>
               <div class="breaker-switch-label">ON</div>
               <div class="breaker-switch-label breaker-switch-label-off">OFF</div>
@@ -4407,9 +4435,9 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
-    // Color tag double-click to open modal
+    // Color tag click to open modal
     this.shadowRoot.querySelectorAll('.breaker-color-tag').forEach(tag => {
-      tag.addEventListener('dblclick', (e) => {
+      tag.addEventListener('click', (e) => {
         e.stopPropagation();
         const breakerNum = tag.dataset.breakerNum;
         const modal = this.shadowRoot.getElementById('breaker-tag-modal');
