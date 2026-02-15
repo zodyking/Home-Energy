@@ -2345,7 +2345,6 @@ class EnergyPanel extends HTMLElement {
     const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
     const isIntradayEvents = type === 'total_warnings' || type === 'total_shutoffs' || type === 'room_warnings' || type === 'room_shutoffs';
     const dates = (isIntraday || isIntradayEvents) ? (this._graphData.timestamps || []) : (this._graphData.dates || []);
-    const dateLabel = (dates.slice(0, 3).join(' — ') || '') + (dates.length > 3 ? ' … ' : '') + (dates.length > 3 ? dates.slice(-2).join(' — ') : '');
     return `
       <div class="graph-modal-overlay" id="graph-modal-overlay">
         <div class="graph-modal">
@@ -2355,7 +2354,6 @@ class EnergyPanel extends HTMLElement {
           </div>
           <div class="graph-modal-body">
             <div class="graph-chart-container" id="graph-apex-chart"></div>
-            <div class="graph-dates">${dateLabel}</div>
           </div>
         </div>
       </div>
@@ -2488,6 +2486,13 @@ class EnergyPanel extends HTMLElement {
         tooltip: {
           theme: 'dark',
           x: { format: useHourLabels ? 'MMM dd HH:mm' : 'dd MMM yyyy' },
+          y: {
+            formatter: (val) => {
+              if (val == null) return '—';
+              const n = Number(val);
+              return isNaN(n) ? String(val) : (n % 1 === 0 ? n : n.toFixed(2));
+            },
+          },
         },
         plotOptions: {
           area: { fillTo: 'origin' },
