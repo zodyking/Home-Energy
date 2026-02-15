@@ -14,15 +14,16 @@ class EnergyPanel extends HTMLElement {
     this._entities = null;
     this._powerData = null;
     this._showSettings = false;
-    this._settingsTab = 'rooms'; // 'rooms', 'tts', or 'breakers'
-    this._dashboardView = 'outlets'; // 'outlets' or 'breakers'
+    this._settingsTab = 'rooms'; // 'rooms' | 'tts' | 'statistics'
+    this._dashboardView = 'rooms'; // 'rooms' | 'statistics' | 'stove'
     this._stoveData = null;
     this._refreshInterval = null;
     this._loading = true;
     this._error = null;
     this._draggedRoomCard = null;
-    this._breakerCount = 0;
-    this._breakerRows = 6; // Default 6 rows, can't remove but can add more
+    this._graphOpen = null;  // { type, roomId?, roomName? }
+    this._graphData = null;  // from get_daily_history
+    this._statsData = null;  // from get_statistics
   }
 
   set hass(hass) {
@@ -49,6 +50,9 @@ class EnergyPanel extends HTMLElement {
     this._stopRefresh();
     this._refreshInterval = setInterval(() => {
       this._loadPowerData();
+      if (this._dashboardView === 'statistics') {
+        this._loadStatistics();
+      }
     }, 1000);
   }
 
@@ -80,6 +84,7 @@ class EnergyPanel extends HTMLElement {
       this._areas = areasResult.areas || [];
       await Promise.all([
         this._loadPowerData(),
+        this._loadStatistics(),
       ]);
       this._loading = false;
       this._render();
@@ -97,7 +102,7 @@ class EnergyPanel extends HTMLElement {
 
     try {
       this._powerData = await this._hass.callWS({ type: 'smart_dashboards/get_power_data' });
-      if (this._dashboardView === 'outlets') {
+      if (this._dashboardView === 'rooms') {
         this._updatePowerDisplay();
       }
     } catch (e) {
@@ -105,6 +110,18 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+
+  async _loadStatistics() {
+    if (!this._hass || this._showSettings) return;
+    try {
+      this._statsData = await this._hass.callWS({ type: 'smart_dashboards/get_statistics' });
+      if (this._dashboardView === 'statistics') {
+        this._render();
+      }
+    } catch (e) {
+      console.error('Failed to load statistics:', e);
+    }
+  }
 
   async _loadStoveData() {
     if (!this._hass || this._showSettings) return;
@@ -274,6 +291,12 @@ class EnergyPanel extends HTMLElement {
         padding: 10px 14px;
         text-align: center;
       }
+      .stat-card.graph-clickable, .graph-clickable {
+        cursor: pointer;
+      }
+      .stat-card.graph-clickable:hover, .graph-clickable:hover {
+        opacity: 0.9;
+      }
 
       .stat-value {
         font-size: 18px;
@@ -320,6 +343,57 @@ class EnergyPanel extends HTMLElement {
         background: var(--panel-accent);
         color: white;
       }
+
+      .statistics-view {
+        display: flex;
+        flex-direction: column;
+        gap: clamp(12px, 3vw, 20px);
+        padding: 0 4px;
+      }
+      .statistics-banner {
+        font-size: clamp(12px, 2.5vw, 14px);
+        color: var(--secondary-text-color);
+        padding: 8px 12px;
+        background: var(--input-bg);
+        border-radius: 8px;
+        border: 1px solid var(--card-border);
+      }
+      .statistics-narrowed { margin-left: 8px; font-size: 11px; opacity: 0.9; }
+      .statistics-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+        gap: clamp(12px, 3vw, 16px);
+      }
+      .statistics-sensor-card,
+      .statistics-totals-card,
+      .statistics-rooms-card {
+        background: var(--card-bg);
+        border-radius: 10px;
+        border: 1px solid var(--card-border);
+        padding: 14px 16px;
+      }
+      .statistics-card-title { font-size: 12px; font-weight: 600; margin: 0 0 12px; color: var(--panel-accent); }
+      .statistics-sensor-grid,
+      .statistics-totals-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .statistics-sensor-item,
+      .statistics-total-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+      .statistics-sensor-label,
+      .statistics-total-label { font-size: 11px; color: var(--secondary-text-color); }
+      .statistics-sensor-value,
+      .statistics-total-value { font-size: 13px; font-weight: 500; }
+      .statistics-table-wrap { overflow-x: auto; }
+      .statistics-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .statistics-table th, .statistics-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--card-border); }
+      .statistics-table th { font-weight: 600; color: var(--secondary-text-color); }
+      .statistics-empty { color: var(--secondary-text-color); text-align: center; padding: 16px !important; }
 
       .rooms-grid {
         display: flex;
@@ -1576,1036 +1650,85 @@ class EnergyPanel extends HTMLElement {
         border-radius: 0 0 6px 6px;
       }
 
-      /* Breaker Panel Card Styles */
-      .breaker-panel-container {
-          display: flex;
-          justify-content: center;
-          padding: clamp(12px, 2.8vw, 20px);
-        }
-
-        .breaker-panel-card {
-        width: min(900px, 94vw);
-        background: 
-          radial-gradient(ellipse at 30% 20%, rgba(120, 130, 150, 0.3) 0%, transparent 50%),
-          linear-gradient(135deg, #4a5568 0%, #3d4756 30%, #2d3441 70%, #252a35 100%);
-        border: clamp(2px, 0.4vw, 3px) solid rgba(0, 0, 0, 0.6);
-        border-top: clamp(1px, 0.3vw, 2px) solid rgba(255, 255, 255, 0.15);
-        border-left: clamp(1px, 0.3vw, 2px) solid rgba(255, 255, 255, 0.1);
-        border-radius: clamp(6px, 1.2vw, 8px);
-        padding: clamp(16px, 3.5vw, 24px);
-          box-shadow: 
-          0 12px 24px rgba(0, 0, 0, 0.5),
-          0 4px 8px rgba(0, 0, 0, 0.3),
-          inset 0 2px 4px rgba(255, 255, 255, 0.08),
-          inset 0 -2px 4px rgba(0, 0, 0, 0.4);
-        position: relative;
-        overflow-x: hidden;
-        overflow-y: visible;
-        }
-
-        .breaker-panel-screw {
-          position: absolute;
-          width: clamp(7px, 1.3vw, 10px);
-          height: clamp(7px, 1.3vw, 10px);
-          border-radius: 50%;
-          background: linear-gradient(#d8d8d8, #bdbdbd);
-          border: 1px solid rgba(0, 0, 0, 0.25);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 2px rgba(0,0,0,0.2);
-          z-index: 10;
-        }
-
-        .breaker-panel-screw::after {
-          content: "";
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          width: clamp(7px, 1.3vw, 10px);
-          height: clamp(1px, 0.3vw, 2px);
-          transform: translate(-50%, -50%);
-          background: rgba(0,0,0,0.35);
-          border-radius: clamp(0.5px, 0.15vw, 1px);
-        }
-
-        .breaker-panel-screw.top-center {
-          top: clamp(6px, 1.2vw, 8px);
-          left: 50%;
-          transform: translateX(-50%);
-        }
-
-        .breaker-panel-screw.bottom-center {
-          bottom: clamp(6px, 1.2vw, 8px);
-          left: 50%;
-          transform: translateX(-50%);
-        }
-
-        .breaker-panel-screw.left-1 {
-          left: clamp(6px, 1.2vw, 8px);
-          top: 20%;
-        }
-
-        .breaker-panel-screw.left-2 {
-          left: clamp(6px, 1.2vw, 8px);
-          top: 50%;
-          transform: translateY(-50%);
-        }
-
-        .breaker-panel-screw.left-3 {
-          left: clamp(6px, 1.2vw, 8px);
-          bottom: 20%;
-        }
-
-        .breaker-panel-screw.right-1 {
-          right: clamp(6px, 1.2vw, 8px);
-          top: 20%;
-        }
-
-        .breaker-panel-screw.right-2 {
-          right: clamp(6px, 1.2vw, 8px);
-          top: 50%;
-          transform: translateY(-50%);
-        }
-
-        .breaker-panel-screw.right-3 {
-          right: clamp(6px, 1.2vw, 8px);
-          bottom: 20%;
-        }
-
-        .breaker-panel-outer {
-        background: 
-          radial-gradient(ellipse at 25% 25%, rgba(100, 110, 130, 0.4) 0%, transparent 60%),
-          linear-gradient(135deg, #5a6578 0%, #4a5568 40%, #3d4756 100%);
-        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.7);
-        border-top: 1px solid rgba(255, 255, 255, 0.12);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: clamp(4px, 0.8vw, 6px);
-        padding: clamp(10px, 2.5vw, 18px);
-          box-shadow: 
-          inset 0 3px 6px rgba(0, 0, 0, 0.5),
-          inset 0 1px 0 rgba(255, 255, 255, 0.1),
-          0 2px 4px rgba(0, 0, 0, 0.3);
-        position: relative;
-        }
-
-        .breaker-panel-inner {
-        background: 
-          radial-gradient(ellipse at 50% 0%, rgba(40, 45, 55, 0.6) 0%, transparent 70%),
-          linear-gradient(180deg, #2d3441 0%, #252a35 30%, #1f252e 60%, #1a1f26 100%);
-        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.8);
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
-        border-left: 1px solid rgba(255, 255, 255, 0.05);
-          border-radius: clamp(3px, 0.6vw, 4px);
-          padding: clamp(12px, 2.8vw, 20px);
-        min-height: clamp(300px, 50vw, 400px);
-          box-shadow: 
-          inset 0 4px 8px rgba(0, 0, 0, 0.6),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05),
-          0 1px 2px rgba(0, 0, 0, 0.4);
-        position: relative;
-        }
-
-        .breaker-panel-row {
-          display: grid;
-        grid-template-columns: 1fr auto 1fr;
-          gap: clamp(10px, 2vw, 14px);
-        align-items: center;
-        padding: clamp(8px, 1.5vw, 10px) 0;
-        border-bottom: 1px solid rgba(0, 0, 0, 0.4);
-        border-top: 1px solid rgba(255, 255, 255, 0.03);
-        position: relative;
-      }
-
-      @media (max-width: 768px) {
-        .breaker-panel-card {
-          width: min(95vw, 100%);
-          max-width: 95vw;
-        }
-
-        .breaker-panel-outer {
-          padding: clamp(8px, 2vw, 18px);
-        }
-
-        .breaker-panel-inner {
-          padding: clamp(10px, 2.5vw, 20px);
-        }
-
-        .breaker-panel-row {
-          gap: clamp(8px, 1.5vw, 14px);
-          padding: clamp(6px, 1.2vw, 10px) 0;
-        }
-      }
-
-      @media (max-width: 480px) {
-        .breaker-panel-card {
-          width: min(98vw, 100%);
-          max-width: 98vw;
-          padding: clamp(6px, 1.5vw, 12px);
-        }
-
-        .breaker-panel-outer {
-          padding: clamp(4px, 1.2vw, 8px);
-        }
-
-        .breaker-panel-inner {
-          padding: clamp(6px, 1.5vw, 12px);
-          min-height: clamp(250px, 60vh, 300px);
-        }
-
-        .breaker-panel-row {
-          gap: clamp(3px, 0.8vw, 6px);
-          padding: clamp(3px, 0.8vw, 6px) 0;
-          grid-template-columns: 1fr auto 1fr;
-        }
-
-        .breaker-switch {
-          width: clamp(60px, 10vw, 75px);
-          height: clamp(24px, 4.5vw, 30px);
-        }
-
-        .breaker-switch-handle {
-          width: clamp(16px, 3vw, 20px);
-          height: clamp(16px, 3vw, 20px);
-          left: clamp(4px, 0.8vw, 6px);
-        }
-
-        .breaker-switch.on .breaker-switch-handle {
-          left: calc(100% - clamp(22px, 4vw, 28px));
-        }
-
-        .breaker-switch-right .breaker-switch-handle {
-          right: clamp(4px, 0.8vw, 6px);
-        }
-
-        .breaker-switch-right.on .breaker-switch-handle {
-          left: clamp(4px, 0.8vw, 6px);
-          right: auto;
-        }
-
-        .breaker-label-text {
-          font-size: clamp(6px, 0.9vw, 7px);
-          padding: clamp(2px, 0.5vw, 3px) clamp(4px, 0.8vw, 6px);
-          min-width: clamp(70px, 10vw, 85px);
-        }
-
-        .breaker-open-settings-btn {
-          padding: clamp(3px, 0.6vw, 4px) clamp(6px, 1.2vw, 8px);
-          font-size: clamp(6px, 0.9vw, 7px);
-        }
-
-        .breaker-color-tag {
-          width: clamp(14px, 2.5vw, 18px);
-          height: clamp(14px, 2.5vw, 18px);
-        }
-
-        .breaker-label-text {
-          padding-left: clamp(14px, 2.5vw, 18px);
-        }
-
-        .breaker-label-right .breaker-label-text {
-          padding-left: clamp(14px, 2.5vw, 18px);
-          padding-right: 0;
-        }
-      }
-
-      @media (max-width: 375px) {
-        .breaker-panel-card {
-          width: 100vw;
-          max-width: 100vw;
-          padding: clamp(4px, 1.2vw, 8px);
-        }
-
-        .breaker-panel-outer {
-          padding: clamp(3px, 1vw, 6px);
-        }
-
-        .breaker-panel-inner {
-          padding: clamp(4px, 1.2vw, 8px);
-          min-height: clamp(200px, 55vh, 250px);
-        }
-
-        .breaker-panel-row {
-          gap: clamp(2px, 0.6vw, 4px);
-          padding: clamp(2px, 0.6vw, 4px) 0;
-          grid-template-columns: 1fr auto 1fr;
-        }
-
-        .breaker-switch {
-          width: clamp(50px, 8.5vw, 60px);
-          height: clamp(20px, 4vw, 24px);
-        }
-
-        .breaker-switch-handle {
-          width: clamp(14px, 2.5vw, 16px);
-          height: clamp(14px, 2.5vw, 16px);
-          left: clamp(3px, 0.6vw, 4px);
-        }
-
-        .breaker-switch.on .breaker-switch-handle {
-          left: calc(100% - clamp(18px, 3.5vw, 22px));
-        }
-
-        .breaker-switch-right .breaker-switch-handle {
-          right: clamp(3px, 0.6vw, 4px);
-        }
-
-        .breaker-switch-right.on .breaker-switch-handle {
-          left: clamp(3px, 0.6vw, 4px);
-          right: auto;
-        }
-
-        .breaker-label-text {
-          font-size: clamp(5px, 0.8vw, 6px);
-          padding: clamp(2px, 0.4vw, 2px) clamp(3px, 0.6vw, 4px);
-          min-width: clamp(60px, 8vw, 70px);
-        }
-
-        .breaker-open-settings-btn {
-          padding: clamp(2px, 0.5vw, 3px) clamp(4px, 1vw, 6px);
-          font-size: clamp(5px, 0.8vw, 6px);
-        }
-
-        .breaker-color-tag {
-          width: clamp(12px, 2vw, 14px);
-          height: clamp(12px, 2vw, 14px);
-        }
-
-        .breaker-label-text {
-          padding-left: clamp(12px, 2vw, 14px);
-        }
-
-        .breaker-label-right .breaker-label-text {
-          padding-left: clamp(12px, 2vw, 14px);
-          padding-right: 0;
-        }
-      }
-
-      .breaker-panel-row::before {
-        content: "";
-          position: absolute;
-        left: 0;
-        right: 0;
-        top: 0;
-        height: 1px;
-        background: linear-gradient(to right, 
-          transparent 0%, 
-          rgba(255, 255, 255, 0.08) 20%, 
-          rgba(255, 255, 255, 0.08) 80%, 
-          transparent 100%);
-      }
-
-      .breaker-panel-row:last-child {
-        border-bottom: none;
-      }
-
-      .breaker-label-left {
-        text-align: right;
-        padding-right: clamp(8px, 1.8vw, 12px);
-          display: flex;
-          flex-direction: column;
-          gap: clamp(6px, 1.2vw, 8px);
-        align-items: flex-end;
-      }
-
-      .breaker-label-right {
-        text-align: right;
-        padding-left: clamp(8px, 1.8vw, 12px);
-        padding-right: 0;
-        display: flex;
-        flex-direction: column;
-        gap: clamp(6px, 1.2vw, 8px);
-        align-items: flex-end;
-      }
-
-      .breaker-label-with-tag {
-        display: flex;
-        align-items: center;
-        gap: clamp(4px, 1vw, 6px);
-        width: 100%;
-      }
-
-      .breaker-label-with-tag {
-          position: relative;
-      }
-
-      .breaker-label-left .breaker-label-with-tag {
-        flex-direction: row;
-      }
-
-      .breaker-label-right .breaker-label-with-tag {
-        flex-direction: row-reverse;
-        justify-content: flex-end;
-      }
-
-      .breaker-color-tag {
-          position: absolute;
-        width: clamp(20px, 3.5vw, 28px);
-        height: clamp(20px, 3.5vw, 28px);
-        top: 0;
-        left: 0;
-        clip-path: polygon(0 0, 100% 0, 0 100%);
-        display: flex;
-        align-items: flex-start;
-        justify-content: flex-start;
-        cursor: pointer;
-        z-index: 10;
-        transition: all 0.2s ease;
-        border-top-left-radius: clamp(1px, 0.3vw, 2px);
-      }
-
-      .breaker-label-right .breaker-color-tag {
-        left: auto;
-        right: 0;
-        clip-path: polygon(0 0, 100% 0, 100% 100%);
-        border-top-left-radius: 0;
-        border-top-right-radius: 2px;
-        align-items: flex-start;
-        justify-content: flex-end;
-      }
-
-      .breaker-label-text {
-        position: relative;
-        padding-left: clamp(20px, 3.5vw, 28px);
-      }
-
-      .breaker-label-right .breaker-label-text {
-        padding-left: clamp(20px, 3.5vw, 28px);
-        padding-right: 0;
-        text-align: right;
-      }
-
-      .breaker-color-tag:hover {
-        border-color: rgba(255, 255, 255, 0.3);
-          box-shadow: 
-          inset 0 1px 2px rgba(0, 0, 0, 0.4),
-          inset 0 1px 0 rgba(255, 255, 255, 0.2),
-          0 1px 2px rgba(0, 0, 0, 0.3),
-          0 0 8px rgba(90, 159, 212, 0.4);
-        transform: scale(1.05);
-      }
-
-      .breaker-tag-number {
-        font-size: clamp(7px, 1.1vw, 9px);
-        font-weight: 700;
-        color: rgba(255, 255, 255, 1);
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-        font-family: 'Courier New', monospace;
-        letter-spacing: clamp(0.2px, 0.04vw, 0.3px);
-          position: absolute;
-        top: clamp(1px, 0.3vw, 2px);
-        left: clamp(1px, 0.3vw, 2px);
-        line-height: 1;
-      }
-
-      .breaker-label-right .breaker-tag-number {
-        left: auto;
-        right: 2px;
-      }
-
-      .breaker-open-settings-btn {
-        width: 100%;
-        padding: clamp(6px, 1.2vw, 8px) clamp(10px, 1.8vw, 12px);
-          font-size: clamp(8px, 1.2vw, 10px);
-          font-weight: 600;
-        background: rgba(30, 35, 45, 0.8);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: clamp(2px, 0.4vw, 3px);
-        color: rgba(255, 255, 255, 0.8);
-        cursor: pointer;
-        text-transform: uppercase;
-        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
-        transition: all 0.2s ease;
-        box-shadow: 
-          inset 0 1px 2px rgba(0, 0, 0, 0.4),
-          0 1px 1px rgba(0, 0, 0, 0.2);
-      }
-
-      .breaker-open-settings-btn:hover {
-        background: rgba(40, 45, 55, 0.9);
-        border-color: rgba(90, 159, 212, 0.4);
-        color: rgba(255, 255, 255, 1);
-        box-shadow: 
-          inset 0 1px 2px rgba(0, 0, 0, 0.4),
-          0 1px 1px rgba(0, 0, 0, 0.2),
-          0 0 8px rgba(90, 159, 212, 0.3);
-        transform: translateY(-1px);
-      }
-
-      .breaker-row-delete-btn {
-          position: absolute;
-        top: clamp(6px, 1.2vw, 8px);
-        right: clamp(6px, 1.2vw, 8px);
-        width: clamp(18px, 3.5vw, 24px);
-        height: clamp(18px, 3.5vw, 24px);
-        border-radius: 50%;
-        background: rgba(200, 50, 50, 0.8);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        color: white;
-        font-size: clamp(14px, 2.5vw, 18px);
-        font-weight: bold;
-        cursor: pointer;
-          display: flex;
-        align-items: center;
-        justify-content: center;
-        line-height: 1;
-        transition: all 0.2s ease;
-        box-shadow: 
-          inset 0 1px 2px rgba(0, 0, 0, 0.4),
-          0 1px 2px rgba(0, 0, 0, 0.3);
-        z-index: 10;
-      }
-
-      .breaker-row-delete-btn:hover {
-        background: rgba(220, 70, 70, 1);
-        transform: scale(1.1);
-        box-shadow: 
-          inset 0 1px 2px rgba(0, 0, 0, 0.4),
-          0 2px 4px rgba(0, 0, 0, 0.4),
-          0 0 8px rgba(220, 70, 70, 0.5);
-      }
-
-      .breaker-tag-modal {
-        display: none;
+      .graph-modal-overlay {
         position: fixed;
-        top: 0;
-        left: 0;
-          width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.7);
-        z-index: 10000;
+        inset: 0;
+        z-index: 1000;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
         align-items: center;
         justify-content: center;
+        padding: clamp(12px, 4vw, 24px);
+        box-sizing: border-box;
       }
-
-      .breaker-tag-modal.active {
-          display: flex;
-      }
-
-      .breaker-tag-modal-content {
-        background: linear-gradient(180deg, #2d3441 0%, #1f252e 100%);
-        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.8);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: clamp(6px, 1.2vw, 8px);
-        padding: clamp(12px, 2.8vw, 20px);
-        min-width: clamp(240px, 40vw, 280px);
-        box-shadow: 
-          inset 0 2px 4px rgba(0, 0, 0, 0.6),
-          0 4px 12px rgba(0, 0, 0, 0.8);
-      }
-
-      .breaker-tag-modal-header {
+      .graph-modal {
+        background: var(--card-bg, #1c1c1c);
+        border-radius: clamp(8px, 2vw, 12px);
+        border: 1px solid var(--card-border, rgba(255,255,255,0.12));
+        width: min(95vw, 600px);
+        max-width: 100%;
+        max-height: min(85vh, 400px);
         display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      }
+      .graph-modal-header {
+        display: flex;
+        align-items: center;
         justify-content: space-between;
-          align-items: center;
-        margin-bottom: clamp(12px, 2.2vw, 16px);
-        padding-bottom: clamp(8px, 1.8vw, 12px);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        padding: clamp(10px, 2.5vw, 16px) clamp(12px, 3vw, 20px);
+        border-bottom: 1px solid var(--card-border, rgba(255,255,255,0.12));
+        flex-shrink: 0;
       }
-
-      .breaker-tag-modal-title {
-        font-size: clamp(12px, 2vw, 14px);
-        font-weight: 700;
-        color: rgba(255, 255, 255, 0.9);
-        text-transform: uppercase;
-        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
+      .graph-modal-title {
+        margin: 0;
+        font-size: clamp(14px, 3.5vw, 18px);
+        font-weight: 600;
+        color: var(--primary-text-color, #fff);
       }
-
-      .breaker-tag-modal-close {
-        width: clamp(18px, 3.5vw, 24px);
-        height: clamp(18px, 3.5vw, 24px);
-        border-radius: 50%;
-        background: rgba(200, 50, 50, 0.8);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        color: white;
-        font-size: clamp(12px, 2.2vw, 16px);
-        font-weight: bold;
+      .graph-modal-close {
+        width: clamp(36px, 8vw, 44px);
+        height: clamp(36px, 8vw, 44px);
+        min-width: 36px;
+        min-height: 36px;
+        border: none;
+        background: rgba(255,255,255,0.1);
+        color: var(--primary-text-color, #fff);
+        font-size: clamp(20px, 5vw, 28px);
+        line-height: 1;
+        border-radius: clamp(4px, 1vw, 8px);
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        line-height: 1;
-        transition: all 0.2s ease;
+        padding: 0;
+        transition: background 0.2s;
       }
-
-      .breaker-tag-modal-close:hover {
-        background: rgba(220, 70, 70, 1);
-        transform: scale(1.1);
+      .graph-modal-close:hover {
+        background: rgba(255,255,255,0.2);
       }
-
-      .breaker-tag-modal-form {
-          display: flex;
-          flex-direction: column;
-          gap: clamp(10px, 1.8vw, 12px);
-        }
-
-      .breaker-tag-modal-field {
-        display: flex;
-        flex-direction: column;
-        gap: clamp(4px, 1vw, 6px);
-      }
-
-      .breaker-tag-modal-label {
-          font-size: clamp(8px, 1.2vw, 10px);
-          font-weight: 600;
-        color: rgba(255, 255, 255, 0.7);
-        text-transform: uppercase;
-        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
-      }
-
-      .breaker-tag-modal-number-input {
-        padding: clamp(6px, 1.2vw, 8px) clamp(10px, 1.8vw, 12px);
-        background: rgba(20, 25, 35, 0.8);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: clamp(3px, 0.6vw, 4px);
-        color: rgba(255, 255, 255, 0.9);
-        font-size: clamp(12px, 2vw, 14px);
-        font-weight: 700;
-        font-family: 'Courier New', monospace;
-        text-align: center;
-        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
-      }
-
-      .breaker-tag-modal-number-input:focus {
-        outline: none;
-        border-color: rgba(90, 159, 212, 0.5);
-          box-shadow: 
-          inset 0 1px 2px rgba(0, 0, 0, 0.4),
-          0 0 8px rgba(90, 159, 212, 0.3);
-      }
-
-      .breaker-tag-modal-color-input {
-          width: 100%;
-        height: clamp(30px, 5.5vw, 40px);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: clamp(3px, 0.6vw, 4px);
-        cursor: pointer;
-        background: rgba(20, 25, 35, 0.8);
-        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
-        }
-
-      .breaker-tag-modal-actions {
-          display: flex;
-        gap: clamp(6px, 1.2vw, 8px);
-        margin-top: clamp(6px, 1.2vw, 8px);
-      }
-
-      .breaker-tag-modal-btn {
+      .graph-modal-body {
+        padding: clamp(10px, 2.5vw, 16px);
         flex: 1;
-        padding: clamp(6px, 1.2vw, 8px) clamp(12px, 2.2vw, 16px);
-        background: rgba(40, 45, 55, 0.8);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: clamp(3px, 0.6vw, 4px);
-        color: rgba(255, 255, 255, 0.9);
-        font-size: clamp(9px, 1.5vw, 11px);
-        font-weight: 600;
-        cursor: pointer;
-        text-transform: uppercase;
-        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
-          transition: all 0.2s ease;
-        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
-        }
-
-      .breaker-tag-modal-btn:hover {
-        background: rgba(50, 55, 65, 0.9);
-        border-color: rgba(90, 159, 212, 0.4);
-          box-shadow: 
-          inset 0 1px 2px rgba(0, 0, 0, 0.4),
-          0 0 6px rgba(90, 159, 212, 0.3);
-      }
-
-      .breaker-tag-modal-btn.primary {
-        background: rgba(90, 159, 212, 0.6);
-      }
-
-      .breaker-tag-modal-btn.primary:hover {
-        background: rgba(90, 159, 212, 0.8);
-      }
-
-      .breaker-settings-modal {
-        display: none;
-        position: fixed;
-        top: 0;
-        left: 0;
-          width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.7);
-        z-index: 10001;
-          align-items: center;
-        justify-content: center;
-      }
-
-      .breaker-settings-modal.active {
-          display: flex;
-      }
-
-      .breaker-settings-modal-content {
-        background: linear-gradient(180deg, #2d3441 0%, #1f252e 100%);
-        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.8);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: clamp(6px, 1.2vw, 8px);
-        padding: clamp(12px, 2.8vw, 20px);
-        min-width: clamp(300px, 50vw, 400px);
-        max-width: 90vw;
-        max-height: 90vh;
-        overflow-y: auto;
-          box-shadow: 
-          inset 0 2px 4px rgba(0, 0, 0, 0.6),
-          0 4px 12px rgba(0, 0, 0, 0.8);
-      }
-
-      .breaker-settings-modal-header {
-        display: flex;
-        justify-content: space-between;
-          align-items: center;
-        margin-bottom: clamp(12px, 2.8vw, 20px);
-        padding-bottom: clamp(8px, 1.8vw, 12px);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      }
-
-      .breaker-settings-modal-title {
-        font-size: clamp(14px, 2.2vw, 16px);
-        font-weight: 700;
-        color: rgba(255, 255, 255, 0.9);
-        text-transform: uppercase;
-        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
-      }
-
-      .breaker-settings-modal-close {
-        width: clamp(18px, 3.5vw, 24px);
-        height: clamp(18px, 3.5vw, 24px);
-        border-radius: 50%;
-        background: rgba(200, 50, 50, 0.8);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        color: white;
-        font-size: clamp(12px, 2.2vw, 16px);
-        font-weight: bold;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        line-height: 1;
-          transition: all 0.2s ease;
-        }
-
-      .breaker-settings-modal-close:hover {
-        background: rgba(220, 70, 70, 1);
-        transform: scale(1.1);
-      }
-
-      .breaker-settings-modal-form {
+        min-height: 0;
         display: flex;
         flex-direction: column;
-        gap: clamp(12px, 2.2vw, 16px);
       }
-
-      .breaker-settings-modal-field {
-        display: flex;
-        flex-direction: column;
-        gap: clamp(4px, 1vw, 6px);
-      }
-
-      .breaker-settings-modal-label {
-        font-size: clamp(9px, 1.5vw, 11px);
-        font-weight: 600;
-        color: rgba(255, 255, 255, 0.8);
-        text-transform: uppercase;
-        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
-      }
-
-      .breaker-settings-modal-input {
-        padding: clamp(6px, 1.2vw, 8px) clamp(10px, 1.8vw, 12px);
-        background: rgba(20, 25, 35, 0.8);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: clamp(3px, 0.6vw, 4px);
-        color: rgba(255, 255, 255, 0.9);
-        font-size: clamp(11px, 1.8vw, 13px);
-        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
-        transition: all 0.2s ease;
-      }
-
-      .breaker-settings-modal-input:focus {
-        outline: none;
-        border-color: rgba(90, 159, 212, 0.5);
-          box-shadow: 
-          inset 0 1px 2px rgba(0, 0, 0, 0.4),
-          0 0 8px rgba(90, 159, 212, 0.3);
-      }
-
-      .breaker-settings-modal-actions {
-        display: flex;
-        gap: clamp(6px, 1.2vw, 8px);
-        margin-top: clamp(6px, 1.2vw, 8px);
-      }
-
-      .breaker-settings-modal-btn {
+      .graph-chart-container {
         flex: 1;
-        padding: clamp(8px, 1.5vw, 10px) clamp(12px, 2.2vw, 16px);
-        background: rgba(40, 45, 55, 0.8);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: clamp(3px, 0.6vw, 4px);
-        color: rgba(255, 255, 255, 0.9);
-        font-size: clamp(10px, 1.8vw, 12px);
-        font-weight: 600;
-        cursor: pointer;
-        text-transform: uppercase;
-        letter-spacing: clamp(0.3px, 0.06vw, 0.5px);
-          transition: all 0.2s ease;
-        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
-        }
-
-      .breaker-settings-modal-btn:hover {
-        background: rgba(50, 55, 65, 0.9);
-        border-color: rgba(90, 159, 212, 0.4);
-          box-shadow: 
-          inset 0 1px 2px rgba(0, 0, 0, 0.4),
-          0 0 6px rgba(90, 159, 212, 0.3);
-      }
-
-      .breaker-settings-modal-btn.primary {
-        background: rgba(90, 159, 212, 0.6);
-      }
-
-      .breaker-settings-modal-btn.primary:hover {
-        background: rgba(90, 159, 212, 0.8);
-      }
-
-      @media (max-width: 768px) {
-        .breaker-settings-modal-content {
-          min-width: auto;
-          width: 95vw;
-          padding: clamp(10px, 2.2vw, 16px);
-        }
-      }
-
-      .breaker-label-text {
-        font-size: clamp(8px, 1.2vw, 10px);
-        font-weight: 700;
-        color: rgba(255, 255, 255, 0.9);
-        background: 
-          linear-gradient(180deg, rgba(30, 35, 45, 0.9) 0%, rgba(20, 25, 35, 0.95) 100%);
-        border: 1px solid rgba(0, 0, 0, 0.7);
-        border-top: 1px solid rgba(255, 255, 255, 0.2);
-        border-left: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: clamp(1px, 0.2vw, 2px);
-        padding: clamp(4px, 0.8vw, 5px) clamp(8px, 1.5vw, 10px);
-        min-width: clamp(100px, 15vw, 130px);
-        text-align: center;
-            box-shadow: 
-          inset 0 2px 3px rgba(0, 0, 0, 0.5),
-          inset 0 1px 0 rgba(255, 255, 255, 0.15),
-          0 1px 1px rgba(0, 0, 0, 0.3);
-        font-family: 'Arial', 'Helvetica', sans-serif;
-        letter-spacing: clamp(0.2px, 0.04vw, 0.3px);
-        text-transform: uppercase;
-      }
-
-      .breaker-label-text:focus {
-        outline: none;
-        border-color: rgba(90, 159, 212, 0.5);
-            box-shadow: 
-          inset 0 2px 3px rgba(0, 0, 0, 0.5),
-          inset 0 1px 0 rgba(255, 255, 255, 0.15),
-          0 1px 1px rgba(0, 0, 0, 0.3),
-          0 0 8px rgba(90, 159, 212, 0.3);
-      }
-
-      .breaker-color-picker-wrapper {
-        position: relative;
-          width: 100%;
-        max-width: clamp(100px, 15vw, 130px);
-      }
-
-      .breaker-color-picker-label {
-        font-size: clamp(7px, 1.1vw, 8px);
-        color: rgba(255, 255, 255, 0.5);
-        margin-bottom: clamp(2px, 0.5vw, 3px);
-        text-transform: uppercase;
-        letter-spacing: clamp(0.5px, 0.12vw, 0.8px);
-        font-weight: 600;
-      }
-
-      .breaker-color-input {
+        min-height: clamp(120px, 35vw, 220px);
         width: 100%;
-        height: clamp(24px, 4.5vw, 30px);
-        border: 1px solid rgba(0, 0, 0, 0.6);
-        border-top: 1px solid rgba(255, 255, 255, 0.15);
-        border-left: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: clamp(2px, 0.5vw, 3px);
-        cursor: pointer;
-        background: rgba(20, 25, 35, 0.8);
-            box-shadow: 
-          inset 0 2px 3px rgba(0, 0, 0, 0.5),
-          inset 0 1px 0 rgba(255, 255, 255, 0.1),
-          0 1px 1px rgba(0, 0, 0, 0.3);
-          transition: all 0.2s ease;
-        }
-
-      .breaker-color-input:hover {
-        border-color: rgba(255, 255, 255, 0.25);
-          box-shadow: 
-          inset 0 2px 3px rgba(0, 0, 0, 0.5),
-          inset 0 1px 0 rgba(255, 255, 255, 0.1),
-          0 1px 1px rgba(0, 0, 0, 0.3),
-          0 0 8px rgba(90, 159, 212, 0.3);
       }
-
-      .breaker-switch-container {
-          display: flex;
-        gap: clamp(6px, 1.2vw, 8px);
-          align-items: center;
-        }
-
-      .breaker-switch {
-        width: clamp(90px, 15vw, 120px);
-        height: clamp(36px, 6vw, 48px);
-        background: 
-          radial-gradient(ellipse at 50% 50%, rgba(40, 45, 55, 0.3) 0%, transparent 70%),
-          linear-gradient(to right, #2d3441 0%, #252a35 30%, #1f252e 50%, #252a35 70%, #2d3441 100%);
-        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.8);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: clamp(2px, 0.5vw, 4px);
-        position: relative;
-        box-shadow: 
-          inset 0 2px 4px rgba(0, 0, 0, 0.7),
-          inset 0 1px 0 rgba(255, 255, 255, 0.12),
-          inset 0 -1px 2px rgba(0, 0, 0, 0.5),
-          0 2px 4px rgba(0, 0, 0, 0.5),
-          0 1px 0 rgba(255, 255, 255, 0.05);
-        cursor: pointer;
-        transition: all 0.2s ease;
-        overflow: hidden;
-        }
-
-        .breaker-switch-handle {
-          position: absolute;
-        left: clamp(6px, 1vw, 8px);
-        top: 50%;
-        transform: translateY(-50%);
-        width: clamp(24px, 4vw, 32px);
-        height: clamp(24px, 4vw, 32px);
-          border-radius: clamp(2px, 0.4vw, 3px);
-        background: 
-          linear-gradient(135deg, #4a5568 0%, #3d4756 50%, #2d3441 100%);
-        border: clamp(1px, 0.3vw, 2px) solid rgba(0, 0, 0, 0.6);
-        border-top: 1px solid rgba(255, 255, 255, 0.2);
-        border-left: 1px solid rgba(255, 255, 255, 0.15);
-          box-shadow: 
-          inset 0 2px 4px rgba(0, 0, 0, 0.6),
-          inset 0 1px 0 rgba(255, 255, 255, 0.2),
-          0 2px 4px rgba(0, 0, 0, 0.5);
-        transition: all 0.3s ease;
+      .graph-svg {
+        width: 100%;
+        height: 100%;
+        min-height: 120px;
       }
-
-      .breaker-switch.on .breaker-switch-handle {
-        left: calc(100% - clamp(30px, 5vw, 40px));
-        background: 
-          linear-gradient(135deg, #5a9fd4 0%, #4a8fc4 50%, #3a7fb4 100%);
-        box-shadow: 
-          inset 0 2px 4px rgba(0, 0, 0, 0.4),
-          inset 0 1px 0 rgba(255, 255, 255, 0.3),
-            0 2px 4px rgba(0, 0, 0, 0.5),
-          0 0 8px rgba(90, 159, 212, 0.5);
+      .graph-dates {
+        font-size: clamp(9px, 2vw, 11px);
+        color: var(--secondary-text-color, #999);
+        margin-top: clamp(6px, 1.5vw, 10px);
       }
-
-      .breaker-switch-label {
-        position: absolute;
-        top: 50%;
-        transform: translateY(-50%);
-        font-size: clamp(8px, 1.2vw, 10px);
-        font-weight: 700;
-        color: rgba(255, 255, 255, 0.3);
-        text-transform: uppercase;
-        letter-spacing: clamp(0.5px, 0.15vw, 1px);
-        transition: all 0.3s ease;
-        width: 50%;
-        text-align: center;
-      }
-
-      .breaker-switch-left .breaker-switch-label:first-of-type {
-        left: 0;
-      }
-
-      .breaker-switch-left .breaker-switch-label-off {
-        right: 0;
-        left: auto;
-      }
-
-      /* Right switch: reversed positioning without text flipping */
-      .breaker-switch-right .breaker-switch-handle {
-        left: auto;
-        right: clamp(6px, 1vw, 8px);
-        transform: translateY(-50%);
-      }
-
-      .breaker-switch-right.on .breaker-switch-handle {
-        right: auto;
-        left: clamp(6px, 1vw, 8px);
-        background: 
-          linear-gradient(135deg, #5a9fd4 0%, #4a8fc4 50%, #3a7fb4 100%);
-        box-shadow: 
-          inset 0 2px 4px rgba(0, 0, 0, 0.4),
-          inset 0 1px 0 rgba(255, 255, 255, 0.3),
-          0 2px 4px rgba(0, 0, 0, 0.5),
-          0 0 8px rgba(90, 159, 212, 0.5);
-      }
-
-      /* Right switch labels: OFF on left, ON on right */
-      .breaker-switch-right .breaker-switch-label-off {
-        left: 0;
-        right: auto;
-      }
-
-      .breaker-switch-right .breaker-switch-label:not(.breaker-switch-label-off) {
-        right: 0;
-        left: auto;
-      }
-
-      .breaker-switch-left.on .breaker-switch-label:first-of-type {
-        color: rgba(90, 159, 212, 0.9);
-        text-shadow: 0 0 4px rgba(90, 159, 212, 0.5);
-      }
-
-      .breaker-switch-right.on .breaker-switch-label:not(.breaker-switch-label-off) {
-        color: rgba(90, 159, 212, 0.9);
-        text-shadow: 0 0 4px rgba(90, 159, 212, 0.5);
-      }
-
-      .breaker-switch-left:not(.on) .breaker-switch-label-off {
-        color: rgba(255, 255, 255, 0.5);
-      }
-
-      .breaker-switch-right:not(.on) .breaker-switch-label-off {
-        color: rgba(255, 255, 255, 0.5);
-      }
-
-      .breaker-switch:hover {
-        border-color: rgba(255, 255, 255, 0.2);
-        box-shadow: 
-          inset 0 2px 4px rgba(0, 0, 0, 0.7),
-          inset 0 1px 0 rgba(255, 255, 255, 0.12),
-          inset 0 -1px 2px rgba(0, 0, 0, 0.5),
-          0 2px 4px rgba(0, 0, 0, 0.5),
-          0 1px 0 rgba(255, 255, 255, 0.05),
-          0 0 12px rgba(90, 159, 212, 0.3);
-        transform: translateY(-1px);
-        }
-
-      .breaker-switch-right:hover {
-        transform: translateY(-1px);
-        }
 
       @media (max-width: 500px) {
         .device-card.stove-card,
@@ -3067,6 +2190,7 @@ class EnergyPanel extends HTMLElement {
   _renderMain(styles) {
     const rooms = this._config?.rooms || [];
     const powerData = this._powerData?.rooms || [];
+    const showStatistics = this._dashboardView === 'statistics';
 
     // Calculate totals
     let totalWatts = 0;
@@ -3100,48 +2224,235 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <div class="content-area">
-          ${rooms.length > 0 ? `
+          <div class="view-tabs">
+            <button class="view-tab ${this._dashboardView === 'rooms' ? 'active' : ''}" data-view="rooms">Rooms</button>
+            <button class="view-tab ${this._dashboardView === 'statistics' ? 'active' : ''}" data-view="statistics">Statistics</button>
+          </div>
+          ${showStatistics ? this._renderStatisticsView() : ''}
+          ${!showStatistics ? (rooms.length === 0 ? this._renderEmptyState() : `
             <div class="summary-stats">
-              <div class="stat-card">
+              <div class="stat-card graph-clickable" data-graph-type="total_wh">
                 <div class="stat-value" id="summary-total-watts">${totalWatts.toFixed(1)} W</div>
                 <div class="stat-label">Current Power</div>
               </div>
-              <div class="stat-card">
+              <div class="stat-card graph-clickable" data-graph-type="total_wh">
                 <div class="stat-value" id="summary-total-day">${(totalDayWh / 1000).toFixed(2)} kWh</div>
                 <div class="stat-label">Today's Usage</div>
               </div>
-              <div class="stat-card">
+              <div class="stat-card graph-clickable" data-graph-type="total_warnings">
                 <div class="stat-value" id="summary-warnings">${totalWarnings}</div>
                 <div class="stat-label">Threshold Warnings</div>
               </div>
-              <div class="stat-card">
+              <div class="stat-card graph-clickable" data-graph-type="total_shutoffs">
                 <div class="stat-value" id="summary-shutoffs">${totalShutoffs}</div>
                 <div class="stat-label">Safety Shutoffs</div>
               </div>
             </div>
-          ` : ''}
-
-          ${rooms.length === 0 && this._dashboardView === 'outlets' ? this._renderEmptyState() : ''}
-          
-          <div class="view-tabs">
-            <button class="view-tab ${this._dashboardView === 'outlets' ? 'active' : ''}" data-view="outlets">
-              Rooms
-            </button>
-            <button class="view-tab ${this._dashboardView === 'breakers' ? 'active' : ''}" data-view="breakers">
-              Breakers
-            </button>
-          </div>
-
-          ${this._dashboardView === 'outlets' ? `
             <div class="rooms-grid">
               ${rooms.map((room) => this._renderRoomCard(room)).join('')}
             </div>
-          ` : this._renderBreakerPanel()}
+          `) : ''}
+          </div>
         </div>
+        ${this._graphOpen ? this._renderGraphModal() : ''}
       </div>
     `;
 
     this._attachEventListeners();
+  }
+
+  _renderGraphModal() {
+    if (!this._graphData || !this._graphOpen) return '';
+    const type = this._graphOpen.type;
+    const roomId = this._graphOpen.roomId;
+    const roomName = this._graphOpen.roomName || '';
+    const labels = { total_wh: 'Usage (kWh)', total_warnings: 'Threshold Warnings', total_shutoffs: 'Safety Shutoffs', room_wh: `${roomName} Usage (kWh)`, room_warnings: `${roomName} Warnings`, room_shutoffs: `${roomName} Shutoffs` };
+    const title = labels[type] || '30-Day History';
+    let values = [];
+    if (type.startsWith('room_')) {
+      const key = type.replace('room_', '');
+      values = (this._graphData.rooms?.[roomId]?.[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
+    } else {
+      const key = type.replace('total_', '');
+      values = (this._graphData[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
+    }
+    const dates = this._graphData.dates || [];
+    const chartSvg = this._renderChartSvg(dates, values, type.includes('wh'));
+    return `
+      <div class="graph-modal-overlay" id="graph-modal-overlay">
+        <div class="graph-modal">
+          <div class="graph-modal-header">
+            <h2 class="graph-modal-title">${title}</h2>
+            <button type="button" class="graph-modal-close" id="graph-modal-close" aria-label="Close">×</button>
+          </div>
+          <div class="graph-modal-body">
+            <div class="graph-chart-container">${chartSvg}</div>
+            <div class="graph-dates">${(dates.slice(0, 5).join(' — ') || '')}${dates.length > 5 ? ' … ' : ''}${dates.length > 5 ? dates.slice(-3).join(' — ') : ''}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderChartSvg(dates, values, isKwh) {
+    const n = Math.max(1, values.length);
+    const maxVal = Math.max(...values, 0.1);
+    const pad = { t: 8, r: 8, b: 8, l: 8 };
+    const w = 100;
+    const h = 100;
+    const chartW = w - pad.l - pad.r;
+    const chartH = h - pad.t - pad.b;
+    const coords = values.map((v, i) => ({
+      x: pad.l + (i / (n - 1 || 1)) * chartW,
+      y: pad.t + chartH - (v / maxVal) * chartH
+    }));
+    const pointsStr = coords.map(c => `${c.x},${c.y}`).join(' ');
+    const areaPoints = `${pad.l},${pad.t + chartH} ${pointsStr} ${pad.l + chartW},${pad.t + chartH}`;
+    const linePath = coords.length ? 'M ' + coords.map(c => `${c.x} ${c.y}`).join(' L ') : '';
+    return `
+      <svg class="graph-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="graphGrad" x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0%" stop-color="var(--panel-accent)" stop-opacity="0.3"/>
+            <stop offset="100%" stop-color="var(--panel-accent)" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <polygon points="${areaPoints}" fill="url(#graphGrad)"/>
+        <path d="${linePath}" fill="none" stroke="var(--panel-accent)" stroke-width="0.8" vector-effect="non-scaling-stroke"/>
+      </svg>
+    `;
+  }
+
+  async _openGraph(type, roomId = null, roomName = null) {
+    try {
+      const result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 30 });
+      this._graphOpen = { type, roomId, roomName };
+      this._graphData = result;
+      this._render();
+      this._attachGraphModalListeners();
+    } catch (e) {
+      console.error('Failed to load daily history:', e);
+      showToast(this.shadowRoot, 'Failed to load history', 'error');
+    }
+  }
+
+  _attachGraphModalListeners() {
+    const overlay = this.shadowRoot.getElementById('graph-modal-overlay');
+    const closeBtn = this.shadowRoot.getElementById('graph-modal-close');
+    const close = () => {
+      this._graphOpen = null;
+      this._graphData = null;
+      this._render();
+    };
+    if (overlay) overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    if (closeBtn) closeBtn.addEventListener('click', close);
+  }
+
+  _formatDateRange(dateStr) {
+    if (!dateStr || typeof dateStr !== 'string') return '—';
+    const parts = dateStr.trim().split('-');
+    if (parts.length !== 3) return dateStr;
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    const y = parts[0];
+    if (isNaN(m) || isNaN(d) || m < 0 || m > 11) return dateStr;
+    return `${months[m]} ${d}, ${y}`;
+  }
+
+  _renderStatisticsView() {
+    const s = this._statsData || {};
+    const dateStart = s.date_start || '';
+    const dateEnd = s.date_end || '';
+    const isNarrowed = s.is_narrowed === true;
+    const startFormatted = this._formatDateRange(dateStart);
+    const endFormatted = this._formatDateRange(dateEnd);
+    const rangeBanner = dateStart && dateEnd
+      ? `${startFormatted} – ${endFormatted}`
+      : 'No date range available';
+    const sensorValues = s.sensor_values || {};
+    const currentUsage = sensorValues.current_usage;
+    const projectedUsage = sensorValues.projected_usage;
+    const kwhCost = sensorValues.kwh_cost;
+    const totalKwh = s.total_kwh ?? 0;
+    const totalWarnings = s.total_warnings ?? 0;
+    const totalShutoffs = s.total_shutoffs ?? 0;
+    const rooms = s.rooms || [];
+
+    const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
+
+    return `
+      <div class="statistics-view">
+        <div class="statistics-banner">
+          <span class="statistics-range">${rangeBanner}</span>
+          ${isNarrowed ? '<span class="statistics-narrowed">Narrowed from billing cycle.</span>' : ''}
+        </div>
+        <div class="statistics-cards">
+          <div class="statistics-sensor-card card">
+            <h3 class="statistics-card-title">Utility Sensors</h3>
+            <div class="statistics-sensor-grid">
+              <div class="statistics-sensor-item">
+                <span class="statistics-sensor-label">Current Usage</span>
+                <span class="statistics-sensor-value">${fmt(currentUsage)} kWh</span>
+              </div>
+              <div class="statistics-sensor-item">
+                <span class="statistics-sensor-label">Projected Usage</span>
+                <span class="statistics-sensor-value">${fmt(projectedUsage)} kWh</span>
+              </div>
+              <div class="statistics-sensor-item">
+                <span class="statistics-sensor-label">kWh Cost</span>
+                <span class="statistics-sensor-value">$${fmt(kwhCost)}</span>
+              </div>
+            </div>
+          </div>
+          <div class="statistics-totals-card card">
+            <h3 class="statistics-card-title">Totals (from daily data)</h3>
+            <div class="statistics-totals-grid">
+              <div class="statistics-total-item">
+                <span class="statistics-total-value">${totalKwh.toFixed(2)}</span>
+                <span class="statistics-total-label">kWh</span>
+              </div>
+              <div class="statistics-total-item">
+                <span class="statistics-total-value">${totalWarnings}</span>
+                <span class="statistics-total-label">Warnings</span>
+              </div>
+              <div class="statistics-total-item">
+                <span class="statistics-total-value">${totalShutoffs}</span>
+                <span class="statistics-total-label">Shutoffs</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="statistics-rooms-card card">
+          <h3 class="statistics-card-title">Room Breakdown</h3>
+          <div class="statistics-table-wrap">
+            <table class="statistics-table">
+              <thead>
+                <tr>
+                  <th>Room</th>
+                  <th>kWh</th>
+                  <th>%</th>
+                  <th>Warnings</th>
+                  <th>Shutoffs</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rooms.length === 0 ? '<tr><td colspan="5" class="statistics-empty">No room data for this range.</td></tr>' : ''}
+                ${rooms.map(r => `
+                  <tr>
+                    <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
+                    <td>${(r.kwh ?? 0).toFixed(2)}</td>
+                    <td>${(r.pct ?? 0).toFixed(1)}%</td>
+                    <td>${r.warnings ?? 0}</td>
+                    <td>${r.shutoffs ?? 0}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   _renderEmptyState() {
@@ -3188,14 +2499,14 @@ class EnergyPanel extends HTMLElement {
                     ${room.threshold}W limit
                   </span>
                 ` : ''}
-                <span class="event-count" title="Threshold Warnings">⚠ ${warnings}</span>
-                <span class="event-count" title="Safety Shutoffs">⚡ ${shutoffs}</span>
+                <span class="event-count graph-clickable" data-graph-type="room_warnings" data-room-id="${room.id}" title="Threshold Warnings">⚠ ${warnings}</span>
+                <span class="event-count graph-clickable" data-graph-type="room_shutoffs" data-room-id="${room.id}" title="Safety Shutoffs">⚡ ${shutoffs}</span>
               </div>
             </div>
           </div>
           <div class="room-stats">
             <div class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</div>
-            <div class="room-total-day">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</div>
+            <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${room.id}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</div>
           </div>
         </div>
 
@@ -3494,7 +2805,9 @@ class EnergyPanel extends HTMLElement {
     const rooms = this._config?.rooms || [];
     const mediaPlayers = this._entities?.media_players || [];
     const powerSensors = this._entities?.power_sensors || [];
+    const sensors = this._entities?.sensors || this._entities?.power_sensors || [];
     const ttsSettings = this._config?.tts_settings || {};
+    const statsSettings = this._config?.statistics_settings || {};
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -3603,8 +2916,8 @@ class EnergyPanel extends HTMLElement {
             <button class="settings-tab ${this._settingsTab === 'tts' ? 'active' : ''}" data-tab="tts">
               TTS Settings
             </button>
-            <button class="settings-tab ${this._settingsTab === 'breakers' ? 'active' : ''}" data-tab="breakers">
-              Breaker Settings
+            <button class="settings-tab ${this._settingsTab === 'statistics' ? 'active' : ''}" data-tab="statistics">
+              Statistics
             </button>
           </div>
           
@@ -3754,31 +3067,64 @@ class EnergyPanel extends HTMLElement {
                   Variables: <code>{prefix}</code>
                 </div>
               </div>
-              <div class="tts-msg-group">
-                <div class="tts-msg-title">Microwave Cut Power Message</div>
-                <div class="tts-msg-desc">Spoken when stove power is cut because microwave is on (shared breaker)</div>
-                <input type="text" class="form-input" id="tts-microwave-cut" 
-                  value="${ttsSettings.microwave_cut_power_msg || '{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off.'}" 
-                  placeholder="{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off.">
-                <div class="tts-var-help">
-                  Variables: <code>{prefix}</code>
-                </div>
-              </div>
-              <div class="tts-msg-group">
-                <div class="tts-msg-title">Microwave Restore Power Message</div>
-                <div class="tts-msg-desc">Spoken when stove power is restored after microwave turns off</div>
-                <input type="text" class="form-input" id="tts-microwave-restore" 
-                  value="${ttsSettings.microwave_restore_power_msg || '{prefix} Microwave is off. Stove power restored.'}" 
-                  placeholder="{prefix} Microwave is off. Stove power restored.">
-                <div class="tts-var-help">
-                  Variables: <code>{prefix}</code>
-                </div>
-              </div>
             </div>
           </div>
           
-          <div class="settings-tab-content ${this._settingsTab === 'breakers' ? 'active' : ''}" id="tab-breakers">
-            ${this._renderBreakerSettings()}
+          <div class="settings-tab-content ${this._settingsTab === 'statistics' ? 'active' : ''}" id="tab-statistics">
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Statistics Settings</h2>
+              </div>
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
+                Configure Opower/utility sensors for billing dates, usage, and cost. Statistics are computed from daily totals.
+              </p>
+              
+              <div class="tts-msg-group" style="margin-bottom: 16px;">
+                <div class="tts-msg-title">Opower / Utility Sensors</div>
+                <div class="tts-msg-desc">Sensor entities that provide billing and usage data (YYYY-MM-DD for dates, kWh for usage)</div>
+                <div class="grid-2">
+                  <div class="form-group">
+                    <label class="form-label">Billing Start Date</label>
+                    ${this._renderEntityAutocomplete(statsSettings.billing_start_sensor || '', 'sensor', 'stats', 'stats-billing-start', 'sensor.billing_start')}
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Billing End Date</label>
+                    ${this._renderEntityAutocomplete(statsSettings.billing_end_sensor || '', 'sensor', 'stats', 'stats-billing-end', 'sensor.billing_end')}
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Current Usage (kWh)</label>
+                    ${this._renderEntityAutocomplete(statsSettings.current_usage_sensor || '', 'sensor', 'stats', 'stats-current-usage', 'sensor.current_usage')}
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Projected Usage (kWh)</label>
+                    ${this._renderEntityAutocomplete(statsSettings.projected_usage_sensor || '', 'sensor', 'stats', 'stats-projected-usage', 'sensor.projected_usage')}
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">kWh Cost</label>
+                    ${this._renderEntityAutocomplete(statsSettings.kwh_cost_sensor || '', 'sensor', 'stats', 'stats-kwh-cost', 'sensor.kwh_cost')}
+                  </div>
+                </div>
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Date Range (Optional Narrow)</div>
+                <div class="tts-msg-desc">Leave empty to use full billing cycle. Format: YYYY-MM-DD</div>
+                <div class="grid-2">
+                  <div class="form-group">
+                    <label class="form-label">Range Start</label>
+                    <input type="text" class="form-input" id="stats-date-range-start" 
+                      value="${statsSettings.date_range_start || ''}" 
+                      placeholder="YYYY-MM-DD">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Range End</label>
+                    <input type="text" class="form-input" id="stats-date-range-end" 
+                      value="${statsSettings.date_range_end || ''}" 
+                      placeholder="YYYY-MM-DD">
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -3788,284 +3134,6 @@ class EnergyPanel extends HTMLElement {
     initCustomSelects(this.shadowRoot);
   }
 
-  _renderBreakerPanel() {
-    return `
-      <div class="breaker-panel-container" style="padding: 20px;">
-        ${this._renderBreakerPanelCard()}
-      </div>
-    `;
-  }
-
-  _renderBreakerSettings() {
-    return `
-      <div class="card">
-        <div class="card-header">
-          <h2 class="card-title">Breaker Panel</h2>
-          <button class="btn btn-secondary" id="add-breaker-row-btn">
-            <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
-            Add Breaker Row
-          </button>
-        </div>
-        <div class="breaker-panel-container">
-          ${this._renderBreakerPanelCard()}
-        </div>
-      </div>
-    `;
-  }
-
-  _rgbToHex(rgb) {
-    if (!rgb) return null;
-    if (rgb.startsWith('#')) return rgb;
-    const match = rgb.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-    if (match) {
-      const r = parseInt(match[1], 10).toString(16).padStart(2, '0');
-      const g = parseInt(match[2], 10).toString(16).padStart(2, '0');
-      const b = parseInt(match[3], 10).toString(16).padStart(2, '0');
-      return `#${r}${g}${b}`;
-    }
-    return null;
-  }
-
-  _openBreakerSettingsModal(breakerNum) {
-    console.log('_openBreakerSettingsModal called with breakerNum:', breakerNum);
-    const modal = this.shadowRoot.getElementById('breaker-settings-modal');
-    if (!modal) {
-      console.error('Breaker settings modal not found in DOM');
-      return;
-    }
-
-    if (!breakerNum) {
-      console.error('Breaker number not provided');
-      return;
-    }
-
-    console.log('Opening breaker settings modal for breaker:', breakerNum);
-
-    // Get current breaker settings (TODO: load from config)
-    const breakerSettings = this._config?.breakers?.[breakerNum] || {};
-    const consumptionSensor = breakerSettings.consumption_sensor || '';
-    const switchSensor = breakerSettings.switch_sensor || '';
-    const warningThreshold = breakerSettings.warning_threshold || 0;
-    const shutoffThreshold = breakerSettings.shutoff_threshold || 0;
-
-    // Set breaker number in modal
-    modal.dataset.breakerNum = breakerNum;
-
-    // Update modal title to show breaker number
-    const modalTitle = modal.querySelector('.breaker-settings-modal-title');
-    if (modalTitle) {
-      modalTitle.textContent = `Breaker ${String(breakerNum).padStart(2, '0')} Settings`;
-    }
-
-    // Populate consumption sensor field
-    const consumptionContainer = this.shadowRoot.getElementById('breaker-settings-consumption-sensor-container');
-    if (consumptionContainer) {
-      consumptionContainer.innerHTML = this._renderEntityAutocomplete(
-        consumptionSensor,
-        'sensor',
-        0, // roomIndex - using 0 as default, could be improved
-        'breaker-consumption-sensor',
-        'sensor.kitchen_power'
-      );
-    } else {
-      console.error('Consumption sensor container not found');
-    }
-
-    // Populate switch sensor field
-    const switchContainer = this.shadowRoot.getElementById('breaker-settings-switch-sensor-container');
-    if (switchContainer) {
-      switchContainer.innerHTML = this._renderEntityAutocomplete(
-        switchSensor,
-        'switch',
-        0, // roomIndex - using 0 as default, could be improved
-        'breaker-switch-sensor',
-        'switch.kitchen_outlet'
-      );
-    } else {
-      console.error('Switch sensor container not found');
-    }
-
-    // Populate threshold fields
-    const warningInput = this.shadowRoot.getElementById('breaker-settings-warning-threshold');
-    if (warningInput) {
-      warningInput.value = warningThreshold;
-    } else {
-      console.error('Warning threshold input not found');
-    }
-
-    const shutoffInput = this.shadowRoot.getElementById('breaker-settings-shutoff-threshold');
-    if (shutoffInput) {
-      shutoffInput.value = shutoffThreshold;
-    } else {
-      console.error('Shutoff threshold input not found');
-    }
-
-    // Initialize entity autocompletes
-    try {
-      this._initEntityAutocompletes(modal);
-    } catch (error) {
-      console.error('Error initializing entity autocompletes:', error);
-    }
-
-    // Show modal
-    modal.classList.add('active');
-    console.log('Modal should now be visible. Modal classes:', modal.className);
-    
-    // Double-check modal is visible
-    setTimeout(() => {
-      const isVisible = modal.classList.contains('active');
-      console.log('Modal visibility check after 100ms:', isVisible);
-      if (!isVisible) {
-        console.error('Modal did not become visible! Forcing active class.');
-        modal.classList.add('active');
-      }
-    }, 100);
-  }
-
-  _renderBreakerPanelCard() {
-    const rows = this._breakerRows || 6;
-    const defaultRows = 6;
-    
-    const renderRow = (rowIndex, isDefault = false) => {
-      const leftBreakerNum = rowIndex * 2 + 1;
-      const rightBreakerNum = rowIndex * 2 + 2;
-      const deleteBtn = !isDefault ? `<button class="breaker-row-delete-btn" data-row-index="${rowIndex}" title="Delete row">×</button>` : '';
-
-    return `
-        <div class="breaker-panel-row" data-row-index="${rowIndex}" data-is-default="${isDefault}">
-          ${deleteBtn}
-          <div class="breaker-label-left" data-breaker-num="${leftBreakerNum}">
-            <div class="breaker-label-with-tag">
-              <input type="text" class="breaker-name-input breaker-label-text" placeholder="Breaker ${leftBreakerNum}" value="" data-breaker-num="${leftBreakerNum}">
-              <div class="breaker-color-tag" data-breaker-num="${leftBreakerNum}" style="background-color: #5a9fd4;">
-                <span class="breaker-tag-number">${String(leftBreakerNum).padStart(2, '0')}</span>
-            </div>
-                </div>
-            <button type="button" class="breaker-open-settings-btn" data-breaker-num="${leftBreakerNum}" title="Open settings">
-              Open Settings
-            </button>
-                    </div>
-          <div class="breaker-switch-container">
-            <div class="breaker-switch breaker-switch-left" data-breaker-num="${leftBreakerNum}">
-              <div class="breaker-switch-handle"></div>
-              <div class="breaker-switch-label">ON</div>
-              <div class="breaker-switch-label breaker-switch-label-off">OFF</div>
-                  </div>
-            <div class="breaker-switch breaker-switch-right" data-breaker-num="${rightBreakerNum}">
-              <div class="breaker-switch-handle"></div>
-              <div class="breaker-switch-label breaker-switch-label-off">OFF</div>
-              <div class="breaker-switch-label">ON</div>
-            </div>
-          </div>
-          <div class="breaker-label-right" data-breaker-num="${rightBreakerNum}">
-            <div class="breaker-label-with-tag">
-              <div class="breaker-color-tag" data-breaker-num="${rightBreakerNum}" style="background-color: #5a9fd4;">
-                <span class="breaker-tag-number">${String(rightBreakerNum).padStart(2, '0')}</span>
-        </div>
-              <input type="text" class="breaker-name-input breaker-label-text" placeholder="Breaker ${rightBreakerNum}" value="" data-breaker-num="${rightBreakerNum}">
-            </div>
-            <button type="button" class="breaker-open-settings-btn" data-breaker-num="${rightBreakerNum}" title="Open settings">
-              Open Settings
-            </button>
-          </div>
-        </div>
-      `;
-    };
-    
-    const defaultRowsHtml = Array.from({ length: defaultRows }, (_, i) => renderRow(i, true)).join('');
-    const additionalRows = rows > defaultRows ? Array.from({ length: rows - defaultRows }, (_, i) => renderRow(i + defaultRows, false)).join('') : '';
-
-    return `
-      <div class="breaker-panel-card">
-        <div class="breaker-panel-screw top-center"></div>
-        <div class="breaker-panel-screw bottom-center"></div>
-        <div class="breaker-panel-screw left-1"></div>
-        <div class="breaker-panel-screw left-2"></div>
-        <div class="breaker-panel-screw left-3"></div>
-        <div class="breaker-panel-screw right-1"></div>
-        <div class="breaker-panel-screw right-2"></div>
-        <div class="breaker-panel-screw right-3"></div>
-        <div class="breaker-panel-outer">
-          <div class="breaker-panel-inner">
-            ${defaultRowsHtml}
-            ${additionalRows}
-            </div>
-                </div>
-        <div class="breaker-tag-modal" id="breaker-tag-modal">
-          <div class="breaker-tag-modal-content">
-            <div class="breaker-tag-modal-header">
-              <div class="breaker-tag-modal-title">Edit Breaker Tag</div>
-              <button class="breaker-tag-modal-close" id="breaker-tag-modal-close">×</button>
-                    </div>
-            <div class="breaker-tag-modal-form">
-              <div class="breaker-tag-modal-field">
-                <label class="breaker-tag-modal-label">Number (2 digits)</label>
-                <input type="text" class="breaker-tag-modal-number-input" id="breaker-tag-number-input" maxlength="2" pattern="[0-9]{1,2}" placeholder="01">
-                    </div>
-              <div class="breaker-tag-modal-field">
-                <label class="breaker-tag-modal-label">Color</label>
-                <input type="color" class="breaker-tag-modal-color-input" id="breaker-tag-color-input" value="#5a9fd4">
-                  </div>
-              <div class="breaker-tag-modal-actions">
-                <button class="breaker-tag-modal-btn" id="breaker-tag-modal-cancel">Cancel</button>
-                <button class="breaker-tag-modal-btn primary" id="breaker-tag-modal-save">Save</button>
-            </div>
-          </div>
-        </div>
-        <div class="breaker-settings-modal" id="breaker-settings-modal">
-          <div class="breaker-settings-modal-content">
-            <div class="breaker-settings-modal-header">
-              <div class="breaker-settings-modal-title">Breaker Settings</div>
-              <button class="breaker-settings-modal-close" id="breaker-settings-modal-close">×</button>
-            </div>
-            <div class="breaker-settings-modal-form">
-              <div class="breaker-settings-modal-field">
-                <label class="breaker-settings-modal-label">Power Consumption Sensor</label>
-                <div id="breaker-settings-consumption-sensor-container"></div>
-                <div style="font-size: 10px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Sensor entity for power consumption monitoring</div>
-              </div>
-              <div class="breaker-settings-modal-field">
-                <label class="breaker-settings-modal-label">Switch Sensor</label>
-                <div id="breaker-settings-switch-sensor-container"></div>
-                <div style="font-size: 10px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Switch entity for on/off control</div>
-              </div>
-              <div class="breaker-settings-modal-field">
-                <label class="breaker-settings-modal-label">Warning Threshold (W)</label>
-                <input type="number" class="breaker-settings-modal-input" id="breaker-settings-warning-threshold" min="0" step="1" placeholder="0">
-                <div style="font-size: 10px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Warning when power exceeds this value</div>
-              </div>
-              <div class="breaker-settings-modal-field">
-                <label class="breaker-settings-modal-label">Shutoff Threshold (W)</label>
-                <input type="number" class="breaker-settings-modal-input" id="breaker-settings-shutoff-threshold" min="0" step="1" placeholder="0">
-                <div style="font-size: 10px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Automatically shut off when power exceeds this value</div>
-              </div>
-              <div class="breaker-settings-modal-actions">
-                <button class="breaker-settings-modal-btn" id="breaker-settings-modal-cancel">Cancel</button>
-                <button class="breaker-settings-modal-btn primary" id="breaker-settings-modal-save">Save</button>
-              </div>
-            </div>
-          </div>
-        </div>
-        </div>
-      </div>
-    `;
-  }
-
-  // SVG code removed - using simplified HTML/CSS breaker panel instead
-
-  _renderBreakerSwitch(number, state = 'off') {
-    // state can be 'on', 'off', or 'tripped'
-    const switchPosition = state === 'on' ? '8px' : state === 'tripped' ? '30px' : '52px';
-    const switchColor = state === 'on' ? '#4caf50' : state === 'tripped' ? '#f44336' : '#6a6a6a';
-    
-    return `
-      <div class="breaker-switch" data-breaker-number="${number}">
-        <div class="breaker-switch-body ${state}">
-          <div class="breaker-switch-handle ${state}" style="top: ${switchPosition}; background: ${switchColor};"></div>
-        </div>
-      </div>
-    `;
-  }
 
   _getAllOutlets() {
     const rooms = this._config?.rooms || [];
@@ -4567,6 +3635,29 @@ class EnergyPanel extends HTMLElement {
     // Menu button to toggle HA sidebar
     this._attachMenuButton();
 
+    this.shadowRoot.querySelectorAll('.view-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const view = tab.dataset.view;
+        if (view && (view === 'rooms' || view === 'statistics')) {
+          this._dashboardView = view;
+          this._render();
+          if (view === 'statistics') {
+            this._loadStatistics();
+          }
+        }
+      });
+    });
+
+    this.shadowRoot.querySelectorAll('.graph-clickable').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const type = el.dataset.graphType;
+        const roomId = el.dataset.roomId || null;
+        const room = roomId ? this._config?.rooms?.find(r => r.id === roomId) : null;
+        this._openGraph(type, roomId, room?.name || null);
+      });
+    });
+
     const settingsBtn = this.shadowRoot.querySelector('#settings-btn');
     const emptySettingsBtn = this.shadowRoot.querySelector('#empty-settings-btn');
 
@@ -4574,6 +3665,8 @@ class EnergyPanel extends HTMLElement {
       settingsBtn.addEventListener('click', async () => {
         const verified = await showPasscodeModal(this.shadowRoot, this._hass);
         if (verified) {
+          this._graphOpen = null;
+          this._graphData = null;
           this._showSettings = true;
           this._stopRefresh();
           this._render();
@@ -4585,6 +3678,8 @@ class EnergyPanel extends HTMLElement {
       emptySettingsBtn.addEventListener('click', async () => {
         const verified = await showPasscodeModal(this.shadowRoot, this._hass);
         if (verified) {
+          this._graphOpen = null;
+          this._graphData = null;
           this._showSettings = true;
           this._stopRefresh();
           this._render();
@@ -4592,17 +3687,6 @@ class EnergyPanel extends HTMLElement {
       });
     }
 
-    // View tab switching
-    const viewTabs = this.shadowRoot.querySelectorAll('.view-tab');
-    viewTabs.forEach(tab => {
-      tab.addEventListener('click', () => {
-        const view = tab.dataset.view;
-        if (view && (view === 'outlets' || view === 'breakers')) {
-          this._dashboardView = view;
-          this._render();
-        }
-      });
-    });
   }
 
   _attachMenuButton() {
@@ -4645,171 +3729,6 @@ class EnergyPanel extends HTMLElement {
       addRoomBtn.addEventListener('click', () => this._addRoom());
     }
 
-    const addBreakerRowBtn = this.shadowRoot.querySelector('#add-breaker-row-btn');
-    if (addBreakerRowBtn) {
-      addBreakerRowBtn.addEventListener('click', () => {
-        this._breakerRows = (this._breakerRows || 6) + 1;
-          this._render();
-      });
-    }
-
-    // Attach breaker name input listeners
-    this.shadowRoot.querySelectorAll('.breaker-name-input').forEach(input => {
-      input.addEventListener('input', (e) => {
-        const breakerNum = e.target.dataset.breakerNum;
-        // Store name for later use
-      });
-    });
-
-    // Color tag click to open modal
-    this.shadowRoot.querySelectorAll('.breaker-color-tag').forEach(tag => {
-      tag.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        // Close breaker settings modal if open
-        const settingsModal = this.shadowRoot.getElementById('breaker-settings-modal');
-        if (settingsModal) {
-          settingsModal.classList.remove('active');
-        }
-        const breakerNum = tag.dataset.breakerNum;
-        const modal = this.shadowRoot.getElementById('breaker-tag-modal');
-        const numberInput = this.shadowRoot.getElementById('breaker-tag-number-input');
-        const colorInput = this.shadowRoot.getElementById('breaker-tag-color-input');
-        
-        if (modal && numberInput && colorInput) {
-          // Get current values from tag
-          const currentNumber = tag.querySelector('.breaker-tag-number')?.textContent || String(breakerNum).padStart(2, '0');
-          const currentColor = tag.style.backgroundColor || '#5a9fd4';
-          
-          numberInput.value = currentNumber;
-          colorInput.value = this._rgbToHex(currentColor) || '#5a9fd4';
-          
-          modal.dataset.breakerNum = breakerNum;
-          modal.classList.add('active');
-        }
-      });
-    });
-
-    // Modal close and cancel
-    const modalClose = this.shadowRoot.getElementById('breaker-tag-modal-close');
-    const modalCancel = this.shadowRoot.getElementById('breaker-tag-modal-cancel');
-    const closeModal = () => {
-      const modal = this.shadowRoot.getElementById('breaker-tag-modal');
-      if (modal) modal.classList.remove('active');
-    };
-    if (modalClose) modalClose.addEventListener('click', closeModal);
-    if (modalCancel) modalCancel.addEventListener('click', closeModal);
-
-    // Breaker settings modal close and cancel
-    const settingsModalClose = this.shadowRoot.getElementById('breaker-settings-modal-close');
-    const settingsModalCancel = this.shadowRoot.getElementById('breaker-settings-modal-cancel');
-    const closeSettingsModal = () => {
-      const modal = this.shadowRoot.getElementById('breaker-settings-modal');
-      if (modal) modal.classList.remove('active');
-    };
-    if (settingsModalClose) settingsModalClose.addEventListener('click', closeSettingsModal);
-    if (settingsModalCancel) settingsModalCancel.addEventListener('click', closeSettingsModal);
-
-    // Breaker settings modal save
-    const settingsModalSave = this.shadowRoot.getElementById('breaker-settings-modal-save');
-    if (settingsModalSave) {
-      settingsModalSave.addEventListener('click', () => {
-        const modal = this.shadowRoot.getElementById('breaker-settings-modal');
-        const breakerNum = modal?.dataset.breakerNum;
-        if (breakerNum) {
-          const consumptionSensor = this.shadowRoot.querySelector('#breaker-settings-consumption-sensor-container .entity-datalist-input')?.value?.trim() || '';
-          const switchSensor = this.shadowRoot.querySelector('#breaker-settings-switch-sensor-container .entity-datalist-input')?.value?.trim() || '';
-          const warningThreshold = parseInt(this.shadowRoot.getElementById('breaker-settings-warning-threshold')?.value, 10) || 0;
-          const shutoffThreshold = parseInt(this.shadowRoot.getElementById('breaker-settings-shutoff-threshold')?.value, 10) || 0;
-          
-          // Store settings (TODO: save to config)
-          console.log('Save breaker settings:', {
-            breakerNum,
-            consumptionSensor,
-            switchSensor,
-            warningThreshold,
-            shutoffThreshold
-          });
-        }
-        closeSettingsModal();
-      });
-    }
-
-    // Modal save
-    const modalSave = this.shadowRoot.getElementById('breaker-tag-modal-save');
-    if (modalSave) {
-      modalSave.addEventListener('click', () => {
-        const modal = this.shadowRoot.getElementById('breaker-tag-modal');
-        const breakerNum = modal?.dataset.breakerNum;
-        const numberInput = this.shadowRoot.getElementById('breaker-tag-number-input');
-        const colorInput = this.shadowRoot.getElementById('breaker-tag-color-input');
-        
-        if (breakerNum && numberInput && colorInput) {
-          const tag = this.shadowRoot.querySelector(`.breaker-color-tag[data-breaker-num="${breakerNum}"]`);
-          if (tag) {
-            const number = numberInput.value.padStart(2, '0').slice(0, 2);
-            const color = colorInput.value;
-            
-            tag.style.backgroundColor = color;
-            const numberSpan = tag.querySelector('.breaker-tag-number');
-            if (numberSpan) numberSpan.textContent = number;
-          }
-        }
-        closeModal();
-      });
-    }
-
-    // Delete row button
-    this.shadowRoot.querySelectorAll('.breaker-row-delete-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const rowIndex = parseInt(btn.dataset.rowIndex);
-        const row = btn.closest('.breaker-panel-row');
-        const isDefault = row?.dataset.isDefault === 'true';
-        
-        if (!isDefault && row) {
-          this._breakerRows = Math.max(6, (this._breakerRows || 6) - 1);
-          this._render();
-        }
-      });
-    });
-
-    // Breaker switch click to toggle
-    this.shadowRoot.querySelectorAll('.breaker-switch').forEach(switchEl => {
-      switchEl.addEventListener('click', () => {
-        switchEl.classList.toggle('on');
-      });
-    });
-
-    // Open Settings button - remove old listeners first to prevent duplicates
-    this.shadowRoot.querySelectorAll('.breaker-open-settings-btn').forEach(btn => {
-      // Clone the button to remove all event listeners
-      const newBtn = btn.cloneNode(true);
-      btn.parentNode.replaceChild(newBtn, btn);
-      
-      // Add fresh event listener
-      newBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        
-        // Close color tag modal if open
-        const tagModal = this.shadowRoot.getElementById('breaker-tag-modal');
-        if (tagModal) {
-          tagModal.classList.remove('active');
-        }
-        
-        const breakerNum = newBtn.dataset.breakerNum;
-        console.log('Open Settings clicked for breaker:', breakerNum);
-        
-        if (breakerNum) {
-          this._openBreakerSettingsModal(breakerNum);
-        } else {
-          console.error('Breaker number not found in button dataset. Button:', newBtn);
-        }
-      });
-    });
-
     // Tab switching
     this.shadowRoot.querySelectorAll('.settings-tab').forEach(tab => {
       tab.addEventListener('click', () => {
@@ -4825,8 +3744,6 @@ class EnergyPanel extends HTMLElement {
         this.shadowRoot.querySelectorAll('.settings-tab-content').forEach(content => {
           content.classList.toggle('active', content.id === `tab-${tabId}`);
         });
-        
-        // Breaker tab is now handled by HTML rendering, no SVG needed
       });
     });
 
@@ -4972,7 +3889,9 @@ class EnergyPanel extends HTMLElement {
   _getEntitiesForAutocomplete(roomIndex, entityType) {
     const prefix = entityType === 'sensor' ? 'sensor.' : entityType === 'switch' ? 'switch.' : entityType === 'light' ? 'light.' : entityType === 'binary_sensor' ? 'binary_sensor.' : '';
     if (entityType === 'sensor') {
-      const list = this._getFilteredSensors(roomIndex) || [];
+      const list = (roomIndex === 'stats' || roomIndex === 'statistics')
+        ? (this._entities?.sensors || this._entities?.power_sensors || [])
+        : (this._getFilteredSensors(roomIndex) || []);
       return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
     }
     if (entityType === 'switch') {
@@ -5516,11 +4435,22 @@ class EnergyPanel extends HTMLElement {
     const ttsStove15Min = this.shadowRoot.querySelector('#tts-stove-15min')?.value || '{prefix} Stove has been on for {cooking_time_minutes} minutes with no one in the kitchen. Stove will automatically turn off in {final_warning_seconds} seconds if no one returns';
     const ttsStove30Sec = this.shadowRoot.querySelector('#tts-stove-30sec')?.value || '{prefix} Stove will automatically turn off in {final_warning_seconds} seconds if no one returns to the kitchen';
     const ttsStoveAutoOff = this.shadowRoot.querySelector('#tts-stove-auto-off')?.value || '{prefix} Stove has been automatically turned off for safety';
-    const ttsMicrowaveCut = this.shadowRoot.querySelector('#tts-microwave-cut')?.value || '{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off.';
-    const ttsMicrowaveRestore = this.shadowRoot.querySelector('#tts-microwave-restore')?.value || '{prefix} Microwave is off. Stove power restored.';
+
+    const tabStats = this.shadowRoot.querySelector('#tab-statistics');
+    const _si = (cls) => tabStats?.querySelector(`input.${cls}`)?.value?.trim?.() || '';
+    const statistics_settings = {
+      billing_start_sensor: _si('stats-billing-start'),
+      billing_end_sensor: _si('stats-billing-end'),
+      current_usage_sensor: _si('stats-current-usage'),
+      projected_usage_sensor: _si('stats-projected-usage'),
+      kwh_cost_sensor: _si('stats-kwh-cost'),
+      date_range_start: tabStats?.querySelector('#stats-date-range-start')?.value?.trim?.() || '',
+      date_range_end: tabStats?.querySelector('#stats-date-range-end')?.value?.trim?.() || '',
+    };
 
     const config = {
       rooms: rooms,
+      statistics_settings,
       tts_settings: {
         language: ttsLanguage,
         speed: 1.0,
@@ -5534,8 +4464,6 @@ class EnergyPanel extends HTMLElement {
         stove_15min_warn_msg: ttsStove15Min,
         stove_30sec_warn_msg: ttsStove30Sec,
         stove_auto_off_msg: ttsStoveAutoOff,
-        microwave_cut_power_msg: ttsMicrowaveCut,
-        microwave_restore_power_msg: ttsMicrowaveRestore,
       },
     };
 

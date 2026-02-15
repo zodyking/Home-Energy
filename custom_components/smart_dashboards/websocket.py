@@ -24,6 +24,8 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_send_tts)
     websocket_api.async_register_command(hass, websocket_set_volume)
     websocket_api.async_register_command(hass, websocket_get_power_data)
+    websocket_api.async_register_command(hass, websocket_get_daily_history)
+    websocket_api.async_register_command(hass, websocket_get_statistics)
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
     websocket_api.async_register_command(hass, websocket_get_areas)
     websocket_api.async_register_command(hass, websocket_get_switches)
@@ -92,6 +94,7 @@ async def websocket_get_entities(
     result: dict[str, list[dict[str, str]]] = {
         "media_players": [],
         "power_sensors": [],
+        "sensors": [],
         "binary_sensors": [],
         "lights": [],
     }
@@ -105,6 +108,14 @@ async def websocket_get_entities(
                 result["media_players"].append({
                     "entity_id": entity_id,
                     "friendly_name": friendly_name,
+                })
+
+        if entity_type is None or entity_type == "sensor":
+            if entity_id.startswith("sensor."):
+                result["sensors"].append({
+                    "entity_id": entity_id,
+                    "friendly_name": friendly_name,
+                    "unit": state.attributes.get("unit_of_measurement", ""),
                 })
 
         if entity_type is None or entity_type == "power_sensor":
@@ -292,6 +303,156 @@ async def websocket_get_power_data(
         room_data["total_watts"] = round(room_data["total_watts"], 1)
         room_data["total_day_wh"] = round(room_data["total_day_wh"], 2)
         result["rooms"].append(room_data)
+
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_daily_history",
+        vol.Optional("days", default=30): int,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_daily_history(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get last N days of daily totals for 30-day graphs."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+    days = min(45, max(1, msg.get("days", 30)))
+    result = config_manager.get_daily_history(days=days)
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_statistics",
+        vol.Optional("date_start"): str,
+        vol.Optional("date_end"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_statistics(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get aggregated statistics for a date range."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    date_start = (msg.get("date_start") or "").strip() or None
+    date_end = (msg.get("date_end") or "").strip() or None
+    start, end, is_narrowed = config_manager.get_statistics_date_range(
+        date_start=date_start, date_end=date_end
+    )
+
+    result: dict[str, Any] = {
+        "date_start": start,
+        "date_end": end,
+        "is_narrowed": is_narrowed,
+        "total_kwh": 0.0,
+        "total_warnings": 0,
+        "total_shutoffs": 0,
+        "rooms": [],
+        "sensor_values": {
+            "current_usage": None,
+            "projected_usage": None,
+            "kwh_cost": None,
+        },
+    }
+
+    # Record billing cycle if changed
+    billing_start, billing_end = config_manager.get_billing_date_range()
+    if billing_start and billing_end:
+        await config_manager.record_billing_cycle_if_changed(billing_start, billing_end)
+
+    if not start or not end:
+        connection.send_result(msg["id"], result)
+        return
+
+    # Aggregate from daily totals
+    daily_totals = config_manager.daily_totals
+    dates_sorted = sorted(daily_totals.keys())
+    range_dates = [d for d in dates_sorted if start <= d <= end]
+
+    total_wh = 0.0
+    total_warnings = 0
+    total_shutoffs = 0
+    room_sums: dict[str, dict[str, Any]] = {}
+
+    for d in range_dates:
+        row = daily_totals.get(d, {})
+        total_wh += float(row.get("total_wh", 0))
+        total_warnings += int(row.get("total_warnings", 0))
+        total_shutoffs += int(row.get("total_shutoffs", 0))
+        row_rooms = row.get("rooms") or {}
+        for rid, rdata in row_rooms.items():
+            if rid not in room_sums:
+                room_sums[rid] = {"kwh": 0.0, "warnings": 0, "shutoffs": 0}
+            room_sums[rid]["kwh"] += float(rdata.get("wh", 0)) / 1000.0
+            room_sums[rid]["warnings"] += int(rdata.get("warnings", 0))
+            room_sums[rid]["shutoffs"] += int(rdata.get("shutoffs", 0))
+
+    total_kwh = total_wh / 1000.0 if total_wh else 0.0
+    result["total_kwh"] = round(total_kwh, 2)
+    result["total_warnings"] = total_warnings
+    result["total_shutoffs"] = total_shutoffs
+
+    # Build rooms list with name and percentage
+    rooms_config = config_manager.energy_config.get("rooms", [])
+    for room in rooms_config:
+        rid = room.get("id", room["name"].lower().replace(" ", "_"))
+        name = room.get("name", rid)
+        rsum = room_sums.get(rid, {"kwh": 0.0, "warnings": 0, "shutoffs": 0})
+        kwh = round(rsum["kwh"], 2)
+        pct = round((kwh / total_kwh * 100) if total_kwh > 0 else 0, 1)
+        result["rooms"].append({
+            "id": rid,
+            "name": name,
+            "kwh": kwh,
+            "pct": pct,
+            "warnings": rsum["warnings"],
+            "shutoffs": rsum["shutoffs"],
+        })
+
+    # Add any rooms in daily totals that aren't in config
+    for rid in room_sums:
+        if not any(r["id"] == rid for r in result["rooms"]):
+            rsum = room_sums[rid]
+            kwh = round(rsum["kwh"], 2)
+            pct = round((kwh / total_kwh * 100) if total_kwh > 0 else 0, 1)
+            result["rooms"].append({
+                "id": rid,
+                "name": rid.replace("_", " ").title(),
+                "kwh": kwh,
+                "pct": pct,
+                "warnings": rsum["warnings"],
+                "shutoffs": rsum["shutoffs"],
+            })
+
+    # Read live sensor values
+    stats = config_manager.energy_config.get("statistics_settings", {})
+    for key, sensor_key in [
+        ("current_usage", "current_usage_sensor"),
+        ("projected_usage", "projected_usage_sensor"),
+        ("kwh_cost", "kwh_cost_sensor"),
+    ]:
+        ent = (stats.get(sensor_key) or "").strip()
+        if ent:
+            state = hass.states.get(ent)
+            if state and state.state not in ("unknown", "unavailable", ""):
+                try:
+                    result["sensor_values"][key] = float(state.state)
+                except (ValueError, TypeError):
+                    pass
 
     connection.send_result(msg["id"], result)
 
