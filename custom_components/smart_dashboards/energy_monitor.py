@@ -188,6 +188,8 @@ class EnergyMonitor:
                                 await self.config_manager.async_add_energy_reading(
                                     tracking_key, outlet_total_watts
                                 )
+                                # Record for intraday 24-hour charts
+                                self.config_manager.record_intraday_power(tracking_key, outlet_total_watts)
                     room_total_watts += outlet_total_watts
                     continue
 
@@ -196,6 +198,8 @@ class EnergyMonitor:
                 if outlet.get("plug1_entity"):
                     plug1_watts = self._get_power_value(outlet["plug1_entity"])
                     outlet_total_watts += plug1_watts
+                    # Record for intraday 24-hour charts
+                    self.config_manager.record_intraday_power(outlet["plug1_entity"], plug1_watts)
 
                     # Check plug 1 shutoff threshold
                     plug1_shutoff = outlet.get("plug1_shutoff", 0)
@@ -218,6 +222,8 @@ class EnergyMonitor:
                 if outlet.get("plug2_entity"):
                     plug2_watts = self._get_power_value(outlet["plug2_entity"])
                     outlet_total_watts += plug2_watts
+                    # Record for intraday 24-hour charts
+                    self.config_manager.record_intraday_power(outlet["plug2_entity"], plug2_watts)
 
                     # Check plug 2 shutoff threshold
                     plug2_shutoff = outlet.get("plug2_shutoff", 0)

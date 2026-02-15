@@ -65,6 +65,10 @@ class ConfigManager:
             "last_billing_end": "",
         }
         self._last_power_update: dict[str, dict] = {}  # entity_id -> {watts, time}
+        # Intraday history: minute-by-minute power readings for 24-hour charts
+        # Structure: {entity_id: [(timestamp_minute, watts), ...]} - keeps last 1440 entries (24h)
+        self._intraday_history: dict[str, list] = {}
+        self._intraday_last_minute: str = ""  # Last minute we recorded
 
     @property
     def config(self) -> dict[str, Any]:
@@ -399,6 +403,78 @@ class ConfigManager:
                     entity_id, last["watts"], elapsed_seconds=elapsed
                 )
         self._last_power_update[entity_id] = {"watts": new_watts, "time": now}
+
+    def record_intraday_power(self, entity_id: str, watts: float) -> None:
+        """Record minute-by-minute power for 24-hour charts. Called from poll loop."""
+        now = dt_util.now()
+        minute_key = now.strftime("%Y-%m-%d %H:%M")
+        # Only record once per minute to avoid duplicates
+        if minute_key == self._intraday_last_minute and entity_id in self._intraday_history:
+            # Update current minute value instead of adding new entry
+            if self._intraday_history[entity_id]:
+                self._intraday_history[entity_id][-1] = (minute_key, watts)
+            return
+        self._intraday_last_minute = minute_key
+        if entity_id not in self._intraday_history:
+            self._intraday_history[entity_id] = []
+        self._intraday_history[entity_id].append((minute_key, watts))
+        # Keep only last 1440 minutes (24 hours)
+        if len(self._intraday_history[entity_id]) > 1440:
+            self._intraday_history[entity_id] = self._intraday_history[entity_id][-1440:]
+
+    def get_intraday_history(self, entity_id: str, minutes: int = 1440) -> list:
+        """Get last N minutes of power history for an entity. Returns [(minute_key, watts), ...]"""
+        history = self._intraday_history.get(entity_id, [])
+        return history[-minutes:] if history else []
+
+    def get_room_intraday_history(self, room_id: str, minutes: int = 1440) -> dict[str, Any]:
+        """Get intraday power history for a room (sum of all outlets)."""
+        room = None
+        for r in self.energy_config.get("rooms", []):
+            rid = r.get("id", r["name"].lower().replace(" ", "_"))
+            if rid == room_id:
+                room = r
+                break
+        if not room:
+            return {"timestamps": [], "watts": []}
+        
+        # Collect all entity IDs for this room
+        entity_ids = []
+        for outlet in room.get("outlets", []):
+            if outlet.get("type") == "light":
+                key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                entity_ids.append(key)
+            else:
+                for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
+                    if e:
+                        entity_ids.append(e)
+        
+        # Merge histories - sum watts for each minute
+        minute_sums: dict[str, float] = {}
+        for eid in entity_ids:
+            for minute_key, watts in self.get_intraday_history(eid, minutes):
+                minute_sums[minute_key] = minute_sums.get(minute_key, 0) + watts
+        
+        # Sort by timestamp and return
+        sorted_minutes = sorted(minute_sums.keys())
+        return {
+            "timestamps": sorted_minutes,
+            "watts": [minute_sums[m] for m in sorted_minutes],
+        }
+
+    def get_total_intraday_history(self, minutes: int = 1440) -> dict[str, Any]:
+        """Get intraday power history for all rooms combined."""
+        minute_sums: dict[str, float] = {}
+        for room in self.energy_config.get("rooms", []):
+            rid = room.get("id", room["name"].lower().replace(" ", "_"))
+            room_data = self.get_room_intraday_history(rid, minutes)
+            for ts, w in zip(room_data["timestamps"], room_data["watts"]):
+                minute_sums[ts] = minute_sums.get(ts, 0) + w
+        sorted_minutes = sorted(minute_sums.keys())
+        return {
+            "timestamps": sorted_minutes,
+            "watts": [minute_sums[m] for m in sorted_minutes],
+        }
 
     # Event count tracking (warnings and shutoffs) - per current date only
     def _ensure_event_counts_for_today(self) -> None:

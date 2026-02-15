@@ -2335,14 +2335,32 @@ class EnergyPanel extends HTMLElement {
 
   async _openGraph(type, roomId = null, roomName = null) {
     try {
-      const result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 31 });
+      // Use intraday (24h, 1-min intervals) for power charts, daily for warnings/shutoffs
+      const isPowerChart = type === 'total_wh' || type === 'room_wh';
+      let result;
+      if (isPowerChart) {
+        result = await this._hass.callWS({ 
+          type: 'smart_dashboards/get_intraday_history', 
+          room_id: roomId || undefined,
+          minutes: 1440 
+        });
+        // Convert to chart format
+        result = {
+          dates: result.timestamps.map(ts => ts.split(' ')[1] || ts), // Extract HH:MM
+          values: result.watts,
+          isIntraday: true,
+        };
+      } else {
+        result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 31 });
+        result.isIntraday = false;
+      }
       this._graphOpen = { type, roomId, roomName };
       this._graphData = result;
       this._render();
       this._attachGraphModalListeners();
       await this._initApexChart();
     } catch (e) {
-      console.error('Failed to load daily history:', e);
+      console.error('Failed to load history:', e);
       showToast(this.shadowRoot, 'Failed to load history', 'error');
     }
   }
@@ -2352,15 +2370,24 @@ class EnergyPanel extends HTMLElement {
     if (!container || !this._graphData || !this._graphOpen) return;
     const type = this._graphOpen.type;
     const roomId = this._graphOpen.roomId;
+    const isIntraday = this._graphData.isIntraday === true;
     let values = [];
-    if (type.startsWith('room_')) {
+    let dates = [];
+    
+    if (isIntraday) {
+      // Intraday data comes pre-formatted
+      values = (this._graphData.values || []).map(v => Math.round(v * 10) / 10);
+      dates = this._graphData.dates || [];
+    } else if (type.startsWith('room_')) {
       const key = type.replace('room_', '');
       values = (this._graphData.rooms?.[roomId]?.[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
+      dates = this._graphData.dates || [];
     } else {
       const key = type.replace('total_', '');
       values = (this._graphData[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
+      dates = this._graphData.dates || [];
     }
-    const dates = this._graphData.dates || [];
+    
     if (this._apexChartInstance) {
       this._apexChartInstance.destroy();
       this._apexChartInstance = null;
@@ -2370,6 +2397,12 @@ class EnergyPanel extends HTMLElement {
       const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
       const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
       const gridColor = getComputedStyle(this).getPropertyValue('--card-border').trim() || 'rgba(255,255,255,0.08)';
+      
+      // For intraday, show fewer x-axis labels (every 60 minutes)
+      const xLabels = isIntraday && dates.length > 60 
+        ? dates.map((d, i) => i % 60 === 0 ? d : '') 
+        : dates;
+      
       const options = {
         chart: {
           type: 'area',
@@ -2380,19 +2413,24 @@ class EnergyPanel extends HTMLElement {
           zoom: { enabled: false },
           animations: { enabled: true },
         },
-        series: [{ name: type.includes('wh') ? 'kWh' : 'Count', data: values }],
+        series: [{ name: isIntraday ? 'Watts' : (type.includes('wh') ? 'kWh' : 'Count'), data: values }],
         xaxis: {
-          categories: dates,
+          categories: xLabels,
           labels: {
             style: { colors: textColor, fontSize: '11px' },
             rotate: -45,
             rotateAlways: dates.length > 10,
+            hideOverlappingLabels: true,
           },
           axisBorder: { show: true, color: gridColor },
           axisTicks: { show: true, color: gridColor },
+          tickAmount: isIntraday ? 12 : undefined,
         },
         yaxis: {
-          labels: { style: { colors: textColor, fontSize: '11px' } },
+          labels: { 
+            style: { colors: textColor, fontSize: '11px' },
+            formatter: (v) => isIntraday ? `${Math.round(v)}W` : v.toFixed(1),
+          },
           axisBorder: { show: false },
           crosshairs: { show: false },
         },
@@ -2411,14 +2449,16 @@ class EnergyPanel extends HTMLElement {
         dataLabels: { enabled: false },
         tooltip: {
           theme: 'dark',
-          x: { format: 'dd MMM yyyy' },
+          x: { show: true },
+          y: { formatter: (v) => isIntraday ? `${Math.round(v)} W` : v.toFixed(2) },
         },
         plotOptions: {
           area: { fillTo: 'origin' },
         },
       };
+      // Never show "no data" - we always have at least current value
       if (dates.length === 0 || values.length === 0) {
-        options.noData = { text: 'No data yet', style: { color: textColor } };
+        options.noData = { text: 'Loading...', style: { color: textColor } };
       }
       this._apexChartInstance = new ApexCharts(container, options);
       await this._apexChartInstance.render();
