@@ -3,7 +3,11 @@
  * Room-based power monitoring with automatic TTS threshold alerts
  */
 
+console.log('[EnergyPanel] Module loading...');
+
 import { sharedStyles, icons, showToast, passcodeModalStyles, showPasscodeModal, renderCustomSelect, initCustomSelects } from './shared-utils.js';
+
+console.log('[EnergyPanel] Imports loaded successfully');
 
 class EnergyPanel extends HTMLElement {
   constructor() {
@@ -39,8 +43,14 @@ class EnergyPanel extends HTMLElement {
   }
 
   connectedCallback() {
-    this._render();
-    this._loadConfig();
+    console.log('[EnergyPanel] connectedCallback called');
+    try {
+      this._render();
+      this._loadConfig();
+    } catch (e) {
+      console.error('[EnergyPanel] connectedCallback error:', e);
+      this.shadowRoot.innerHTML = `<div style="color: red; padding: 20px;">Panel initialization error: ${e.message}</div>`;
+    }
   }
 
   disconnectedCallback() {
@@ -5082,4 +5092,9 @@ class EnergyPanel extends HTMLElement {
   }
 }
 
-customElements.define('energy-panel', EnergyPanel);
+try {
+  customElements.define('energy-panel', EnergyPanel);
+  console.log('[EnergyPanel] Custom element registered successfully');
+} catch (e) {
+  console.error('[EnergyPanel] Failed to register custom element:', e);
+}
