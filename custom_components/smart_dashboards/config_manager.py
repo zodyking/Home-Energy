@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from copy import deepcopy
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -69,6 +70,12 @@ class ConfigManager:
         # Structure: {entity_id: [(timestamp_minute, watts), ...]} - keeps last 1440 entries (24h)
         self._intraday_history: dict[str, list] = {}
         self._intraday_last_minute: str = ""  # Last minute we recorded
+        
+        # Power enforcement tracking
+        # Structure: {room_id: {"warnings": [(timestamp, watts), ...], "phase": 0|1|2, "volume_offset": 0, "last_phase_change": timestamp, "kwh_alerts_sent": [5, 10, ...]}}
+        self._enforcement_state: dict[str, dict] = {}
+        self._home_kwh_alert_sent: bool = False  # Whether we've sent the home kWh alert today
+        self._enforcement_reset_date: str | None = None
 
     @property
     def config(self) -> dict[str, Any]:
@@ -109,6 +116,10 @@ class ConfigManager:
         await self._async_load_daily_totals()
         # Load billing history
         await self._async_load_billing_history()
+        # Load enforcement state
+        await self._async_load_enforcement_state()
+        # Load intraday history
+        await self._async_load_intraday_history()
 
     async def async_save(self) -> None:
         """Save configuration to file."""
@@ -314,6 +325,29 @@ class ConfigManager:
             "stove_auto_off_msg": tts.get("stove_auto_off_msg", default_tts["stove_auto_off_msg"]),
             "microwave_cut_power_msg": tts.get("microwave_cut_power_msg", default_tts["microwave_cut_power_msg"]),
             "microwave_restore_power_msg": tts.get("microwave_restore_power_msg", default_tts["microwave_restore_power_msg"]),
+            "phase1_warn_msg": tts.get("phase1_warn_msg", default_tts.get("phase1_warn_msg", "")),
+            "phase2_warn_msg": tts.get("phase2_warn_msg", default_tts.get("phase2_warn_msg", "")),
+            "phase_reset_msg": tts.get("phase_reset_msg", default_tts.get("phase_reset_msg", "")),
+            "room_kwh_warn_msg": tts.get("room_kwh_warn_msg", default_tts.get("room_kwh_warn_msg", "")),
+            "home_kwh_warn_msg": tts.get("home_kwh_warn_msg", default_tts.get("home_kwh_warn_msg", "")),
+        }
+
+        # Validate power enforcement settings
+        pe = config.get("power_enforcement", {})
+        default_pe = DEFAULT_CONFIG["energy"]["power_enforcement"]
+        validated["power_enforcement"] = {
+            "enabled": bool(pe.get("enabled", default_pe["enabled"])),
+            "phase1_warning_count": max(1, int(pe.get("phase1_warning_count", default_pe["phase1_warning_count"]))),
+            "phase1_time_window_minutes": max(1, int(pe.get("phase1_time_window_minutes", default_pe["phase1_time_window_minutes"]))),
+            "phase1_volume_increment": max(1, min(20, int(pe.get("phase1_volume_increment", default_pe["phase1_volume_increment"])))),
+            "phase1_reset_minutes": max(1, int(pe.get("phase1_reset_minutes", default_pe["phase1_reset_minutes"]))),
+            "phase2_warning_count": max(1, int(pe.get("phase2_warning_count", default_pe["phase2_warning_count"]))),
+            "phase2_time_window_minutes": max(1, int(pe.get("phase2_time_window_minutes", default_pe["phase2_time_window_minutes"]))),
+            "phase2_reset_minutes": max(1, int(pe.get("phase2_reset_minutes", default_pe["phase2_reset_minutes"]))),
+            "phase2_cycle_delay_seconds": max(1, min(30, int(pe.get("phase2_cycle_delay_seconds", default_pe["phase2_cycle_delay_seconds"])))),
+            "room_kwh_intervals": pe.get("room_kwh_intervals", default_pe["room_kwh_intervals"]),
+            "home_kwh_limit": max(1, int(pe.get("home_kwh_limit", default_pe["home_kwh_limit"]))),
+            "rooms_enabled": pe.get("rooms_enabled", default_pe["rooms_enabled"]),
         }
 
         # Validate statistics settings
@@ -475,6 +509,135 @@ class ConfigManager:
             "timestamps": sorted_minutes,
             "watts": [minute_sums[m] for m in sorted_minutes],
         }
+
+    # Power enforcement tracking
+    def _ensure_enforcement_state_for_today(self) -> None:
+        """Reset enforcement state if date changed (new day)."""
+        today = dt_util.now().strftime("%Y-%m-%d")
+        if self._enforcement_reset_date != today:
+            self._enforcement_state = {}
+            self._home_kwh_alert_sent = False
+            self._enforcement_reset_date = today
+
+    def get_enforcement_state(self, room_id: str) -> dict:
+        """Get enforcement state for a room."""
+        self._ensure_enforcement_state_for_today()
+        if room_id not in self._enforcement_state:
+            self._enforcement_state[room_id] = {
+                "warnings": [],  # [(timestamp, watts), ...]
+                "phase": 0,  # 0=normal, 1=volume escalation, 2=power cycling
+                "volume_offset": 0,  # Current volume increase (0-100)
+                "last_phase_change": None,
+                "kwh_alerts_sent": [],  # [5, 10, 15, ...]
+            }
+        return self._enforcement_state[room_id]
+
+    async def async_record_threshold_warning(self, room_id: str, watts: float) -> None:
+        """Record a threshold warning with timestamp."""
+        self._ensure_enforcement_state_for_today()
+        state = self.get_enforcement_state(room_id)
+        now = dt_util.now()
+        state["warnings"].append((now.isoformat(), watts))
+        # Keep only warnings from the last hour
+        cutoff = (now - timedelta(hours=1)).isoformat()
+        state["warnings"] = [(ts, w) for ts, w in state["warnings"] if ts >= cutoff]
+        await self._async_save_enforcement_state()
+
+    def get_warnings_in_window(self, room_id: str, minutes: int) -> int:
+        """Count warnings in the last N minutes."""
+        state = self.get_enforcement_state(room_id)
+        now = dt_util.now()
+        cutoff = (now - timedelta(minutes=minutes)).isoformat()
+        return sum(1 for ts, _ in state["warnings"] if ts >= cutoff)
+
+    def check_phase_reset(self, room_id: str, reset_minutes: int) -> bool:
+        """Check if room has been below threshold long enough to reset phase."""
+        state = self.get_enforcement_state(room_id)
+        if not state["warnings"]:
+            return True
+        last_warning_ts = max(ts for ts, _ in state["warnings"])
+        try:
+            last_warning = datetime.fromisoformat(last_warning_ts)
+            return (dt_util.now() - last_warning).total_seconds() >= (reset_minutes * 60)
+        except (ValueError, TypeError):
+            return False
+
+    async def async_set_enforcement_phase(self, room_id: str, phase: int) -> None:
+        """Set the enforcement phase for a room."""
+        state = self.get_enforcement_state(room_id)
+        if state["phase"] != phase:
+            state["phase"] = phase
+            state["last_phase_change"] = dt_util.now().isoformat()
+            if phase == 0:
+                state["volume_offset"] = 0  # Reset volume on phase reset
+            await self._async_save_enforcement_state()
+
+    async def async_increment_volume_offset(self, room_id: str, increment: int, max_offset: int = 100) -> int:
+        """Increase volume offset for a room. Returns new offset."""
+        state = self.get_enforcement_state(room_id)
+        state["volume_offset"] = min(max_offset, state["volume_offset"] + increment)
+        await self._async_save_enforcement_state()
+        return state["volume_offset"]
+
+    def get_room_day_kwh(self, room_id: str) -> float:
+        """Get total kWh for a room today."""
+        room_wh = 0.0
+        for room in self.energy_config.get("rooms", []):
+            rid = room.get("id", room["name"].lower().replace(" ", "_"))
+            if rid == room_id:
+                for outlet in room.get("outlets", []):
+                    if outlet.get("type") == "light":
+                        key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                        room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                    else:
+                        for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
+                            if e:
+                                room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
+                break
+        return room_wh / 1000.0  # Convert Wh to kWh
+
+    def get_total_day_kwh(self) -> float:
+        """Get total kWh for all rooms today."""
+        total_wh = sum(d.get("energy", 0.0) for d in self._day_energy_data.values())
+        return total_wh / 1000.0
+
+    def get_room_percentage_of_total(self, room_id: str) -> float:
+        """Get percentage of total home usage for a room."""
+        total_kwh = self.get_total_day_kwh()
+        if total_kwh <= 0:
+            return 0.0
+        room_kwh = self.get_room_day_kwh(room_id)
+        return round((room_kwh / total_kwh) * 100, 1)
+
+    async def async_should_send_room_kwh_alert(self, room_id: str, intervals: list) -> int | None:
+        """Check if a kWh interval alert should be sent. Returns interval or None."""
+        state = self.get_enforcement_state(room_id)
+        room_kwh = self.get_room_day_kwh(room_id)
+        for interval in sorted(intervals):
+            if room_kwh >= interval and interval not in state["kwh_alerts_sent"]:
+                state["kwh_alerts_sent"].append(interval)
+                await self._async_save_enforcement_state()
+                return interval
+        return None
+
+    async def async_should_send_home_kwh_alert(self, limit: int) -> bool:
+        """Check if home kWh alert should be sent."""
+        self._ensure_enforcement_state_for_today()
+        if self._home_kwh_alert_sent:
+            return False
+        if self.get_total_day_kwh() >= limit:
+            self._home_kwh_alert_sent = True
+            await self._async_save_enforcement_state()
+            return True
+        return False
+
+    def is_room_enforcement_enabled(self, room_id: str) -> bool:
+        """Check if power enforcement is enabled for a room."""
+        pe = self.energy_config.get("power_enforcement", {})
+        if not pe.get("enabled", False):
+            return False
+        rooms_enabled = pe.get("rooms_enabled", [])
+        return room_id in rooms_enabled
 
     # Event count tracking (warnings and shutoffs) - per current date only
     def _ensure_event_counts_for_today(self) -> None:
@@ -833,3 +996,65 @@ class ConfigManager:
         outlet_ids = breaker.get("outlet_ids", [])
         all_outlets = self.get_all_outlets()
         return [outlet for outlet in all_outlets if outlet["id"] in outlet_ids]
+
+    # Enforcement state persistence
+    async def _async_load_enforcement_state(self) -> None:
+        """Load enforcement state from file."""
+        path = self.hass.config.path("smart_dashboards_enforcement_state.json")
+        try:
+            data = await self.hass.async_add_executor_job(_load_json_file, path)
+            if data is not None:
+                self._enforcement_reset_date = data.get("reset_date")
+                self._enforcement_state = data.get("rooms", {})
+                self._home_kwh_alert_sent = data.get("home_kwh_alert_sent", False)
+        except (json.JSONDecodeError, IOError):
+            pass
+        # Reset if new day
+        self._ensure_enforcement_state_for_today()
+
+    async def _async_save_enforcement_state(self) -> None:
+        """Save enforcement state to file."""
+        path = self.hass.config.path("smart_dashboards_enforcement_state.json")
+        payload = {
+            "reset_date": self._enforcement_reset_date,
+            "rooms": self._enforcement_state,
+            "home_kwh_alert_sent": self._home_kwh_alert_sent,
+        }
+        try:
+            await self.hass.async_add_executor_job(_write_json_file, path, payload)
+        except IOError as err:
+            _LOGGER.error("Error saving enforcement state: %s", err)
+
+    # Intraday history persistence
+    async def _async_load_intraday_history(self) -> None:
+        """Load intraday power history from file."""
+        path = self.hass.config.path("smart_dashboards_intraday_history.json")
+        try:
+            data = await self.hass.async_add_executor_job(_load_json_file, path)
+            if data is not None:
+                saved_date = data.get("date")
+                today = dt_util.now().strftime("%Y-%m-%d")
+                # Only load if data is from today
+                if saved_date == today:
+                    self._intraday_history = data.get("history", {})
+                    self._intraday_last_minute = data.get("last_minute", "")
+                else:
+                    # Data is from a previous day, start fresh
+                    self._intraday_history = {}
+                    self._intraday_last_minute = ""
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    async def _async_save_intraday_history(self) -> None:
+        """Save intraday power history to file."""
+        path = self.hass.config.path("smart_dashboards_intraday_history.json")
+        today = dt_util.now().strftime("%Y-%m-%d")
+        payload = {
+            "date": today,
+            "last_minute": self._intraday_last_minute,
+            "history": self._intraday_history,
+        }
+        try:
+            await self.hass.async_add_executor_job(_write_json_file, path, payload)
+        except IOError as err:
+            _LOGGER.error("Error saving intraday history: %s", err)
