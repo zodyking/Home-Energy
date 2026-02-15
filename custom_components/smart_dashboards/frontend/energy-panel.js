@@ -2342,7 +2342,7 @@ class EnergyPanel extends HTMLElement {
       room_wh: `${roomName} Usage (kWh)`, room_warnings: `${roomName} Warnings`, room_shutoffs: `${roomName} Shutoffs`
     };
     const title = labels[type] || '30-Day History';
-    const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday';
+    const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
     const dates = isIntraday ? (this._graphData.timestamps || []) : (this._graphData.dates || []);
     const dateLabel = (dates.slice(0, 3).join(' — ') || '') + (dates.length > 3 ? ' … ' : '') + (dates.length > 3 ? dates.slice(-2).join(' — ') : '');
     return `
@@ -2363,10 +2363,12 @@ class EnergyPanel extends HTMLElement {
 
   async _openGraph(type, roomId = null, roomName = null) {
     try {
-      const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday';
+      const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
       let result;
       if (isIntraday) {
-        result = await this._hass.callWS({ type: 'smart_dashboards/get_intraday_history', minutes: 1440 });
+        const payload = { type: 'smart_dashboards/get_intraday_history', minutes: 1440 };
+        if (roomId) payload.room_id = roomId;
+        result = await this._hass.callWS(payload);
       } else {
         result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 31 });
       }
@@ -2388,11 +2390,11 @@ class EnergyPanel extends HTMLElement {
     const roomId = this._graphOpen.roomId;
     let values = [];
     let dates = [];
-    const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday';
+    const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
     if (isIntraday) {
       dates = this._graphData.timestamps || [];
       const watts = this._graphData.watts || [];
-      if (type === 'total_wh_intraday') {
+      if (type === 'total_wh_intraday' || type === 'room_wh') {
         let cum = 0;
         values = watts.map(w => { cum += (w || 0) / 60000; return cum; }); // kWh per minute = watts/60/1000
       } else {
@@ -2433,12 +2435,23 @@ class EnergyPanel extends HTMLElement {
             style: { colors: textColor, fontSize: '11px' },
             rotate: -45,
             rotateAlways: dates.length > 10,
+            formatter: isIntraday ? (val) => {
+              if (!val || typeof val !== 'string') return '';
+              const m = val.match(/^\d{4}-\d{2}-\d{2}\s+(\d{1,2}):(\d{2})$/);
+              if (!m) return val;
+              const h = parseInt(m[1], 10);
+              const min = parseInt(m[2], 10);
+              if (min !== 0) return '';
+              if (h === 0) return '12am';
+              if (h === 12) return '12pm';
+              return h < 12 ? `${h}am` : `${h - 12}pm`;
+            } : undefined,
           },
           axisBorder: { show: true, color: gridColor },
           axisTicks: { show: true, color: gridColor },
         },
         yaxis: {
-          labels: { style: { colors: textColor, fontSize: '11px' } },
+          labels: { show: false },
           axisBorder: { show: false },
           crosshairs: { show: false },
         },
