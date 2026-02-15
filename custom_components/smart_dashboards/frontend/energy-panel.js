@@ -1224,25 +1224,6 @@ class EnergyPanel extends HTMLElement {
         border: 1px solid rgba(0,0,0,0.10);
       }
 
-      .enforcement-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 3px;
-        font-size: 9px;
-        font-weight: 600;
-        padding: 2px 6px;
-        border-radius: 8px;
-        color: #fff;
-        background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
-        box-shadow: 0 1px 3px rgba(255, 152, 0, 0.3);
-        text-transform: uppercase;
-        letter-spacing: 0.3px;
-      }
-
-      .enforcement-badge svg {
-        filter: drop-shadow(0 1px 1px rgba(0,0,0,0.2));
-      }
-
       .device-card.stove-card {
         width: 243px;
         min-width: 243px;
@@ -2354,32 +2335,14 @@ class EnergyPanel extends HTMLElement {
 
   async _openGraph(type, roomId = null, roomName = null) {
     try {
-      // Use intraday (24h, 1-min intervals) for power charts, daily for warnings/shutoffs
-      const isPowerChart = type === 'total_wh' || type === 'room_wh';
-      let result;
-      if (isPowerChart) {
-        result = await this._hass.callWS({ 
-          type: 'smart_dashboards/get_intraday_history', 
-          room_id: roomId || undefined,
-          minutes: 1440 
-        });
-        // Convert to chart format
-        result = {
-          dates: result.timestamps.map(ts => ts.split(' ')[1] || ts), // Extract HH:MM
-          values: result.watts,
-          isIntraday: true,
-        };
-      } else {
-        result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 31 });
-        result.isIntraday = false;
-      }
+      const result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 31 });
       this._graphOpen = { type, roomId, roomName };
       this._graphData = result;
       this._render();
       this._attachGraphModalListeners();
       await this._initApexChart();
     } catch (e) {
-      console.error('Failed to load history:', e);
+      console.error('Failed to load daily history:', e);
       showToast(this.shadowRoot, 'Failed to load history', 'error');
     }
   }
@@ -2389,24 +2352,15 @@ class EnergyPanel extends HTMLElement {
     if (!container || !this._graphData || !this._graphOpen) return;
     const type = this._graphOpen.type;
     const roomId = this._graphOpen.roomId;
-    const isIntraday = this._graphData.isIntraday === true;
     let values = [];
-    let dates = [];
-    
-    if (isIntraday) {
-      // Intraday data comes pre-formatted
-      values = (this._graphData.values || []).map(v => Math.round(v * 10) / 10);
-      dates = this._graphData.dates || [];
-    } else if (type.startsWith('room_')) {
+    if (type.startsWith('room_')) {
       const key = type.replace('room_', '');
       values = (this._graphData.rooms?.[roomId]?.[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
-      dates = this._graphData.dates || [];
     } else {
       const key = type.replace('total_', '');
       values = (this._graphData[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
-      dates = this._graphData.dates || [];
     }
-    
+    const dates = this._graphData.dates || [];
     if (this._apexChartInstance) {
       this._apexChartInstance.destroy();
       this._apexChartInstance = null;
@@ -2416,12 +2370,6 @@ class EnergyPanel extends HTMLElement {
       const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
       const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
       const gridColor = getComputedStyle(this).getPropertyValue('--card-border').trim() || 'rgba(255,255,255,0.08)';
-      
-      // For intraday, show fewer x-axis labels (every 60 minutes)
-      const xLabels = isIntraday && dates.length > 60 
-        ? dates.map((d, i) => i % 60 === 0 ? d : '') 
-        : dates;
-      
       const options = {
         chart: {
           type: 'area',
@@ -2432,24 +2380,19 @@ class EnergyPanel extends HTMLElement {
           zoom: { enabled: false },
           animations: { enabled: true },
         },
-        series: [{ name: isIntraday ? 'Watts' : (type.includes('wh') ? 'kWh' : 'Count'), data: values }],
+        series: [{ name: type.includes('wh') ? 'kWh' : 'Count', data: values }],
         xaxis: {
-          categories: xLabels,
+          categories: dates,
           labels: {
             style: { colors: textColor, fontSize: '11px' },
             rotate: -45,
             rotateAlways: dates.length > 10,
-            hideOverlappingLabels: true,
           },
           axisBorder: { show: true, color: gridColor },
           axisTicks: { show: true, color: gridColor },
-          tickAmount: isIntraday ? 12 : undefined,
         },
         yaxis: {
-          labels: { 
-            style: { colors: textColor, fontSize: '11px' },
-            formatter: (v) => isIntraday ? `${Math.round(v)}W` : v.toFixed(1),
-          },
+          labels: { style: { colors: textColor, fontSize: '11px' } },
           axisBorder: { show: false },
           crosshairs: { show: false },
         },
@@ -2468,16 +2411,14 @@ class EnergyPanel extends HTMLElement {
         dataLabels: { enabled: false },
         tooltip: {
           theme: 'dark',
-          x: { show: true },
-          y: { formatter: (v) => isIntraday ? `${Math.round(v)} W` : v.toFixed(2) },
+          x: { format: 'dd MMM yyyy' },
         },
         plotOptions: {
           area: { fillTo: 'origin' },
         },
       };
-      // Never show "no data" - we always have at least current value
       if (dates.length === 0 || values.length === 0) {
-        options.noData = { text: 'Loading...', style: { color: textColor } };
+        options.noData = { text: 'No data yet', style: { color: textColor } };
       }
       this._apexChartInstance = new ApexCharts(container, options);
       await this._apexChartInstance.render();
@@ -2633,11 +2574,6 @@ class EnergyPanel extends HTMLElement {
     const isOverThreshold = room.threshold > 0 && roomData.total_watts > room.threshold;
     const warnings = roomData.warnings || 0;
     const shutoffs = roomData.shutoffs || 0;
-    
-    // Check if power enforcement is enabled for this room
-    const pe = this._config?.power_enforcement || {};
-    const roomsEnabled = pe.rooms_enabled || [];
-    const isEnforcementEnabled = pe.enabled && roomsEnabled.includes(room.id);
 
     return `
       <div class="room-card" data-room-id="${room.id}">
@@ -2650,12 +2586,6 @@ class EnergyPanel extends HTMLElement {
               <h3 class="room-name">${room.name}</h3>
               <div class="room-meta">
                 <span>${room.outlets?.length || 0} devices</span>
-                ${isEnforcementEnabled ? `
-                  <span class="enforcement-badge" title="Power Enforcement Active">
-                    <svg viewBox="0 0 24 24" style="width: 12px; height: 12px; fill: #fff;">${icons.shield}</svg>
-                    Enforced
-                  </span>
-                ` : ''}
                 ${room.threshold > 0 ? `
                   <span class="threshold-badge">
                     <svg viewBox="0 0 24 24">${icons.warning}</svg>
@@ -3082,9 +3012,6 @@ class EnergyPanel extends HTMLElement {
             <button class="settings-tab ${this._settingsTab === 'statistics' ? 'active' : ''}" data-tab="statistics">
               Statistics
             </button>
-            <button class="settings-tab ${this._settingsTab === 'enforcement' ? 'active' : ''}" data-tab="enforcement">
-              Power Enforcement
-            </button>
           </div>
           
           <div class="settings-tab-content ${this._settingsTab === 'rooms' ? 'active' : ''}" id="tab-rooms">
@@ -3233,63 +3160,6 @@ class EnergyPanel extends HTMLElement {
                   Variables: <code>{prefix}</code>
                 </div>
               </div>
-              
-              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--divider-color); padding-top: 16px;">Power Enforcement Messages</h3>
-              
-              <div class="tts-msg-group">
-                <div class="tts-msg-title">Phase 1 Warning (Volume Escalation)</div>
-                <div class="tts-msg-desc">Spoken when warning count triggers volume escalation phase</div>
-                <input type="text" class="form-input" id="tts-phase1-warn" 
-                  value="${ttsSettings.phase1_warn_msg || '{prefix} {room_name} has hit {warning_count} threshold warnings within the hour. Threshold warning volume will increase systematically until {room_name} power remains below its consumption threshold of {threshold} watts for an hour.'}" 
-                  placeholder="{prefix} {room_name} has hit {warning_count} threshold warnings within the hour...">
-                <div class="tts-var-help">
-                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code> <code>{threshold}</code>
-                </div>
-              </div>
-              
-              <div class="tts-msg-group">
-                <div class="tts-msg-title">Phase 2 Warning (Power Cycling)</div>
-                <div class="tts-msg-desc">Spoken when warning count triggers power cycling phase</div>
-                <input type="text" class="form-input" id="tts-phase2-warn" 
-                  value="${ttsSettings.phase2_warn_msg || '{prefix} {room_name} has hit {warning_count} threshold warnings within 30 minutes. Please reduce power consumption by turning off minor appliances or lights. Each ongoing consumption warning will systematically power cycle your outlet plugs with the least power usage to help reduce the load.'}" 
-                  placeholder="{prefix} {room_name} has hit {warning_count} threshold warnings within 30 minutes...">
-                <div class="tts-var-help">
-                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code>
-                </div>
-              </div>
-              
-              <div class="tts-msg-group">
-                <div class="tts-msg-title">Enforcement Reset Message</div>
-                <div class="tts-msg-desc">Spoken when power has been maintained below threshold and enforcement resets</div>
-                <input type="text" class="form-input" id="tts-phase-reset" 
-                  value="${ttsSettings.phase_reset_msg || '{prefix} {room_name} has maintained power below threshold for the required time. Power enforcement has been reset to normal.'}" 
-                  placeholder="{prefix} {room_name} has maintained power below threshold...">
-                <div class="tts-var-help">
-                  Variables: <code>{prefix}</code> <code>{room_name}</code>
-                </div>
-              </div>
-              
-              <div class="tts-msg-group">
-                <div class="tts-msg-title">Room kWh Warning</div>
-                <div class="tts-msg-desc">Spoken when a room exceeds daily kWh thresholds (5, 10, 15, 20 kWh)</div>
-                <input type="text" class="form-input" id="tts-room-kwh-warn" 
-                  value="${ttsSettings.room_kwh_warn_msg || '{prefix} {room_name} has exceeded {kwh_limit} kilowatt hours for the day. Please reduce power consumption by powering off unused devices. This room has contributed to {percentage} percent of the entire home\\'s usage for the day.'}" 
-                  placeholder="{prefix} {room_name} has exceeded {kwh_limit} kilowatt hours for the day...">
-                <div class="tts-var-help">
-                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{kwh_limit}</code> <code>{percentage}</code>
-                </div>
-              </div>
-              
-              <div class="tts-msg-group">
-                <div class="tts-msg-title">Home kWh Warning</div>
-                <div class="tts-msg-desc">Spoken when total home usage exceeds the daily limit (default 22 kWh)</div>
-                <input type="text" class="form-input" id="tts-home-kwh-warn" 
-                  value="${ttsSettings.home_kwh_warn_msg || '{prefix} Your home has exceeded {kwh_limit} kilowatt hours for the day. This is above average household usage in New York City. Please reduce power consumption.'}" 
-                  placeholder="{prefix} Your home has exceeded {kwh_limit} kilowatt hours for the day...">
-                <div class="tts-var-help">
-                  Variables: <code>{prefix}</code> <code>{kwh_limit}</code>
-                </div>
-              </div>
             </div>
           </div>
           
@@ -3330,8 +3200,6 @@ class EnergyPanel extends HTMLElement {
               </div>
             </div>
           </div>
-          
-          ${this._renderEnforcementTab()}
         </div>
       </div>
     `;
@@ -3340,118 +3208,6 @@ class EnergyPanel extends HTMLElement {
     initCustomSelects(this.shadowRoot);
   }
 
-
-  _renderEnforcementTab() {
-    const pe = this._config?.power_enforcement || {};
-    const rooms = this._config?.rooms || [];
-    const roomsEnabled = pe.rooms_enabled || [];
-    
-    return `
-      <div class="settings-tab-content ${this._settingsTab === 'enforcement' ? 'active' : ''}" id="tab-enforcement">
-        <div class="card">
-          <div class="card-header">
-            <h2 class="card-title">Power Enforcement Settings</h2>
-          </div>
-          <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
-            Configure automatic power enforcement actions when thresholds are repeatedly exceeded.
-          </p>
-          
-          <div class="form-group" style="margin-bottom: 20px;">
-            <label class="form-label" style="display: flex; align-items: center; gap: 10px;">
-              <input type="checkbox" id="pe-enabled" ${pe.enabled ? 'checked' : ''} style="width: 18px; height: 18px;">
-              Enable Power Enforcement
-            </label>
-            <span style="color: var(--secondary-text-color); font-size: 10px;">
-              When enabled, repeated threshold warnings trigger escalating enforcement actions.
-            </span>
-          </div>
-          
-          <div class="tts-msg-group" style="margin-bottom: 16px;">
-            <div class="tts-msg-title">Phase 1: Volume Escalation</div>
-            <div class="tts-msg-desc">When warnings accumulate, TTS volume increases until power stays below threshold.</div>
-            <div class="grid-2">
-              <div class="form-group">
-                <label class="form-label">Warning Count to Trigger</label>
-                <input type="number" class="form-input" id="pe-phase1-count" value="${pe.phase1_warning_count || 20}" min="1" max="100">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Time Window (minutes)</label>
-                <input type="number" class="form-input" id="pe-phase1-window" value="${pe.phase1_time_window_minutes || 60}" min="1" max="120">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Volume Increment (%)</label>
-                <input type="number" class="form-input" id="pe-phase1-vol-inc" value="${pe.phase1_volume_increment || 2}" min="1" max="20">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Reset After (minutes)</label>
-                <input type="number" class="form-input" id="pe-phase1-reset" value="${pe.phase1_reset_minutes || 60}" min="1" max="180">
-              </div>
-            </div>
-          </div>
-          
-          <div class="tts-msg-group" style="margin-bottom: 16px;">
-            <div class="tts-msg-title">Phase 2: Power Cycling</div>
-            <div class="tts-msg-desc">More severe enforcement: outlets with lowest power draw are cycled off/on to reduce load.</div>
-            <div class="grid-2">
-              <div class="form-group">
-                <label class="form-label">Warning Count to Trigger</label>
-                <input type="number" class="form-input" id="pe-phase2-count" value="${pe.phase2_warning_count || 40}" min="1" max="200">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Time Window (minutes)</label>
-                <input type="number" class="form-input" id="pe-phase2-window" value="${pe.phase2_time_window_minutes || 30}" min="1" max="120">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Cycle Delay (seconds)</label>
-                <input type="number" class="form-input" id="pe-phase2-delay" value="${pe.phase2_cycle_delay_seconds || 5}" min="1" max="30">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Reset After (minutes)</label>
-                <input type="number" class="form-input" id="pe-phase2-reset" value="${pe.phase2_reset_minutes || 30}" min="1" max="180">
-              </div>
-            </div>
-          </div>
-          
-          <div class="tts-msg-group" style="margin-bottom: 16px;">
-            <div class="tts-msg-title">Daily kWh Warnings</div>
-            <div class="tts-msg-desc">TTS alerts when rooms exceed daily kWh thresholds (5, 10, 15, 20 kWh) or home exceeds limit.</div>
-            <div class="grid-2">
-              <div class="form-group">
-                <label class="form-label">Room kWh Intervals (comma-separated)</label>
-                <input type="text" class="form-input" id="pe-room-kwh-intervals" value="${(pe.room_kwh_intervals || [5,10,15,20]).join(', ')}" placeholder="5, 10, 15, 20">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Home kWh Limit</label>
-                <input type="number" class="form-input" id="pe-home-kwh-limit" value="${pe.home_kwh_limit || 22}" min="1">
-              </div>
-            </div>
-          </div>
-          
-          <div class="tts-msg-group" style="margin-bottom: 16px;">
-            <div class="tts-msg-title">Rooms with Enforcement Enabled</div>
-            <div class="tts-msg-desc">Select which rooms have power enforcement active. Enabled rooms show a badge on the dashboard.</div>
-            <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
-              ${rooms.map(room => {
-                const roomId = room.id || room.name.toLowerCase().replace(' ', '_');
-                const isEnabled = roomsEnabled.includes(roomId);
-                return `
-                  <label style="display: flex; align-items: center; gap: 6px; background: var(--card-background-color); padding: 8px 12px; border-radius: 8px; cursor: pointer;">
-                    <input type="checkbox" class="pe-room-checkbox" data-room-id="${roomId}" ${isEnabled ? 'checked' : ''} style="width: 16px; height: 16px;">
-                    <span>${room.name}</span>
-                  </label>
-                `;
-              }).join('')}
-              ${rooms.length === 0 ? '<span style="color: var(--secondary-text-color);">No rooms configured.</span>' : ''}
-            </div>
-          </div>
-          
-          <button class="btn btn-primary" id="save-enforcement-btn" style="margin-top: 16px;">
-            Save Power Enforcement Settings
-          </button>
-        </div>
-      </div>
-    `;
-  }
 
   _getAllOutlets() {
     const rooms = this._config?.rooms || [];
@@ -4159,12 +3915,6 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
-    // Power enforcement save button
-    const saveEnforcementBtn = this.shadowRoot.querySelector('#save-enforcement-btn');
-    if (saveEnforcementBtn) {
-      saveEnforcementBtn.addEventListener('click', () => this._saveEnforcementSettings());
-    }
-
   }
 
   async _testToggleSwitch(btn) {
@@ -4613,46 +4363,6 @@ class EnergyPanel extends HTMLElement {
     });
   }
 
-  async _saveEnforcementSettings() {
-    const pe = {
-      enabled: this.shadowRoot.querySelector('#pe-enabled')?.checked || false,
-      phase1_warning_count: parseInt(this.shadowRoot.querySelector('#pe-phase1-count')?.value) || 20,
-      phase1_time_window_minutes: parseInt(this.shadowRoot.querySelector('#pe-phase1-window')?.value) || 60,
-      phase1_volume_increment: parseInt(this.shadowRoot.querySelector('#pe-phase1-vol-inc')?.value) || 2,
-      phase1_reset_minutes: parseInt(this.shadowRoot.querySelector('#pe-phase1-reset')?.value) || 60,
-      phase2_warning_count: parseInt(this.shadowRoot.querySelector('#pe-phase2-count')?.value) || 40,
-      phase2_time_window_minutes: parseInt(this.shadowRoot.querySelector('#pe-phase2-window')?.value) || 30,
-      phase2_cycle_delay_seconds: parseInt(this.shadowRoot.querySelector('#pe-phase2-delay')?.value) || 5,
-      phase2_reset_minutes: parseInt(this.shadowRoot.querySelector('#pe-phase2-reset')?.value) || 30,
-      room_kwh_intervals: (this.shadowRoot.querySelector('#pe-room-kwh-intervals')?.value || '5, 10, 15, 20')
-        .split(',')
-        .map(s => parseInt(s.trim()))
-        .filter(n => !isNaN(n) && n > 0),
-      home_kwh_limit: parseInt(this.shadowRoot.querySelector('#pe-home-kwh-limit')?.value) || 22,
-      rooms_enabled: [],
-    };
-    
-    // Gather enabled rooms
-    this.shadowRoot.querySelectorAll('.pe-room-checkbox:checked').forEach(cb => {
-      pe.rooms_enabled.push(cb.dataset.roomId);
-    });
-    
-    try {
-      await this._hass.callWS({
-        type: 'smart_dashboards/save_config',
-        config: {
-          ...this._config,
-          power_enforcement: pe,
-        },
-      });
-      this._config.power_enforcement = pe;
-      showToast(this.shadowRoot, 'Power enforcement settings saved!', 'success');
-    } catch (e) {
-      console.error('Failed to save enforcement settings:', e);
-      showToast(this.shadowRoot, 'Failed to save settings', 'error');
-    }
-  }
-
   async _saveSettings() {
     const roomCards = this.shadowRoot.querySelectorAll('.room-settings-card');
     const rooms = [];
@@ -4805,11 +4515,6 @@ class EnergyPanel extends HTMLElement {
     const ttsStove15Min = this.shadowRoot.querySelector('#tts-stove-15min')?.value || '{prefix} Stove has been on for {cooking_time_minutes} minutes with no one in the kitchen. Stove will automatically turn off in {final_warning_seconds} seconds if no one returns';
     const ttsStove30Sec = this.shadowRoot.querySelector('#tts-stove-30sec')?.value || '{prefix} Stove will automatically turn off in {final_warning_seconds} seconds if no one returns to the kitchen';
     const ttsStoveAutoOff = this.shadowRoot.querySelector('#tts-stove-auto-off')?.value || '{prefix} Stove has been automatically turned off for safety';
-    const ttsPhase1Warn = this.shadowRoot.querySelector('#tts-phase1-warn')?.value || '';
-    const ttsPhase2Warn = this.shadowRoot.querySelector('#tts-phase2-warn')?.value || '';
-    const ttsPhaseReset = this.shadowRoot.querySelector('#tts-phase-reset')?.value || '';
-    const ttsRoomKwhWarn = this.shadowRoot.querySelector('#tts-room-kwh-warn')?.value || '';
-    const ttsHomeKwhWarn = this.shadowRoot.querySelector('#tts-home-kwh-warn')?.value || '';
 
     const tabStats = this.shadowRoot.querySelector('#tab-statistics');
     const _si = (cls) => tabStats?.querySelector(`input.${cls}`)?.value?.trim?.() || '';
@@ -4837,13 +4542,7 @@ class EnergyPanel extends HTMLElement {
         stove_15min_warn_msg: ttsStove15Min,
         stove_30sec_warn_msg: ttsStove30Sec,
         stove_auto_off_msg: ttsStoveAutoOff,
-        phase1_warn_msg: ttsPhase1Warn,
-        phase2_warn_msg: ttsPhase2Warn,
-        phase_reset_msg: ttsPhaseReset,
-        room_kwh_warn_msg: ttsRoomKwhWarn,
-        home_kwh_warn_msg: ttsHomeKwhWarn,
       },
-      power_enforcement: this._config?.power_enforcement || {},
     };
 
     try {
