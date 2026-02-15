@@ -70,7 +70,7 @@ class ConfigManager:
         # Structure: {entity_id: [(timestamp_minute, watts), ...]} - keeps last 1440 entries (24h)
         self._intraday_history: dict[str, list] = {}
         self._intraday_last_minute: str = ""  # Last minute we recorded
-        
+
         # Power enforcement tracking
         # Structure: {room_id: {"warnings": [(timestamp, watts), ...], "phase": 0|1|2, "volume_offset": 0, "last_phase_change": timestamp, "kwh_alerts_sent": [5, 10, ...]}}
         self._enforcement_state: dict[str, dict] = {}
@@ -510,135 +510,6 @@ class ConfigManager:
             "watts": [minute_sums[m] for m in sorted_minutes],
         }
 
-    # Power enforcement tracking
-    def _ensure_enforcement_state_for_today(self) -> None:
-        """Reset enforcement state if date changed (new day)."""
-        today = dt_util.now().strftime("%Y-%m-%d")
-        if self._enforcement_reset_date != today:
-            self._enforcement_state = {}
-            self._home_kwh_alert_sent = False
-            self._enforcement_reset_date = today
-
-    def get_enforcement_state(self, room_id: str) -> dict:
-        """Get enforcement state for a room."""
-        self._ensure_enforcement_state_for_today()
-        if room_id not in self._enforcement_state:
-            self._enforcement_state[room_id] = {
-                "warnings": [],  # [(timestamp, watts), ...]
-                "phase": 0,  # 0=normal, 1=volume escalation, 2=power cycling
-                "volume_offset": 0,  # Current volume increase (0-100)
-                "last_phase_change": None,
-                "kwh_alerts_sent": [],  # [5, 10, 15, ...]
-            }
-        return self._enforcement_state[room_id]
-
-    async def async_record_threshold_warning(self, room_id: str, watts: float) -> None:
-        """Record a threshold warning with timestamp."""
-        self._ensure_enforcement_state_for_today()
-        state = self.get_enforcement_state(room_id)
-        now = dt_util.now()
-        state["warnings"].append((now.isoformat(), watts))
-        # Keep only warnings from the last hour
-        cutoff = (now - timedelta(hours=1)).isoformat()
-        state["warnings"] = [(ts, w) for ts, w in state["warnings"] if ts >= cutoff]
-        await self._async_save_enforcement_state()
-
-    def get_warnings_in_window(self, room_id: str, minutes: int) -> int:
-        """Count warnings in the last N minutes."""
-        state = self.get_enforcement_state(room_id)
-        now = dt_util.now()
-        cutoff = (now - timedelta(minutes=minutes)).isoformat()
-        return sum(1 for ts, _ in state["warnings"] if ts >= cutoff)
-
-    def check_phase_reset(self, room_id: str, reset_minutes: int) -> bool:
-        """Check if room has been below threshold long enough to reset phase."""
-        state = self.get_enforcement_state(room_id)
-        if not state["warnings"]:
-            return True
-        last_warning_ts = max(ts for ts, _ in state["warnings"])
-        try:
-            last_warning = datetime.fromisoformat(last_warning_ts)
-            return (dt_util.now() - last_warning).total_seconds() >= (reset_minutes * 60)
-        except (ValueError, TypeError):
-            return False
-
-    async def async_set_enforcement_phase(self, room_id: str, phase: int) -> None:
-        """Set the enforcement phase for a room."""
-        state = self.get_enforcement_state(room_id)
-        if state["phase"] != phase:
-            state["phase"] = phase
-            state["last_phase_change"] = dt_util.now().isoformat()
-            if phase == 0:
-                state["volume_offset"] = 0  # Reset volume on phase reset
-            await self._async_save_enforcement_state()
-
-    async def async_increment_volume_offset(self, room_id: str, increment: int, max_offset: int = 100) -> int:
-        """Increase volume offset for a room. Returns new offset."""
-        state = self.get_enforcement_state(room_id)
-        state["volume_offset"] = min(max_offset, state["volume_offset"] + increment)
-        await self._async_save_enforcement_state()
-        return state["volume_offset"]
-
-    def get_room_day_kwh(self, room_id: str) -> float:
-        """Get total kWh for a room today."""
-        room_wh = 0.0
-        for room in self.energy_config.get("rooms", []):
-            rid = room.get("id", room["name"].lower().replace(" ", "_"))
-            if rid == room_id:
-                for outlet in room.get("outlets", []):
-                    if outlet.get("type") == "light":
-                        key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
-                        room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
-                    else:
-                        for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
-                            if e:
-                                room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
-                break
-        return room_wh / 1000.0  # Convert Wh to kWh
-
-    def get_total_day_kwh(self) -> float:
-        """Get total kWh for all rooms today."""
-        total_wh = sum(d.get("energy", 0.0) for d in self._day_energy_data.values())
-        return total_wh / 1000.0
-
-    def get_room_percentage_of_total(self, room_id: str) -> float:
-        """Get percentage of total home usage for a room."""
-        total_kwh = self.get_total_day_kwh()
-        if total_kwh <= 0:
-            return 0.0
-        room_kwh = self.get_room_day_kwh(room_id)
-        return round((room_kwh / total_kwh) * 100, 1)
-
-    async def async_should_send_room_kwh_alert(self, room_id: str, intervals: list) -> int | None:
-        """Check if a kWh interval alert should be sent. Returns interval or None."""
-        state = self.get_enforcement_state(room_id)
-        room_kwh = self.get_room_day_kwh(room_id)
-        for interval in sorted(intervals):
-            if room_kwh >= interval and interval not in state["kwh_alerts_sent"]:
-                state["kwh_alerts_sent"].append(interval)
-                await self._async_save_enforcement_state()
-                return interval
-        return None
-
-    async def async_should_send_home_kwh_alert(self, limit: int) -> bool:
-        """Check if home kWh alert should be sent."""
-        self._ensure_enforcement_state_for_today()
-        if self._home_kwh_alert_sent:
-            return False
-        if self.get_total_day_kwh() >= limit:
-            self._home_kwh_alert_sent = True
-            await self._async_save_enforcement_state()
-            return True
-        return False
-
-    def is_room_enforcement_enabled(self, room_id: str) -> bool:
-        """Check if power enforcement is enabled for a room."""
-        pe = self.energy_config.get("power_enforcement", {})
-        if not pe.get("enabled", False):
-            return False
-        rooms_enabled = pe.get("rooms_enabled", [])
-        return room_id in rooms_enabled
-
     # Event count tracking (warnings and shutoffs) - per current date only
     def _ensure_event_counts_for_today(self) -> None:
         """Reset event counts if date has changed (new day)."""
@@ -996,6 +867,127 @@ class ConfigManager:
         outlet_ids = breaker.get("outlet_ids", [])
         all_outlets = self.get_all_outlets()
         return [outlet for outlet in all_outlets if outlet["id"] in outlet_ids]
+
+    # Power enforcement
+    def _ensure_enforcement_state_for_today(self) -> None:
+        """Reset enforcement state if date changed (new day)."""
+        today = dt_util.now().strftime("%Y-%m-%d")
+        if self._enforcement_reset_date != today:
+            self._enforcement_state = {}
+            self._home_kwh_alert_sent = False
+            self._enforcement_reset_date = today
+
+    def get_enforcement_state(self, room_id: str) -> dict:
+        """Get enforcement state for a room."""
+        self._ensure_enforcement_state_for_today()
+        if room_id not in self._enforcement_state:
+            self._enforcement_state[room_id] = {
+                "warnings": [],  # [(timestamp, watts), ...]
+                "phase": 0,  # 0=normal, 1=volume escalation, 2=power cycling
+                "volume_offset": 0,  # Current volume increase (0-100)
+                "last_phase_change": None,
+                "kwh_alerts_sent": [],  # [5, 10, 15, ...]
+            }
+        return self._enforcement_state[room_id]
+
+    async def async_record_threshold_warning(self, room_id: str, watts: float) -> None:
+        """Record a threshold warning with timestamp."""
+        self._ensure_enforcement_state_for_today()
+        state = self.get_enforcement_state(room_id)
+        now = dt_util.now()
+        state["warnings"].append((now.isoformat(), watts))
+        # Keep only warnings from the last hour
+        cutoff = (now - timedelta(hours=1)).isoformat()
+        state["warnings"] = [(ts, w) for ts, w in state["warnings"] if ts >= cutoff]
+        await self._async_save_enforcement_state()
+
+    def get_warnings_in_window(self, room_id: str, minutes: int) -> int:
+        """Count warnings in the last N minutes."""
+        state = self.get_enforcement_state(room_id)
+        now = dt_util.now()
+        cutoff = (now - timedelta(minutes=minutes)).isoformat()
+        return sum(1 for ts, _ in state["warnings"] if ts >= cutoff)
+
+    def check_phase_reset(self, room_id: str, reset_minutes: int) -> bool:
+        """Check if room has been below threshold long enough to reset phase."""
+        state = self.get_enforcement_state(room_id)
+        if not state["warnings"]:
+            return True
+        last_warning_ts = max(ts for ts, _ in state["warnings"])
+        try:
+            last_warning = datetime.fromisoformat(last_warning_ts)
+            return (dt_util.now() - last_warning).total_seconds() >= (reset_minutes * 60)
+        except (ValueError, TypeError):
+            return False
+
+    async def async_set_enforcement_phase(self, room_id: str, phase: int) -> None:
+        """Set the enforcement phase for a room."""
+        state = self.get_enforcement_state(room_id)
+        if state["phase"] != phase:
+            state["phase"] = phase
+            state["last_phase_change"] = dt_util.now().isoformat()
+            if phase == 0:
+                state["volume_offset"] = 0  # Reset volume on phase reset
+            await self._async_save_enforcement_state()
+
+    async def async_increment_volume_offset(self, room_id: str, increment: int, max_offset: int = 100) -> int:
+        """Increase volume offset for a room. Returns new offset."""
+        state = self.get_enforcement_state(room_id)
+        state["volume_offset"] = min(max_offset, state["volume_offset"] + increment)
+        await self._async_save_enforcement_state()
+        return state["volume_offset"]
+
+    def get_room_day_kwh(self, room_id: str) -> float:
+        """Get total kWh for a room today."""
+        room_wh = 0.0
+        for room in self.energy_config.get("rooms", []):
+            rid = room.get("id", room["name"].lower().replace(" ", "_"))
+            if rid != room_id:
+                continue
+            for outlet in room.get("outlets", []):
+                if outlet.get("type") == "light":
+                    key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                else:
+                    for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
+                        if e:
+                            room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
+        return room_wh / 1000.0
+
+    def get_total_day_kwh(self) -> float:
+        """Get total kWh for all rooms today."""
+        total_wh = sum(d.get("energy", 0.0) for d in self._day_energy_data.values())
+        return total_wh / 1000.0
+
+    def get_room_percentage_of_total(self, room_id: str) -> float:
+        """Get percentage of total home usage for a room."""
+        total_kwh = self.get_total_day_kwh()
+        if total_kwh <= 0:
+            return 0.0
+        room_kwh = self.get_room_day_kwh(room_id)
+        return round((room_kwh / total_kwh) * 100, 1)
+
+    async def async_should_send_room_kwh_alert(self, room_id: str, intervals: list) -> int | None:
+        """Check if a kWh interval alert should be sent. Returns interval or None."""
+        state = self.get_enforcement_state(room_id)
+        room_kwh = self.get_room_day_kwh(room_id)
+        for interval in sorted(intervals):
+            if room_kwh >= interval and interval not in state["kwh_alerts_sent"]:
+                state["kwh_alerts_sent"].append(interval)
+                await self._async_save_enforcement_state()
+                return interval
+        return None
+
+    async def async_should_send_home_kwh_alert(self, limit: int) -> bool:
+        """Check if home kWh alert should be sent."""
+        self._ensure_enforcement_state_for_today()
+        if self._home_kwh_alert_sent:
+            return False
+        if self.get_total_day_kwh() >= limit:
+            self._home_kwh_alert_sent = True
+            await self._async_save_enforcement_state()
+            return True
+        return False
 
     # Enforcement state persistence
     async def _async_load_enforcement_state(self) -> None:
