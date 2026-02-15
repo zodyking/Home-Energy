@@ -23,6 +23,7 @@ class EnergyPanel extends HTMLElement {
     this._draggedRoomCard = null;
     this._graphOpen = null;  // { type, roomId?, roomName? }
     this._graphData = null;  // from get_daily_history
+    this._apexChartInstance = null;
     this._statsData = null;  // from get_statistics
   }
 
@@ -116,10 +117,61 @@ class EnergyPanel extends HTMLElement {
     try {
       this._statsData = await this._hass.callWS({ type: 'smart_dashboards/get_statistics' });
       if (this._dashboardView === 'statistics') {
-        this._render();
+        if (this.shadowRoot.querySelector('.statistics-view')) {
+          this._updateStatisticsDisplay();
+        } else {
+          this._render();
+        }
       }
     } catch (e) {
       console.error('Failed to load statistics:', e);
+    }
+  }
+
+  _updateStatisticsDisplay() {
+    if (!this._statsData || this._showSettings) return;
+    const s = this._statsData;
+    const dateStart = s.date_start || '';
+    const dateEnd = s.date_end || '';
+    const isNarrowed = s.is_narrowed === true;
+    const startFormatted = this._formatDateRange(dateStart);
+    const endFormatted = this._formatDateRange(dateEnd);
+    const rangeBanner = dateStart && dateEnd ? `${startFormatted} – ${endFormatted}` : 'No date range available';
+    const sensorValues = s.sensor_values || {};
+    const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
+    const rangeEl = this.shadowRoot.querySelector('#stat-range-banner');
+    const narrowedEl = this.shadowRoot.querySelector('#stat-narrowed');
+    if (rangeEl) rangeEl.textContent = rangeBanner;
+    if (narrowedEl) narrowedEl.style.display = isNarrowed ? '' : 'none';
+    const curEl = this.shadowRoot.querySelector('#stat-current-usage');
+    const projEl = this.shadowRoot.querySelector('#stat-projected-usage');
+    const costEl = this.shadowRoot.querySelector('#stat-kwh-cost');
+    if (curEl) curEl.textContent = `${fmt(sensorValues.current_usage)} kWh`;
+    if (projEl) projEl.textContent = `${fmt(sensorValues.projected_usage)} kWh`;
+    if (costEl) costEl.textContent = `$${fmt(sensorValues.kwh_cost)}`;
+    const totalKwh = s.total_kwh ?? 0;
+    const totalWarnings = s.total_warnings ?? 0;
+    const totalShutoffs = s.total_shutoffs ?? 0;
+    const kwhEl = this.shadowRoot.querySelector('#stat-total-kwh');
+    const warnEl = this.shadowRoot.querySelector('#stat-total-warnings');
+    const shutEl = this.shadowRoot.querySelector('#stat-total-shutoffs');
+    if (kwhEl) kwhEl.textContent = totalKwh.toFixed(2);
+    if (warnEl) warnEl.textContent = totalWarnings;
+    if (shutEl) shutEl.textContent = totalShutoffs;
+    const rooms = s.rooms || [];
+    const tbody = this.shadowRoot.querySelector('#stat-rooms-tbody');
+    if (tbody) {
+      tbody.innerHTML = rooms.length === 0
+        ? '<tr><td colspan="5" class="statistics-empty">No room data for this range.</td></tr>'
+        : rooms.map(r => `
+          <tr>
+            <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
+            <td>${(r.kwh ?? 0).toFixed(2)}</td>
+            <td>${(r.pct ?? 0).toFixed(1)}%</td>
+            <td>${r.warnings ?? 0}</td>
+            <td>${r.shutoffs ?? 0}</td>
+          </tr>
+        `).join('');
     }
   }
 
@@ -1716,13 +1768,8 @@ class EnergyPanel extends HTMLElement {
       }
       .graph-chart-container {
         flex: 1;
-        min-height: clamp(120px, 35vw, 220px);
+        min-height: clamp(200px, 45vw, 280px);
         width: 100%;
-      }
-      .graph-svg {
-        width: 100%;
-        height: 100%;
-        min-height: 120px;
       }
       .graph-dates {
         font-size: clamp(9px, 2vw, 11px);
@@ -2268,6 +2315,43 @@ class EnergyPanel extends HTMLElement {
     const roomName = this._graphOpen.roomName || '';
     const labels = { total_wh: 'Usage (kWh)', total_warnings: 'Threshold Warnings', total_shutoffs: 'Safety Shutoffs', room_wh: `${roomName} Usage (kWh)`, room_warnings: `${roomName} Warnings`, room_shutoffs: `${roomName} Shutoffs` };
     const title = labels[type] || '30-Day History';
+    const dates = this._graphData.dates || [];
+    const dateLabel = (dates.slice(0, 5).join(' — ') || '') + (dates.length > 5 ? ' … ' : '') + (dates.length > 5 ? dates.slice(-3).join(' — ') : '');
+    return `
+      <div class="graph-modal-overlay" id="graph-modal-overlay">
+        <div class="graph-modal">
+          <div class="graph-modal-header">
+            <h2 class="graph-modal-title">${title}</h2>
+            <button type="button" class="graph-modal-close" id="graph-modal-close" aria-label="Close">×</button>
+          </div>
+          <div class="graph-modal-body">
+            <div class="graph-chart-container" id="graph-apex-chart"></div>
+            <div class="graph-dates">${dateLabel}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  async _openGraph(type, roomId = null, roomName = null) {
+    try {
+      const result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 31 });
+      this._graphOpen = { type, roomId, roomName };
+      this._graphData = result;
+      this._render();
+      this._attachGraphModalListeners();
+      await this._initApexChart();
+    } catch (e) {
+      console.error('Failed to load daily history:', e);
+      showToast(this.shadowRoot, 'Failed to load history', 'error');
+    }
+  }
+
+  async _initApexChart() {
+    const container = this.shadowRoot.getElementById('graph-apex-chart');
+    if (!container || !this._graphData || !this._graphOpen) return;
+    const type = this._graphOpen.type;
+    const roomId = this._graphOpen.roomId;
     let values = [];
     if (type.startsWith('room_')) {
       const key = type.replace('room_', '');
@@ -2277,62 +2361,70 @@ class EnergyPanel extends HTMLElement {
       values = (this._graphData[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
     }
     const dates = this._graphData.dates || [];
-    const chartSvg = this._renderChartSvg(dates, values, type.includes('wh'));
-    return `
-      <div class="graph-modal-overlay" id="graph-modal-overlay">
-        <div class="graph-modal">
-          <div class="graph-modal-header">
-            <h2 class="graph-modal-title">${title}</h2>
-            <button type="button" class="graph-modal-close" id="graph-modal-close" aria-label="Close">×</button>
-          </div>
-          <div class="graph-modal-body">
-            <div class="graph-chart-container">${chartSvg}</div>
-            <div class="graph-dates">${(dates.slice(0, 5).join(' — ') || '')}${dates.length > 5 ? ' … ' : ''}${dates.length > 5 ? dates.slice(-3).join(' — ') : ''}</div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  _renderChartSvg(dates, values, isKwh) {
-    const n = Math.max(1, values.length);
-    const maxVal = Math.max(...values, 0.1);
-    const pad = { t: 8, r: 8, b: 8, l: 8 };
-    const w = 100;
-    const h = 100;
-    const chartW = w - pad.l - pad.r;
-    const chartH = h - pad.t - pad.b;
-    const coords = values.map((v, i) => ({
-      x: pad.l + (i / (n - 1 || 1)) * chartW,
-      y: pad.t + chartH - (v / maxVal) * chartH
-    }));
-    const pointsStr = coords.map(c => `${c.x},${c.y}`).join(' ');
-    const areaPoints = `${pad.l},${pad.t + chartH} ${pointsStr} ${pad.l + chartW},${pad.t + chartH}`;
-    const linePath = coords.length ? 'M ' + coords.map(c => `${c.x} ${c.y}`).join(' L ') : '';
-    return `
-      <svg class="graph-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="graphGrad" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0%" stop-color="var(--panel-accent)" stop-opacity="0.3"/>
-            <stop offset="100%" stop-color="var(--panel-accent)" stop-opacity="0"/>
-          </linearGradient>
-        </defs>
-        <polygon points="${areaPoints}" fill="url(#graphGrad)"/>
-        <path d="${linePath}" fill="none" stroke="var(--panel-accent)" stroke-width="0.8" vector-effect="non-scaling-stroke"/>
-      </svg>
-    `;
-  }
-
-  async _openGraph(type, roomId = null, roomName = null) {
+    if (this._apexChartInstance) {
+      this._apexChartInstance.destroy();
+      this._apexChartInstance = null;
+    }
     try {
-      const result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 30 });
-      this._graphOpen = { type, roomId, roomName };
-      this._graphData = result;
-      this._render();
-      this._attachGraphModalListeners();
+      const ApexCharts = (await import('https://cdn.jsdelivr.net/npm/apexcharts@3.45.1/dist/apexcharts.esm.min.js')).default;
+      const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
+      const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
+      const gridColor = getComputedStyle(this).getPropertyValue('--card-border').trim() || 'rgba(255,255,255,0.08)';
+      const options = {
+        chart: {
+          type: 'area',
+          height: 260,
+          fontFamily: 'inherit',
+          background: 'transparent',
+          toolbar: { show: false },
+          zoom: { enabled: false },
+          animations: { enabled: true },
+        },
+        series: [{ name: type.includes('wh') ? 'kWh' : 'Count', data: values }],
+        xaxis: {
+          categories: dates,
+          labels: {
+            style: { colors: textColor, fontSize: '11px' },
+            rotate: -45,
+            rotateAlways: dates.length > 10,
+          },
+          axisBorder: { show: true, color: gridColor },
+          axisTicks: { show: true, color: gridColor },
+        },
+        yaxis: {
+          labels: { style: { colors: textColor, fontSize: '11px' } },
+          axisBorder: { show: false },
+          crosshairs: { show: false },
+        },
+        colors: [accent],
+        fill: {
+          type: 'gradient',
+          gradient: { shadeIntensity: 0.3, opacityFrom: 0.5, opacityTo: 0.05 },
+        },
+        stroke: { curve: 'smooth', width: 2 },
+        grid: {
+          borderColor: gridColor,
+          strokeDashArray: 4,
+          xaxis: { lines: { show: false } },
+          yaxis: { lines: { show: true } },
+        },
+        dataLabels: { enabled: false },
+        tooltip: {
+          theme: 'dark',
+          x: { format: 'dd MMM yyyy' },
+        },
+        plotOptions: {
+          area: { fillTo: 'origin' },
+        },
+      };
+      if (dates.length === 0 || values.length === 0) {
+        options.noData = { text: 'No data yet', style: { color: textColor } };
+      }
+      this._apexChartInstance = new ApexCharts(container, options);
+      await this._apexChartInstance.render();
     } catch (e) {
-      console.error('Failed to load daily history:', e);
-      showToast(this.shadowRoot, 'Failed to load history', 'error');
+      console.error('ApexCharts failed to load:', e);
+      container.innerHTML = '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">Chart failed to load. Check network or try again.</p>';
     }
   }
 
@@ -2340,6 +2432,10 @@ class EnergyPanel extends HTMLElement {
     const overlay = this.shadowRoot.getElementById('graph-modal-overlay');
     const closeBtn = this.shadowRoot.getElementById('graph-modal-close');
     const close = () => {
+      if (this._apexChartInstance) {
+        this._apexChartInstance.destroy();
+        this._apexChartInstance = null;
+      }
       this._graphOpen = null;
       this._graphData = null;
       this._render();
@@ -2352,12 +2448,9 @@ class EnergyPanel extends HTMLElement {
     if (!dateStr || typeof dateStr !== 'string') return '—';
     const parts = dateStr.trim().split('-');
     if (parts.length !== 3) return dateStr;
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const m = parseInt(parts[1], 10) - 1;
-    const d = parseInt(parts[2], 10);
-    const y = parts[0];
-    if (isNaN(m) || isNaN(d) || m < 0 || m > 11) return dateStr;
-    return `${months[m]} ${d}, ${y}`;
+    const y = parts[0], m = parts[1], d = parts[2];
+    if (!/^\d{4}$/.test(y) || !/^\d{1,2}$/.test(m) || !/^\d{1,2}$/.test(d)) return dateStr;
+    return `${m.padStart(2, '0')}/${d.padStart(2, '0')}/${y}`;
   }
 
   _renderStatisticsView() {
@@ -2384,8 +2477,8 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="statistics-view">
         <div class="statistics-banner">
-          <span class="statistics-range">${rangeBanner}</span>
-          ${isNarrowed ? '<span class="statistics-narrowed">Narrowed from billing cycle.</span>' : ''}
+          <span class="statistics-range" id="stat-range-banner">${rangeBanner}</span>
+          <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Narrowed from billing cycle.</span>
         </div>
         <div class="statistics-cards">
           <div class="statistics-sensor-card card">
@@ -2393,15 +2486,15 @@ class EnergyPanel extends HTMLElement {
             <div class="statistics-sensor-grid">
               <div class="statistics-sensor-item">
                 <span class="statistics-sensor-label">Current Usage</span>
-                <span class="statistics-sensor-value">${fmt(currentUsage)} kWh</span>
+                <span class="statistics-sensor-value" id="stat-current-usage">${fmt(currentUsage)} kWh</span>
               </div>
               <div class="statistics-sensor-item">
                 <span class="statistics-sensor-label">Projected Usage</span>
-                <span class="statistics-sensor-value">${fmt(projectedUsage)} kWh</span>
+                <span class="statistics-sensor-value" id="stat-projected-usage">${fmt(projectedUsage)} kWh</span>
               </div>
               <div class="statistics-sensor-item">
                 <span class="statistics-sensor-label">kWh Cost</span>
-                <span class="statistics-sensor-value">$${fmt(kwhCost)}</span>
+                <span class="statistics-sensor-value" id="stat-kwh-cost">$${fmt(kwhCost)}</span>
               </div>
             </div>
           </div>
@@ -2409,15 +2502,15 @@ class EnergyPanel extends HTMLElement {
             <h3 class="statistics-card-title">Totals (from daily data)</h3>
             <div class="statistics-totals-grid">
               <div class="statistics-total-item">
-                <span class="statistics-total-value">${totalKwh.toFixed(2)}</span>
+                <span class="statistics-total-value" id="stat-total-kwh">${totalKwh.toFixed(2)}</span>
                 <span class="statistics-total-label">kWh</span>
               </div>
               <div class="statistics-total-item">
-                <span class="statistics-total-value">${totalWarnings}</span>
+                <span class="statistics-total-value" id="stat-total-warnings">${totalWarnings}</span>
                 <span class="statistics-total-label">Warnings</span>
               </div>
               <div class="statistics-total-item">
-                <span class="statistics-total-value">${totalShutoffs}</span>
+                <span class="statistics-total-value" id="stat-total-shutoffs">${totalShutoffs}</span>
                 <span class="statistics-total-label">Shutoffs</span>
               </div>
             </div>
@@ -2436,7 +2529,7 @@ class EnergyPanel extends HTMLElement {
                   <th>Shutoffs</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="stat-rooms-tbody">
                 ${rooms.length === 0 ? '<tr><td colspan="5" class="statistics-empty">No room data for this range.</td></tr>' : ''}
                 ${rooms.map(r => `
                   <tr>
@@ -3101,26 +3194,7 @@ class EnergyPanel extends HTMLElement {
                   </div>
                   <div class="form-group">
                     <label class="form-label">kWh Cost</label>
-                    ${this._renderEntityAutocomplete(statsSettings.kwh_cost_sensor || '', 'sensor', 'stats', 'stats-kwh-cost', 'sensor.kwh_cost')}
-                  </div>
-                </div>
-              </div>
-              
-              <div class="tts-msg-group">
-                <div class="tts-msg-title">Date Range (Optional Narrow)</div>
-                <div class="tts-msg-desc">Leave empty to use full billing cycle. Format: YYYY-MM-DD</div>
-                <div class="grid-2">
-                  <div class="form-group">
-                    <label class="form-label">Range Start</label>
-                    <input type="text" class="form-input" id="stats-date-range-start" 
-                      value="${statsSettings.date_range_start || ''}" 
-                      placeholder="YYYY-MM-DD">
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label">Range End</label>
-                    <input type="text" class="form-input" id="stats-date-range-end" 
-                      value="${statsSettings.date_range_end || ''}" 
-                      placeholder="YYYY-MM-DD">
+                    ${this._renderEntityAutocomplete(statsSettings.kwh_cost_sensor || '', 'cost_helper', 'stats', 'stats-kwh-cost', 'input_text.kwh_cost')}
                   </div>
                 </div>
               </div>
@@ -3888,6 +3962,12 @@ class EnergyPanel extends HTMLElement {
 
   _getEntitiesForAutocomplete(roomIndex, entityType) {
     const prefix = entityType === 'sensor' ? 'sensor.' : entityType === 'switch' ? 'switch.' : entityType === 'light' ? 'light.' : entityType === 'binary_sensor' ? 'binary_sensor.' : '';
+    if (entityType === 'cost_helper') {
+      const sensors = (this._entities?.sensors || this._entities?.power_sensors || []).map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+      const inputTexts = (this._entities?.input_text || []).map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+      const inputNumbers = (this._entities?.input_number || []).map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+      return [...sensors, ...inputTexts, ...inputNumbers];
+    }
     if (entityType === 'sensor') {
       const list = (roomIndex === 'stats' || roomIndex === 'statistics')
         ? (this._entities?.sensors || this._entities?.power_sensors || [])
@@ -4444,8 +4524,6 @@ class EnergyPanel extends HTMLElement {
       current_usage_sensor: _si('stats-current-usage'),
       projected_usage_sensor: _si('stats-projected-usage'),
       kwh_cost_sensor: _si('stats-kwh-cost'),
-      date_range_start: tabStats?.querySelector('#stats-date-range-start')?.value?.trim?.() || '',
-      date_range_end: tabStats?.querySelector('#stats-date-range-end')?.value?.trim?.() || '',
     };
 
     const config = {

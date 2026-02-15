@@ -97,6 +97,8 @@ async def websocket_get_entities(
         "sensors": [],
         "binary_sensors": [],
         "lights": [],
+        "input_text": [],
+        "input_number": [],
     }
 
     for state in hass.states.async_all():
@@ -148,6 +150,20 @@ async def websocket_get_entities(
         if entity_type is None or entity_type == "light":
             if entity_id.startswith("light."):
                 result["lights"].append({
+                    "entity_id": entity_id,
+                    "friendly_name": friendly_name,
+                })
+
+        if entity_type is None or entity_type == "input_text":
+            if entity_id.startswith("input_text."):
+                result["input_text"].append({
+                    "entity_id": entity_id,
+                    "friendly_name": friendly_name,
+                })
+
+        if entity_type is None or entity_type == "input_number":
+            if entity_id.startswith("input_number."):
+                result["input_number"].append({
                     "entity_id": entity_id,
                     "friendly_name": friendly_name,
                 })
@@ -438,7 +454,7 @@ async def websocket_get_statistics(
                 "shutoffs": rsum["shutoffs"],
             })
 
-    # Read live sensor values
+    # Read live sensor values (sensors + input_text, input_number helpers)
     stats = config_manager.energy_config.get("statistics_settings", {})
     for key, sensor_key in [
         ("current_usage", "current_usage_sensor"),
@@ -450,7 +466,10 @@ async def websocket_get_statistics(
             state = hass.states.get(ent)
             if state and state.state not in ("unknown", "unavailable", ""):
                 try:
-                    result["sensor_values"][key] = float(state.state)
+                    val = str(state.state).strip()
+                    if key == "kwh_cost":
+                        val = val.replace("$", "").replace(",", "").strip()
+                    result["sensor_values"][key] = float(val)
                 except (ValueError, TypeError):
                     pass
 

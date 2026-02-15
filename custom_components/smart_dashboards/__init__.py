@@ -61,9 +61,10 @@ async def async_options_update_listener(hass: HomeAssistant, entry: ConfigEntry)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Stop energy monitor
-    if "energy_monitor_task" in hass.data.get(DOMAIN, {}):
-        hass.data[DOMAIN]["energy_monitor_task"].cancel()
+    # Stop energy monitor (unregister listeners, cancel task)
+    energy_monitor = hass.data.get(DOMAIN, {}).get("energy_monitor")
+    if energy_monitor:
+        await energy_monitor.async_stop()
 
     # Remove panel (only if it was registered)
     try:
