@@ -1003,12 +1003,24 @@ class ConfigManager:
         path = self.hass.config.path("smart_dashboards_enforcement_state.json")
         try:
             data = await self.hass.async_add_executor_job(_load_json_file, path)
-            if data is not None:
+            if data is not None and isinstance(data, dict):
                 self._enforcement_reset_date = data.get("reset_date")
-                self._enforcement_state = data.get("rooms", {})
-                self._home_kwh_alert_sent = data.get("home_kwh_alert_sent", False)
-        except (json.JSONDecodeError, IOError):
-            pass
+                rooms_data = data.get("rooms", {})
+                if isinstance(rooms_data, dict):
+                    # Validate each room state has required structure
+                    self._enforcement_state = {}
+                    for rid, rdata in rooms_data.items():
+                        if isinstance(rdata, dict):
+                            self._enforcement_state[str(rid)] = {
+                                "warnings": rdata.get("warnings", []) if isinstance(rdata.get("warnings"), list) else [],
+                                "phase": int(rdata.get("phase", 0)) if isinstance(rdata.get("phase"), (int, float)) else 0,
+                                "volume_offset": int(rdata.get("volume_offset", 0)) if isinstance(rdata.get("volume_offset"), (int, float)) else 0,
+                                "last_phase_change": rdata.get("last_phase_change"),
+                                "kwh_alerts_sent": rdata.get("kwh_alerts_sent", []) if isinstance(rdata.get("kwh_alerts_sent"), list) else [],
+                            }
+                self._home_kwh_alert_sent = bool(data.get("home_kwh_alert_sent", False))
+        except (json.JSONDecodeError, IOError, TypeError) as err:
+            _LOGGER.debug("Enforcement state load skipped: %s", err)
         # Reset if new day
         self._ensure_enforcement_state_for_today()
 
