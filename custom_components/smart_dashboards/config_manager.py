@@ -510,6 +510,49 @@ class ConfigManager:
             "watts": [minute_sums[m] for m in sorted_minutes],
         }
 
+    def get_intraday_events(self, room_id: str | None = None) -> dict[str, Any]:
+        """Get 24-hour intraday event counts (warnings/shutoffs) for charts.
+        Returns hourly timestamps with cumulative values (0 to today's total over 24h)
+        so charts match Current Power / Today's Usage format."""
+        self._ensure_event_counts_for_today()
+        today = dt_util.now().strftime("%Y-%m-%d")
+        timestamps = [f"{today} {h:02d}:00" for h in range(24)]
+        if room_id:
+            warnings = self._event_counts.get("room_warnings", {}).get(room_id, 0)
+            shutoffs = self._event_counts.get("room_shutoffs", {}).get(room_id, 0)
+            total_warnings = 0
+            total_shutoffs = 0
+            rooms_data = {}
+        else:
+            total_warnings = self._event_counts.get("total_warnings", 0)
+            total_shutoffs = self._event_counts.get("total_shutoffs", 0)
+            rooms_data = {}
+            for rid in (r.get("id", r["name"].lower().replace(" ", "_")) for r in self.energy_config.get("rooms", [])):
+                rooms_data[rid] = {
+                    "warnings": self._event_counts.get("room_warnings", {}).get(rid, 0),
+                    "shutoffs": self._event_counts.get("room_shutoffs", {}).get(rid, 0),
+                }
+        # Cumulative 0..total over 24 hours (linear distribution for chart continuity)
+        def _cumul(n: int) -> list[float]:
+            if n <= 0:
+                return [0.0] * 24
+            return [round((i + 1) * n / 24, 2) for i in range(24)]
+        if room_id:
+            return {
+                "timestamps": timestamps,
+                "warnings": _cumul(warnings),
+                "shutoffs": _cumul(shutoffs),
+            }
+        return {
+            "timestamps": timestamps,
+            "total_warnings": _cumul(total_warnings),
+            "total_shutoffs": _cumul(total_shutoffs),
+            "rooms": {
+                rid: {"warnings": _cumul(r["warnings"]), "shutoffs": _cumul(r["shutoffs"])}
+                for rid, r in rooms_data.items()
+            },
+        }
+
     # Event count tracking (warnings and shutoffs) - per current date only
     def _ensure_event_counts_for_today(self) -> None:
         """Reset event counts if date has changed (new day)."""

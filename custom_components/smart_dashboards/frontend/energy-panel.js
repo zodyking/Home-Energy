@@ -2343,7 +2343,8 @@ class EnergyPanel extends HTMLElement {
     };
     const title = labels[type] || '30-Day History';
     const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
-    const dates = isIntraday ? (this._graphData.timestamps || []) : (this._graphData.dates || []);
+    const isIntradayEvents = type === 'total_warnings' || type === 'total_shutoffs' || type === 'room_warnings' || type === 'room_shutoffs';
+    const dates = (isIntraday || isIntradayEvents) ? (this._graphData.timestamps || []) : (this._graphData.dates || []);
     const dateLabel = (dates.slice(0, 3).join(' — ') || '') + (dates.length > 3 ? ' … ' : '') + (dates.length > 3 ? dates.slice(-2).join(' — ') : '');
     return `
       <div class="graph-modal-overlay" id="graph-modal-overlay">
@@ -2364,9 +2365,14 @@ class EnergyPanel extends HTMLElement {
   async _openGraph(type, roomId = null, roomName = null) {
     try {
       const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
+      const isIntradayEvents = type === 'total_warnings' || type === 'total_shutoffs' || type === 'room_warnings' || type === 'room_shutoffs';
       let result;
       if (isIntraday) {
         const payload = { type: 'smart_dashboards/get_intraday_history', minutes: 1440 };
+        if (roomId) payload.room_id = roomId;
+        result = await this._hass.callWS(payload);
+      } else if (isIntradayEvents) {
+        const payload = { type: 'smart_dashboards/get_intraday_events' };
         if (roomId) payload.room_id = roomId;
         result = await this._hass.callWS(payload);
       } else {
@@ -2391,6 +2397,7 @@ class EnergyPanel extends HTMLElement {
     let values = [];
     let dates = [];
     const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
+    const isIntradayEvents = type === 'total_warnings' || type === 'total_shutoffs' || type === 'room_warnings' || type === 'room_shutoffs';
     if (isIntraday) {
       dates = this._graphData.timestamps || [];
       const watts = this._graphData.watts || [];
@@ -2400,6 +2407,12 @@ class EnergyPanel extends HTMLElement {
       } else {
         values = watts.map(w => w || 0);
       }
+    } else if (isIntradayEvents) {
+      dates = this._graphData.timestamps || [];
+      if (type === 'total_warnings') values = this._graphData.total_warnings || [];
+      else if (type === 'total_shutoffs') values = this._graphData.total_shutoffs || [];
+      else if (type === 'room_warnings') values = roomId ? (this._graphData.warnings || this._graphData.rooms?.[roomId]?.warnings || []) : [];
+      else values = roomId ? (this._graphData.shutoffs || this._graphData.rooms?.[roomId]?.shutoffs || []) : [];
     } else if (type.startsWith('room_')) {
       const key = type.replace('room_', '');
       values = (this._graphData.rooms?.[roomId]?.[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
@@ -2418,6 +2431,7 @@ class EnergyPanel extends HTMLElement {
       const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
       const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
       const gridColor = getComputedStyle(this).getPropertyValue('--card-border').trim() || 'rgba(255,255,255,0.08)';
+      const useHourLabels = isIntraday || isIntradayEvents;
       const options = {
         chart: {
           type: 'area',
@@ -2435,7 +2449,7 @@ class EnergyPanel extends HTMLElement {
             style: { colors: textColor, fontSize: '11px' },
             rotate: -45,
             rotateAlways: dates.length > 10,
-            formatter: isIntraday ? (val) => {
+            formatter: useHourLabels ? (val) => {
               if (!val || typeof val !== 'string') return '';
               const m = val.match(/^\d{4}-\d{2}-\d{2}\s+(\d{1,2}):(\d{2})$/);
               if (!m) return val;
@@ -2451,7 +2465,10 @@ class EnergyPanel extends HTMLElement {
           axisTicks: { show: true, color: gridColor },
         },
         yaxis: {
-          labels: { show: false },
+          labels: {
+            show: false,
+            formatter: () => '',
+          },
           axisBorder: { show: false },
           crosshairs: { show: false },
         },
@@ -2470,7 +2487,7 @@ class EnergyPanel extends HTMLElement {
         dataLabels: { enabled: false },
         tooltip: {
           theme: 'dark',
-          x: { format: isIntraday ? 'MMM dd HH:mm' : 'dd MMM yyyy' },
+          x: { format: useHourLabels ? 'MMM dd HH:mm' : 'dd MMM yyyy' },
         },
         plotOptions: {
           area: { fillTo: 'origin' },
