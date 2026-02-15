@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -50,11 +51,18 @@ class ConfigManager:
         self._config_path = hass.config.path(CONFIG_FILE)
         self._day_energy_data: dict[str, dict[str, float]] = {}
         self._last_reset_date: str | None = None
+        self._event_counts_reset_date: str | None = None
         self._event_counts: dict[str, Any] = {
             "total_warnings": 0,
             "total_shutoffs": 0,
-            "room_warnings": {},  # room_id -> count
-            "room_shutoffs": {},  # room_id -> count
+            "room_warnings": {},  # room_id -> count (today only)
+            "room_shutoffs": {},  # room_id -> count (today only)
+        }
+        self._daily_totals: dict[str, Any] = {}
+        self._billing_history: dict[str, Any] = {
+            "cycles": [],
+            "last_billing_start": "",
+            "last_billing_end": "",
         }
 
     @property
@@ -66,6 +74,11 @@ class ConfigManager:
     def energy_config(self) -> dict[str, Any]:
         """Return energy configuration."""
         return self._config.get("energy", DEFAULT_CONFIG["energy"])
+
+    @property
+    def daily_totals(self) -> dict[str, Any]:
+        """Return daily totals history (read-only)."""
+        return self._daily_totals
 
     async def async_load(self) -> None:
         """Load configuration from file."""
@@ -87,6 +100,10 @@ class ConfigManager:
         await self._async_load_energy_tracking()
         # Load event counts
         await self._async_load_event_counts()
+        # Load daily totals history
+        await self._async_load_daily_totals()
+        # Load billing history
+        await self._async_load_billing_history()
 
     async def async_save(self) -> None:
         """Save configuration to file."""
@@ -134,6 +151,10 @@ class ConfigManager:
                         break
             if "tts_settings" in energy:
                 result["energy"]["tts_settings"].update(energy["tts_settings"])
+            if "statistics_settings" in energy:
+                for k, v in energy["statistics_settings"].items():
+                    if k in result["energy"]["statistics_settings"] and v:
+                        result["energy"]["statistics_settings"][k] = str(v).strip()
 
         return result
 
@@ -290,6 +311,19 @@ class ConfigManager:
             "microwave_restore_power_msg": tts.get("microwave_restore_power_msg", default_tts["microwave_restore_power_msg"]),
         }
 
+        # Validate statistics settings
+        stats = config.get("statistics_settings", {})
+        default_stats = DEFAULT_CONFIG["energy"]["statistics_settings"]
+        validated["statistics_settings"] = {
+            "billing_start_sensor": (stats.get("billing_start_sensor") or "").strip(),
+            "billing_end_sensor": (stats.get("billing_end_sensor") or "").strip(),
+            "current_usage_sensor": (stats.get("current_usage_sensor") or "").strip(),
+            "projected_usage_sensor": (stats.get("projected_usage_sensor") or "").strip(),
+            "kwh_cost_sensor": (stats.get("kwh_cost_sensor") or "").strip(),
+            "date_range_start": (stats.get("date_range_start") or "").strip(),
+            "date_range_end": (stats.get("date_range_end") or "").strip(),
+        }
+
         return validated
 
     # Day energy tracking
@@ -349,15 +383,28 @@ class ConfigManager:
         # Save periodically (every 60 seconds to reduce disk writes)
         # This is handled by the energy monitor
 
-    # Event count tracking (warnings and shutoffs)
+    # Event count tracking (warnings and shutoffs) - per current date only
+    def _ensure_event_counts_for_today(self) -> None:
+        """Reset event counts if date has changed (new day)."""
+        today = dt_util.now().strftime("%Y-%m-%d")
+        if self._event_counts_reset_date != today:
+            self._event_counts = {
+                "total_warnings": 0,
+                "total_shutoffs": 0,
+                "room_warnings": {},
+                "room_shutoffs": {},
+            }
+            self._event_counts_reset_date = today
+
     async def _async_load_event_counts(self) -> None:
-        """Load event counts (warnings and shutoffs)."""
+        """Load event counts (warnings and shutoffs). Reset if new day."""
         counts_path = self.hass.config.path("smart_dashboards_event_counts.json")
         try:
             data = await self.hass.async_add_executor_job(
                 _load_json_file, counts_path
             )
             if data is not None:
+                self._event_counts_reset_date = data.get("last_reset_date")
                 self._event_counts = {
                     "total_warnings": data.get("total_warnings", 0),
                     "total_shutoffs": data.get("total_shutoffs", 0),
@@ -366,19 +413,28 @@ class ConfigManager:
                 }
         except (json.JSONDecodeError, IOError):
             pass
+        self._ensure_event_counts_for_today()
 
     async def _async_save_event_counts(self) -> None:
-        """Save event counts."""
+        """Save event counts with current date."""
         counts_path = self.hass.config.path("smart_dashboards_event_counts.json")
+        payload = {
+            "last_reset_date": self._event_counts_reset_date or dt_util.now().strftime("%Y-%m-%d"),
+            "total_warnings": self._event_counts.get("total_warnings", 0),
+            "total_shutoffs": self._event_counts.get("total_shutoffs", 0),
+            "room_warnings": self._event_counts.get("room_warnings", {}),
+            "room_shutoffs": self._event_counts.get("room_shutoffs", {}),
+        }
         try:
             await self.hass.async_add_executor_job(
-                _write_json_file, counts_path, self._event_counts
+                _write_json_file, counts_path, payload
             )
         except IOError as err:
             _LOGGER.error("Error saving event counts: %s", err)
 
     async def async_increment_warning(self, room_id: str) -> None:
-        """Increment warning count for a room and total."""
+        """Increment warning count for a room and total (today only)."""
+        self._ensure_event_counts_for_today()
         self._event_counts["total_warnings"] = self._event_counts.get("total_warnings", 0) + 1
         if room_id not in self._event_counts["room_warnings"]:
             self._event_counts["room_warnings"][room_id] = 0
@@ -386,7 +442,8 @@ class ConfigManager:
         await self._async_save_event_counts()
 
     async def async_increment_shutoff(self, room_id: str) -> None:
-        """Increment shutoff count for a room and total."""
+        """Increment shutoff count for a room and total (today only)."""
+        self._ensure_event_counts_for_today()
         self._event_counts["total_shutoffs"] = self._event_counts.get("total_shutoffs", 0) + 1
         if room_id not in self._event_counts["room_shutoffs"]:
             self._event_counts["room_shutoffs"][room_id] = 0
@@ -394,8 +451,254 @@ class ConfigManager:
         await self._async_save_event_counts()
 
     def get_event_counts(self) -> dict[str, Any]:
-        """Get all event counts."""
+        """Get event counts for current date only."""
+        self._ensure_event_counts_for_today()
         return self._event_counts.copy()
+
+    # Daily totals history (end-of-day snapshots for 30-day graphs)
+    async def _async_load_daily_totals(self) -> None:
+        """Load daily totals history from file."""
+        path = self.hass.config.path("smart_dashboards_daily_totals.json")
+        try:
+            data = await self.hass.async_add_executor_job(_load_json_file, path)
+            self._daily_totals = data.get("days", {}) if data else {}
+        except (json.JSONDecodeError, IOError):
+            self._daily_totals = {}
+
+    async def _async_save_daily_totals(self) -> None:
+        """Save daily totals history (keep last 45 days)."""
+        dates_sorted = sorted(self._daily_totals.keys(), reverse=True)
+        if len(dates_sorted) > 45:
+            for d in dates_sorted[45:]:
+                del self._daily_totals[d]
+        path = self.hass.config.path("smart_dashboards_daily_totals.json")
+        try:
+            await self.hass.async_add_executor_job(
+                _write_json_file, path, {"days": self._daily_totals}
+            )
+        except IOError as err:
+            _LOGGER.error("Error saving daily totals: %s", err)
+
+    async def async_snapshot_day_and_reset_if_rolled_over(self) -> None:
+        """If date rolled over, snapshot previous day's totals to history, then reset."""
+        today = dt_util.now().strftime("%Y-%m-%d")
+        old_date = self._last_reset_date or self._event_counts_reset_date
+        if not old_date or old_date == today:
+            return
+
+        rooms_data = {}
+        energy_config = self.energy_config
+        for room in energy_config.get("rooms", []):
+            room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+            room_wh = 0.0
+            for outlet in room.get("outlets", []):
+                if outlet.get("type") == "light":
+                    key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                else:
+                    for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
+                        if e:
+                            room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
+
+            rooms_data[room_id] = {
+                "wh": round(room_wh, 2),
+                "warnings": self._event_counts.get("room_warnings", {}).get(room_id, 0),
+                "shutoffs": self._event_counts.get("room_shutoffs", {}).get(room_id, 0),
+            }
+
+        total_wh = sum(r["wh"] for r in rooms_data.values())
+        self._daily_totals[old_date] = {
+            "total_wh": round(total_wh, 2),
+            "total_warnings": self._event_counts.get("total_warnings", 0),
+            "total_shutoffs": self._event_counts.get("total_shutoffs", 0),
+            "rooms": rooms_data,
+        }
+        await self._async_save_daily_totals()
+
+        self._day_energy_data = {}
+        self._last_reset_date = today
+        self._event_counts = {
+            "total_warnings": 0,
+            "total_shutoffs": 0,
+            "room_warnings": {},
+            "room_shutoffs": {},
+        }
+        self._event_counts_reset_date = today
+        await self._async_save_energy_tracking()
+        await self._async_save_event_counts()
+
+    def _build_today_totals(self) -> dict[str, Any]:
+        """Build today's running totals from current data."""
+        self._ensure_event_counts_for_today()
+        rooms_data = {}
+        for room in self.energy_config.get("rooms", []):
+            rid = room.get("id", room["name"].lower().replace(" ", "_"))
+            room_wh = 0.0
+            for outlet in room.get("outlets", []):
+                if outlet.get("type") == "light":
+                    key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                else:
+                    for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
+                        if e:
+                            room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
+            rooms_data[rid] = {
+                "wh": round(room_wh, 2),
+                "warnings": self._event_counts.get("room_warnings", {}).get(rid, 0),
+                "shutoffs": self._event_counts.get("room_shutoffs", {}).get(rid, 0),
+            }
+        total_wh = sum(r["wh"] for r in rooms_data.values())
+        return {
+            "total_wh": round(total_wh, 2),
+            "total_warnings": self._event_counts.get("total_warnings", 0),
+            "total_shutoffs": self._event_counts.get("total_shutoffs", 0),
+            "rooms": rooms_data,
+        }
+
+    def get_daily_history(self, days: int = 30, include_today: bool = True) -> dict[str, Any]:
+        """Get last N days of daily totals for graphs."""
+        from datetime import timedelta
+        today = dt_util.now().strftime("%Y-%m-%d")
+        all_room_ids = {
+            r.get("id", r["name"].lower().replace(" ", "_"))
+            for r in self.energy_config.get("rooms", [])
+        }
+        result = {"dates": [], "total_wh": [], "total_warnings": [], "total_shutoffs": [], "rooms": {}}
+        for rid in all_room_ids:
+            result["rooms"][rid] = {"wh": [], "warnings": [], "shutoffs": []}
+        for i in range(days):
+            d = (dt_util.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            if d == today and include_today:
+                row = self._build_today_totals()
+            else:
+                row = self._daily_totals.get(d, {})
+            result["dates"].append(d)
+            result["total_wh"].append(row.get("total_wh", 0))
+            result["total_warnings"].append(row.get("total_warnings", 0))
+            result["total_shutoffs"].append(row.get("total_shutoffs", 0))
+            row_rooms = row.get("rooms") or {}
+            for rid in all_room_ids:
+                rdata = row_rooms.get(rid, {})
+                result["rooms"][rid]["wh"].append(rdata.get("wh", 0))
+                result["rooms"][rid]["warnings"].append(rdata.get("warnings", 0))
+                result["rooms"][rid]["shutoffs"].append(rdata.get("shutoffs", 0))
+        result["dates"].reverse()
+        result["total_wh"].reverse()
+        result["total_warnings"].reverse()
+        result["total_shutoffs"].reverse()
+        for rid in result["rooms"]:
+            result["rooms"][rid]["wh"].reverse()
+            result["rooms"][rid]["warnings"].reverse()
+            result["rooms"][rid]["shutoffs"].reverse()
+        return result
+
+    # Billing history (for new-cycle alerts)
+    async def _async_load_billing_history(self) -> None:
+        """Load billing history from file."""
+        path = self.hass.config.path("smart_dashboards_billing_history.json")
+        try:
+            data = await self.hass.async_add_executor_job(_load_json_file, path)
+            if data:
+                self._billing_history = {
+                    "cycles": data.get("cycles", []),
+                    "last_billing_start": data.get("last_billing_start", ""),
+                    "last_billing_end": data.get("last_billing_end", ""),
+                }
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    async def _async_save_billing_history(self) -> None:
+        """Save billing history to file."""
+        path = self.hass.config.path("smart_dashboards_billing_history.json")
+        try:
+            await self.hass.async_add_executor_job(
+                _write_json_file, path, self._billing_history
+            )
+        except IOError as err:
+            _LOGGER.error("Error saving billing history: %s", err)
+
+    def _parse_date_sensor(self, entity_id: str) -> str | None:
+        """Read sensor state and parse YYYY-MM-DD."""
+        if not entity_id or not entity_id.strip():
+            return None
+        state = self.hass.states.get(entity_id.strip())
+        if not state or state.state in ("unknown", "unavailable", ""):
+            return None
+        val = str(state.state).strip()
+        m = re.match(r"(\d{4})-(\d{2})-(\d{2})", val)
+        if m:
+            return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        return None
+
+    def get_billing_date_range(self) -> tuple[str | None, str | None]:
+        """Read billing sensors and return (start, end) as YYYY-MM-DD or (None, None)."""
+        stats = self.energy_config.get("statistics_settings", {})
+        start_ent = stats.get("billing_start_sensor", "").strip()
+        end_ent = stats.get("billing_end_sensor", "").strip()
+        if not start_ent or not end_ent:
+            return (None, None)
+        start = self._parse_date_sensor(start_ent)
+        end = self._parse_date_sensor(end_ent)
+        return (start, end)
+
+    def get_statistics_date_range(
+        self, date_start: str | None = None, date_end: str | None = None
+    ) -> tuple[str | None, str | None, bool]:
+        """Resolve final date range. Returns (start, end, is_narrowed).
+        Applies user narrow range within billing; clamps to available daily totals."""
+        stats = self.energy_config.get("statistics_settings", {})
+        billing_start, billing_end = self.get_billing_date_range()
+        user_start = (stats.get("date_range_start") or "").strip() or date_start
+        user_end = (stats.get("date_range_end") or "").strip() or date_end
+
+        if billing_start and billing_end:
+            base_start = billing_start
+            base_end = billing_end
+        else:
+            available = sorted(self._daily_totals.keys())
+            if not available:
+                return (None, None, False)
+            base_start = available[0]
+            base_end = available[-1]
+
+        start = base_start
+        end = base_end
+        if user_start and user_start >= base_start and (not user_end or user_start <= user_end):
+            start = user_start
+        if user_end and user_end <= base_end and (not user_start or user_end >= user_start):
+            end = user_end
+
+        available = set(self._daily_totals.keys())
+        if start and start not in available:
+            after = [d for d in available if d >= start]
+            start = min(after) if after else start
+        if end and end not in available:
+            before = [d for d in available if d <= end]
+            end = max(before) if before else end
+
+        is_narrowed = (user_start or user_end) and (start != base_start or end != base_end)
+        return (start, end, is_narrowed)
+
+    async def record_billing_cycle_if_changed(self, start: str, end: str) -> bool:
+        """If billing dates differ from last known, append to cycles and save. Returns True if changed."""
+        if not start or not end:
+            return False
+        last_start = self._billing_history.get("last_billing_start", "")
+        last_end = self._billing_history.get("last_billing_end", "")
+        if start == last_start and end == last_end:
+            return False
+        now_str = dt_util.now().isoformat()
+        self._billing_history["cycles"].append({
+            "start": start,
+            "end": end,
+            "detected_at": now_str,
+        })
+        if len(self._billing_history["cycles"]) > 60:
+            self._billing_history["cycles"] = self._billing_history["cycles"][-60:]
+        self._billing_history["last_billing_start"] = start
+        self._billing_history["last_billing_end"] = end
+        await self._async_save_billing_history()
+        return True
 
     def get_all_outlets(self) -> list[dict[str, Any]]:
         """Get all outlets from all rooms with their identifiers."""

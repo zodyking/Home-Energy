@@ -98,6 +98,7 @@ class EnergyMonitor:
 
     async def _check_energy(self) -> None:
         """Check energy consumption for all rooms and outlets."""
+        await self.config_manager.async_snapshot_day_and_reset_if_rolled_over()
         energy_config = self.config_manager.energy_config
         rooms = energy_config.get("rooms", [])
         tts_settings = energy_config.get("tts_settings", {})
@@ -272,9 +273,6 @@ class EnergyMonitor:
         self._shutoff_pending[shutoff_key] = True
         
         try:
-            # Increment shutoff count
-            await self.config_manager.async_increment_shutoff(room_id)
-            
             # Turn off the switch
             await self.hass.services.async_call(
                 "switch", "turn_off",
@@ -299,6 +297,8 @@ class EnergyMonitor:
                 await self._async_send_tts_with_lights(
                     room, media_player, message, volume, tts_settings
                 )
+                # Count only when TTS was actually sent
+                await self.config_manager.async_increment_shutoff(room_id)
             
             # Wait 5 seconds
             await asyncio.sleep(SHUTOFF_RESET_DELAY)
@@ -491,9 +491,8 @@ class EnergyMonitor:
         if last_alert and (now - last_alert).total_seconds() < ALERT_COOLDOWN:
             return  # Still in cooldown
 
-        # Update last alert time and count (only when TTS is actually sent)
+        # Update last alert time
         self._last_room_alerts[room_id] = now
-        await self.config_manager.async_increment_warning(room_id)
 
         # Format message with prefix
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
@@ -508,6 +507,8 @@ class EnergyMonitor:
             await self._async_send_tts_with_lights(
                 room, media_player, message, volume, tts_settings
             )
+            # Count only when TTS was actually sent
+            await self.config_manager.async_increment_warning(room_id)
             _LOGGER.warning(
                 "Room threshold alert: %s - %dW",
                 room_name,
@@ -538,9 +539,8 @@ class EnergyMonitor:
         if last_alert and (now - last_alert).total_seconds() < ALERT_COOLDOWN:
             return  # Still in cooldown
 
-        # Update last alert time and count (only when TTS is actually sent)
+        # Update last alert time
         self._last_outlet_alerts[alert_key] = now
-        await self.config_manager.async_increment_warning(room_id)
 
         # Format message with prefix
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
@@ -556,6 +556,8 @@ class EnergyMonitor:
             await self._async_send_tts_with_lights(
                 room, media_player, message, volume, tts_settings
             )
+            # Count only when TTS was actually sent
+            await self.config_manager.async_increment_warning(room_id)
             _LOGGER.warning(
                 "Outlet threshold alert: %s %s - %dW",
                 room_name,

@@ -66,5 +66,14 @@ DEFAULT_CONFIG = {
             "microwave_cut_power_msg": DEFAULT_MICROWAVE_CUT_MSG,
             "microwave_restore_power_msg": DEFAULT_MICROWAVE_RESTORE_MSG,
         },
+        "statistics_settings": {
+            "billing_start_sensor": "",
+            "billing_end_sensor": "",
+            "current_usage_sensor": "",
+            "projected_usage_sensor": "",
+            "kwh_cost_sensor": "",
+            "date_range_start": "",
+            "date_range_end": "",
+        },
     },
 }
