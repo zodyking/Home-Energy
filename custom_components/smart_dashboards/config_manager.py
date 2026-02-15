@@ -64,6 +64,7 @@ class ConfigManager:
             "last_billing_start": "",
             "last_billing_end": "",
         }
+        self._last_power_update: dict[str, dict] = {}  # entity_id -> {watts, time}
 
     @property
     def config(self) -> dict[str, Any]:
@@ -365,23 +366,41 @@ class ConfigManager:
         """Get accumulated day energy for an entity."""
         return self._day_energy_data.get(entity_id, {}).get("energy", 0.0)
 
-    async def async_add_energy_reading(self, entity_id: str, watts: float) -> None:
-        """Add an energy reading (called every second)."""
-        # Check for day reset
+    async def async_add_energy_reading(
+        self, entity_id: str, watts: float, elapsed_seconds: float = 1.0
+    ) -> None:
+        """Add energy from a reading. Energy = watts * elapsed_seconds / 3600 (Wh).
+        Called every second from poll (elapsed=1) or from state-change (elapsed=actual)."""
         today = dt_util.now().strftime("%Y-%m-%d")
         if self._last_reset_date != today:
             self._day_energy_data = {}
             self._last_reset_date = today
+            self._last_power_update = {}
 
-        # Accumulate energy (watts * 1 second = watt-seconds, convert to Wh)
         if entity_id not in self._day_energy_data:
             self._day_energy_data[entity_id] = {"energy": 0.0}
 
-        # Add watt-seconds converted to watt-hours (1 Wh = 3600 Ws)
-        self._day_energy_data[entity_id]["energy"] += watts / 3600
+        self._day_energy_data[entity_id]["energy"] += (watts * elapsed_seconds) / 3600.0
 
-        # Save periodically (every 60 seconds to reduce disk writes)
-        # This is handled by the energy monitor
+    async def async_add_energy_reading_on_state_change(
+        self, entity_id: str, new_watts: float
+    ) -> None:
+        """Add energy when entity state changes (real-time). Uses elapsed time since
+        last update. Called from state-change listener."""
+        today = dt_util.now().strftime("%Y-%m-%d")
+        if self._last_reset_date != today:
+            self._day_energy_data = {}
+            self._last_reset_date = today
+            self._last_power_update = {}
+        last = self._last_power_update.get(entity_id)
+        now = dt_util.utcnow()
+        if last is not None:
+            elapsed = (now - last["time"]).total_seconds()
+            if 0 < elapsed < 86400:  # Sanity: max 24h
+                await self.async_add_energy_reading(
+                    entity_id, last["watts"], elapsed_seconds=elapsed
+                )
+        self._last_power_update[entity_id] = {"watts": new_watts, "time": now}
 
     # Event count tracking (warnings and shutoffs) - per current date only
     def _ensure_event_counts_for_today(self) -> None:
@@ -517,6 +536,7 @@ class ConfigManager:
 
         self._day_energy_data = {}
         self._last_reset_date = today
+        self._last_power_update = {}
         self._event_counts = {
             "total_warnings": 0,
             "total_shutoffs": 0,
@@ -619,16 +639,27 @@ class ConfigManager:
             _LOGGER.error("Error saving billing history: %s", err)
 
     def _parse_date_sensor(self, entity_id: str) -> str | None:
-        """Read sensor state and parse YYYY-MM-DD."""
+        """Read sensor state and parse date. Accepts YYYY-MM-DD, MM/DD/YYYY, MM-DD-YYYY.
+        Returns normalized YYYY-MM-DD or None."""
         if not entity_id or not entity_id.strip():
             return None
         state = self.hass.states.get(entity_id.strip())
         if not state or state.state in ("unknown", "unavailable", ""):
             return None
         val = str(state.state).strip()
+        # YYYY-MM-DD
         m = re.match(r"(\d{4})-(\d{2})-(\d{2})", val)
         if m:
             return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        # MM/DD/YYYY or MM-DD-YYYY (first<=12=month, second=day) or DD/MM when first>12
+        m = re.match(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", val)
+        if m:
+            a, b, y = int(m.group(1)), int(m.group(2)), m.group(3)
+            if a > 12 and b <= 12:
+                mo, d = b, a  # DD/MM
+            else:
+                mo, d = a, b  # MM/DD
+            return f"{y}-{str(mo).zfill(2)}-{str(d).zfill(2)}"
         return None
 
     def get_billing_date_range(self) -> tuple[str | None, str | None]:
