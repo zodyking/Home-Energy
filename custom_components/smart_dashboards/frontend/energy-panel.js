@@ -238,8 +238,8 @@ class EnergyPanel extends HTMLElement {
       if (eventCounts.length >= 2) {
         const warnings = room.warnings || 0;
         const shutoffs = room.shutoffs || 0;
-        eventCounts[0].textContent = `⚠ ${warnings}`;
-        eventCounts[1].textContent = `⚡ ${shutoffs}`;
+        eventCounts[0].textContent = `Warnings: ${warnings}`;
+        eventCounts[1].textContent = `Shutoffs: ${shutoffs}`;
       }
 
       // Update individual devices
@@ -509,6 +509,10 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
+      }
+
+      .room-meta .meta-right {
+        margin-left: auto;
       }
 
       .room-meta svg {
@@ -2297,11 +2301,11 @@ class EnergyPanel extends HTMLElement {
           ${showStatistics ? this._renderStatisticsView() : ''}
           ${!showStatistics ? (rooms.length === 0 ? this._renderEmptyState() : `
             <div class="summary-stats">
-              <div class="stat-card graph-clickable" data-graph-type="total_wh">
+              <div class="stat-card graph-clickable" data-graph-type="total_watts_intraday">
                 <div class="stat-value" id="summary-total-watts">${totalWatts.toFixed(1)} W</div>
                 <div class="stat-label">Current Power</div>
               </div>
-              <div class="stat-card graph-clickable" data-graph-type="total_wh">
+              <div class="stat-card graph-clickable" data-graph-type="total_wh_intraday">
                 <div class="stat-value" id="summary-total-day">${(totalDayWh / 1000).toFixed(2)} kWh</div>
                 <div class="stat-label">Today's Usage</div>
               </div>
@@ -2332,10 +2336,15 @@ class EnergyPanel extends HTMLElement {
     const type = this._graphOpen.type;
     const roomId = this._graphOpen.roomId;
     const roomName = this._graphOpen.roomName || '';
-    const labels = { total_wh: 'Usage (kWh)', total_warnings: 'Threshold Warnings', total_shutoffs: 'Safety Shutoffs', room_wh: `${roomName} Usage (kWh)`, room_warnings: `${roomName} Warnings`, room_shutoffs: `${roomName} Shutoffs` };
+    const labels = {
+      total_wh: 'Usage (kWh)', total_watts_intraday: 'Current Power (W)', total_wh_intraday: "Today's Usage (kWh)",
+      total_warnings: 'Threshold Warnings', total_shutoffs: 'Safety Shutoffs',
+      room_wh: `${roomName} Usage (kWh)`, room_warnings: `${roomName} Warnings`, room_shutoffs: `${roomName} Shutoffs`
+    };
     const title = labels[type] || '30-Day History';
-    const dates = this._graphData.dates || [];
-    const dateLabel = (dates.slice(0, 5).join(' — ') || '') + (dates.length > 5 ? ' … ' : '') + (dates.length > 5 ? dates.slice(-3).join(' — ') : '');
+    const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday';
+    const dates = isIntraday ? (this._graphData.timestamps || []) : (this._graphData.dates || []);
+    const dateLabel = (dates.slice(0, 3).join(' — ') || '') + (dates.length > 3 ? ' … ' : '') + (dates.length > 3 ? dates.slice(-2).join(' — ') : '');
     return `
       <div class="graph-modal-overlay" id="graph-modal-overlay">
         <div class="graph-modal">
@@ -2354,14 +2363,20 @@ class EnergyPanel extends HTMLElement {
 
   async _openGraph(type, roomId = null, roomName = null) {
     try {
-      const result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 31 });
+      const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday';
+      let result;
+      if (isIntraday) {
+        result = await this._hass.callWS({ type: 'smart_dashboards/get_intraday_history', minutes: 1440 });
+      } else {
+        result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 31 });
+      }
       this._graphOpen = { type, roomId, roomName };
       this._graphData = result;
       this._render();
       this._attachGraphModalListeners();
       await this._initApexChart();
     } catch (e) {
-      console.error('Failed to load daily history:', e);
+      console.error('Failed to load graph data:', e);
       showToast(this.shadowRoot, 'Failed to load history', 'error');
     }
   }
@@ -2372,14 +2387,26 @@ class EnergyPanel extends HTMLElement {
     const type = this._graphOpen.type;
     const roomId = this._graphOpen.roomId;
     let values = [];
-    if (type.startsWith('room_')) {
+    let dates = [];
+    const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday';
+    if (isIntraday) {
+      dates = this._graphData.timestamps || [];
+      const watts = this._graphData.watts || [];
+      if (type === 'total_wh_intraday') {
+        let cum = 0;
+        values = watts.map(w => { cum += (w || 0) / 60000; return cum; }); // kWh per minute = watts/60/1000
+      } else {
+        values = watts.map(w => w || 0);
+      }
+    } else if (type.startsWith('room_')) {
       const key = type.replace('room_', '');
       values = (this._graphData.rooms?.[roomId]?.[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
+      dates = this._graphData.dates || [];
     } else {
       const key = type.replace('total_', '');
       values = (this._graphData[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
+      dates = this._graphData.dates || [];
     }
-    const dates = this._graphData.dates || [];
     if (this._apexChartInstance) {
       this._apexChartInstance.destroy();
       this._apexChartInstance = null;
@@ -2399,7 +2426,7 @@ class EnergyPanel extends HTMLElement {
           zoom: { enabled: false },
           animations: { enabled: true },
         },
-        series: [{ name: type.includes('wh') ? 'kWh' : 'Count', data: values }],
+        series: [{ name: type.includes('wh') ? 'kWh' : (type.includes('watts') ? 'W' : 'Count'), data: values }],
         xaxis: {
           categories: dates,
           labels: {
@@ -2430,10 +2457,15 @@ class EnergyPanel extends HTMLElement {
         dataLabels: { enabled: false },
         tooltip: {
           theme: 'dark',
-          x: { format: 'dd MMM yyyy' },
+          x: { format: isIntraday ? 'MMM dd HH:mm' : 'dd MMM yyyy' },
         },
         plotOptions: {
           area: { fillTo: 'origin' },
+          line: { dataLabels: { enabled: false } },
+        },
+        markers: {
+          size: values.length <= 5 ? 4 : 0,
+          hover: { size: 6 },
         },
       };
       if (dates.length === 0 || values.length === 0) {
@@ -2608,21 +2640,23 @@ class EnergyPanel extends HTMLElement {
             <div>
               <h3 class="room-name">${(room.name || '').replace(/</g, '&lt;')}</h3>
               <div class="room-meta">
-                <span>${(room.outlets || []).length} devices</span>
-                ${isEnforcementEnabled && icons && icons.shield ? `
-                  <span class="enforcement-badge" title="Power Enforcement Active">
-                    <svg viewBox="0 0 24 24" style="width: 12px; height: 12px; fill: #fff;">${icons.shield}</svg>
-                    Enforced
-                  </span>
-                ` : ''}
+                <span class="has-tooltip" title="Number of outlets and devices in this room">${(room.outlets || []).length} devices</span>
                 ${room.threshold > 0 ? `
-                  <span class="threshold-badge">
+                  <span class="threshold-badge has-tooltip" title="Room power threshold; TTS alert when exceeded">
                     <svg viewBox="0 0 24 24">${icons.warning}</svg>
                     ${room.threshold}W limit
                   </span>
                 ` : ''}
-                <span class="event-count graph-clickable" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold Warnings">⚠ ${warnings}</span>
-                <span class="event-count graph-clickable" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety Shutoffs">⚡ ${shutoffs}</span>
+                <span class="event-count graph-clickable has-tooltip" data-graph-type="room_warnings" data-room-id="${roomId}" title="TTS threshold warning count today">Warnings: ${warnings}</span>
+                <span class="event-count graph-clickable has-tooltip" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety plug shutoff count today">Shutoffs: ${shutoffs}</span>
+                ${isEnforcementEnabled && icons && icons.shield ? `
+                  <span class="meta-right">
+                    <span class="enforcement-badge has-tooltip" title="Power enforcement is active; volume escalation and power cycling may occur on repeated threshold breaches">
+                      <svg viewBox="0 0 24 24" style="width: 12px; height: 12px; fill: #fff;">${icons.shield}</svg>
+                      Enforced
+                    </span>
+                  </span>
+                ` : ''}
               </div>
             </div>
           </div>
@@ -3912,6 +3946,7 @@ class EnergyPanel extends HTMLElement {
           this._graphData = null;
           this._showSettings = true;
           this._stopRefresh();
+          await this._loadConfig();
           this._render();
         }
       });
@@ -3925,6 +3960,7 @@ class EnergyPanel extends HTMLElement {
           this._graphData = null;
           this._showSettings = true;
           this._stopRefresh();
+          await this._loadConfig();
           this._render();
         }
       });
@@ -4734,13 +4770,41 @@ class EnergyPanel extends HTMLElement {
     const ttsHomeKwhWarn = this.shadowRoot.querySelector('#tts-home-kwh-warn')?.value || '';
 
     const tabStats = this.shadowRoot.querySelector('#tab-statistics');
-    const _si = (cls) => tabStats?.querySelector(`input.${cls}`)?.value?.trim?.() || '';
+    const _si = (cls) => (tabStats?.querySelector(`input.${cls}`)?.value ?? '').trim();
     const statistics_settings = {
       billing_start_sensor: _si('stats-billing-start'),
       billing_end_sensor: _si('stats-billing-end'),
       current_usage_sensor: _si('stats-current-usage'),
       projected_usage_sensor: _si('stats-projected-usage'),
       kwh_cost_sensor: _si('stats-kwh-cost'),
+    };
+
+    const tabEnf = this.shadowRoot.querySelector('#tab-enforcement');
+    const _pei = (id) => {
+      const el = tabEnf?.querySelector(`#${id}`);
+      if (!el) return null;
+      if (el.type === 'checkbox') return el.checked;
+      const v = el.value;
+      return v !== undefined && v !== null ? String(v).trim() : null;
+    };
+    const roomsEnabled = [];
+    tabEnf?.querySelectorAll('.pe-room-checkbox:checked').forEach(cb => roomsEnabled.push(cb.dataset.roomId || ''));
+    const power_enforcement = {
+      enabled: _pei('pe-enabled') === true,
+      phase1_warning_count: parseInt(_pei('pe-phase1-count')) || 20,
+      phase1_time_window_minutes: parseInt(_pei('pe-phase1-window')) || 60,
+      phase1_volume_increment: parseInt(_pei('pe-phase1-vol-inc')) || 2,
+      phase1_reset_minutes: parseInt(_pei('pe-phase1-reset')) || 60,
+      phase2_warning_count: parseInt(_pei('pe-phase2-count')) || 40,
+      phase2_time_window_minutes: parseInt(_pei('pe-phase2-window')) || 30,
+      phase2_cycle_delay_seconds: parseInt(_pei('pe-phase2-delay')) || 5,
+      phase2_reset_minutes: parseInt(_pei('pe-phase2-reset')) || 30,
+      room_kwh_intervals: (_pei('pe-room-kwh-intervals') || '5, 10, 15, 20')
+        .split(',')
+        .map(s => parseInt(String(s).trim()))
+        .filter(n => !isNaN(n) && n > 0),
+      home_kwh_limit: parseInt(_pei('pe-home-kwh-limit')) || 22,
+      rooms_enabled: roomsEnabled,
     };
 
     const config = {
@@ -4768,7 +4832,7 @@ class EnergyPanel extends HTMLElement {
         room_kwh_warn_msg: ttsRoomKwhWarn,
         home_kwh_warn_msg: ttsHomeKwhWarn,
       },
-      power_enforcement: this._config?.power_enforcement || {},
+      power_enforcement,
     };
 
     try {

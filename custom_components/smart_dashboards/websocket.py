@@ -379,46 +379,41 @@ async def websocket_get_intraday_history(
     if not data["timestamps"]:
         from homeassistant.util import dt as dt_util
         now = dt_util.now().strftime("%Y-%m-%d %H:%M")
-        # Get current power from power_data
+
+        def _get_power(entity_id: str) -> float:
+            state = hass.states.get(entity_id)
+            if not state:
+                return 0.0
+            if entity_id.startswith("sensor."):
+                if state.state in ("unknown", "unavailable", ""):
+                    return 0.0
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    return 0.0
+            if entity_id.startswith("switch."):
+                try:
+                    return float(state.attributes.get("current_power_w", 0))
+                except (ValueError, TypeError):
+                    return 0.0
+            return 0.0
+
         current_watts = 0.0
         if room_id:
             for room in config_manager.energy_config.get("rooms", []):
                 rid = room.get("id", room["name"].lower().replace(" ", "_"))
                 if rid == room_id:
                     for outlet in room.get("outlets", []):
-                        if outlet.get("plug1_entity"):
-                            state = hass.states.get(outlet["plug1_entity"])
-                            if state and state.state not in ("unknown", "unavailable", ""):
-                                try:
-                                    current_watts += float(state.state)
-                                except (ValueError, TypeError):
-                                    pass
-                        if outlet.get("plug2_entity"):
-                            state = hass.states.get(outlet["plug2_entity"])
-                            if state and state.state not in ("unknown", "unavailable", ""):
-                                try:
-                                    current_watts += float(state.state)
-                                except (ValueError, TypeError):
-                                    pass
+                        for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
+                            if eid:
+                                current_watts += _get_power(eid)
                     break
         else:
-            # Sum all rooms
             for room in config_manager.energy_config.get("rooms", []):
                 for outlet in room.get("outlets", []):
-                    if outlet.get("plug1_entity"):
-                        state = hass.states.get(outlet["plug1_entity"])
-                        if state and state.state not in ("unknown", "unavailable", ""):
-                            try:
-                                current_watts += float(state.state)
-                            except (ValueError, TypeError):
-                                pass
-                    if outlet.get("plug2_entity"):
-                        state = hass.states.get(outlet["plug2_entity"])
-                        if state and state.state not in ("unknown", "unavailable", ""):
-                            try:
-                                current_watts += float(state.state)
-                            except (ValueError, TypeError):
-                                pass
+                    for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
+                        if eid:
+                            current_watts += _get_power(eid)
         data = {"timestamps": [now], "watts": [current_watts]}
     
     connection.send_result(msg["id"], data)
