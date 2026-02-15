@@ -3,11 +3,7 @@
  * Room-based power monitoring with automatic TTS threshold alerts
  */
 
-console.log('[EnergyPanel] Module loading...');
-
 import { sharedStyles, icons, showToast, passcodeModalStyles, showPasscodeModal, renderCustomSelect, initCustomSelects } from './shared-utils.js';
-
-console.log('[EnergyPanel] Imports loaded successfully');
 
 class EnergyPanel extends HTMLElement {
   constructor() {
@@ -43,14 +39,8 @@ class EnergyPanel extends HTMLElement {
   }
 
   connectedCallback() {
-    console.log('[EnergyPanel] connectedCallback called');
-    try {
-      this._render();
-      this._loadConfig();
-    } catch (e) {
-      console.error('[EnergyPanel] connectedCallback error:', e);
-      this.shadowRoot.innerHTML = `<div style="color: red; padding: 20px;">Panel initialization error: ${e.message}</div>`;
-    }
+    this._render();
+    this._loadConfig();
   }
 
   disconnectedCallback() {
@@ -88,9 +78,7 @@ class EnergyPanel extends HTMLElement {
         this._hass.callWS({ type: 'smart_dashboards/get_areas' }),
         this._hass.callWS({ type: 'smart_dashboards/get_switches' }),
       ]);
-      this._config = (config && config.energy) ? config.energy : {};
-      if (!this._config.rooms) this._config.rooms = [];
-      if (!this._config.power_enforcement) this._config.power_enforcement = {};
+      this._config = config.energy || {};
       this._entities = entities;
       this._entities.switches = switchesResult.switches || [];
       this._entities.binary_sensors = entities.binary_sensors || [];
@@ -2258,34 +2246,10 @@ class EnergyPanel extends HTMLElement {
       return;
     }
 
-    try {
-      if (this._showSettings) {
-        this._renderSettings(styles);
-      } else {
-        this._renderMain(styles);
-      }
-    } catch (err) {
-      console.error('Energy panel render error:', err);
-      this._error = err.message || 'Failed to render panel';
-      this.shadowRoot.innerHTML = `
-        <style>${styles}</style>
-        <div class="panel-container">
-          <div class="panel-header">
-            <button class="menu-btn" id="menu-btn" title="Menu"><svg viewBox="0 0 24 24">${icons.menu}</svg></button>
-            <h1 class="panel-title"><svg class="panel-title-icon" viewBox="0 0 24 24">${icons.flash}</svg> Home Energy</h1>
-          </div>
-          <div class="content-area">
-            <div class="empty-state">
-              <svg class="empty-state-icon" viewBox="0 0 24 24" style="fill: var(--panel-danger);">${icons.warning}</svg>
-              <h3 class="empty-state-title">Render Error</h3>
-              <p class="empty-state-desc">${this._error}</p>
-              <button class="btn btn-primary" id="retry-btn">Retry</button>
-            </div>
-          </div>
-        </div>
-      `;
-      const retryBtn = this.shadowRoot.querySelector('#retry-btn');
-      if (retryBtn) retryBtn.addEventListener('click', () => { this._error = null; this._loadConfig(); });
+    if (this._showSettings) {
+      this._renderSettings(styles);
+    } else {
+      this._renderMain(styles);
     }
   }
 
@@ -2658,9 +2622,7 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderRoomCard(room) {
-    if (!room || typeof room !== 'object') return '';
-    const roomId = room.id || (room.name ? room.name.toLowerCase().replace(/\s+/g, '_') : 'room');
-    const roomData = this._powerData?.rooms?.find(r => r.id === roomId) || {
+    const roomData = this._powerData?.rooms?.find(r => r.id === room.id) || {
       total_watts: 0,
       total_day_wh: 0,
       warnings: 0,
@@ -2675,17 +2637,17 @@ class EnergyPanel extends HTMLElement {
     // Check if power enforcement is enabled for this room
     const pe = this._config?.power_enforcement || {};
     const roomsEnabled = pe.rooms_enabled || [];
-    const isEnforcementEnabled = pe.enabled && roomsEnabled.includes(roomId);
+    const isEnforcementEnabled = pe.enabled && roomsEnabled.includes(room.id);
 
     return `
-      <div class="room-card" data-room-id="${roomId}">
+      <div class="room-card" data-room-id="${room.id}">
         <div class="room-header">
           <div class="room-info">
             <div class="room-icon">
               <svg viewBox="0 0 24 24">${icons.room}</svg>
             </div>
             <div>
-              <h3 class="room-name">${room.name || roomId || 'Room'}</h3>
+              <h3 class="room-name">${room.name}</h3>
               <div class="room-meta">
                 <span>${room.outlets?.length || 0} devices</span>
                 ${isEnforcementEnabled ? `
@@ -2700,20 +2662,20 @@ class EnergyPanel extends HTMLElement {
                     ${room.threshold}W limit
                   </span>
                 ` : ''}
-                <span class="event-count graph-clickable" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold Warnings">⚠ ${warnings}</span>
-                <span class="event-count graph-clickable" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety Shutoffs">⚡ ${shutoffs}</span>
+                <span class="event-count graph-clickable" data-graph-type="room_warnings" data-room-id="${room.id}" title="Threshold Warnings">⚠ ${warnings}</span>
+                <span class="event-count graph-clickable" data-graph-type="room_shutoffs" data-room-id="${room.id}" title="Safety Shutoffs">⚡ ${shutoffs}</span>
               </div>
             </div>
           </div>
           <div class="room-stats">
             <div class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</div>
-            <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</div>
+            <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${room.id}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</div>
           </div>
         </div>
 
         <div class="room-content">
           <div class="outlets-grid">
-            ${(room.outlets || []).map((device, oi) => this._renderDeviceCard(device, oi, (roomData.outlets || [])[oi])).join('')}
+            ${(room.outlets || []).map((device, oi) => this._renderDeviceCard(device, oi, roomData.outlets[oi])).join('')}
           </div>
         </div>
       </div>
@@ -4677,7 +4639,7 @@ class EnergyPanel extends HTMLElement {
     
     try {
       await this._hass.callWS({
-        type: 'smart_dashboards/save_energy',
+        type: 'smart_dashboards/save_config',
         config: {
           ...this._config,
           power_enforcement: pe,
@@ -5092,9 +5054,4 @@ class EnergyPanel extends HTMLElement {
   }
 }
 
-try {
-  customElements.define('energy-panel', EnergyPanel);
-  console.log('[EnergyPanel] Custom element registered successfully');
-} catch (e) {
-  console.error('[EnergyPanel] Failed to register custom element:', e);
-}
+customElements.define('energy-panel', EnergyPanel);

@@ -107,23 +107,18 @@ async def async_register_panels(hass: HomeAssistant, entry: ConfigEntry) -> None
 
     # Register Energy Panel (if enabled)
     if enable_energy:
-        # Remove existing panel first to ensure fresh registration with new cache-bust URL
-        try:
-            frontend.async_remove_panel(hass, ENERGY_PANEL_URL)
-        except KeyError:
-            pass  # Panel wasn't registered yet
-        
-        await panel_custom.async_register_panel(
-            hass,
-            webcomponent_name="energy-panel",
-            frontend_url_path=ENERGY_PANEL_URL,
-            sidebar_title=ENERGY_PANEL_TITLE,
-            sidebar_icon=ENERGY_PANEL_ICON,
-            module_url=f"{panel_url}/energy-panel.js?v={version}&_={load_id}",
-            embed_iframe=False,
-            require_admin=False,
-        )
-        _LOGGER.info("Registered Energy panel with module_url: %s", f"{panel_url}/energy-panel.js?v={version}&_={load_id}")
+        if ENERGY_PANEL_URL not in hass.data.get("frontend_panels", {}):
+            await panel_custom.async_register_panel(
+                hass,
+                webcomponent_name="energy-panel",
+                frontend_url_path=ENERGY_PANEL_URL,
+                sidebar_title=ENERGY_PANEL_TITLE,
+                sidebar_icon=ENERGY_PANEL_ICON,
+                module_url=f"{panel_url}/energy-panel.js?v={version}&_={load_id}",
+                embed_iframe=False,
+                require_admin=False,
+            )
+            _LOGGER.info("Registered Energy panel")
     else:
         # Remove panel if it was previously registered
         try:
