@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, callback
@@ -644,17 +644,17 @@ class EnergyMonitor:
             plug1_switch = outlet.get("plug1_switch")
             plug2_entity = outlet.get("plug2_entity")
             plug2_switch = outlet.get("plug2_switch")
-            
+
             if plug1_entity and plug1_switch:
                 watts = self._get_power_value(plug1_entity)
                 if watts > 0:  # Only cycle outlets with power draw
                     outlets_with_power.append((watts, plug1_switch, outlet.get("name", "Plug 1")))
-            
+
             if plug2_entity and plug2_switch:
                 watts = self._get_power_value(plug2_entity)
                 if watts > 0:
                     outlets_with_power.append((watts, plug2_switch, outlet.get("name", "Plug 2")))
-        
+
         # Sort by power (lowest first) and cycle up to 2 outlets
         outlets_with_power.sort(key=lambda x: x[0])
         cycled = 0
@@ -671,7 +671,7 @@ class EnergyMonitor:
                 cycled += 1
             except Exception as e:
                 _LOGGER.error("Failed to power cycle %s: %s", switch_entity, e)
-        
+
         if cycled > 0:
             _LOGGER.warning("Power cycled %d outlets in %s for enforcement", cycled, room_id)
 
@@ -804,7 +804,7 @@ class EnergyMonitor:
                     media_player = room["media_player"]
                     room_for_tts = room
                     break
-            
+
             if media_player and room_for_tts:
                 msg_template = tts_settings.get("home_kwh_warn_msg", "")
                 if msg_template:
