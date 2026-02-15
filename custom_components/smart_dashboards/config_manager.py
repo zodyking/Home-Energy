@@ -556,7 +556,8 @@ class ConfigManager:
         }
 
     def get_daily_history(self, days: int = 30, include_today: bool = True) -> dict[str, Any]:
-        """Get last N days of daily totals for graphs."""
+        """Get daily totals for graphs. Only returns dates that have data, from earliest to latest.
+        Chart grows over time until full range is available (no leading blank sections)."""
         from datetime import timedelta
         today = dt_util.now().strftime("%Y-%m-%d")
         all_room_ids = {
@@ -566,12 +567,19 @@ class ConfigManager:
         result = {"dates": [], "total_wh": [], "total_warnings": [], "total_shutoffs": [], "rooms": {}}
         for rid in all_room_ids:
             result["rooms"][rid] = {"wh": [], "warnings": [], "shutoffs": []}
+
+        # Collect only dates that have data (in _daily_totals or today)
+        candidates = []
         for i in range(days):
             d = (dt_util.now() - timedelta(days=i)).strftime("%Y-%m-%d")
             if d == today and include_today:
-                row = self._build_today_totals()
-            else:
-                row = self._daily_totals.get(d, {})
+                candidates.append((d, self._build_today_totals()))
+            elif d in self._daily_totals:
+                candidates.append((d, self._daily_totals[d]))
+
+        # Sort chronologically (oldest first) and limit to days
+        candidates.sort(key=lambda x: x[0])
+        for d, row in candidates:
             result["dates"].append(d)
             result["total_wh"].append(row.get("total_wh", 0))
             result["total_warnings"].append(row.get("total_warnings", 0))
@@ -582,14 +590,7 @@ class ConfigManager:
                 result["rooms"][rid]["wh"].append(rdata.get("wh", 0))
                 result["rooms"][rid]["warnings"].append(rdata.get("warnings", 0))
                 result["rooms"][rid]["shutoffs"].append(rdata.get("shutoffs", 0))
-        result["dates"].reverse()
-        result["total_wh"].reverse()
-        result["total_warnings"].reverse()
-        result["total_shutoffs"].reverse()
-        for rid in result["rooms"]:
-            result["rooms"][rid]["wh"].reverse()
-            result["rooms"][rid]["warnings"].reverse()
-            result["rooms"][rid]["shutoffs"].reverse()
+
         return result
 
     # Billing history (for new-cycle alerts)
