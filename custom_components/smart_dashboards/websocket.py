@@ -25,6 +25,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_set_volume)
     websocket_api.async_register_command(hass, websocket_get_power_data)
     websocket_api.async_register_command(hass, websocket_get_daily_history)
+    websocket_api.async_register_command(hass, websocket_get_intraday_history)
     websocket_api.async_register_command(hass, websocket_get_statistics)
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
     websocket_api.async_register_command(hass, websocket_get_areas)
@@ -343,6 +344,84 @@ async def websocket_get_daily_history(
     days = min(45, max(1, msg.get("days", 30)))
     result = config_manager.get_daily_history(days=days)
     connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_intraday_history",
+        vol.Optional("room_id"): str,
+        vol.Optional("minutes"): vol.Coerce(int),
+    }
+)
+@websocket_api.async_response
+async def websocket_get_intraday_history(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get minute-by-minute power history for 24-hour charts."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+    
+    room_id = msg.get("room_id")
+    minutes = min(1440, max(1, msg.get("minutes", 1440)))  # Max 24 hours
+    
+    if room_id:
+        # Get room-specific intraday history
+        data = config_manager.get_room_intraday_history(room_id, minutes)
+    else:
+        # Get total intraday history (all rooms)
+        data = config_manager.get_total_intraday_history(minutes)
+    
+    # Ensure at least one data point (current power if no history)
+    if not data["timestamps"]:
+        from homeassistant.util import dt as dt_util
+        now = dt_util.now().strftime("%Y-%m-%d %H:%M")
+        # Get current power from power_data
+        current_watts = 0.0
+        if room_id:
+            for room in config_manager.energy_config.get("rooms", []):
+                rid = room.get("id", room["name"].lower().replace(" ", "_"))
+                if rid == room_id:
+                    for outlet in room.get("outlets", []):
+                        if outlet.get("plug1_entity"):
+                            state = hass.states.get(outlet["plug1_entity"])
+                            if state and state.state not in ("unknown", "unavailable", ""):
+                                try:
+                                    current_watts += float(state.state)
+                                except (ValueError, TypeError):
+                                    pass
+                        if outlet.get("plug2_entity"):
+                            state = hass.states.get(outlet["plug2_entity"])
+                            if state and state.state not in ("unknown", "unavailable", ""):
+                                try:
+                                    current_watts += float(state.state)
+                                except (ValueError, TypeError):
+                                    pass
+                    break
+        else:
+            # Sum all rooms
+            for room in config_manager.energy_config.get("rooms", []):
+                for outlet in room.get("outlets", []):
+                    if outlet.get("plug1_entity"):
+                        state = hass.states.get(outlet["plug1_entity"])
+                        if state and state.state not in ("unknown", "unavailable", ""):
+                            try:
+                                current_watts += float(state.state)
+                            except (ValueError, TypeError):
+                                pass
+                    if outlet.get("plug2_entity"):
+                        state = hass.states.get(outlet["plug2_entity"])
+                        if state and state.state not in ("unknown", "unavailable", ""):
+                            try:
+                                current_watts += float(state.state)
+                            except (ValueError, TypeError):
+                                pass
+        data = {"timestamps": [now], "watts": [current_watts]}
+    
+    connection.send_result(msg["id"], data)
 
 
 @websocket_api.websocket_command(
