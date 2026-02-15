@@ -26,6 +26,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_power_data)
     websocket_api.async_register_command(hass, websocket_get_daily_history)
     websocket_api.async_register_command(hass, websocket_get_intraday_history)
+    websocket_api.async_register_command(hass, websocket_get_intraday_events)
     websocket_api.async_register_command(hass, websocket_get_statistics)
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
     websocket_api.async_register_command(hass, websocket_get_areas)
@@ -416,6 +417,28 @@ async def websocket_get_intraday_history(
                             current_watts += _get_power(eid)
         data = {"timestamps": [now], "watts": [current_watts]}
     
+    connection.send_result(msg["id"], data)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_intraday_events",
+        vol.Optional("room_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_intraday_events(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get 24-hour intraday event counts (warnings/shutoffs) for chart display."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+    room_id = msg.get("room_id")
+    data = config_manager.get_intraday_events(room_id=room_id)
     connection.send_result(msg["id"], data)
 
 
