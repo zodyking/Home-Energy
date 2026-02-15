@@ -321,8 +321,6 @@ class ConfigManager:
             "current_usage_sensor": (stats.get("current_usage_sensor") or "").strip(),
             "projected_usage_sensor": (stats.get("projected_usage_sensor") or "").strip(),
             "kwh_cost_sensor": (stats.get("kwh_cost_sensor") or "").strip(),
-            "date_range_start": (stats.get("date_range_start") or "").strip(),
-            "date_range_end": (stats.get("date_range_end") or "").strip(),
         }
 
         return validated
@@ -673,43 +671,41 @@ class ConfigManager:
         end = self._parse_date_sensor(end_ent)
         return (start, end)
 
+    def _is_valid_date(self, date_str: str | None) -> bool:
+        """Check if string is a valid YYYY-MM-DD date."""
+        if not date_str:
+            return False
+        return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", date_str))
+
     def get_statistics_date_range(
         self, date_start: str | None = None, date_end: str | None = None
     ) -> tuple[str | None, str | None, bool]:
         """Resolve final date range. Returns (start, end, is_narrowed).
-        Applies user narrow range within billing; clamps to available daily totals."""
-        stats = self.energy_config.get("statistics_settings", {})
+        Uses billing cycle dates; includes today if there's live data."""
+        today = dt_util.now().strftime("%Y-%m-%d")
         billing_start, billing_end = self.get_billing_date_range()
-        user_start = (stats.get("date_range_start") or "").strip() or date_start
-        user_end = (stats.get("date_range_end") or "").strip() or date_end
 
         if billing_start and billing_end:
             base_start = billing_start
             base_end = billing_end
         else:
+            # Fall back to available daily data + today if we have live data
             available = sorted(self._daily_totals.keys())
+            if self._day_energy_data:
+                available = sorted(set(available) | {today})
             if not available:
                 return (None, None, False)
             base_start = available[0]
             base_end = available[-1]
 
-        start = base_start
-        end = base_end
-        if user_start and user_start >= base_start and (not user_end or user_start <= user_end):
-            start = user_start
-        if user_end and user_end <= base_end and (not user_start or user_end >= user_start):
-            end = user_end
+        # Include today if within range
+        if base_start <= today <= base_end:
+            pass  # today is in range
+        elif today > base_end:
+            base_end = today  # extend to today if billing end is in the past
 
-        available = set(self._daily_totals.keys())
-        if start and start not in available:
-            after = [d for d in available if d >= start]
-            start = min(after) if after else start
-        if end and end not in available:
-            before = [d for d in available if d <= end]
-            end = max(before) if before else end
-
-        is_narrowed = (user_start or user_end) and (start != base_start or end != base_end)
-        return (start, end, is_narrowed)
+        is_narrowed = False
+        return (base_start, base_end, is_narrowed)
 
     async def record_billing_cycle_if_changed(self, start: str, end: str) -> bool:
         """If billing dates differ from last known, append to cycles and save. Returns True if changed."""

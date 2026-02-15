@@ -72,8 +72,6 @@ DEFAULT_CONFIG = {
             "current_usage_sensor": "",
             "projected_usage_sensor": "",
             "kwh_cost_sensor": "",
-            "date_range_start": "",
-            "date_range_end": "",
         },
     },
 }
