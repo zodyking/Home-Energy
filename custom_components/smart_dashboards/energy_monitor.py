@@ -624,8 +624,8 @@ class EnergyMonitor:
             )
             # Count only when TTS was actually sent
             await self.config_manager.async_increment_warning(room_id)
-            _LOGGER.warning(
-                "Room threshold alert: %s - %dW (enforcement phase %d, volume %.0f%%)",
+            _LOGGER.debug(
+                "Room threshold alert sent: %s - %dW (enforcement phase %d, volume %.0f%%)",
                 room_name,
                 int(current_watts),
                 self.config_manager.get_enforcement_state(room_id).get("phase", 0) if enforcement_enabled else 0,
