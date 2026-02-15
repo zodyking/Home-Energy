@@ -394,9 +394,15 @@ async def websocket_get_statistics(
         connection.send_result(msg["id"], result)
         return
 
-    # Aggregate from daily totals
+    # Aggregate from daily totals + today's live data
+    from homeassistant.util import dt as dt_util
+    today = dt_util.now().strftime("%Y-%m-%d")
     daily_totals = config_manager.daily_totals
-    dates_sorted = sorted(daily_totals.keys())
+    # Include today in the date list if it's within range
+    all_dates = set(daily_totals.keys())
+    if start <= today <= end:
+        all_dates.add(today)
+    dates_sorted = sorted(all_dates)
     range_dates = [d for d in dates_sorted if start <= d <= end]
 
     total_wh = 0.0
@@ -405,7 +411,11 @@ async def websocket_get_statistics(
     room_sums: dict[str, dict[str, Any]] = {}
 
     for d in range_dates:
-        row = daily_totals.get(d, {})
+        # Use live data for today, historical data for past days
+        if d == today:
+            row = config_manager._build_today_totals()
+        else:
+            row = daily_totals.get(d, {})
         total_wh += float(row.get("total_wh", 0))
         total_warnings += int(row.get("total_warnings", 0))
         total_shutoffs += int(row.get("total_shutoffs", 0))
