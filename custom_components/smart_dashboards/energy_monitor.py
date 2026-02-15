@@ -188,6 +188,8 @@ class EnergyMonitor:
                                 await self.config_manager.async_add_energy_reading(
                                     tracking_key, outlet_total_watts
                                 )
+                                # Record for intraday 24-hour charts
+                                self.config_manager.record_intraday_power(tracking_key, outlet_total_watts)
                     room_total_watts += outlet_total_watts
                     continue
 
@@ -196,6 +198,8 @@ class EnergyMonitor:
                 if outlet.get("plug1_entity"):
                     plug1_watts = self._get_power_value(outlet["plug1_entity"])
                     outlet_total_watts += plug1_watts
+                    # Record for intraday 24-hour charts
+                    self.config_manager.record_intraday_power(outlet["plug1_entity"], plug1_watts)
 
                     # Check plug 1 shutoff threshold
                     plug1_shutoff = outlet.get("plug1_shutoff", 0)
@@ -218,6 +222,8 @@ class EnergyMonitor:
                 if outlet.get("plug2_entity"):
                     plug2_watts = self._get_power_value(outlet["plug2_entity"])
                     outlet_total_watts += plug2_watts
+                    # Record for intraday 24-hour charts
+                    self.config_manager.record_intraday_power(outlet["plug2_entity"], plug2_watts)
 
                     # Check plug 2 shutoff threshold
                     plug2_shutoff = outlet.get("plug2_shutoff", 0)
@@ -268,11 +274,16 @@ class EnergyMonitor:
         # Check stove safety
         await self._check_stove_safety(tts_settings)
 
+        # Check power enforcement phase resets and kWh warnings
+        await self._check_power_enforcement(tts_settings)
+
         # Periodically save energy tracking data (every 60 seconds)
         self._save_counter += 1
         if self._save_counter >= 60:
             self._save_counter = 0
             await self.config_manager._async_save_energy_tracking()
+            await self.config_manager._async_save_intraday_history()
+            await self.config_manager._async_save_enforcement_state()
 
     def _get_power_value(self, entity_id: str) -> float:
         """Get power value from an entity."""
@@ -529,7 +540,7 @@ class EnergyMonitor:
         volume: float,
         tts_settings: dict,
     ) -> None:
-        """Send TTS alert for room threshold exceeded."""
+        """Send TTS alert for room threshold exceeded with power enforcement."""
         if not media_player:
             return
 
@@ -542,28 +553,127 @@ class EnergyMonitor:
         # Update last alert time
         self._last_room_alerts[room_id] = now
 
-        # Format message with prefix
+        # Record threshold warning with timestamp for power enforcement
+        await self.config_manager.async_record_threshold_warning(room_id, current_watts)
+
+        # Get power enforcement settings
+        pe = self.config_manager.energy_config.get("power_enforcement", {})
+        enforcement_enabled = self.config_manager.is_room_enforcement_enabled(room_id)
+        room_threshold = room.get("threshold", 0)
+
+        # Calculate effective volume (base + enforcement offset)
+        effective_volume = volume
+        message = ""
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
-        msg_template = tts_settings.get("room_warn_msg", DEFAULT_ROOM_WARN_MSG)
-        message = msg_template.format(
-            prefix=prefix,
-            room_name=room_name,
-            watts=int(current_watts),
-        )
+
+        if enforcement_enabled:
+            state = self.config_manager.get_enforcement_state(room_id)
+            phase1_count = pe.get("phase1_warning_count", 20)
+            phase1_window = pe.get("phase1_time_window_minutes", 60)
+            phase2_count = pe.get("phase2_warning_count", 40)
+            phase2_window = pe.get("phase2_time_window_minutes", 30)
+            volume_increment = pe.get("phase1_volume_increment", 2)
+
+            warnings_in_phase1_window = self.config_manager.get_warnings_in_window(room_id, phase1_window)
+            warnings_in_phase2_window = self.config_manager.get_warnings_in_window(room_id, phase2_window)
+
+            # Check for phase 2 (power cycling)
+            if warnings_in_phase2_window >= phase2_count and state["phase"] < 2:
+                await self.config_manager.async_set_enforcement_phase(room_id, 2)
+                msg_template = tts_settings.get("phase2_warn_msg", "")
+                message = msg_template.format(
+                    prefix=prefix,
+                    room_name=room_name,
+                    warning_count=warnings_in_phase2_window,
+                )
+                # Trigger power cycling
+                await self._power_cycle_room_outlets(room_id, room, pe.get("phase2_cycle_delay_seconds", 5))
+
+            # Check for phase 1 (volume escalation)
+            elif warnings_in_phase1_window >= phase1_count and state["phase"] < 1:
+                await self.config_manager.async_set_enforcement_phase(room_id, 1)
+                msg_template = tts_settings.get("phase1_warn_msg", "")
+                message = msg_template.format(
+                    prefix=prefix,
+                    room_name=room_name,
+                    warning_count=warnings_in_phase1_window,
+                    threshold=room_threshold,
+                )
+
+            # If in phase 1+, increase volume
+            if state["phase"] >= 1:
+                new_offset = await self.config_manager.async_increment_volume_offset(room_id, volume_increment)
+                effective_volume = min(1.0, volume + (new_offset / 100.0))
+
+            # If in phase 2, continue power cycling on each warning
+            if state["phase"] == 2:
+                await self._power_cycle_room_outlets(room_id, room, pe.get("phase2_cycle_delay_seconds", 5))
+
+        # Use standard message if no enforcement message was set
+        if not message:
+            msg_template = tts_settings.get("room_warn_msg", DEFAULT_ROOM_WARN_MSG)
+            message = msg_template.format(
+                prefix=prefix,
+                room_name=room_name,
+                watts=int(current_watts),
+            )
 
         try:
             await self._async_send_tts_with_lights(
-                room, media_player, message, volume, tts_settings
+                room, media_player, message, effective_volume, tts_settings
             )
             # Count only when TTS was actually sent
             await self.config_manager.async_increment_warning(room_id)
             _LOGGER.warning(
-                "Room threshold alert: %s - %dW",
+                "Room threshold alert: %s - %dW (enforcement phase %d, volume %.0f%%)",
                 room_name,
                 int(current_watts),
+                self.config_manager.get_enforcement_state(room_id).get("phase", 0) if enforcement_enabled else 0,
+                effective_volume * 100,
             )
         except Exception as e:
             _LOGGER.error("Failed to send room threshold alert: %s", e)
+
+    async def _power_cycle_room_outlets(self, room_id: str, room: dict, delay_seconds: int) -> None:
+        """Power cycle outlets with lowest power usage in a room."""
+        outlets_with_power = []
+        for outlet in room.get("outlets", []):
+            if outlet.get("type") in ("stove", "microwave", "light"):
+                continue  # Skip sensitive appliances and lights
+            plug1_entity = outlet.get("plug1_entity")
+            plug1_switch = outlet.get("plug1_switch")
+            plug2_entity = outlet.get("plug2_entity")
+            plug2_switch = outlet.get("plug2_switch")
+            
+            if plug1_entity and plug1_switch:
+                watts = self._get_power_value(plug1_entity)
+                if watts > 0:  # Only cycle outlets with power draw
+                    outlets_with_power.append((watts, plug1_switch, outlet.get("name", "Plug 1")))
+            
+            if plug2_entity and plug2_switch:
+                watts = self._get_power_value(plug2_entity)
+                if watts > 0:
+                    outlets_with_power.append((watts, plug2_switch, outlet.get("name", "Plug 2")))
+        
+        # Sort by power (lowest first) and cycle up to 2 outlets
+        outlets_with_power.sort(key=lambda x: x[0])
+        cycled = 0
+        for watts, switch_entity, name in outlets_with_power[:2]:
+            try:
+                _LOGGER.info("Power cycling %s (%.1fW) for enforcement", name, watts)
+                await self.hass.services.async_call(
+                    "switch", "turn_off", {"entity_id": switch_entity}, blocking=True
+                )
+                await asyncio.sleep(delay_seconds)
+                await self.hass.services.async_call(
+                    "switch", "turn_on", {"entity_id": switch_entity}, blocking=True
+                )
+                cycled += 1
+            except Exception as e:
+                _LOGGER.error("Failed to power cycle %s: %s", switch_entity, e)
+        
+        if cycled > 0:
+            _LOGGER.warning("Power cycled %d outlets in %s for enforcement", cycled, room_id)
 
     async def _send_outlet_alert(
         self,
@@ -590,6 +700,9 @@ class EnergyMonitor:
         # Update last alert time
         self._last_outlet_alerts[alert_key] = now
 
+        # Record threshold warning for power enforcement (outlet warnings count toward room)
+        await self.config_manager.async_record_threshold_warning(room_id, current_watts)
+
         # Format message with prefix
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
         msg_template = tts_settings.get("outlet_warn_msg", DEFAULT_OUTLET_WARN_MSG)
@@ -614,6 +727,100 @@ class EnergyMonitor:
             )
         except Exception as e:
             _LOGGER.error("Failed to send outlet threshold alert: %s", e)
+
+    async def _check_power_enforcement(self, tts_settings: dict) -> None:
+        """Check power enforcement phase resets and kWh warnings."""
+        pe = self.config_manager.energy_config.get("power_enforcement", {})
+        if not pe.get("enabled", False):
+            return
+
+        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        rooms = self.config_manager.energy_config.get("rooms", [])
+        rooms_enabled = pe.get("rooms_enabled", [])
+
+        # Check phase resets for each room
+        phase1_reset = pe.get("phase1_reset_minutes", 60)
+        phase2_reset = pe.get("phase2_reset_minutes", 30)
+
+        for room in rooms:
+            room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+            room_name = room.get("name", room_id)
+            media_player = room.get("media_player")
+            volume = float(room.get("volume", 0.7))
+
+            if room_id not in rooms_enabled:
+                continue
+
+            state = self.config_manager.get_enforcement_state(room_id)
+            current_phase = state.get("phase", 0)
+
+            # Check for phase reset (no warnings for reset_minutes)
+            reset_minutes = phase2_reset if current_phase == 2 else phase1_reset
+            if current_phase > 0 and self.config_manager.check_phase_reset(room_id, reset_minutes):
+                await self.config_manager.async_set_enforcement_phase(room_id, 0)
+                msg_template = tts_settings.get("phase_reset_msg", "")
+                if msg_template and media_player:
+                    message = msg_template.format(
+                        prefix=prefix,
+                        room_name=room_name,
+                    )
+                    try:
+                        await self._async_send_tts_with_lights(
+                            room, media_player, message, volume, tts_settings
+                        )
+                        _LOGGER.info("Power enforcement reset for %s", room_name)
+                    except Exception as e:
+                        _LOGGER.error("Failed to send phase reset TTS: %s", e)
+
+            # Check room kWh intervals
+            intervals = pe.get("room_kwh_intervals", [5, 10, 15, 20])
+            interval_hit = await self.config_manager.async_should_send_room_kwh_alert(room_id, intervals)
+            if interval_hit is not None and media_player:
+                percentage = self.config_manager.get_room_percentage_of_total(room_id)
+                msg_template = tts_settings.get("room_kwh_warn_msg", "")
+                if msg_template:
+                    message = msg_template.format(
+                        prefix=prefix,
+                        room_name=room_name,
+                        kwh_limit=interval_hit,
+                        percentage=percentage,
+                    )
+                    try:
+                        await self._async_send_tts_with_lights(
+                            room, media_player, message, volume, tts_settings
+                        )
+                        _LOGGER.warning("Room kWh alert: %s exceeded %d kWh", room_name, interval_hit)
+                    except Exception as e:
+                        _LOGGER.error("Failed to send room kWh alert: %s", e)
+
+        # Check home kWh limit
+        home_limit = pe.get("home_kwh_limit", 22)
+        if await self.config_manager.async_should_send_home_kwh_alert(home_limit):
+            # Find a media player to use
+            media_player = None
+            room_for_tts = None
+            for room in rooms:
+                if room.get("media_player"):
+                    media_player = room["media_player"]
+                    room_for_tts = room
+                    break
+            
+            if media_player and room_for_tts:
+                msg_template = tts_settings.get("home_kwh_warn_msg", "")
+                if msg_template:
+                    total_kwh = self.config_manager.get_total_day_kwh()
+                    message = msg_template.format(
+                        prefix=prefix,
+                        kwh_limit=home_limit,
+                    )
+                    try:
+                        volume = float(room_for_tts.get("volume", 0.7))
+                        await self._async_send_tts_with_lights(
+                            room_for_tts, media_player, message, volume, tts_settings
+                        )
+                        _LOGGER.warning("Home kWh alert: exceeded %d kWh (current: %.1f)", home_limit, total_kwh)
+                    except Exception as e:
+                        _LOGGER.error("Failed to send home kWh alert: %s", e)
 
     async def _check_breaker_lines(self, tts_settings: dict) -> None:
         """Check breaker line loads and trigger warnings/shutoffs."""
