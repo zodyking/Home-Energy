@@ -73,11 +73,15 @@ async def websocket_save_energy(
 ) -> None:
     """Save energy configuration."""
     config_manager = hass.data[DOMAIN].get("config_manager")
-    if config_manager:
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+    try:
         await config_manager.async_update_energy(msg["config"])
         connection.send_result(msg["id"], {"success": True})
-    else:
-        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+    except Exception as e:
+        _LOGGER.exception("Failed to save energy config: %s", e)
+        connection.send_error(msg["id"], "save_failed", str(e))
 
 
 @websocket_api.websocket_command(

@@ -17,6 +17,26 @@ from .const import CONFIG_FILE, DEFAULT_CONFIG, DOMAIN, DEFAULT_TTS_VOLUME
 _LOGGER = logging.getLogger(__name__)
 
 
+def _safe_int(val: Any, default: int) -> int:
+    """Parse int safely; return default for None, empty string, or invalid."""
+    if val is None or val == "":
+        return default
+    try:
+        return int(val) if isinstance(val, (int, float)) else int(str(val).strip())
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(val: Any, default: float) -> float:
+    """Parse float safely; return default for None, empty string, or invalid."""
+    if val is None or val == "":
+        return default
+    try:
+        return float(val) if isinstance(val, (int, float)) else float(str(val).strip())
+    except (ValueError, TypeError):
+        return default
+
+
 def _validate_rgb(val: Any) -> list[int]:
     """Validate and return RGB list [r, g, b] 0-255."""
     if isinstance(val, list) and len(val) >= 3:
@@ -218,8 +238,8 @@ class ConfigManager:
                     "volume": float(room.get("volume", 0.7)),
                     "responsive_light_warnings": bool(room.get("responsive_light_warnings", False)),
                     "responsive_light_color": _validate_rgb(room.get("responsive_light_color")),
-                    "responsive_light_temp": max(2000, min(6500, int(room.get("responsive_light_temp", 6500)))),
-                    "responsive_light_interval": max(0.1, min(10.0, float(room.get("responsive_light_interval", 1.5)))),
+                    "responsive_light_temp": max(2000, min(6500, _safe_int(room.get("responsive_light_temp"), 6500))),
+                    "responsive_light_interval": max(0.1, min(10.0, _safe_float(room.get("responsive_light_interval"), 1.5))),
                     "outlets": [],
                 }
                 for outlet in room.get("outlets", []):
@@ -309,8 +329,8 @@ class ConfigManager:
                 validated["rooms"].append(validated_room)
 
         # Validate breaker panel size
-        panel_size = config.get("breaker_panel_size", 20)
-        validated["breaker_panel_size"] = max(2, min(40, int(panel_size))) if panel_size % 2 == 0 else 20
+        panel_size = _safe_int(config.get("breaker_panel_size"), 20)
+        validated["breaker_panel_size"] = max(2, min(40, panel_size)) if panel_size and panel_size % 2 == 0 else 20
 
         # Validate breaker lines
         breaker_lines = config.get("breaker_lines", [])
@@ -333,8 +353,8 @@ class ConfigManager:
         default_tts = DEFAULT_CONFIG["energy"]["tts_settings"]
         validated["tts_settings"] = {
             "language": tts.get("language", default_tts["language"]),
-            "speed": float(tts.get("speed", default_tts["speed"])),
-            "volume": float(tts.get("volume", default_tts["volume"])),
+            "speed": _safe_float(tts.get("speed"), default_tts["speed"]),
+            "volume": _safe_float(tts.get("volume"), default_tts["volume"]),
             "prefix": tts.get("prefix", default_tts["prefix"]),
             "room_warn_msg": tts.get("room_warn_msg", default_tts["room_warn_msg"]),
             "outlet_warn_msg": tts.get("outlet_warn_msg", default_tts["outlet_warn_msg"]),
