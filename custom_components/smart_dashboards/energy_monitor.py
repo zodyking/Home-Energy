@@ -33,6 +33,7 @@ from .const import (
     DEFAULT_MICROWAVE_RESTORE_MSG,
 )
 from .tts_helper import async_send_tts
+from .tts_queue import async_send_tts_or_queue
 
 if TYPE_CHECKING:
     from .config_manager import ConfigManager
@@ -66,6 +67,9 @@ class EnergyMonitor:
         self._stove_15min_warn_sent: dict[str, bool] = {}
         self._stove_30sec_warn_sent: dict[str, bool] = {}
         self._stove_powered_off_by_microwave: dict[str, bool] = {}
+        self._stove_power_below_since: dict[str, datetime | None] = {}
+        self._stove_power_above_since: dict[str, datetime | None] = {}
+        self._stove_presence_window_start: dict[str, datetime | None] = {}
         self._power_listener_unsub: list = []  # Unsubscribe callbacks for state listeners
 
     def _get_power_entity_ids(self) -> list[str]:
@@ -353,11 +357,20 @@ class EnergyMonitor:
                     outlet_name=outlet_name,
                     plug=plug_name,
                 )
-                await self._async_send_tts_with_lights(
-                    room, media_player, message, volume, tts_settings
-                )
-                # Count only when TTS was actually sent
-                await self.config_manager.async_increment_shutoff(room_id)
+                try:
+                    await self._async_send_tts_with_lights(
+                        room, media_player, message, volume, tts_settings
+                    )
+                    # Count only when TTS was actually sent
+                    await self.config_manager.async_increment_shutoff(room_id)
+                    await self.config_manager.async_add_event_log_entry(
+                        room_id, room_name, "shutoff", outlet_name, True
+                    )
+                except Exception as tts_err:
+                    _LOGGER.error("Shutoff TTS error: %s", tts_err)
+                    await self.config_manager.async_add_event_log_entry(
+                        room_id, room_name, "shutoff", outlet_name, False
+                    )
             
             # Wait 5 seconds
             await asyncio.sleep(SHUTOFF_RESET_DELAY)
@@ -488,37 +501,50 @@ class EnergyMonitor:
         volume: float,
         tts_settings: dict,
     ) -> None:
-        """Send TTS and optionally run responsive light loop if enabled for room."""
+        """Send TTS and optionally run responsive light loop. Waits for media player ready (on/idle/standby)."""
         if not media_player:
             return
-        wrgb_lights = self._get_wrgb_light_entities(room) if room.get("responsive_light_warnings") else []
-        rgb = room.get("responsive_light_color") or [245, 0, 0]
-        temp_k = int(room.get("responsive_light_temp", 6500))
-        interval = float(room.get("responsive_light_interval", 1.5))
-        if wrgb_lights:
-            restore_data = self._get_light_restore_data(wrgb_lights)
-            tts_task = asyncio.create_task(
-                async_send_tts(
+
+        async def _do_lights_and_tts() -> None:
+            wrgb_lights = self._get_wrgb_light_entities(room) if room.get("responsive_light_warnings") else []
+            rgb = room.get("responsive_light_color") or [245, 0, 0]
+            temp_k = int(room.get("responsive_light_temp", 6500))
+            interval = float(room.get("responsive_light_interval", 1.5))
+            if wrgb_lights:
+                restore_data = self._get_light_restore_data(wrgb_lights)
+                tts_task = asyncio.create_task(
+                    async_send_tts(
+                        self.hass,
+                        media_player=media_player,
+                        message=message,
+                        language=tts_settings.get("language"),
+                        volume=volume,
+                    )
+                )
+                light_task = asyncio.create_task(
+                    self._async_light_warning_loop(wrgb_lights, rgb, temp_k, tts_task, interval)
+                )
+                await asyncio.gather(tts_task, light_task)
+                await self._async_restore_lights(wrgb_lights, restore_data)
+            else:
+                await async_send_tts(
                     self.hass,
                     media_player=media_player,
                     message=message,
                     language=tts_settings.get("language"),
                     volume=volume,
                 )
-            )
-            light_task = asyncio.create_task(
-                self._async_light_warning_loop(wrgb_lights, rgb, temp_k, tts_task, interval)
-            )
-            await asyncio.gather(tts_task, light_task)
-            await self._async_restore_lights(wrgb_lights, restore_data)
-        else:
-            await async_send_tts(
-                self.hass,
-                media_player=media_player,
-                message=message,
-                language=tts_settings.get("language"),
-                volume=volume,
-            )
+
+        await async_send_tts_or_queue(
+            self.hass,
+            media_player=media_player,
+            message=message,
+            language=tts_settings.get("language"),
+            volume=volume,
+            tts_settings=tts_settings,
+            room=room,
+            with_lights_callback=_do_lights_and_tts,
+        )
 
     def _get_room_for_breaker(self, breaker_id: str) -> dict | None:
         """Get first room with responsive lights and outlets on this breaker."""
@@ -624,6 +650,9 @@ class EnergyMonitor:
             )
             # Count only when TTS was actually sent
             await self.config_manager.async_increment_warning(room_id)
+            await self.config_manager.async_add_event_log_entry(
+                room_id, room_name, "warning", None, True
+            )
             _LOGGER.warning(
                 "Room threshold alert: %s - %dW (enforcement phase %d, volume %.0f%%)",
                 room_name,
@@ -633,6 +662,9 @@ class EnergyMonitor:
             )
         except Exception as e:
             _LOGGER.error("Failed to send room threshold alert: %s", e)
+            await self.config_manager.async_add_event_log_entry(
+                room_id, room_name, "warning", None, False
+            )
 
     async def _power_cycle_room_outlets(self, room_id: str, room: dict, delay_seconds: int) -> None:
         """Power cycle outlets with lowest power usage in a room."""
@@ -719,6 +751,9 @@ class EnergyMonitor:
             )
             # Count only when TTS was actually sent
             await self.config_manager.async_increment_warning(room_id)
+            await self.config_manager.async_add_event_log_entry(
+                room_id, room_name, "warning", outlet_name, True
+            )
             _LOGGER.warning(
                 "Outlet threshold alert: %s %s - %dW",
                 room_name,
@@ -727,6 +762,9 @@ class EnergyMonitor:
             )
         except Exception as e:
             _LOGGER.error("Failed to send outlet threshold alert: %s", e)
+            await self.config_manager.async_add_event_log_entry(
+                room_id, room_name, "warning", outlet_name, False
+            )
 
     async def _check_power_enforcement(self, tts_settings: dict) -> None:
         """Check power enforcement phase resets and kWh warnings."""
@@ -880,7 +918,7 @@ class EnergyMonitor:
                                 room_for_lights, media_player, message, volume, tts_settings
                             )
                         else:
-                            await async_send_tts(
+                            await async_send_tts_or_queue(
                                 self.hass,
                                 media_player=media_player,
                                 message=message,
@@ -919,7 +957,7 @@ class EnergyMonitor:
                                 room_for_lights, media_player, message, volume, tts_settings
                             )
                         else:
-                            await async_send_tts(
+                            await async_send_tts_or_queue(
                                 self.hass,
                                 media_player=media_player,
                                 message=message,
@@ -1077,8 +1115,14 @@ class EnergyMonitor:
             self._stove_15min_warn_sent.setdefault(key, False)
             self._stove_30sec_warn_sent.setdefault(key, False)
             self._stove_powered_off_by_microwave.setdefault(key, False)
+            self._stove_power_below_since.setdefault(key, None)
+            self._stove_power_above_since.setdefault(key, None)
+            self._stove_presence_window_start.setdefault(key, None)
 
             stove_power_threshold = int(stove_outlet.get("stove_power_threshold", 100))
+            stove_off_debounce = int(stove_outlet.get("stove_off_debounce_seconds", 10))
+            stove_on_debounce = int(stove_outlet.get("stove_on_debounce_seconds", 0))
+            timer_start_window = int(stove_outlet.get("timer_start_window_seconds", 10))
             cooking_time_minutes = int(stove_outlet.get("cooking_time_minutes", 15))
             final_warning_seconds = int(stove_outlet.get("final_warning_seconds", 30))
             cooking_time_sec = max(1, cooking_time_minutes) * 60
@@ -1094,38 +1138,52 @@ class EnergyMonitor:
             presence_state = self.hass.states.get(presence_sensor)
             state_val = (presence_state.state or "").lower() if presence_state else ""
             presence_detected = state_val in ("detected", "on")
+            now = dt_util.now()
 
-            if stove_is_on and self._stove_state[key] != "on":
-                self._stove_state[key] = "on"
-                self._stove_15min_warn_sent[key] = False
-                self._stove_30sec_warn_sent[key] = False
-                if media_player:
-                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
-                    msg_template = tts_settings.get("stove_on_msg", DEFAULT_STOVE_ON_MSG)
-                    await async_send_tts(
-                        self.hass, media_player=media_player, message=msg_template.format(prefix=prefix),
-                        language=tts_settings.get("language"), volume=volume,
-                    )
-                _LOGGER.info("Stove turned on")
-            elif not stove_is_on and self._stove_state[key] == "on":
-                self._stove_state[key] = "off"
-                self._stove_timer_start[key] = None
-                self._stove_timer_phase[key] = "none"
-                self._stove_15min_warn_sent[key] = False
-                self._stove_30sec_warn_sent[key] = False
-                if not self._stove_powered_off_by_microwave[key] and media_player:
-                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
-                    msg_template = tts_settings.get("stove_off_msg", DEFAULT_STOVE_OFF_MSG)
-                    await async_send_tts(
-                        self.hass, media_player=media_player, message=msg_template.format(prefix=prefix),
-                        language=tts_settings.get("language"), volume=volume,
-                    )
-                _LOGGER.info("Stove turned off")
+            # Stove on/off with debounce (electric stoves fluctuate at medium heat)
+            if stove_is_on:
+                if self._stove_power_above_since[key] is None:
+                    self._stove_power_above_since[key] = now
+                self._stove_power_below_since[key] = None
+                elapsed_above = (now - self._stove_power_above_since[key]).total_seconds()
+                if self._stove_state[key] != "on" and elapsed_above >= stove_on_debounce:
+                    self._stove_state[key] = "on"
+                    self._stove_15min_warn_sent[key] = False
+                    self._stove_30sec_warn_sent[key] = False
+                    if media_player:
+                        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                        msg_template = tts_settings.get("stove_on_msg", DEFAULT_STOVE_ON_MSG)
+                        await async_send_tts_or_queue(
+                            self.hass, media_player=media_player, message=msg_template.format(prefix=prefix),
+                            language=tts_settings.get("language"), volume=volume,
+                        )
+                    _LOGGER.info("Stove turned on")
+            else:
+                if self._stove_power_below_since[key] is None:
+                    self._stove_power_below_since[key] = now
+                self._stove_power_above_since[key] = None
+                elapsed_below = (now - self._stove_power_below_since[key]).total_seconds()
+                if self._stove_state[key] == "on" and elapsed_below >= stove_off_debounce:
+                    self._stove_state[key] = "off"
+                    self._stove_timer_start[key] = None
+                    self._stove_timer_phase[key] = "none"
+                    self._stove_presence_window_start[key] = None
+                    self._stove_15min_warn_sent[key] = False
+                    self._stove_30sec_warn_sent[key] = False
+                    if not self._stove_powered_off_by_microwave[key] and media_player:
+                        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                        msg_template = tts_settings.get("stove_off_msg", DEFAULT_STOVE_OFF_MSG)
+                        await async_send_tts_or_queue(
+                            self.hass, media_player=media_player, message=msg_template.format(prefix=prefix),
+                            language=tts_settings.get("language"), volume=volume,
+                        )
+                    _LOGGER.info("Stove turned off")
 
             if not stove_is_on:
                 continue
 
             if presence_detected:
+                self._stove_presence_window_start[key] = None
                 if self._stove_timer_phase[key] != "none":
                     self._stove_timer_start[key] = None
                     self._stove_timer_phase[key] = "none"
@@ -1134,26 +1192,34 @@ class EnergyMonitor:
                     _LOGGER.info("Presence detected - timer reset")
                 self._stove_last_presence[key] = "on"
             else:
+                # Cooking timer: presence window before starting (don't start if person briefly left)
+                window_start = self._stove_presence_window_start[key]
                 if self._stove_last_presence[key] == "on":
-                    self._stove_timer_start[key] = dt_util.now()
-                    self._stove_timer_phase[key] = "15min"
-                    self._stove_15min_warn_sent[key] = False
-                    self._stove_30sec_warn_sent[key] = False
-                    if media_player:
-                        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
-                        msg_template = tts_settings.get(
-                            "stove_timer_started_msg", DEFAULT_STOVE_TIMER_STARTED_MSG
-                        )
-                        await async_send_tts(
-                            self.hass, media_player=media_player,
-                            message=msg_template.format(
-                                prefix=prefix, cooking_time_minutes=cooking_time_minutes,
-                                final_warning_seconds=final_warning_sec,
-                            ),
-                            language=tts_settings.get("language"), volume=volume,
-                        )
-                    _LOGGER.info("Presence left - starting cooking timer (%d min)", cooking_time_minutes)
-                self._stove_last_presence[key] = "off"
+                    if window_start is None:
+                        self._stove_presence_window_start[key] = now
+                    else:
+                        window_elapsed = (now - window_start).total_seconds()
+                        if window_elapsed >= timer_start_window:
+                            self._stove_timer_start[key] = now
+                            self._stove_timer_phase[key] = "15min"
+                            self._stove_presence_window_start[key] = None
+                            self._stove_15min_warn_sent[key] = False
+                            self._stove_30sec_warn_sent[key] = False
+                            if media_player:
+                                prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                                msg_template = tts_settings.get(
+                                    "stove_timer_started_msg", DEFAULT_STOVE_TIMER_STARTED_MSG
+                                )
+                                await async_send_tts_or_queue(
+                                    self.hass, media_player=media_player,
+                                    message=msg_template.format(
+                                        prefix=prefix, cooking_time_minutes=cooking_time_minutes,
+                                        final_warning_seconds=final_warning_sec,
+                                    ),
+                                    language=tts_settings.get("language"), volume=volume,
+                                )
+                            _LOGGER.info("Presence left - starting cooking timer (%d min)", cooking_time_minutes)
+                            self._stove_last_presence[key] = "off"
 
                 if self._stove_timer_start[key]:
                     now = dt_util.now()
@@ -1189,7 +1255,7 @@ class EnergyMonitor:
                                 if media_player:
                                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                                     msg_template = tts_settings.get("stove_30sec_warn_msg", DEFAULT_STOVE_30SEC_WARN_MSG)
-                                    await async_send_tts(
+                                    await async_send_tts_or_queue(
                                         self.hass, media_player=media_player,
                                         message=msg_template.format(
                                             prefix=prefix, cooking_time_minutes=cooking_time_minutes,

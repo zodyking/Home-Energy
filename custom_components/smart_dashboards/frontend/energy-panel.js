@@ -2331,6 +2331,10 @@ class EnergyPanel extends HTMLElement {
     this._attachEventListeners();
   }
 
+  _isEventLogType(type) {
+    return type === 'total_warnings' || type === 'total_shutoffs' || type === 'room_warnings' || type === 'room_shutoffs';
+  }
+
   _renderGraphModal() {
     if (!this._graphData || !this._graphOpen) return '';
     const type = this._graphOpen.type;
@@ -2338,13 +2342,38 @@ class EnergyPanel extends HTMLElement {
     const roomName = this._graphOpen.roomName || '';
     const labels = {
       total_wh: 'Usage (kWh)', total_watts_intraday: 'Current Power (W)', total_wh_intraday: "Today's Usage (kWh)",
-      total_warnings: 'Threshold Warnings', total_shutoffs: 'Safety Shutoffs',
-      room_wh: `${roomName} Usage (kWh)`, room_warnings: `${roomName} Warnings`, room_shutoffs: `${roomName} Shutoffs`
+      total_warnings: 'Threshold Warnings (24h)', total_shutoffs: 'Safety Shutoffs (24h)',
+      room_wh: `${roomName} Usage (kWh)`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`
     };
     const title = labels[type] || '30-Day History';
-    const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
-    const isIntradayEvents = type === 'total_warnings' || type === 'total_shutoffs' || type === 'room_warnings' || type === 'room_shutoffs';
-    const dates = (isIntraday || isIntradayEvents) ? (this._graphData.timestamps || []) : (this._graphData.dates || []);
+    const isEventLog = this._isEventLogType(type);
+    let bodyContent = '';
+    if (isEventLog) {
+      const events = this._graphData.events || [];
+      const filterType = type.includes('warnings') ? 'warning' : 'shutoff';
+      const filtered = events.filter(e => e.type === filterType);
+      bodyContent = `
+        <div class="event-log-container" style="max-height: 360px; overflow-y: auto; padding: 16px;">
+          ${filtered.length === 0
+            ? '<p style="color: var(--secondary-text-color); text-align: center; padding: 24px;">No events in the last 24 hours</p>'
+            : `
+            <ul class="event-log-list" style="list-style: none; margin: 0; padding: 0;">
+              ${filtered.map(e => `
+                <li class="event-log-entry" style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--card-border); font-size: 14px;">
+                  <span style="color: var(--secondary-text-color); min-width: 70px;">${e.ts ? e.ts.replace('T', ' ').slice(0, 19) : '—'}</span>
+                  <span style="flex: 1;">${e.room_name || ''}${e.outlet_name ? ' – ' + e.outlet_name : ''}</span>
+                  <span class="tts-badge" style="padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; ${e.tts_succeeded ? 'background: rgba(76, 175, 80, 0.2); color: #4caf50;' : 'background: rgba(244, 67, 54, 0.2); color: #f44336;'}">
+                    ${e.tts_succeeded ? 'TTS Succeeded' : 'TTS Failed'}
+                  </span>
+                </li>
+              `).join('')}
+            </ul>
+          `}
+        </div>
+      `;
+    } else {
+      bodyContent = '<div class="graph-chart-container" id="graph-apex-chart"></div>';
+    }
     return `
       <div class="graph-modal-overlay" id="graph-modal-overlay">
         <div class="graph-modal">
@@ -2353,7 +2382,7 @@ class EnergyPanel extends HTMLElement {
             <button type="button" class="graph-modal-close" id="graph-modal-close" aria-label="Close">×</button>
           </div>
           <div class="graph-modal-body">
-            <div class="graph-chart-container" id="graph-apex-chart"></div>
+            ${bodyContent}
           </div>
         </div>
       </div>
@@ -2363,14 +2392,14 @@ class EnergyPanel extends HTMLElement {
   async _openGraph(type, roomId = null, roomName = null) {
     try {
       const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
-      const isIntradayEvents = type === 'total_warnings' || type === 'total_shutoffs' || type === 'room_warnings' || type === 'room_shutoffs';
+      const isEventLog = this._isEventLogType(type);
       let result;
-      if (isIntraday) {
-        const payload = { type: 'smart_dashboards/get_intraday_history', minutes: 1440 };
+      if (isEventLog) {
+        const payload = { type: 'smart_dashboards/get_event_log', since_hours: 24 };
         if (roomId) payload.room_id = roomId;
         result = await this._hass.callWS(payload);
-      } else if (isIntradayEvents) {
-        const payload = { type: 'smart_dashboards/get_intraday_events' };
+      } else if (isIntraday) {
+        const payload = { type: 'smart_dashboards/get_intraday_history', minutes: 1440 };
         if (roomId) payload.room_id = roomId;
         result = await this._hass.callWS(payload);
       } else {
@@ -2380,7 +2409,9 @@ class EnergyPanel extends HTMLElement {
       this._graphData = result;
       this._render();
       this._attachGraphModalListeners();
-      await this._initApexChart();
+      if (!isEventLog) {
+        await this._initApexChart();
+      }
     } catch (e) {
       console.error('Failed to load graph data:', e);
       showToast(this.shadowRoot, 'Failed to load history', 'error');
@@ -3788,13 +3819,30 @@ class EnergyPanel extends HTMLElement {
           </div>
           <div class="grid-2" style="margin-bottom: 12px;">
             <div class="form-group">
+              <label class="form-label">On Debounce (sec)</label>
+              <input type="number" class="form-input stove-on-debounce" value="${device.stove_on_debounce_seconds ?? 0}" min="0" max="60" placeholder="0">
+              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Seconds above threshold before "on" (0=immediate)</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Off Debounce (sec)</label>
+              <input type="number" class="form-input stove-off-debounce" value="${device.stove_off_debounce_seconds ?? 10}" min="0" max="60" placeholder="10">
+              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Seconds below threshold before "off" (reduces on/off flicker)</div>
+            </div>
+          </div>
+          <div class="grid-2" style="margin-bottom: 12px;">
+            <div class="form-group">
               <label class="form-label">Final Warning (sec)</label>
               <input type="number" class="form-input stove-final-warning" value="${device.final_warning_seconds ?? 30}" min="5" max="300" placeholder="30">
             </div>
             <div class="form-group">
-              <label class="form-label">Presence Sensor</label>
-              ${this._renderEntityAutocomplete(device.presence_sensor || '', 'binary_sensor', roomIndex, 'stove-presence-sensor', 'binary_sensor.kitchen_presence')}
+              <label class="form-label">Timer Start Window (sec)</label>
+              <input type="number" class="form-input stove-timer-window" value="${device.timer_start_window_seconds ?? 10}" min="1" max="120" placeholder="10">
+              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Wait before starting timer after leaving kitchen (brief absences ignored)</div>
             </div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Presence Sensor</label>
+            ${this._renderEntityAutocomplete(device.presence_sensor || '', 'binary_sensor', roomIndex, 'stove-presence-sensor', 'binary_sensor.kitchen_presence')}
           </div>
         ` : '';
 
@@ -4695,8 +4743,11 @@ class EnergyPanel extends HTMLElement {
             device.plug2_shutoff = 0;
             device.stove_safety_enabled = item.querySelector('.stove-safety-enabled')?.checked !== false;
             device.stove_power_threshold = parseInt(item.querySelector('.stove-power-threshold')?.value) || 100;
+            device.stove_on_debounce_seconds = parseInt(item.querySelector('.stove-on-debounce')?.value) || 0;
+            device.stove_off_debounce_seconds = parseInt(item.querySelector('.stove-off-debounce')?.value) || 10;
             device.cooking_time_minutes = parseInt(item.querySelector('.stove-cooking-time')?.value) || 15;
             device.final_warning_seconds = parseInt(item.querySelector('.stove-final-warning')?.value) || 30;
+            device.timer_start_window_seconds = parseInt(item.querySelector('.stove-timer-window')?.value) || 10;
             device.presence_sensor = item.querySelector('.stove-presence-sensor')?.value || null;
           } else if (isMicrowave) {
             device.type = 'microwave';
@@ -4937,8 +4988,11 @@ class EnergyPanel extends HTMLElement {
           device.plug2_shutoff = 0;
           device.stove_safety_enabled = item.querySelector('.stove-safety-enabled')?.checked !== false;
           device.stove_power_threshold = parseInt(item.querySelector('.stove-power-threshold')?.value) || 100;
+          device.stove_on_debounce_seconds = parseInt(item.querySelector('.stove-on-debounce')?.value) || 0;
+          device.stove_off_debounce_seconds = parseInt(item.querySelector('.stove-off-debounce')?.value) || 10;
           device.cooking_time_minutes = parseInt(item.querySelector('.stove-cooking-time')?.value) || 15;
           device.final_warning_seconds = parseInt(item.querySelector('.stove-final-warning')?.value) || 30;
+          device.timer_start_window_seconds = parseInt(item.querySelector('.stove-timer-window')?.value) || 10;
           device.presence_sensor = item.querySelector('.stove-presence-sensor')?.value || null;
         } else if (isMicrowave) {
           device.type = 'microwave';
@@ -5053,6 +5107,7 @@ class EnergyPanel extends HTMLElement {
     const ttsSettings = this._config?.tts_settings || {};
 
     const config = {
+      ...this._config,
       rooms: filteredRooms,
       tts_settings: ttsSettings,
     };
@@ -5063,7 +5118,7 @@ class EnergyPanel extends HTMLElement {
         config: config,
       });
 
-      this._config = config;
+      this._config = { ...this._config, ...config };
       showToast(this.shadowRoot, 'Room saved!', 'success');
       
       // Refresh the page to show updated data
