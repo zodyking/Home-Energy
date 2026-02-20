@@ -77,6 +77,10 @@ class ConfigManager:
         self._home_kwh_alert_sent: bool = False  # Whether we've sent the home kWh alert today
         self._enforcement_reset_date: str | None = None
 
+        # Event log: 24h warnings/shutoffs with TTS success/fail (for dashboard log modal)
+        self._event_log: list[dict[str, Any]] = []
+        self._event_log_max_entries = 500
+
     @property
     def config(self) -> dict[str, Any]:
         """Return the current configuration."""
@@ -91,6 +95,11 @@ class ConfigManager:
     def daily_totals(self) -> dict[str, Any]:
         """Return daily totals history (read-only)."""
         return self._daily_totals
+
+    def is_room_enforcement_enabled(self, room_id: str) -> bool:
+        """Return True if power enforcement is enabled and this room is in rooms_enabled."""
+        pe = self.energy_config.get("power_enforcement", {})
+        return bool(pe.get("enabled", False)) and room_id in pe.get("rooms_enabled", [])
 
     async def async_load(self) -> None:
         """Load configuration from file."""
@@ -112,6 +121,8 @@ class ConfigManager:
         await self._async_load_energy_tracking()
         # Load event counts
         await self._async_load_event_counts()
+        # Load event log
+        await self._async_load_event_log()
         # Load daily totals history
         await self._async_load_daily_totals()
         # Load billing history
@@ -176,7 +187,17 @@ class ConfigManager:
 
     async def async_update_energy(self, energy_config: dict[str, Any]) -> None:
         """Update energy configuration."""
-        self._config["energy"] = self._validate_energy_config(energy_config)
+        existing = self._config.get("energy", {})
+        default_energy = DEFAULT_CONFIG["energy"]
+        merged = dict(energy_config)
+        # Preserve existing values when incoming config omits or sends empty structured fields
+        for key in ("power_enforcement", "statistics_settings", "breaker_lines", "breaker_panel_size"):
+            val = merged.get(key)
+            if key not in merged:
+                merged[key] = existing.get(key, default_energy.get(key))
+            elif isinstance(val, (list, dict)) and len(val or []) == 0:
+                merged[key] = existing.get(key, default_energy.get(key))
+        self._config["energy"] = self._validate_energy_config(merged)
         await self.async_save()
 
     def _validate_energy_config(self, config: dict[str, Any]) -> dict[str, Any]:
@@ -226,8 +247,11 @@ class ConfigManager:
                             item["plug2_shutoff"] = 0
                             item["stove_safety_enabled"] = outlet.get("stove_safety_enabled", True)
                             item["stove_power_threshold"] = int(outlet.get("stove_power_threshold", 100))
+                            item["stove_off_debounce_seconds"] = max(0, min(60, int(outlet.get("stove_off_debounce_seconds", 10))))
+                            item["stove_on_debounce_seconds"] = max(0, min(60, int(outlet.get("stove_on_debounce_seconds", 0))))
                             item["cooking_time_minutes"] = int(outlet.get("cooking_time_minutes", 15))
                             item["final_warning_seconds"] = int(outlet.get("final_warning_seconds", 30))
+                            item["timer_start_window_seconds"] = max(1, min(120, int(outlet.get("timer_start_window_seconds", 10))))
                             item["presence_sensor"] = outlet.get("presence_sensor")
                         elif outlet_type == "microwave":
                             item["plug2_entity"] = None
@@ -624,6 +648,67 @@ class ConfigManager:
         """Get event counts for current date only."""
         self._ensure_event_counts_for_today()
         return self._event_counts.copy()
+
+    # Event log (24h warnings/shutoffs with TTS success/fail)
+    EVENT_LOG_FILE = "smart_dashboards_event_log.json"
+
+    async def _async_load_event_log(self) -> None:
+        """Load event log from file."""
+        path = self.hass.config.path(self.EVENT_LOG_FILE)
+        try:
+            data = await self.hass.async_add_executor_job(_load_json_file, path)
+            self._event_log = data.get("events", []) if data else []
+        except (json.JSONDecodeError, IOError):
+            self._event_log = []
+
+    async def _async_save_event_log(self) -> None:
+        """Save event log to file (keep last N entries)."""
+        path = self.hass.config.path(self.EVENT_LOG_FILE)
+        payload = {"events": self._event_log[-self._event_log_max_entries :]}
+        try:
+            await self.hass.async_add_executor_job(_write_json_file, path, payload)
+        except IOError as err:
+            _LOGGER.error("Error saving event log: %s", err)
+
+    async def async_add_event_log_entry(
+        self,
+        room_id: str,
+        room_name: str,
+        event_type: str,  # "warning" or "shutoff"
+        outlet_name: str | None,
+        tts_succeeded: bool,
+    ) -> None:
+        """Add an event to the log (threshold warning or shutoff with TTS result)."""
+        now = dt_util.now()
+        entry = {
+            "ts": now.strftime("%Y-%m-%dT%H:%M:%S"),
+            "room_id": room_id,
+            "room_name": room_name,
+            "type": event_type,
+            "outlet_name": outlet_name,
+            "tts_succeeded": tts_succeeded,
+        }
+        self._event_log.append(entry)
+        if len(self._event_log) > self._event_log_max_entries:
+            self._event_log = self._event_log[-self._event_log_max_entries :]
+        await self._async_save_event_log()
+
+    def get_event_log(
+        self,
+        room_id: str | None = None,
+        since_hours: int = 24,
+    ) -> list[dict[str, Any]]:
+        """Get event log entries, optionally filtered by room and time."""
+        cutoff = dt_util.now() - timedelta(hours=since_hours)
+        cutoff_ts = cutoff.strftime("%Y-%m-%dT%H:%M:%S")
+        result = []
+        for e in reversed(self._event_log):
+            if e.get("ts", "") < cutoff_ts:
+                break
+            if room_id and e.get("room_id") != room_id:
+                continue
+            result.append(e)
+        return result
 
     # Daily totals history (end-of-day snapshots for 30-day graphs)
     async def _async_load_daily_totals(self) -> None:

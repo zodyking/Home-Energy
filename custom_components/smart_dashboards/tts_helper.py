@@ -11,6 +11,17 @@ from .const import DEFAULT_TTS_LANGUAGE, DEFAULT_TTS_VOLUME
 
 _LOGGER = logging.getLogger(__name__)
 
+# States in which TTS may be sent; do not send when off, playing, paused, etc.
+READY_FOR_TTS_STATES = ("on", "idle", "standby")
+
+
+def is_media_player_ready_for_tts(hass: HomeAssistant, media_player: str) -> bool:
+    """Return True if media player is ready for TTS (on, idle, or standby only)."""
+    state = hass.states.get(media_player)
+    if state is None:
+        return False
+    return (state.state or "").lower() in READY_FOR_TTS_STATES
+
 
 async def async_send_tts(
     hass: HomeAssistant,
@@ -19,6 +30,7 @@ async def async_send_tts(
     language: str | None = None,
     volume: float | None = None,
     tts_entity: str | None = None,
+    blocking: bool = False,
 ) -> None:
     """Send TTS message to a media player.
 
@@ -29,6 +41,8 @@ async def async_send_tts(
         language: TTS language (default: en)
         volume: Volume level 0-1 (optional, will set before TTS)
         tts_entity: TTS engine entity (e.g., tts.google_translate_en_com)
+        blocking: If True, wait for TTS to complete. Default False to avoid blocking
+            the energy monitor when decoder issues occur (e.g. Apple TV/HomePod).
     """
     if not message or not message.strip():
         _LOGGER.warning("Empty TTS message, skipping")
@@ -66,7 +80,7 @@ async def async_send_tts(
                 "message": message.strip(),
             },
             target={"entity_id": tts_entity},
-            blocking=True,
+            blocking=blocking,
         )
         _LOGGER.debug("TTS sent to %s via %s: %s", media_player, tts_entity, message[:50])
 

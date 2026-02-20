@@ -27,6 +27,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_daily_history)
     websocket_api.async_register_command(hass, websocket_get_intraday_history)
     websocket_api.async_register_command(hass, websocket_get_intraday_events)
+    websocket_api.async_register_command(hass, websocket_get_event_log)
     websocket_api.async_register_command(hass, websocket_get_statistics)
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
     websocket_api.async_register_command(hass, websocket_get_areas)
@@ -188,11 +189,11 @@ async def websocket_send_tts(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Send TTS to a media player."""
-    from .tts_helper import async_send_tts
+    """Send TTS to a media player (waits for on/idle/standby if not ready)."""
+    from .tts_queue import async_send_tts_or_queue
 
     try:
-        await async_send_tts(
+        await async_send_tts_or_queue(
             hass,
             media_player=msg["media_player"],
             message=msg["message"],
@@ -440,6 +441,30 @@ async def websocket_get_intraday_events(
     room_id = msg.get("room_id")
     data = config_manager.get_intraday_events(room_id=room_id)
     connection.send_result(msg["id"], data)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_event_log",
+        vol.Optional("room_id"): str,
+        vol.Optional("since_hours"): int,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_event_log(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get event log (warnings/shutoffs with TTS success/fail) for dashboard log modal."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+    room_id = msg.get("room_id")
+    since_hours = msg.get("since_hours", 24)
+    events = config_manager.get_event_log(room_id=room_id, since_hours=since_hours)
+    connection.send_result(msg["id"], {"events": events})
 
 
 @websocket_api.websocket_command(
