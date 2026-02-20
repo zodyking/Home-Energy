@@ -252,8 +252,10 @@ class EnergyPanel extends HTMLElement {
         const deviceType = deviceConfig?.type || 'outlet';
         const isSingleOutlet = deviceType === 'single_outlet';
         const isMinisplit = deviceType === 'minisplit';
+        const isFridge = deviceType === 'fridge';
+        const isCeilingVent = deviceType === 'ceiling_vent_fan';
         const isAppliance = deviceType === 'stove' || deviceType === 'microwave';
-        const outletTotal = isAppliance || isSingleOutlet || isMinisplit
+        const outletTotal = isAppliance || isSingleOutlet || isMinisplit || isFridge || isCeilingVent
           ? outlet.plug1.watts
           : outlet.plug1.watts + outlet.plug2.watts;
 
@@ -1179,18 +1181,24 @@ class EnergyPanel extends HTMLElement {
 
       .device-card.stove-card .outlet-name-top,
       .device-card.microwave-card .outlet-name-top,
-      .device-card.minisplit-card .outlet-name-top {
+      .device-card.minisplit-card .outlet-name-top,
+      .device-card.fridge-card .outlet-name-top,
+      .device-card.ceiling-vent-card .outlet-name-top {
         font-size: 12px;
         color: var(--primary-text-color);
       }
 
       .device-card.stove-card .outlet-meta,
-      .device-card.microwave-card .outlet-meta {
+      .device-card.microwave-card .outlet-meta,
+      .device-card.fridge-card .outlet-meta,
+      .device-card.ceiling-vent-card .outlet-meta {
         border-top-color: rgba(255,255,255,0.08);
       }
 
       .device-card.stove-card .threshold-badge,
-      .device-card.microwave-card .threshold-badge {
+      .device-card.microwave-card .threshold-badge,
+      .device-card.fridge-card .threshold-badge,
+      .device-card.ceiling-vent-card .threshold-badge {
         color: var(--secondary-text-color);
         background: rgba(255,255,255,0.08);
         border-color: rgba(255,255,255,0.12);
@@ -1725,6 +1733,147 @@ class EnergyPanel extends HTMLElement {
         border-radius: 0 0 6px 6px;
       }
 
+      /* Fridge card - single width, detailed two-door fridge */
+      .device-card.fridge-card {
+        width: 81px;
+        min-width: 81px;
+        flex-shrink: 0;
+        background: transparent;
+      }
+      .device-card.fridge-card .fridge-faceplate {
+        background: transparent;
+        border: none;
+        padding: 6px 6px 5px;
+        box-shadow: none;
+        min-height: 200px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .device-card.fridge-card .fridge-body {
+        flex: 1;
+        width: 100%;
+        margin: 4px 0;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        background: linear-gradient(135deg, #e8eae8 0%, #c8ccd0 50%, #b0b4b8 100%);
+        border: 1px solid rgba(0, 0, 0, 0.15);
+        border-radius: 4px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 1px 2px rgba(0,0,0,0.1);
+        overflow: hidden;
+        position: relative;
+      }
+      .device-card.fridge-card .fridge-body.fridge-on {
+        box-shadow: inset 0 0 0 2px rgba(3, 169, 244, 0.4);
+      }
+      .device-card.fridge-card .fridge-freezer-door {
+        flex: 0 0 28%;
+        background: linear-gradient(180deg, #e0e4e4 0%, #c0c4c8 100%);
+        border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        padding-left: 2px;
+      }
+      .device-card.fridge-card .fridge-fridge-door {
+        flex: 1;
+        min-height: 50px;
+        background: linear-gradient(180deg, #e4e8e8 0%, #c4c8cc 100%);
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        padding-left: 2px;
+      }
+      .device-card.fridge-card .fridge-handle {
+        width: 3px;
+        height: 80%;
+        background: linear-gradient(90deg, #a0a4a8 0%, #707478 50%, #909498 100%);
+        border-radius: 1px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 1px 1px rgba(0,0,0,0.2);
+      }
+      .device-card.fridge-card .fridge-handle-top { height: 60%; }
+      .device-card.fridge-card .fridge-handle-bottom { height: 70%; }
+      .device-card.fridge-card .fridge-watts {
+        position: absolute;
+        bottom: 4px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 9px;
+        font-weight: 800;
+        color: var(--panel-accent, #03a9f4);
+        font-variant-numeric: tabular-nums;
+        text-shadow: 0 0 3px rgba(0,0,0,0.6);
+      }
+      .device-card.fridge-card .fridge-watts.over-threshold {
+        color: var(--panel-danger, #ff5252);
+      }
+
+      /* Ceiling vent fan card - single width, detailed vent grill */
+      .device-card.ceiling-vent-card {
+        width: 81px;
+        min-width: 81px;
+        flex-shrink: 0;
+        background: transparent;
+      }
+      .device-card.ceiling-vent-card .ceiling-vent-faceplate {
+        background: transparent;
+        border: none;
+        padding: 6px 6px 5px;
+        box-shadow: none;
+        min-height: 200px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .device-card.ceiling-vent-card .ceiling-vent-body {
+        flex: 1;
+        width: 100%;
+        margin: 4px 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(180deg, #f5f5f5 0%, #e8e8e8 100%);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 6px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 2px rgba(0,0,0,0.08);
+        overflow: hidden;
+        position: relative;
+      }
+      .device-card.ceiling-vent-card .ceiling-vent-body.vent-on {
+        box-shadow: inset 0 0 0 2px rgba(3, 169, 244, 0.4);
+      }
+      .device-card.ceiling-vent-card .ceiling-vent-grill {
+        width: 100%;
+        padding: 8px 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        align-items: stretch;
+      }
+      .device-card.ceiling-vent-card .cv-slat {
+        display: block;
+        height: 2px;
+        background: linear-gradient(180deg, #1a1a1a 0%, #0d0d0d 50%, #1a1a1a 100%);
+        border-radius: 0;
+        box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
+      }
+      .device-card.ceiling-vent-card .ceiling-vent-watts {
+        position: absolute;
+        bottom: 4px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 9px;
+        font-weight: 800;
+        color: var(--panel-accent, #03a9f4);
+        font-variant-numeric: tabular-nums;
+        text-shadow: 0 0 3px rgba(255,255,255,0.5);
+      }
+      .device-card.ceiling-vent-card .ceiling-vent-watts.over-threshold {
+        color: var(--panel-danger, #ff5252);
+      }
+
       .graph-modal-overlay {
         position: fixed;
         inset: 0;
@@ -1806,6 +1955,11 @@ class EnergyPanel extends HTMLElement {
         .device-card.minisplit-card {
           width: 216px;
           min-width: 216px;
+        }
+        .device-card.fridge-card,
+        .device-card.ceiling-vent-card {
+          width: 72px;
+          min-width: 72px;
         }
       }
 
@@ -2616,7 +2770,7 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
           <div class="statistics-totals-card card">
-            <h3 class="statistics-card-title">Totals (from daily data)</h3>
+            <h3 class="statistics-card-title">Totals (from sensor history)</h3>
             <div class="statistics-totals-grid">
               <div class="statistics-total-item">
                 <span class="statistics-total-value" id="stat-total-kwh">${totalKwh.toFixed(2)}</span>
@@ -2746,6 +2900,8 @@ class EnergyPanel extends HTMLElement {
     if (type === 'stove') return this._renderStoveCard(device, index, deviceData);
     if (type === 'microwave') return this._renderMicrowaveCard(device, index, deviceData);
     if (type === 'minisplit') return this._renderMinisplitCard(device, index, deviceData);
+    if (type === 'fridge') return this._renderFridgeCard(device, index, deviceData);
+    if (type === 'ceiling_vent_fan') return this._renderCeilingVentCard(device, index, deviceData);
     if (type === 'light') return this._renderLightCard(device, index, deviceData);
     return this._renderOutletCard(device, index, deviceData);
   }
@@ -2888,6 +3044,67 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
           <div class="outlet-meta ms-meta">
+            <div class="outlet-threshold">
+              <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderFridgeCard(device, index, deviceData) {
+    const data = deviceData || { plug1: { watts: 0 } };
+    const watts = data.plug1?.watts || 0;
+    const isOverThreshold = device.threshold > 0 && watts > device.threshold;
+    const isActive = watts > 0.1;
+
+    return `
+      <div class="device-card fridge-card" data-outlet-index="${index}">
+        <div class="fridge-faceplate">
+          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="fridge-body ${isActive ? 'fridge-on' : ''}">
+            <div class="fridge-freezer-door">
+              <div class="fridge-handle fridge-handle-top"></div>
+            </div>
+            <div class="fridge-fridge-door">
+              <div class="fridge-handle fridge-handle-bottom"></div>
+            </div>
+            <div class="fridge-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
+          </div>
+          <div class="outlet-meta fridge-meta">
+            <div class="outlet-threshold">
+              <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderCeilingVentCard(device, index, deviceData) {
+    const data = deviceData || { plug1: { watts: 0 } };
+    const watts = data.plug1?.watts || 0;
+    const isOverThreshold = device.threshold > 0 && watts > device.threshold;
+    const isActive = watts > 0.1;
+
+    return `
+      <div class="device-card ceiling-vent-card" data-outlet-index="${index}">
+        <div class="ceiling-vent-faceplate">
+          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="ceiling-vent-body ${isActive ? 'vent-on' : ''}">
+            <div class="ceiling-vent-grill">
+              <span class="cv-slat"></span>
+              <span class="cv-slat"></span>
+              <span class="cv-slat"></span>
+              <span class="cv-slat"></span>
+              <span class="cv-slat"></span>
+              <span class="cv-slat"></span>
+              <span class="cv-slat"></span>
+            </div>
+            <div class="ceiling-vent-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
+          </div>
+          <div class="outlet-meta ceiling-vent-meta">
             <div class="outlet-threshold">
               <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
             </div>
@@ -3611,6 +3828,8 @@ class EnergyPanel extends HTMLElement {
                 <button class="add-device-option" data-type="stove">Stove</button>
                 <button class="add-device-option" data-type="microwave">Microwave</button>
                 <button class="add-device-option" data-type="minisplit">Mini-Split (Heater/AC)</button>
+                <button class="add-device-option" data-type="fridge">Fridge</button>
+                <button class="add-device-option" data-type="ceiling_vent_fan">Ceiling Vent Fan</button>
                 <button class="add-device-option" data-type="light">Light</button>
               </div>
             </div>
@@ -3631,6 +3850,12 @@ class EnergyPanel extends HTMLElement {
     }
     if (type === 'minisplit') {
       return this._renderMinisplitSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
+    }
+    if (type === 'fridge') {
+      return this._renderFridgeSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
+    }
+    if (type === 'ceiling_vent_fan') {
+      return this._renderCeilingVentSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
     }
     if (type === 'light') {
       return this._renderLightSettings(device, deviceIndex, roomIndex, isCollapsed);
@@ -3775,6 +4000,90 @@ class EnergyPanel extends HTMLElement {
                 <button class="test-switch-btn" data-switch="${device.plug1_switch || ''}" title="Test switch">
                   <svg viewBox="0 0 24 24">${icons.power}</svg>
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderFridgeSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed = true) {
+    const displayName = device.name || 'Unnamed Fridge';
+    const collapsedClass = isCollapsed ? 'collapsed' : '';
+    return `
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="fridge" draggable="true">
+        <div class="outlet-settings-bar">
+          <div class="outlet-drag-handle" title="Drag to reorder">
+            <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0 4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
+          </div>
+          <span class="outlet-name-display ${device.name ? '' : 'empty'}">${displayName}</span>
+          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${deviceIndex}" title="Delete">
+            <svg viewBox="0 0 24 24">${icons.delete}</svg>
+          </button>
+          <div class="outlet-expand-icon">
+            <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+          </div>
+        </div>
+        <div class="outlet-settings-body">
+          <div class="outlet-settings-header">
+            <div class="form-group" style="flex: 1;">
+              <label class="form-label">Fridge Name</label>
+              <input type="text" class="form-input outlet-name" value="${device.name || ''}" placeholder="Fridge name...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Warn Limit</label>
+              <input type="number" class="form-input outlet-threshold" value="${device.threshold || ''}" placeholder="W" min="0" style="width: 70px;">
+            </div>
+          </div>
+          <div class="plugs-settings-grid single-plug">
+            <div class="plug-settings-card" data-plug="1">
+              <div class="plug-settings-title">Power Sensor</div>
+              <div class="form-group">
+                <label class="form-label">Power Sensor</label>
+                ${this._renderEntityAutocomplete(device.plug1_entity || '', 'sensor', roomIndex, 'outlet-plug1', 'sensor.fridge_power')}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderCeilingVentSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed = true) {
+    const displayName = device.name || 'Unnamed Ceiling Vent';
+    const collapsedClass = isCollapsed ? 'collapsed' : '';
+    return `
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="ceiling_vent_fan" draggable="true">
+        <div class="outlet-settings-bar">
+          <div class="outlet-drag-handle" title="Drag to reorder">
+            <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0 4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
+          </div>
+          <span class="outlet-name-display ${device.name ? '' : 'empty'}">${displayName}</span>
+          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${deviceIndex}" title="Delete">
+            <svg viewBox="0 0 24 24">${icons.delete}</svg>
+          </button>
+          <div class="outlet-expand-icon">
+            <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+          </div>
+        </div>
+        <div class="outlet-settings-body">
+          <div class="outlet-settings-header">
+            <div class="form-group" style="flex: 1;">
+              <label class="form-label">Ceiling Vent Fan Name</label>
+              <input type="text" class="form-input outlet-name" value="${device.name || ''}" placeholder="Ceiling vent name...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Warn Limit</label>
+              <input type="number" class="form-input outlet-threshold" value="${device.threshold || ''}" placeholder="W" min="0" style="width: 70px;">
+            </div>
+          </div>
+          <div class="plugs-settings-grid single-plug">
+            <div class="plug-settings-card" data-plug="1">
+              <div class="plug-settings-title">Power Sensor</div>
+              <div class="form-group">
+                <label class="form-label">Power Sensor</label>
+                ${this._renderEntityAutocomplete(device.plug1_entity || '', 'sensor', roomIndex, 'outlet-plug1', 'sensor.vent_power')}
               </div>
             </div>
           </div>
@@ -4789,6 +5098,13 @@ class EnergyPanel extends HTMLElement {
             device.plug2_switch = null;
             device.plug1_shutoff = plug1Shutoff;
             device.plug2_shutoff = 0;
+          } else if (deviceTypeFromItem === 'fridge' || deviceTypeFromItem === 'ceiling_vent_fan') {
+            device.type = deviceTypeFromItem;
+            device.plug2_entity = null;
+            device.plug1_switch = null;
+            device.plug2_switch = null;
+            device.plug1_shutoff = 0;
+            device.plug2_shutoff = 0;
           } else {
             device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
             device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
@@ -5034,6 +5350,13 @@ class EnergyPanel extends HTMLElement {
           device.plug1_switch = plug1Switch || null;
           device.plug2_switch = null;
           device.plug1_shutoff = plug1Shutoff;
+          device.plug2_shutoff = 0;
+        } else if (deviceTypeFromItem === 'fridge' || deviceTypeFromItem === 'ceiling_vent_fan') {
+          device.type = deviceTypeFromItem;
+          device.plug2_entity = null;
+          device.plug1_switch = null;
+          device.plug2_switch = null;
+          device.plug1_shutoff = 0;
           device.plug2_shutoff = 0;
         } else {
           device.type = isSingleOutlet ? 'single_outlet' : 'outlet';

@@ -471,6 +471,130 @@ async def websocket_get_event_log(
     connection.send_result(msg["id"], {"events": events})
 
 
+def _parse_power_from_state(state_value: str, unit: str | None) -> float:
+    """Parse power value to watts. Handles W, kW, mW."""
+    if not state_value or state_value in ("unknown", "unavailable"):
+        return 0.0
+    try:
+        val = float(str(state_value).strip())
+    except (ValueError, TypeError):
+        return 0.0
+    if unit == "kW":
+        return val * 1000.0
+    if unit == "mW":
+        return val / 1000.0
+    return val  # W or default
+
+
+def _integrate_power_to_wh(
+    entity_states: list, entity_id: str
+) -> float:
+    """Integrate power (W) over time using trapezoidal rule. Returns Wh."""
+    if not entity_states or len(entity_states) < 2:
+        return 0.0
+    total_wh = 0.0
+    for i in range(1, len(entity_states)):
+        s1, s2 = entity_states[i - 1], entity_states[i]
+        try:
+            unit1 = s1.attributes.get("unit_of_measurement") if hasattr(s1, "attributes") else None
+            unit2 = s2.attributes.get("unit_of_measurement") if hasattr(s2, "attributes") else None
+            w1 = _parse_power_from_state(s1.state, unit1)
+            w2 = _parse_power_from_state(s2.state, unit2)
+        except (AttributeError, TypeError):
+            continue
+        dt_sec = (s2.last_updated - s1.last_updated).total_seconds()
+        if dt_sec <= 0:
+            continue
+        # Trapezoidal: (w1 + w2) / 2 * hours
+        total_wh += (w1 + w2) / 2.0 * (dt_sec / 3600.0)
+    return total_wh
+
+
+def _compute_kwh_from_history_sync(
+    hass: HomeAssistant,
+    entity_to_room: dict[str, str],
+    start_dt,  # datetime
+    end_dt,  # datetime
+) -> tuple[float, dict[str, float]]:
+    """Synchronous core: query recorder history and integrate power to Wh.
+    Returns (total_wh, room_wh_map)."""
+    from homeassistant.components.recorder.history import get_significant_states_with_session
+    from homeassistant.components.recorder.util import session_scope
+
+    entity_ids = list(entity_to_room.keys())
+    if not entity_ids:
+        return 0.0, {}
+
+    with session_scope(hass=hass, read_only=True) as session:
+        states_dict = get_significant_states_with_session(
+            hass,
+            session,
+            start_dt,
+            end_dt,
+            entity_ids,
+            None,
+            include_start_time_state=True,
+            significant_changes_only=False,
+            minimal_response=False,
+            no_attributes=False,
+        )
+
+    room_wh: dict[str, float] = {}
+    total_wh = 0.0
+    for eid, states in states_dict.items():
+        wh = _integrate_power_to_wh(states, eid)
+        room_id = entity_to_room.get(eid)
+        if room_id:
+            room_wh[room_id] = room_wh.get(room_id, 0.0) + wh
+        total_wh += wh
+    return total_wh, room_wh
+
+
+async def _compute_kwh_from_history(
+    hass: HomeAssistant,
+    config_manager,
+    start_date: str,
+    end_date: str,
+) -> tuple[float, dict[str, float]]:
+    """Compute kWh from HA recorder history over start_date..end_date.
+    Returns (total_wh, room_wh_map)."""
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.util import dt as dt_util
+
+    # Collect entity_ids and room mapping from room config
+    entity_to_room: dict[str, str] = {}
+    for room in config_manager.energy_config.get("rooms", []):
+        room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+        for outlet in room.get("outlets", []):
+            if outlet.get("type") == "light":
+                continue
+            for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
+                if eid and isinstance(eid, str) and eid.strip():
+                    entity_to_room[eid.strip()] = room_id
+
+    if not entity_to_room:
+        return 0.0, {}
+
+    # Parse date range to UTC datetimes
+    try:
+        start_dt = dt_util.parse_datetime(f"{start_date} 00:00:00")
+        end_dt = dt_util.parse_datetime(f"{end_date} 23:59:59")
+        if start_dt is None or end_dt is None:
+            return 0.0, {}
+        start_dt = dt_util.as_utc(start_dt)
+        end_dt = dt_util.as_utc(end_dt)
+    except (ValueError, TypeError):
+        return 0.0, {}
+
+    return await get_instance(hass).async_add_executor_job(
+        _compute_kwh_from_history_sync,
+        hass,
+        entity_to_room,
+        start_dt,
+        end_dt,
+    )
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "smart_dashboards/get_statistics",
@@ -520,40 +644,51 @@ async def websocket_get_statistics(
         connection.send_result(msg["id"], result)
         return
 
-    # Aggregate from daily totals + today's live data
+    # kWh from HA recorder history (same source as sensor graphs)
+    try:
+        total_wh, room_wh_map = await _compute_kwh_from_history(
+            hass, config_manager, start, end
+        )
+    except Exception as err:  # recorder not ready or history unavailable
+        _LOGGER.warning("Statistics kWh from history failed: %s", err)
+        total_wh = 0.0
+        room_wh_map = {}
+    total_kwh = total_wh / 1000.0 if total_wh else 0.0
+
+    # Warnings and shutoffs from daily_totals
     from homeassistant.util import dt as dt_util
     today = dt_util.now().strftime("%Y-%m-%d")
     daily_totals = config_manager.daily_totals
-    # Include today in the date list if it's within range
     all_dates = set(daily_totals.keys())
     if start <= today <= end:
         all_dates.add(today)
     dates_sorted = sorted(all_dates)
     range_dates = [d for d in dates_sorted if start <= d <= end]
 
-    total_wh = 0.0
     total_warnings = 0
     total_shutoffs = 0
     room_sums: dict[str, dict[str, Any]] = {}
 
+    for rid in room_wh_map:
+        room_sums[rid] = {
+            "kwh": room_wh_map[rid] / 1000.0,
+            "warnings": 0,
+            "shutoffs": 0,
+        }
+
     for d in range_dates:
-        # Use live data for today, historical data for past days
         if d == today:
             row = config_manager._build_today_totals()
         else:
             row = daily_totals.get(d, {})
-        total_wh += float(row.get("total_wh", 0))
         total_warnings += int(row.get("total_warnings", 0))
         total_shutoffs += int(row.get("total_shutoffs", 0))
         row_rooms = row.get("rooms") or {}
         for rid, rdata in row_rooms.items():
             if rid not in room_sums:
                 room_sums[rid] = {"kwh": 0.0, "warnings": 0, "shutoffs": 0}
-            room_sums[rid]["kwh"] += float(rdata.get("wh", 0)) / 1000.0
             room_sums[rid]["warnings"] += int(rdata.get("warnings", 0))
             room_sums[rid]["shutoffs"] += int(rdata.get("shutoffs", 0))
-
-    total_kwh = total_wh / 1000.0 if total_wh else 0.0
     result["total_kwh"] = round(total_kwh, 2)
     result["total_warnings"] = total_warnings
     result["total_shutoffs"] = total_shutoffs

@@ -245,7 +245,10 @@ class ConfigManager:
                 for outlet in room.get("outlets", []):
                     if isinstance(outlet, dict) and outlet.get("name"):
                         outlet_type = outlet.get("type", "outlet")
-                        if outlet_type not in ("outlet", "single_outlet", "stove", "microwave", "minisplit", "light"):
+                        if outlet_type not in (
+                            "outlet", "single_outlet", "stove", "microwave",
+                            "minisplit", "light", "fridge", "ceiling_vent_fan",
+                        ):
                             outlet_type = "outlet"
                         item = {
                             "name": outlet["name"],
@@ -313,7 +316,7 @@ class ConfigManager:
                                 ]
                             else:
                                 item["light_entities"] = []
-                        elif outlet_type in ("single_outlet", "minisplit"):
+                        elif outlet_type in ("single_outlet", "minisplit", "fridge", "ceiling_vent_fan"):
                             item["plug2_entity"] = None
                             item["plug1_switch"] = outlet.get("plug1_switch")
                             item["plug2_switch"] = None
@@ -947,14 +950,9 @@ class ConfigManager:
             base_start = billing_start
             base_end = billing_end
         else:
-            # Fall back to available daily data + today if we have live data
-            available = sorted(self._daily_totals.keys())
-            if self._day_energy_data:
-                available = sorted(set(available) | {today})
-            if not available:
-                return (None, None, False)
-            base_start = available[0]
-            base_end = available[-1]
+            # Fall back to last 31 days when no billing sensors are configured
+            base_start = (dt_util.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            base_end = today
 
         # Include today if within range
         if base_start <= today <= base_end:
