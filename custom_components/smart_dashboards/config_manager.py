@@ -235,6 +235,7 @@ class ConfigManager:
                     "area_id": room.get("area_id"),
                     "media_player": room.get("media_player"),
                     "threshold": int(room.get("threshold", 0)),
+                    "kwh_budget": max(0, float(room.get("kwh_budget", 5))),
                     "volume": float(room.get("volume", 0.7)),
                     "responsive_light_warnings": bool(room.get("responsive_light_warnings", False)),
                     "responsive_light_color": _validate_rgb(room.get("responsive_light_color")),
@@ -316,12 +317,21 @@ class ConfigManager:
                                 ]
                             else:
                                 item["light_entities"] = []
-                        elif outlet_type in ("single_outlet", "minisplit", "fridge", "ceiling_vent_fan"):
+                        elif outlet_type in ("single_outlet", "minisplit", "fridge"):
                             item["plug2_entity"] = None
                             item["plug1_switch"] = outlet.get("plug1_switch")
                             item["plug2_switch"] = None
                             item["plug1_shutoff"] = int(outlet.get("plug1_shutoff", 0))
                             item["plug2_shutoff"] = 0
+                        elif outlet_type == "ceiling_vent_fan":
+                            item["plug1_entity"] = None
+                            item["plug2_entity"] = None
+                            item["plug1_switch"] = None
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = 0
+                            item["plug2_shutoff"] = 0
+                            item["switch_entity"] = outlet.get("switch_entity")
+                            item["watts_when_on"] = max(0, int(outlet.get("watts_when_on", 0)))
                         else:
                             item["plug2_entity"] = None
                             item["plug1_switch"] = None
@@ -377,6 +387,7 @@ class ConfigManager:
             "phase_reset_msg": tts.get("phase_reset_msg", default_tts.get("phase_reset_msg", "")),
             "room_kwh_warn_msg": tts.get("room_kwh_warn_msg", default_tts.get("room_kwh_warn_msg", "")),
             "home_kwh_warn_msg": tts.get("home_kwh_warn_msg", default_tts.get("home_kwh_warn_msg", "")),
+            "budget_exceeded_msg": tts.get("budget_exceeded_msg", default_tts.get("budget_exceeded_msg", "")),
         }
 
         # Validate power enforcement settings
@@ -519,11 +530,14 @@ class ConfigManager:
         if not room:
             return {"timestamps": [], "watts": []}
         
-        # Collect all entity IDs for this room
+        # Collect all entity IDs / tracking keys for this room
         entity_ids = []
         for outlet in room.get("outlets", []):
             if outlet.get("type") == "light":
                 key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                entity_ids.append(key)
+            elif outlet.get("type") == "ceiling_vent_fan":
+                key = f"ceiling_vent_{room_id}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
                 entity_ids.append(key)
             else:
                 for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
@@ -773,6 +787,9 @@ class ConfigManager:
                 if outlet.get("type") == "light":
                     key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
                     room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                elif outlet.get("type") == "ceiling_vent_fan":
+                    key = f"ceiling_vent_{room_id}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
+                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
                         if e:
@@ -816,6 +833,9 @@ class ConfigManager:
             for outlet in room.get("outlets", []):
                 if outlet.get("type") == "light":
                     key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                elif outlet.get("type") == "ceiling_vent_fan":
+                    key = f"ceiling_vent_{rid}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
                     room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
@@ -1079,7 +1099,8 @@ class ConfigManager:
     async def async_increment_volume_offset(self, room_id: str, increment: int, max_offset: int = 100) -> int:
         """Increase volume offset for a room. Returns new offset."""
         state = self.get_enforcement_state(room_id)
-        state["volume_offset"] = min(max_offset, state["volume_offset"] + increment)
+        current = int(state.get("volume_offset", 0) or 0)
+        state["volume_offset"] = min(max_offset, current + increment)
         await self._async_save_enforcement_state()
         return state["volume_offset"]
 
@@ -1093,6 +1114,9 @@ class ConfigManager:
             for outlet in room.get("outlets", []):
                 if outlet.get("type") == "light":
                     key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                elif outlet.get("type") == "ceiling_vent_fan":
+                    key = f"ceiling_vent_{rid}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
                     room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):

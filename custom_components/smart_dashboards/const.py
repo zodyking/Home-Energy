@@ -48,6 +48,7 @@ DEFAULT_PHASE2_WARN_MSG = "{prefix} {room_name} has hit {warning_count} threshol
 DEFAULT_PHASE_RESET_MSG = "{prefix} {room_name} has maintained power below threshold for the required time. Power enforcement has been reset to normal."
 DEFAULT_ROOM_KWH_WARN_MSG = "{prefix} {room_name} has exceeded {kwh_limit} kilowatt hours for the day. Please reduce power consumption by powering off unused devices. This room has contributed to {percentage} percent of the entire home's usage for the day."
 DEFAULT_HOME_KWH_WARN_MSG = "{prefix} Your home has exceeded {kwh_limit} kilowatt hours for the day. This is above average household usage in New York City. Please reduce power consumption."
+DEFAULT_BUDGET_EXCEEDED_MSG = "{prefix} {room_name} has met {kwh_used} kilowatt hours. Threshold warnings are now active."
 
 # Default config structure
 DEFAULT_CONFIG = {
@@ -77,6 +78,7 @@ DEFAULT_CONFIG = {
             "phase_reset_msg": DEFAULT_PHASE_RESET_MSG,
             "room_kwh_warn_msg": DEFAULT_ROOM_KWH_WARN_MSG,
             "home_kwh_warn_msg": DEFAULT_HOME_KWH_WARN_MSG,
+            "budget_exceeded_msg": DEFAULT_BUDGET_EXCEEDED_MSG,
         },
         "power_enforcement": {
             "enabled": False,

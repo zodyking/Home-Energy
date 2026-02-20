@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import voluptuous as vol
@@ -13,6 +14,10 @@ from homeassistant.core import HomeAssistant, callback
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+# Server-side cache for get_statistics (60s TTL) to avoid heavy recorder queries
+_STATISTICS_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+_STATISTICS_CACHE_TTL = 60.0
 
 
 @callback
@@ -288,7 +293,7 @@ async def websocket_get_power_data(
                 switch_entity = outlet.get("switch_entity")
                 if switch_entity:
                     state = hass.states.get(switch_entity)
-                    is_on = (state.state or "off").lower() in ("on",)
+                    is_on = bool(state and (state.state or "off").lower() in ("on",))
                     outlet_data["switch_state"] = is_on
                     if is_on:
                         light_ents = outlet.get("light_entities") or []
@@ -304,6 +309,21 @@ async def websocket_get_power_data(
                         room_data["total_day_wh"] += total_day_wh
                 else:
                     outlet_data["switch_state"] = False
+            elif outlet_type == "ceiling_vent_fan":
+                # Ceiling vent: switch + predefined watts when on
+                switch_entity = outlet.get("switch_entity")
+                watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
+                if switch_entity:
+                    state = hass.states.get(switch_entity)
+                    is_on = bool(state and (state.state or "off").lower() in ("on",))
+                    watts = watts_when_on if is_on else 0.0
+                else:
+                    watts = 0.0
+                tracking_key = f"ceiling_vent_{room_id}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
+                day_wh = config_manager.get_day_energy(tracking_key)
+                outlet_data["plug1"] = {"watts": watts, "day_wh": round(day_wh, 2)}
+                room_data["total_watts"] += watts
+                room_data["total_day_wh"] += day_wh
             else:
                 # Get plug 1 data
                 if outlet.get("plug1_entity"):
@@ -405,18 +425,19 @@ async def websocket_get_intraday_history(
             return 0.0
 
         current_watts = 0.0
-        if room_id:
-            for room in config_manager.energy_config.get("rooms", []):
-                rid = room.get("id", room["name"].lower().replace(" ", "_"))
-                if rid == room_id:
-                    for outlet in room.get("outlets", []):
-                        for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
-                            if eid:
-                                current_watts += _get_power(eid)
-                    break
-        else:
-            for room in config_manager.energy_config.get("rooms", []):
-                for outlet in room.get("outlets", []):
+        for room in config_manager.energy_config.get("rooms", []):
+            rid = room.get("id", room["name"].lower().replace(" ", "_"))
+            if room_id and rid != room_id:
+                continue
+            for outlet in room.get("outlets", []):
+                if outlet.get("type") == "ceiling_vent_fan":
+                    switch_entity = outlet.get("switch_entity")
+                    watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
+                    if switch_entity and watts_when_on > 0:
+                        state = hass.states.get(switch_entity)
+                        if state and (state.state or "off").lower() in ("on",):
+                            current_watts += watts_when_on
+                elif outlet.get("type") != "light":
                     for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
                         if eid:
                             current_watts += _get_power(eid)
@@ -620,6 +641,17 @@ async def websocket_get_statistics(
         date_start=date_start, date_end=date_end
     )
 
+    # Return cached result if valid (avoids heavy recorder query)
+    cache_key = (start or "", end or "")
+    now = time.monotonic()
+    if cache_key[0] and cache_key[1]:
+        entry = _STATISTICS_CACHE.get(cache_key)
+        if entry:
+            cached_at, cached_result = entry
+            if now - cached_at < _STATISTICS_CACHE_TTL:
+                connection.send_result(msg["id"], cached_result)
+                return
+
     result: dict[str, Any] = {
         "date_start": start,
         "date_end": end,
@@ -743,6 +775,9 @@ async def websocket_get_statistics(
                     result["sensor_values"][key] = float(val)
                 except (ValueError, TypeError):
                     pass
+
+    if cache_key[0] and cache_key[1]:
+        _STATISTICS_CACHE[cache_key] = (now, result)
 
     connection.send_result(msg["id"], result)
 

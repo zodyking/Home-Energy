@@ -18,6 +18,7 @@ class EnergyPanel extends HTMLElement {
     this._dashboardView = 'rooms'; // 'rooms' | 'statistics' | 'stove'
     this._stoveData = null;
     this._refreshInterval = null;
+    this._statsRefreshInterval = null;
     this._loading = true;
     this._error = null;
     this._draggedRoomCard = null;
@@ -49,18 +50,20 @@ class EnergyPanel extends HTMLElement {
 
   _startRefresh() {
     this._stopRefresh();
-    this._refreshInterval = setInterval(() => {
-      this._loadPowerData();
-      if (this._dashboardView === 'statistics') {
-        this._loadStatistics();
-      }
-    }, 1000);
+    this._refreshInterval = setInterval(() => this._loadPowerData(), 1000);
+    this._statsRefreshInterval = setInterval(() => {
+      if (this._dashboardView === 'statistics') this._loadStatistics();
+    }, 30000);
   }
 
   _stopRefresh() {
     if (this._refreshInterval) {
       clearInterval(this._refreshInterval);
       this._refreshInterval = null;
+    }
+    if (this._statsRefreshInterval) {
+      clearInterval(this._statsRefreshInterval);
+      this._statsRefreshInterval = null;
     }
   }
 
@@ -83,10 +86,8 @@ class EnergyPanel extends HTMLElement {
       this._entities.switches = switchesResult.switches || [];
       this._entities.binary_sensors = entities.binary_sensors || [];
       this._areas = areasResult.areas || [];
-      await Promise.all([
-        this._loadPowerData(),
-        this._loadStatistics(),
-      ]);
+      await this._loadPowerData();
+      // Statistics loaded lazily when user switches to Statistics tab (avoids slow recorder query on init)
       this._loading = false;
       this._render();
       this._startRefresh();
@@ -1733,7 +1734,7 @@ class EnergyPanel extends HTMLElement {
         border-radius: 0 0 6px 6px;
       }
 
-      /* Fridge card - single width, detailed two-door fridge */
+      /* Fridge card - single width, detailed two-door top-freezer fridge */
       .device-card.fridge-card {
         width: 81px;
         min-width: 81px;
@@ -1757,59 +1758,80 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: stretch;
-        background: linear-gradient(135deg, #e8eae8 0%, #c8ccd0 50%, #b0b4b8 100%);
-        border: 1px solid rgba(0, 0, 0, 0.15);
+        background: linear-gradient(135deg, #b8bcc0 0%, #a0a4a8 100%);
+        border: 1px solid rgba(0, 0, 0, 0.2);
         border-radius: 4px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 1px 2px rgba(0,0,0,0.1);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.12);
         overflow: hidden;
         position: relative;
       }
       .device-card.fridge-card .fridge-body.fridge-on {
         box-shadow: inset 0 0 0 2px rgba(3, 169, 244, 0.4);
       }
+      .device-card.fridge-card .fridge-freezer-door,
+      .device-card.fridge-card .fridge-fresh-door {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        padding-left: 3px;
+        position: relative;
+      }
       .device-card.fridge-card .fridge-freezer-door {
-        flex: 0 0 28%;
-        background: linear-gradient(180deg, #e0e4e4 0%, #c0c4c8 100%);
-        border-bottom: 1px solid rgba(0, 0, 0, 0.12);
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        padding-left: 2px;
+        flex: 0 0 32%;
+        min-height: 36px;
       }
-      .device-card.fridge-card .fridge-fridge-door {
+      .device-card.fridge-card .fridge-fresh-door {
         flex: 1;
-        min-height: 50px;
-        background: linear-gradient(180deg, #e4e8e8 0%, #c4c8cc 100%);
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        padding-left: 2px;
+        min-height: 56px;
       }
-      .device-card.fridge-card .fridge-handle {
-        width: 3px;
-        height: 80%;
-        background: linear-gradient(90deg, #a0a4a8 0%, #707478 50%, #909498 100%);
+      .device-card.fridge-card .fridge-door-panel {
+        flex: 1;
+        height: 100%;
+        min-height: 24px;
+        background: linear-gradient(135deg, #e4e8ec 0%, #d0d4d8 40%, #c4c8cc 100%);
+        border: 1px solid rgba(0, 0, 0, 0.15);
+        border-radius: 2px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 0 rgba(0,0,0,0.08);
+      }
+      .device-card.fridge-card .fridge-freezer-door .fridge-door-panel {
+        background: linear-gradient(135deg, #e0e4e8 0%, #ccd0d4 100%);
+      }
+      .device-card.fridge-card .fridge-handle-vert {
+        width: 4px;
+        height: 75%;
+        min-height: 18px;
+        margin-left: 4px;
+        background: linear-gradient(90deg, #909498 0%, #606468 40%, #707478 100%);
         border-radius: 1px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 1px 1px rgba(0,0,0,0.2);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 1px 1px rgba(0,0,0,0.2);
+        flex-shrink: 0;
       }
-      .device-card.fridge-card .fridge-handle-top { height: 60%; }
-      .device-card.fridge-card .fridge-handle-bottom { height: 70%; }
+      .device-card.fridge-card .fridge-seam {
+        height: 2px;
+        background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.2) 20%, rgba(0,0,0,0.2) 80%, transparent 100%);
+        flex-shrink: 0;
+      }
+      .device-card.fridge-card .fridge-kickplate {
+        height: 5px;
+        background: linear-gradient(180deg, #2a2a2a 0%, #1a1a1a 100%);
+        flex-shrink: 0;
+      }
       .device-card.fridge-card .fridge-watts {
         position: absolute;
-        bottom: 4px;
+        bottom: 8px;
         left: 50%;
         transform: translateX(-50%);
         font-size: 9px;
         font-weight: 800;
         color: var(--panel-accent, #03a9f4);
         font-variant-numeric: tabular-nums;
-        text-shadow: 0 0 3px rgba(0,0,0,0.6);
+        text-shadow: 0 0 3px rgba(0,0,0,0.7);
       }
       .device-card.fridge-card .fridge-watts.over-threshold {
         color: var(--panel-danger, #ff5252);
       }
 
-      /* Ceiling vent fan card - single width, detailed vent grill */
+      /* Ceiling vent fan card - single width, square, detailed vent grill */
       .device-card.ceiling-vent-card {
         width: 81px;
         min-width: 81px;
@@ -1827,9 +1849,10 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
       }
       .device-card.ceiling-vent-card .ceiling-vent-body {
-        flex: 1;
-        width: 100%;
+        width: 69px;
+        height: 69px;
         margin: 4px 0;
+        flex-shrink: 0;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -1846,7 +1869,7 @@ class EnergyPanel extends HTMLElement {
       }
       .device-card.ceiling-vent-card .ceiling-vent-grill {
         width: 100%;
-        padding: 8px 6px;
+        padding: 6px 4px;
         display: flex;
         flex-direction: column;
         gap: 2px;
@@ -1859,9 +1882,34 @@ class EnergyPanel extends HTMLElement {
         border-radius: 0;
         box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
       }
+      .device-card.ceiling-vent-card .cv-air-particles {
+        position: absolute;
+        inset: 8px;
+        pointer-events: none;
+      }
+      .device-card.ceiling-vent-card .cv-particle {
+        position: absolute;
+        width: 2px;
+        height: 2px;
+        background: rgba(3, 169, 244, 0.5);
+        border-radius: 50%;
+        animation: cv-particle-float 2s ease-in-out infinite;
+      }
+      .device-card.ceiling-vent-card .cv-particle:nth-child(1) { left: 15%; top: 80%; animation-delay: 0s; }
+      .device-card.ceiling-vent-card .cv-particle:nth-child(2) { left: 45%; top: 70%; animation-delay: 0.4s; }
+      .device-card.ceiling-vent-card .cv-particle:nth-child(3) { left: 75%; top: 85%; animation-delay: 0.8s; }
+      .device-card.ceiling-vent-card .cv-particle:nth-child(4) { left: 25%; top: 50%; animation-delay: 0.2s; }
+      .device-card.ceiling-vent-card .cv-particle:nth-child(5) { left: 60%; top: 40%; animation-delay: 0.6s; }
+      @keyframes cv-particle-float {
+        0%, 100% { transform: translateY(0) scale(0.8); opacity: 0.4; }
+        50% { transform: translateY(-8px) scale(1); opacity: 0.8; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .device-card.ceiling-vent-card .cv-particle { animation: none; opacity: 0.5; }
+      }
       .device-card.ceiling-vent-card .ceiling-vent-watts {
         position: absolute;
-        bottom: 4px;
+        bottom: 3px;
         left: 50%;
         transform: translateX(-50%);
         font-size: 9px;
@@ -3065,11 +3113,15 @@ class EnergyPanel extends HTMLElement {
           <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
           <div class="fridge-body ${isActive ? 'fridge-on' : ''}">
             <div class="fridge-freezer-door">
-              <div class="fridge-handle fridge-handle-top"></div>
+              <div class="fridge-door-panel"></div>
+              <div class="fridge-handle-vert"></div>
             </div>
-            <div class="fridge-fridge-door">
-              <div class="fridge-handle fridge-handle-bottom"></div>
+            <div class="fridge-seam"></div>
+            <div class="fridge-fresh-door">
+              <div class="fridge-door-panel"></div>
+              <div class="fridge-handle-vert"></div>
             </div>
+            <div class="fridge-kickplate"></div>
             <div class="fridge-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
           </div>
           <div class="outlet-meta fridge-meta">
@@ -3102,6 +3154,7 @@ class EnergyPanel extends HTMLElement {
               <span class="cv-slat"></span>
               <span class="cv-slat"></span>
             </div>
+            ${isActive ? '<div class="cv-air-particles"><span class="cv-particle"></span><span class="cv-particle"></span><span class="cv-particle"></span><span class="cv-particle"></span><span class="cv-particle"></span></div>' : ''}
             <div class="ceiling-vent-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
           </div>
           <div class="outlet-meta ceiling-vent-meta">
@@ -3432,6 +3485,17 @@ class EnergyPanel extends HTMLElement {
                   placeholder="{prefix} {room_name} {outlet_name} is pulling {watts} watts">
                 <div class="tts-var-help">
                   Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{watts}</code>
+                </div>
+              </div>
+
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Budget Exceeded Message</div>
+                <div class="tts-msg-desc">Spoken when room first meets its daily kWh budget and threshold warnings become active</div>
+                <input type="text" class="form-input" id="tts-budget-exceeded" 
+                  value="${ttsSettings.budget_exceeded_msg || '{prefix} {room_name} has met {kwh_used} kilowatt hours. Threshold warnings are now active.'}" 
+                  placeholder="{prefix} {room_name} has met {kwh_used} kilowatt hours. Threshold warnings are now active.">
+                <div class="tts-var-help">
+                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{kwh_used}</code>
                 </div>
               </div>
               
@@ -3803,6 +3867,11 @@ class EnergyPanel extends HTMLElement {
               <label class="form-label">Room Threshold (W)</label>
               <input type="number" class="form-input room-threshold" value="${room.threshold || ''}" placeholder="0" min="0">
             </div>
+            <div class="form-group">
+              <label class="form-label">Daily kWh Budget (freebie)</label>
+              <input type="number" class="form-input room-kwh-budget" value="${room.kwh_budget ?? 5}" placeholder="5" min="0" step="0.5">
+              <div class="tts-msg-desc" style="margin-top: 4px;">No warnings or shutoffs until room uses this much today. 0 = always enforce.</div>
+            </div>
           </div>
 
           <div class="form-group" style="margin-bottom: 12px;">
@@ -4080,11 +4149,20 @@ class EnergyPanel extends HTMLElement {
           </div>
           <div class="plugs-settings-grid single-plug">
             <div class="plug-settings-card" data-plug="1">
-              <div class="plug-settings-title">Power Sensor</div>
+              <div class="plug-settings-title">Switch & Power</div>
               <div class="form-group">
-                <label class="form-label">Power Sensor</label>
-                ${this._renderEntityAutocomplete(device.plug1_entity || '', 'sensor', roomIndex, 'outlet-plug1', 'sensor.vent_power')}
+                <label class="form-label">Switch Entity</label>
+                ${this._renderEntityAutocomplete(device.switch_entity || '', 'switch', roomIndex, 'ceiling-vent-switch', 'switch.bathroom_vent')}
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Vent fan on/off state</div>
               </div>
+              <div class="form-group">
+                <label class="form-label">Power When On (W)</label>
+                <input type="number" class="form-input ceiling-vent-watts" value="${device.watts_when_on || ''}" placeholder="e.g. 25" min="0" max="500">
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Predefined draw when switch is on</div>
+              </div>
+              <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
+                <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
+              </button>
             </div>
           </div>
         </div>
@@ -4657,6 +4735,7 @@ class EnergyPanel extends HTMLElement {
       name: `Room ${index + 1}`,
       media_player: '',
       threshold: 0,
+      kwh_budget: 5,
       volume: 0.7,
       outlets: [],
     };
@@ -4733,20 +4812,25 @@ class EnergyPanel extends HTMLElement {
     // Generate new device based on type
     const isAppliance = deviceType === 'stove' || deviceType === 'microwave';
     const isLight = deviceType === 'light';
+    const isCeilingVent = deviceType === 'ceiling_vent_fan';
     const newOutlet = {
       name: '',
       type: deviceType,
-      plug1_entity: isLight ? null : '',
+      plug1_entity: isLight || isCeilingVent ? null : '',
       plug2_entity: deviceType === 'outlet' ? '' : null,
-      plug1_switch: isAppliance || isLight ? null : '',
+      plug1_switch: isAppliance || isLight || isCeilingVent ? null : '',
       plug2_switch: deviceType === 'outlet' ? '' : null,
       threshold: 0,
-      plug1_shutoff: isAppliance || isLight ? 0 : 0,
+      plug1_shutoff: isAppliance || isLight || isCeilingVent ? 0 : 0,
       plug2_shutoff: deviceType === 'outlet' ? 0 : null,
     };
     if (isLight) {
       newOutlet.switch_entity = '';
       newOutlet.light_entities = [];
+    }
+    if (isCeilingVent) {
+      newOutlet.switch_entity = '';
+      newOutlet.watts_when_on = 25;
     }
     
     // Render as expanded (not collapsed)
@@ -5014,6 +5098,7 @@ class EnergyPanel extends HTMLElement {
       const nameInput = card.querySelector('.room-name-input');
       const mediaPlayerSelect = card.querySelector('.room-media-player');
       const thresholdInput = card.querySelector('.room-threshold');
+      const kwhBudgetInput = card.querySelector('.room-kwh-budget');
       const volumeSlider = card.querySelector('.room-volume');
       const outletItems = card.querySelectorAll('.outlet-settings-item');
 
@@ -5098,13 +5183,24 @@ class EnergyPanel extends HTMLElement {
             device.plug2_switch = null;
             device.plug1_shutoff = plug1Shutoff;
             device.plug2_shutoff = 0;
-          } else if (deviceTypeFromItem === 'fridge' || deviceTypeFromItem === 'ceiling_vent_fan') {
-            device.type = deviceTypeFromItem;
+          } else if (deviceTypeFromItem === 'fridge') {
+            device.type = 'fridge';
             device.plug2_entity = null;
             device.plug1_switch = null;
             device.plug2_switch = null;
             device.plug1_shutoff = 0;
             device.plug2_shutoff = 0;
+          } else if (deviceTypeFromItem === 'ceiling_vent_fan') {
+            device.type = 'ceiling_vent_fan';
+            device.plug1_entity = null;
+            device.plug2_entity = null;
+            device.plug1_switch = null;
+            device.plug2_switch = null;
+            device.plug1_shutoff = 0;
+            device.plug2_shutoff = 0;
+            const switchVal = (item.querySelector('input.ceiling-vent-switch') || item.querySelector('.entity-datalist-input.ceiling-vent-switch'))?.value;
+            device.switch_entity = (switchVal && switchVal.startsWith('switch.')) ? switchVal : null;
+            device.watts_when_on = parseInt(item.querySelector('.ceiling-vent-watts')?.value, 10) || 0;
           } else {
             device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
             device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
@@ -5145,6 +5241,7 @@ class EnergyPanel extends HTMLElement {
           name: roomName,
           media_player: mediaPlayer,
           threshold: parseInt(thresholdInput?.value) || 0,
+          kwh_budget: parseFloat(kwhBudgetInput?.value) ?? 5,
           volume: parseFloat(volumeSlider?.value) || 0.7,
           responsive_light_warnings: responsiveToggle?.checked === true && !responsiveToggle.disabled,
           responsive_light_color: rgb,
@@ -5159,6 +5256,7 @@ class EnergyPanel extends HTMLElement {
     const ttsPrefix = this.shadowRoot.querySelector('#tts-prefix')?.value || 'Message from Home Energy.';
     const ttsRoomWarn = this.shadowRoot.querySelector('#tts-room-warn')?.value || '{prefix} {room_name} is pulling {watts} watts';
     const ttsOutletWarn = this.shadowRoot.querySelector('#tts-outlet-warn')?.value || '{prefix} {room_name} {outlet_name} is pulling {watts} watts';
+    const ttsBudgetExceeded = this.shadowRoot.querySelector('#tts-budget-exceeded')?.value || '{prefix} {room_name} has met {kwh_used} kilowatt hours. Threshold warnings are now active.';
     const ttsShutoff = this.shadowRoot.querySelector('#tts-shutoff')?.value || '{prefix} {room_name} {outlet_name} {plug} has been reset to protect circuit from overload';
     const ttsStoveOn = this.shadowRoot.querySelector('#tts-stove-on')?.value || '{prefix} Stove has been turned on';
     const ttsStoveOff = this.shadowRoot.querySelector('#tts-stove-off')?.value || '{prefix} Stove has been turned off';
@@ -5222,6 +5320,7 @@ class EnergyPanel extends HTMLElement {
         prefix: ttsPrefix,
         room_warn_msg: ttsRoomWarn,
         outlet_warn_msg: ttsOutletWarn,
+        budget_exceeded_msg: ttsBudgetExceeded,
         shutoff_msg: ttsShutoff,
         stove_on_msg: ttsStoveOn,
         stove_off_msg: ttsStoveOff,
@@ -5351,13 +5450,24 @@ class EnergyPanel extends HTMLElement {
           device.plug2_switch = null;
           device.plug1_shutoff = plug1Shutoff;
           device.plug2_shutoff = 0;
-        } else if (deviceTypeFromItem === 'fridge' || deviceTypeFromItem === 'ceiling_vent_fan') {
-          device.type = deviceTypeFromItem;
+        } else if (deviceTypeFromItem === 'fridge') {
+          device.type = 'fridge';
           device.plug2_entity = null;
           device.plug1_switch = null;
           device.plug2_switch = null;
           device.plug1_shutoff = 0;
           device.plug2_shutoff = 0;
+        } else if (deviceTypeFromItem === 'ceiling_vent_fan') {
+          device.type = 'ceiling_vent_fan';
+          device.plug1_entity = null;
+          device.plug2_entity = null;
+          device.plug1_switch = null;
+          device.plug2_switch = null;
+          device.plug1_shutoff = 0;
+          device.plug2_shutoff = 0;
+          const switchVal = item.querySelector('.ceiling-vent-switch')?.value || item.querySelector('.entity-datalist-input.ceiling-vent-switch')?.value;
+          device.switch_entity = (switchVal && switchVal.startsWith('switch.')) ? switchVal : null;
+          device.watts_when_on = parseInt(item.querySelector('.ceiling-vent-watts')?.value, 10) || 0;
         } else {
           device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
           device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
