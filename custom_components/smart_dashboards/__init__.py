@@ -66,6 +66,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if energy_monitor:
         await energy_monitor.async_stop()
 
+    # Persist energy and tracking data before cleanup (survives reload/restart)
+    config_manager = hass.data.get(DOMAIN, {}).get("config_manager")
+    if config_manager:
+        await config_manager.async_save_persistent_data()
+
     # Remove panel (only if it was registered)
     try:
         frontend.async_remove_panel(hass, ENERGY_PANEL_URL)

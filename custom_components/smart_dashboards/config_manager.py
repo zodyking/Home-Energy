@@ -442,6 +442,13 @@ class ConfigManager:
             self._last_reset_date = today
             await self._async_save_energy_tracking()
 
+    async def async_save_persistent_data(self) -> None:
+        """Save all persistent data (energy, intraday, enforcement, event counts). Call on unload/restart."""
+        await self._async_save_energy_tracking()
+        await self._async_save_intraday_history()
+        await self._async_save_enforcement_state()
+        await self._async_save_event_counts()
+
     async def _async_save_energy_tracking(self) -> None:
         """Save day energy tracking data."""
         tracking_path = self.hass.config.path("smart_dashboards_energy_tracking.json")
@@ -475,26 +482,6 @@ class ConfigManager:
             self._day_energy_data[entity_id] = {"energy": 0.0}
 
         self._day_energy_data[entity_id]["energy"] += (watts * elapsed_seconds) / 3600.0
-
-    async def async_add_energy_reading_on_state_change(
-        self, entity_id: str, new_watts: float
-    ) -> None:
-        """Add energy when entity state changes (real-time). Uses elapsed time since
-        last update. Called from state-change listener."""
-        today = dt_util.now().strftime("%Y-%m-%d")
-        if self._last_reset_date != today:
-            self._day_energy_data = {}
-            self._last_reset_date = today
-            self._last_power_update = {}
-        last = self._last_power_update.get(entity_id)
-        now = dt_util.utcnow()
-        if last is not None:
-            elapsed = (now - last["time"]).total_seconds()
-            if 0 < elapsed < 86400:  # Sanity: max 24h
-                await self.async_add_energy_reading(
-                    entity_id, last["watts"], elapsed_seconds=elapsed
-                )
-        self._last_power_update[entity_id] = {"watts": new_watts, "time": now}
 
     def record_intraday_power(self, entity_id: str, watts: float) -> None:
         """Record minute-by-minute power for 24-hour charts. Called from poll loop."""
