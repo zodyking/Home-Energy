@@ -6,8 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -101,37 +100,10 @@ class EnergyMonitor:
         self._running = True
         self._task = asyncio.create_task(self._monitor_loop())
 
-        # Real-time energy: listen for state changes on power entities
+        # Plug energy accumulated via poll loop every second (actual watts read each cycle).
+        # State-change was removed: it missed switch current_power_w updates and caused undercounting.
         entity_ids = self._get_power_entity_ids()
-        if entity_ids:
-            # Seed initial state so we don't lose energy from startup to first update
-            now = dt_util.utcnow()
-            for eid in entity_ids:
-                watts = self._get_power_value(eid)
-                self.config_manager._last_power_update[eid] = {"watts": watts, "time": now}
-
-            @callback
-            def _on_power_state_change(event):
-                new_state = event.data.get("new_state")
-                if not new_state or new_state.state in ("unknown", "unavailable", ""):
-                    return
-                try:
-                    watts = float(new_state.state)
-                except (ValueError, TypeError):
-                    return
-                entity_id = event.data.get("entity_id", "")
-                self.hass.async_create_task(
-                    self.config_manager.async_add_energy_reading_on_state_change(
-                        entity_id, watts
-                    )
-                )
-
-            unsub = async_track_state_change_event(
-                self.hass, entity_ids, _on_power_state_change
-            )
-            self._power_listener_unsub.append(unsub)
-
-        _LOGGER.info("Energy monitor started (real-time accumulation for %d entities)", len(entity_ids))
+        _LOGGER.info("Energy monitor started (poll-based accumulation for %d plug entities)", len(entity_ids))
 
     async def async_stop(self) -> None:
         """Stop the energy monitoring loop and listeners."""
@@ -222,7 +194,7 @@ class EnergyMonitor:
                                 if isinstance(le, dict) and le.get("entity_id", "").startswith("light."):
                                     outlet_total_watts += float(le.get("watts", 0) or 0)
                             if outlet_total_watts > 0:
-                                tracking_key = f"light_{room_id}_{outlet.get('name', 'light').lower().replace(' ', '_')}"
+                                tracking_key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
                                 await self.config_manager.async_add_energy_reading(
                                     tracking_key, outlet_total_watts
                                 )
@@ -240,7 +212,7 @@ class EnergyMonitor:
                         is_on = state is not None and (state.state or "off").lower() in ("on",)
                         if is_on:
                             outlet_total_watts = watts_when_on
-                            tracking_key = f"ceiling_vent_{room_id}_{outlet.get('name', 'vent').lower().replace(' ', '_')}"
+                            tracking_key = f"ceiling_vent_{room_id}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
                             await self.config_manager.async_add_energy_reading(
                                 tracking_key, outlet_total_watts
                             )
@@ -267,6 +239,8 @@ class EnergyMonitor:
                     outlet_total_watts += plug1_watts
                     # Record for intraday 24-hour charts
                     self.config_manager.record_intraday_power(outlet["plug1_entity"], plug1_watts)
+                    # Add energy from actual reading (poll every 1s; state_change misses switch power + infrequent sensors)
+                    await self.config_manager.async_add_energy_reading(outlet["plug1_entity"], plug1_watts, elapsed_seconds=1.0)
 
                     # Check plug 1 shutoff threshold (only when budget exceeded)
                     plug1_shutoff = outlet.get("plug1_shutoff", 0)
@@ -291,6 +265,8 @@ class EnergyMonitor:
                     outlet_total_watts += plug2_watts
                     # Record for intraday 24-hour charts
                     self.config_manager.record_intraday_power(outlet["plug2_entity"], plug2_watts)
+                    # Add energy from actual reading (poll every 1s)
+                    await self.config_manager.async_add_energy_reading(outlet["plug2_entity"], plug2_watts, elapsed_seconds=1.0)
 
                     # Check plug 2 shutoff threshold (only when budget exceeded)
                     plug2_shutoff = outlet.get("plug2_shutoff", 0)
@@ -344,13 +320,11 @@ class EnergyMonitor:
         # Check power enforcement phase resets and kWh warnings
         await self._check_power_enforcement(tts_settings)
 
-        # Periodically save energy tracking data (every 60 seconds)
+        # Periodically save energy tracking data (every 15 seconds, survives restarts)
         self._save_counter += 1
-        if self._save_counter >= 60:
+        if self._save_counter >= 15:
             self._save_counter = 0
-            await self.config_manager._async_save_energy_tracking()
-            await self.config_manager._async_save_intraday_history()
-            await self.config_manager._async_save_enforcement_state()
+            await self.config_manager.async_save_persistent_data()
 
     def _get_power_value(self, entity_id: str) -> float:
         """Get power value from an entity."""
