@@ -4690,7 +4690,8 @@ class EnergyPanel extends HTMLElement {
       showToast(this.shadowRoot, 'Power enforcement settings saved!', 'success');
     } catch (e) {
       console.error('Failed to save enforcement settings:', e);
-      showToast(this.shadowRoot, 'Failed to save settings', 'error');
+      const msg = (e && (e.message || e.error_message || e)) ? String(e.message || e.error_message || e) : 'Unknown error';
+      showToast(this.shadowRoot, `Failed to save settings: ${msg}`, 'error');
     }
   }
 
@@ -4937,7 +4938,8 @@ class EnergyPanel extends HTMLElement {
       }, 500);
     } catch (e) {
       console.error('Failed to save settings:', e);
-      showToast(this.shadowRoot, 'Failed to save settings', 'error');
+      const msg = (e && (e.message || e.error_message || e)) ? String(e.message || e.error_message || e) : 'Unknown error';
+      showToast(this.shadowRoot, `Failed to save settings: ${msg}`, 'error');
     }
   }
 
@@ -5128,7 +5130,8 @@ class EnergyPanel extends HTMLElement {
       }, 500);
     } catch (e) {
       console.error('Failed to save room:', e);
-      showToast(this.shadowRoot, 'Failed to save room', 'error');
+      const msg = (e && (e.message || e.error_message || e)) ? String(e.message || e.error_message || e) : 'Unknown error';
+      showToast(this.shadowRoot, `Failed to save room: ${msg}`, 'error');
     }
   }
 }
