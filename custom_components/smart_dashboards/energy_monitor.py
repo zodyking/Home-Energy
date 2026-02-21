@@ -537,8 +537,10 @@ class EnergyMonitor:
         message: str,
         volume: float,
         tts_settings: dict,
+        post_send_callback=None,
     ) -> None:
-        """Send TTS and optionally run responsive light loop. Waits for media player ready (on/idle/standby)."""
+        """Send TTS and optionally run responsive light loop. Waits for media player ready (on/idle/standby).
+        post_send_callback runs after TTS is actually sent (incl. when dequeued from queue)."""
         if not media_player:
             return
 
@@ -581,6 +583,7 @@ class EnergyMonitor:
             tts_settings=tts_settings,
             room=room,
             with_lights_callback=_do_lights_and_tts,
+            post_send_callback=post_send_callback,
         )
 
     def _get_room_for_breaker(self, breaker_id: str) -> dict | None:
@@ -614,6 +617,8 @@ class EnergyMonitor:
         now = dt_util.now()
         pe = self.config_manager.energy_config.get("power_enforcement", {})
         enforcement_enabled = self.config_manager.is_room_enforcement_enabled(room_id)
+        phase1_enabled = pe.get("phase1_enabled", True)
+        phase2_enabled = pe.get("phase2_enabled", True)
         phase_transition = False
         if enforcement_enabled:
             state = self.config_manager.get_enforcement_state(room_id)
@@ -625,8 +630,8 @@ class EnergyMonitor:
             warnings_p1 = self.config_manager.get_warnings_in_window(room_id, phase1_window)
             warnings_p2 = self.config_manager.get_warnings_in_window(room_id, phase2_window)
             phase_transition = (
-                (warnings_p2 >= phase2_count and phase < 2) or
-                (warnings_p1 >= phase1_count and phase < 1)
+                (phase2_enabled and warnings_p2 >= phase2_count and phase < 2) or
+                (phase1_enabled and warnings_p1 >= phase1_count and phase < 1)
             )
 
         # Cooldown: skip for phase transitions (we always need TTS when phases enable)
@@ -661,7 +666,7 @@ class EnergyMonitor:
             phase = int(state.get("phase", 0) or 0)
 
             # Check for phase 2 (power cycling) - set message; power cycle happens AFTER TTS
-            if warnings_in_phase2_window >= phase2_count and phase < 2:
+            if phase2_enabled and warnings_in_phase2_window >= phase2_count and phase < 2:
                 await self.config_manager.async_set_enforcement_phase(room_id, 2)
                 msg_template = tts_settings.get("phase2_warn_msg") or ""
                 try:
@@ -674,7 +679,7 @@ class EnergyMonitor:
                     message = ""
 
             # Check for phase 1 (volume escalation)
-            elif warnings_in_phase1_window >= phase1_count and phase < 1:
+            elif phase1_enabled and warnings_in_phase1_window >= phase1_count and phase < 1:
                 await self.config_manager.async_set_enforcement_phase(room_id, 1)
                 msg_template = tts_settings.get("phase1_warn_msg") or ""
                 try:
@@ -692,8 +697,14 @@ class EnergyMonitor:
             if phase >= 1:
                 new_offset = await self.config_manager.async_increment_volume_offset(room_id, volume_increment)
                 effective_volume = min(1.0, volume + (new_offset / 100.0))
+            # Phase 2: cap volume at phase2_max_volume (0-100 scale)
+            if phase >= 2:
+                phase2_max = pe.get("phase2_max_volume", 100)
+                if phase2_max is not None:
+                    cap = max(0.0, min(1.0, float(phase2_max) / 100.0))
+                    effective_volume = min(effective_volume, cap)
 
-            # Phase 2 power cycling moved to after TTS (see below)
+            # Phase 2 power cycling moved to post_send_callback (runs after TTS actually plays)
 
         # Use standard message if no enforcement message was set (or format failed)
         if not message:
@@ -705,11 +716,42 @@ class EnergyMonitor:
                     watts=int(current_watts),
                 )
             except (KeyError, ValueError):
-                message = f"{prefix} {room_name} is pulling {int(current_watts)} watts"
+                message = f"{prefix} {room_name} over power limit at {int(current_watts)} watts — turn off unused devices."
+
+        # Power cycle runs in post_send_callback after TTS actually plays (incl. when queued).
+        # Flow: TTS (before) -> power cycle ALL outlets -> TTS (after, adhere message)
+        post_send_cb = None
+        if enforcement_enabled and phase2_enabled:
+            phase_now = int(self.config_manager.get_enforcement_state(room_id).get("phase", 0) or 0)
+            if phase_now == 2:
+                delay_sec = pe.get("phase2_cycle_delay_seconds", 5)
+                after_template = tts_settings.get("phase2_after_msg") or ""
+
+                async def _power_cycle_and_tts_after() -> None:
+                    await self._power_cycle_room_outlets(room_id, room, delay_sec)
+                    if media_player and after_template:
+                        try:
+                            after_msg = after_template.format(
+                                prefix=prefix,
+                                room_name=room_name,
+                            )
+                        except (KeyError, ValueError):
+                            after_msg = f"{prefix} Cycle complete in {room_name}. Stay under limit or outlets cycle again."
+                        await async_send_tts_or_queue(
+                            self.hass,
+                            media_player=media_player,
+                            message=after_msg,
+                            language=tts_settings.get("language"),
+                            volume=effective_volume,
+                            tts_settings=tts_settings,
+                        )
+
+                post_send_cb = _power_cycle_and_tts_after
 
         try:
             await self._async_send_tts_with_lights(
-                room, media_player, message, effective_volume, tts_settings
+                room, media_player, message, effective_volume, tts_settings,
+                post_send_callback=post_send_cb,
             )
             # Count only when TTS was actually sent
             await self.config_manager.async_increment_warning(room_id)
@@ -723,11 +765,6 @@ class EnergyMonitor:
                 self.config_manager.get_enforcement_state(room_id).get("phase", 0) if enforcement_enabled else 0,
                 effective_volume * 100,
             )
-            # Power cycle AFTER TTS completes (avoids cutting off media player if on cycled outlet)
-            if enforcement_enabled:
-                phase_now = self.config_manager.get_enforcement_state(room_id).get("phase", 0)
-                if phase_now == 2:
-                    await self._power_cycle_room_outlets(room_id, room, pe.get("phase2_cycle_delay_seconds", 5))
         except Exception as e:
             _LOGGER.error("Failed to send room threshold alert: %s", e)
             await self.config_manager.async_add_event_log_entry(
@@ -735,45 +772,38 @@ class EnergyMonitor:
             )
 
     async def _power_cycle_room_outlets(self, room_id: str, room: dict, delay_seconds: int) -> None:
-        """Power cycle outlets with lowest power usage in a room."""
-        outlets_with_power = []
+        """Power cycle ALL outlets in the room that have a switch (stove/microwave excluded for safety)."""
+        switch_entities: list[str] = []
+        seen: set[str] = set()
         for outlet in room.get("outlets", []):
-            if outlet.get("type") in ("stove", "microwave", "light"):
-                continue  # Skip sensitive appliances and lights
-            plug1_entity = outlet.get("plug1_entity")
-            plug1_switch = outlet.get("plug1_switch")
-            plug2_entity = outlet.get("plug2_entity")
-            plug2_switch = outlet.get("plug2_switch")
+            if outlet.get("type") in ("stove", "microwave"):
+                continue  # Skip stove and microwave for safety
+            for switch in (
+                outlet.get("plug1_switch"),
+                outlet.get("plug2_switch"),
+                outlet.get("switch_entity"),
+            ):
+                if switch and switch.startswith("switch.") and switch not in seen:
+                    seen.add(switch)
+                    switch_entities.append(switch)
 
-            if plug1_entity and plug1_switch:
-                watts = self._get_power_value(plug1_entity)
-                if watts > 0:  # Only cycle outlets with power draw
-                    outlets_with_power.append((watts, plug1_switch, outlet.get("name", "Plug 1")))
+        if not switch_entities:
+            _LOGGER.debug("No switchable outlets in room %s for power cycle", room_id)
+            return
 
-            if plug2_entity and plug2_switch:
-                watts = self._get_power_value(plug2_entity)
-                if watts > 0:
-                    outlets_with_power.append((watts, plug2_switch, outlet.get("name", "Plug 2")))
-
-        # Sort by power (lowest first) and cycle up to 2 outlets
-        outlets_with_power.sort(key=lambda x: x[0])
-        cycled = 0
-        for watts, switch_entity, name in outlets_with_power[:2]:
-            try:
-                _LOGGER.info("Power cycling %s (%.1fW) for enforcement", name, watts)
-                await self.hass.services.async_call(
-                    "switch", "turn_off", {"entity_id": switch_entity}, blocking=True
-                )
-                await asyncio.sleep(delay_seconds)
-                await self.hass.services.async_call(
-                    "switch", "turn_on", {"entity_id": switch_entity}, blocking=True
-                )
-                cycled += 1
-            except Exception as e:
-                _LOGGER.error("Failed to power cycle %s: %s", switch_entity, e)
-
-        if cycled > 0:
-            _LOGGER.warning("Power cycled %d outlets in %s for enforcement", cycled, room_id)
+        # Turn all off, wait, turn all on
+        try:
+            _LOGGER.info("Power cycling %d outlets in %s for enforcement", len(switch_entities), room_id)
+            await self.hass.services.async_call(
+                "switch", "turn_off", {"entity_id": switch_entities}, blocking=True
+            )
+            await asyncio.sleep(delay_seconds)
+            await self.hass.services.async_call(
+                "switch", "turn_on", {"entity_id": switch_entities}, blocking=True
+            )
+            _LOGGER.warning("Power cycled all %d outlets in %s for enforcement", len(switch_entities), room_id)
+        except Exception as e:
+            _LOGGER.error("Failed to power cycle outlets in %s: %s", room_id, e)
 
     async def _send_outlet_alert(
         self,

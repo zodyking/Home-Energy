@@ -198,6 +198,12 @@ class ConfigManager:
                         break
             if "tts_settings" in energy:
                 result["energy"]["tts_settings"].update(energy["tts_settings"])
+            if "power_enforcement" in energy:
+                pe_loaded = energy["power_enforcement"]
+                pe_result = result["energy"]["power_enforcement"]
+                for k in list(pe_result.keys()) + list(pe_loaded.keys()):
+                    if k in pe_loaded and pe_loaded[k] is not None:
+                        pe_result[k] = pe_loaded[k]
             if "statistics_settings" in energy:
                 for k, v in energy["statistics_settings"].items():
                     if k in result["energy"]["statistics_settings"] and v:
@@ -384,10 +390,12 @@ class ConfigManager:
             "microwave_restore_power_msg": tts.get("microwave_restore_power_msg", default_tts["microwave_restore_power_msg"]),
             "phase1_warn_msg": tts.get("phase1_warn_msg", default_tts.get("phase1_warn_msg", "")),
             "phase2_warn_msg": tts.get("phase2_warn_msg", default_tts.get("phase2_warn_msg", "")),
+            "phase2_after_msg": tts.get("phase2_after_msg", default_tts.get("phase2_after_msg", "")),
             "phase_reset_msg": tts.get("phase_reset_msg", default_tts.get("phase_reset_msg", "")),
             "room_kwh_warn_msg": tts.get("room_kwh_warn_msg", default_tts.get("room_kwh_warn_msg", "")),
             "home_kwh_warn_msg": tts.get("home_kwh_warn_msg", default_tts.get("home_kwh_warn_msg", "")),
             "budget_exceeded_msg": tts.get("budget_exceeded_msg", default_tts.get("budget_exceeded_msg", "")),
+            "min_interval_seconds": max(1.0, min(60.0, _safe_float(tts.get("min_interval_seconds"), default_tts.get("min_interval_seconds", 3)))),
         }
 
         # Validate power enforcement settings
@@ -395,6 +403,8 @@ class ConfigManager:
         default_pe = DEFAULT_CONFIG["energy"]["power_enforcement"]
         validated["power_enforcement"] = {
             "enabled": bool(pe.get("enabled", default_pe["enabled"])),
+            "phase1_enabled": bool(pe.get("phase1_enabled", default_pe.get("phase1_enabled", True))),
+            "phase2_enabled": bool(pe.get("phase2_enabled", default_pe.get("phase2_enabled", True))),
             "phase1_warning_count": max(1, int(pe.get("phase1_warning_count", default_pe["phase1_warning_count"]))),
             "phase1_time_window_minutes": max(1, int(pe.get("phase1_time_window_minutes", default_pe["phase1_time_window_minutes"]))),
             "phase1_volume_increment": max(1, min(20, int(pe.get("phase1_volume_increment", default_pe["phase1_volume_increment"])))),
@@ -403,6 +413,7 @@ class ConfigManager:
             "phase2_time_window_minutes": max(1, int(pe.get("phase2_time_window_minutes", default_pe["phase2_time_window_minutes"]))),
             "phase2_reset_minutes": max(1, int(pe.get("phase2_reset_minutes", default_pe["phase2_reset_minutes"]))),
             "phase2_cycle_delay_seconds": max(1, min(30, int(pe.get("phase2_cycle_delay_seconds", default_pe["phase2_cycle_delay_seconds"])))),
+            "phase2_max_volume": max(0, min(100, int(pe.get("phase2_max_volume", default_pe.get("phase2_max_volume", 100))))),
             "room_kwh_intervals": pe.get("room_kwh_intervals", default_pe["room_kwh_intervals"]),
             "home_kwh_limit": max(1, int(pe.get("home_kwh_limit", default_pe["home_kwh_limit"]))),
             "rooms_enabled": pe.get("rooms_enabled", default_pe["rooms_enabled"]),
