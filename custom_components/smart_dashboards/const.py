@@ -28,11 +28,11 @@ STOVE_SHUTOFF_TIMER = 30  # 30 seconds
 
 # TTS message templates (user customizable)
 DEFAULT_TTS_PREFIX = "Message from Home Energy."
-DEFAULT_ROOM_WARN_MSG = "{prefix} {room_name} over power limit at {watts} watts — turn off unused devices."
-DEFAULT_OUTLET_WARN_MSG = "{prefix} {outlet_name} in {room_name} over limit at {watts} watts — reduce use or face shutoff."
-DEFAULT_SHUTOFF_MSG = "{prefix} {room_name} {outlet_name} {plug} reset after overload — reduce power use."
-DEFAULT_BREAKER_WARN_MSG = "{prefix} {breaker_name} near max load — reduce use or shutoff."
-DEFAULT_BREAKER_SHUTOFF_MSG = "{prefix} {breaker_name} at limit — shutoff enabled."
+DEFAULT_ROOM_WARN_MSG = "{prefix} {room_name} is using {watts} watts out of {threshold} watt room threshold, reduce your usage."
+DEFAULT_OUTLET_WARN_MSG = "{prefix} {outlet_name} in {room_name} is using {watts} watts out of {threshold} watt outlet threshold, reduce your usage."
+DEFAULT_SHUTOFF_MSG = "{prefix} {room_name} {outlet_name} {plug} reset after overload, reduce power use."
+DEFAULT_BREAKER_WARN_MSG = "{prefix} {breaker_name} is using {watts} watts out of {max_load} watt limit, reduce your usage."
+DEFAULT_BREAKER_SHUTOFF_MSG = "{prefix} {breaker_name} at limit, {watts} watts, max {max_load} watts. Shutoff enabled."
 DEFAULT_STOVE_ON_MSG = "{prefix} Stove has been turned on"
 DEFAULT_STOVE_OFF_MSG = "{prefix} Stove has been turned off"
 DEFAULT_STOVE_TIMER_STARTED_MSG = "{prefix} The stove is on with no one in the kitchen. A {cooking_time_minutes} minute Unattended cooking timer has started."
@@ -43,13 +43,13 @@ DEFAULT_MICROWAVE_CUT_MSG = "{prefix} Microwave is on. Stove power cut to protec
 DEFAULT_MICROWAVE_RESTORE_MSG = "{prefix} Microwave is off. Stove power restored."
 
 # Power enforcement TTS messages (flow naturally after prefix "Message from Home Energy.")
-DEFAULT_PHASE1_WARN_MSG = "{prefix} {room_name} exceeded the limit repeatedly. Volume will rise until power stays under {threshold} watts."
-DEFAULT_PHASE2_WARN_MSG = "{prefix} {room_name} over limit too many times. Cycling all outlets now — turn off devices."
+DEFAULT_PHASE1_WARN_MSG = "{prefix} {room_name} has exceeded threshold {warning_count} times. Volume will rise until power stays under {threshold} watts."
+DEFAULT_PHASE2_WARN_MSG = "{prefix} {room_name} has exceeded threshold {warning_count} times. Cycling all outlets now, turn off devices."
 DEFAULT_PHASE2_AFTER_MSG = "{prefix} Cycle complete in {room_name}. Stay under limit or outlets cycle again."
-DEFAULT_PHASE_RESET_MSG = "{prefix} {room_name} under limit — enforcement reset."
-DEFAULT_ROOM_KWH_WARN_MSG = "{prefix} {room_name} used {kwh_limit} kWh today ({percentage}% of home) — reduce use."
-DEFAULT_HOME_KWH_WARN_MSG = "{prefix} Home over {kwh_limit} kWh today — reduce consumption."
-DEFAULT_BUDGET_EXCEEDED_MSG = "{prefix} {room_name} at {kwh_used} kWh — power alerts are on."
+DEFAULT_PHASE_RESET_MSG = "{prefix} {room_name} under limit, enforcement reset."
+DEFAULT_ROOM_KWH_WARN_MSG = "{prefix} {room_name} used {kwh_limit} kWh today, {percentage} percent of home, reduce use."
+DEFAULT_HOME_KWH_WARN_MSG = "{prefix} Home over {kwh_limit} kWh today, reduce consumption."
+DEFAULT_BUDGET_EXCEEDED_MSG = "{prefix} {room_name} at {kwh_used} kWh, power alerts are on."
 
 # Default config structure
 DEFAULT_CONFIG = {
