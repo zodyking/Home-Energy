@@ -3456,6 +3456,12 @@ class EnergyPanel extends HTMLElement {
                     <option value="de" ${ttsSettings.language === 'de' ? 'selected' : ''}>German</option>
                   </select>
                 </div>
+                <div class="form-group">
+                  <label class="form-label">Min Interval Between TTS (seconds)</label>
+                  <input type="number" class="form-input" id="tts-min-interval" 
+                    value="${ttsSettings.min_interval_seconds ?? 3}" min="1" max="60" 
+                    title="Minimum seconds between TTS sends per media player. Prevents rapid repeated alerts from hanging.">
+                </div>
               </div>
               
               <div class="tts-msg-group">
@@ -3470,8 +3476,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Room Warning Message</div>
                 <div class="tts-msg-desc">Spoken when room total exceeds threshold</div>
                 <input type="text" class="form-input" id="tts-room-warn" 
-                  value="${ttsSettings.room_warn_msg || '{prefix} {room_name} is pulling {watts} watts'}" 
-                  placeholder="{prefix} {room_name} is pulling {watts} watts">
+                  value="${ttsSettings.room_warn_msg || ''}" 
+                  placeholder="{room_name} over power limit at {watts} watts — turn off devices.">
                 <div class="tts-var-help">
                   Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{watts}</code>
                 </div>
@@ -3481,8 +3487,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Outlet Warning Message</div>
                 <div class="tts-msg-desc">Spoken when outlet total exceeds threshold</div>
                 <input type="text" class="form-input" id="tts-outlet-warn" 
-                  value="${ttsSettings.outlet_warn_msg || '{prefix} {room_name} {outlet_name} is pulling {watts} watts'}" 
-                  placeholder="{prefix} {room_name} {outlet_name} is pulling {watts} watts">
+                  value="${ttsSettings.outlet_warn_msg || ''}" 
+                  placeholder="{outlet_name} in {room_name} over limit at {watts} watts — reduce use.">
                 <div class="tts-var-help">
                   Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{watts}</code>
                 </div>
@@ -3492,8 +3498,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Budget Exceeded Message</div>
                 <div class="tts-msg-desc">Spoken when room first meets its daily kWh budget and threshold warnings become active</div>
                 <input type="text" class="form-input" id="tts-budget-exceeded" 
-                  value="${ttsSettings.budget_exceeded_msg || '{prefix} {room_name} has met {kwh_used} kilowatt hours. Threshold warnings are now active.'}" 
-                  placeholder="{prefix} {room_name} has met {kwh_used} kilowatt hours. Threshold warnings are now active.">
+                  value="${ttsSettings.budget_exceeded_msg || ''}" 
+                  placeholder="{room_name} at {kwh_used} kWh — power alerts are on.">
                 <div class="tts-var-help">
                   Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{kwh_used}</code>
                 </div>
@@ -3582,16 +3588,24 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-desc">Spoken when warning count triggers volume escalation phase</div>
                 <input type="text" class="form-input" id="tts-phase1-warn" 
                   value="${ttsSettings.phase1_warn_msg || ''}" 
-                  placeholder="{prefix} {room_name} has hit {warning_count} threshold warnings within the hour...">
+                  placeholder="{room_name} exceeded the limit repeatedly. Volume will rise until under {threshold} watts.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code> <code>{threshold}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Phase 2 Warning (Power Cycling)</div>
-                <div class="tts-msg-desc">Spoken when warning count triggers power cycling phase</div>
+                <div class="tts-msg-desc">Spoken before power cycle (outlets will be cycled)</div>
                 <input type="text" class="form-input" id="tts-phase2-warn" 
                   value="${ttsSettings.phase2_warn_msg || ''}" 
-                  placeholder="{prefix} {room_name} has hit {warning_count} threshold warnings within 30 minutes...">
+                  placeholder="{room_name} over limit too many times. Cycling outlets now — turn off devices.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Phase 2 After Message</div>
+                <div class="tts-msg-desc">Spoken after power cycle completes (adhere to warning)</div>
+                <input type="text" class="form-input" id="tts-phase2-after" 
+                  value="${ttsSettings.phase2_after_msg || ''}" 
+                  placeholder="Cycle complete in {room_name}. Stay under limit.">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Phase Reset Message</div>
@@ -3677,6 +3691,10 @@ class EnergyPanel extends HTMLElement {
               </div>
               <div class="tts-msg-group" style="margin-bottom: 16px;">
                 <div class="tts-msg-title">Phase 1: Volume Escalation</div>
+                <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: pointer;">
+                  <input type="checkbox" id="pe-phase1-enabled" ${pe.phase1_enabled !== false ? 'checked' : ''} style="width: 18px; height: 18px;">
+                  <span>Enable Phase 1</span>
+                </label>
                 <div class="grid-2">
                   <div class="form-group">
                     <label class="form-label">Warning Count to Trigger</label>
@@ -3698,14 +3716,18 @@ class EnergyPanel extends HTMLElement {
               </div>
               <div class="tts-msg-group" style="margin-bottom: 16px;">
                 <div class="tts-msg-title">Phase 2: Power Cycling</div>
+                <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: pointer;">
+                  <input type="checkbox" id="pe-phase2-enabled" ${pe.phase2_enabled !== false ? 'checked' : ''} style="width: 18px; height: 18px;">
+                  <span>Enable Phase 2</span>
+                </label>
                 <div class="grid-2">
                   <div class="form-group">
                     <label class="form-label">Warning Count to Trigger</label>
-                    <input type="number" class="form-input" id="pe-phase2-count" value="${pe.phase2_warning_count || 40}" min="1" max="200">
+                    <input type="number" class="form-input" id="pe-phase2-count" value="${pe.phase2_warning_count ?? 10}" min="1" max="200">
                   </div>
                   <div class="form-group">
                     <label class="form-label">Time Window (minutes)</label>
-                    <input type="number" class="form-input" id="pe-phase2-window" value="${pe.phase2_time_window_minutes || 30}" min="1" max="120">
+                    <input type="number" class="form-input" id="pe-phase2-window" value="${pe.phase2_time_window_minutes ?? 10}" min="1" max="120">
                   </div>
                   <div class="form-group">
                     <label class="form-label">Cycle Delay (seconds)</label>
@@ -3714,6 +3736,10 @@ class EnergyPanel extends HTMLElement {
                   <div class="form-group">
                     <label class="form-label">Reset After (minutes)</label>
                     <input type="number" class="form-input" id="pe-phase2-reset" value="${pe.phase2_reset_minutes || 30}" min="1" max="180">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Max Volume (%) in Phase 2</label>
+                    <input type="number" class="form-input" id="pe-phase2-max-volume" value="${pe.phase2_max_volume ?? 100}" min="0" max="100" title="Cap TTS volume when in phase 2">
                   </div>
                 </div>
               </div>
@@ -5052,14 +5078,17 @@ class EnergyPanel extends HTMLElement {
   async _saveEnforcementSettings() {
     const pe = {
       enabled: this.shadowRoot.querySelector('#pe-enabled')?.checked || false,
+      phase1_enabled: this.shadowRoot.querySelector('#pe-phase1-enabled')?.checked !== false,
+      phase2_enabled: this.shadowRoot.querySelector('#pe-phase2-enabled')?.checked !== false,
       phase1_warning_count: parseInt(this.shadowRoot.querySelector('#pe-phase1-count')?.value) || 20,
       phase1_time_window_minutes: parseInt(this.shadowRoot.querySelector('#pe-phase1-window')?.value) || 60,
       phase1_volume_increment: parseInt(this.shadowRoot.querySelector('#pe-phase1-vol-inc')?.value) || 2,
       phase1_reset_minutes: parseInt(this.shadowRoot.querySelector('#pe-phase1-reset')?.value) || 60,
-      phase2_warning_count: parseInt(this.shadowRoot.querySelector('#pe-phase2-count')?.value) || 40,
-      phase2_time_window_minutes: parseInt(this.shadowRoot.querySelector('#pe-phase2-window')?.value) || 30,
+      phase2_warning_count: parseInt(this.shadowRoot.querySelector('#pe-phase2-count')?.value) || 10,
+      phase2_time_window_minutes: parseInt(this.shadowRoot.querySelector('#pe-phase2-window')?.value) || 10,
       phase2_cycle_delay_seconds: parseInt(this.shadowRoot.querySelector('#pe-phase2-delay')?.value) || 5,
       phase2_reset_minutes: parseInt(this.shadowRoot.querySelector('#pe-phase2-reset')?.value) || 30,
+      phase2_max_volume: Math.max(0, Math.min(100, parseInt(this.shadowRoot.querySelector('#pe-phase2-max-volume')?.value) || 100)),
       room_kwh_intervals: (this.shadowRoot.querySelector('#pe-room-kwh-intervals')?.value || '5, 10, 15, 20')
         .split(',')
         .map(s => parseInt(s.trim()))
@@ -5254,9 +5283,9 @@ class EnergyPanel extends HTMLElement {
 
     const ttsLanguage = this.shadowRoot.querySelector('#tts-language')?.value || 'en';
     const ttsPrefix = this.shadowRoot.querySelector('#tts-prefix')?.value || 'Message from Home Energy.';
-    const ttsRoomWarn = this.shadowRoot.querySelector('#tts-room-warn')?.value || '{prefix} {room_name} is pulling {watts} watts';
-    const ttsOutletWarn = this.shadowRoot.querySelector('#tts-outlet-warn')?.value || '{prefix} {room_name} {outlet_name} is pulling {watts} watts';
-    const ttsBudgetExceeded = this.shadowRoot.querySelector('#tts-budget-exceeded')?.value || '{prefix} {room_name} has met {kwh_used} kilowatt hours. Threshold warnings are now active.';
+    const ttsRoomWarn = this.shadowRoot.querySelector('#tts-room-warn')?.value || '';
+    const ttsOutletWarn = this.shadowRoot.querySelector('#tts-outlet-warn')?.value || '';
+    const ttsBudgetExceeded = this.shadowRoot.querySelector('#tts-budget-exceeded')?.value || '';
     const ttsShutoff = this.shadowRoot.querySelector('#tts-shutoff')?.value || '{prefix} {room_name} {outlet_name} {plug} has been reset to protect circuit from overload';
     const ttsStoveOn = this.shadowRoot.querySelector('#tts-stove-on')?.value || '{prefix} Stove has been turned on';
     const ttsStoveOff = this.shadowRoot.querySelector('#tts-stove-off')?.value || '{prefix} Stove has been turned off';
@@ -5266,6 +5295,7 @@ class EnergyPanel extends HTMLElement {
     const ttsStoveAutoOff = this.shadowRoot.querySelector('#tts-stove-auto-off')?.value || '{prefix} Stove has been automatically turned off for safety';
     const ttsPhase1Warn = this.shadowRoot.querySelector('#tts-phase1-warn')?.value || '';
     const ttsPhase2Warn = this.shadowRoot.querySelector('#tts-phase2-warn')?.value || '';
+    const ttsPhase2After = this.shadowRoot.querySelector('#tts-phase2-after')?.value || '';
     const ttsPhaseReset = this.shadowRoot.querySelector('#tts-phase-reset')?.value || '';
     const ttsRoomKwhWarn = this.shadowRoot.querySelector('#tts-room-kwh-warn')?.value || '';
     const ttsHomeKwhWarn = this.shadowRoot.querySelector('#tts-home-kwh-warn')?.value || '';
@@ -5292,14 +5322,17 @@ class EnergyPanel extends HTMLElement {
     tabEnf?.querySelectorAll('.pe-room-checkbox:checked').forEach(cb => roomsEnabled.push(cb.dataset.roomId || ''));
     const power_enforcement = {
       enabled: _pei('pe-enabled') === true,
+      phase1_enabled: _pei('pe-phase1-enabled') !== false,
+      phase2_enabled: _pei('pe-phase2-enabled') !== false,
       phase1_warning_count: parseInt(_pei('pe-phase1-count')) || 20,
       phase1_time_window_minutes: parseInt(_pei('pe-phase1-window')) || 60,
       phase1_volume_increment: parseInt(_pei('pe-phase1-vol-inc')) || 2,
       phase1_reset_minutes: parseInt(_pei('pe-phase1-reset')) || 60,
-      phase2_warning_count: parseInt(_pei('pe-phase2-count')) || 40,
-      phase2_time_window_minutes: parseInt(_pei('pe-phase2-window')) || 30,
+      phase2_warning_count: parseInt(_pei('pe-phase2-count')) || 10,
+      phase2_time_window_minutes: parseInt(_pei('pe-phase2-window')) || 10,
       phase2_cycle_delay_seconds: parseInt(_pei('pe-phase2-delay')) || 5,
       phase2_reset_minutes: parseInt(_pei('pe-phase2-reset')) || 30,
+      phase2_max_volume: Math.max(0, Math.min(100, parseInt(_pei('pe-phase2-max-volume')) || 100)),
       room_kwh_intervals: (_pei('pe-room-kwh-intervals') || '5, 10, 15, 20')
         .split(',')
         .map(s => parseInt(String(s).trim()))
@@ -5317,6 +5350,7 @@ class EnergyPanel extends HTMLElement {
         language: ttsLanguage,
         speed: this._config?.tts_settings?.speed ?? 1.0,
         volume: this._config?.tts_settings?.volume ?? 0.7,
+        min_interval_seconds: Math.max(1, Math.min(60, parseInt(this.shadowRoot.querySelector('#tts-min-interval')?.value) || 3)),
         prefix: ttsPrefix,
         room_warn_msg: ttsRoomWarn,
         outlet_warn_msg: ttsOutletWarn,
@@ -5330,6 +5364,7 @@ class EnergyPanel extends HTMLElement {
         stove_auto_off_msg: ttsStoveAutoOff,
         phase1_warn_msg: ttsPhase1Warn,
         phase2_warn_msg: ttsPhase2Warn,
+        phase2_after_msg: ttsPhase2After,
         phase_reset_msg: ttsPhaseReset,
         room_kwh_warn_msg: ttsRoomKwhWarn,
         home_kwh_warn_msg: ttsHomeKwhWarn,

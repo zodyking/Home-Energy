@@ -138,7 +138,7 @@ async def async_set_volume(
                 ATTR_ENTITY_ID: media_player,
                 "volume_level": volume,
             },
-            blocking=True,
+            blocking=False,
         )
         _LOGGER.debug("Volume set to %.2f on %s", volume, media_player)
     except Exception as e:

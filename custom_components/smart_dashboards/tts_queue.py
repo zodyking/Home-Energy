@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
@@ -15,6 +16,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # Poll interval when media player is not ready
 POLL_INTERVAL = 1.0
+# Minimum seconds between TTS sends per media player (prevents rapid-fire hang)
+MIN_TTS_INTERVAL = 3.0
 
 
 @dataclass
@@ -29,6 +32,7 @@ class TTSPendingItem:
     room: dict | None  # For responsive lights
     tts_settings: dict
     with_lights_callback: Callable[[], Awaitable[None]] | None  # Optional lights+tts call
+    post_send_callback: Callable[[], Awaitable[None]] | None = None  # Run after TTS actually sent (incl. when from queue)
     blocking: bool = False
 
 
@@ -40,6 +44,8 @@ class TTSPendingQueue:
         self._queues: dict[str, list[TTSPendingItem]] = defaultdict(list)
         self._poll_tasks: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
+        self._sending: set[str] = set()  # Media players currently sending TTS (prevents concurrent sends)
+        self._last_send_time: dict[str, float] = {}  # media_player -> monotonic time of last send
 
     async def enqueue(self, item: TTSPendingItem) -> None:
         """Add item to queue for its media player; start poll task if needed."""
@@ -72,8 +78,18 @@ class TTSPendingQueue:
         except Exception as e:
             _LOGGER.error("TTS queue poll error for %s: %s", media_player, e)
 
+    def _can_send_now(self, media_player: str, min_interval: float = MIN_TTS_INTERVAL) -> bool:
+        """Return True if no TTS is in progress and min interval has passed."""
+        if media_player in self._sending:
+            return False
+        last = self._last_send_time.get(media_player)
+        if last is not None and (time.monotonic() - last) < min_interval:
+            return False
+        return True
+
     async def _send_item(self, item: TTSPendingItem) -> None:
-        """Send a single TTS item (with optional lights callback)."""
+        """Send a single TTS item (with optional lights callback). Run post_send_callback after success."""
+        self._sending.add(item.media_player)
         try:
             if item.with_lights_callback:
                 await item.with_lights_callback()
@@ -87,9 +103,14 @@ class TTSPendingQueue:
                     tts_entity=item.tts_entity,
                     blocking=item.blocking,
                 )
+            self._last_send_time[item.media_player] = time.monotonic()
+            if item.post_send_callback:
+                await item.post_send_callback()
         except Exception as e:
             _LOGGER.error("TTS queue send failed for %s: %s", item.media_player, e)
             raise
+        finally:
+            self._sending.discard(item.media_player)
 
 
 # Module-level queue instance (set when integration starts)
@@ -114,11 +135,13 @@ async def async_send_tts_or_queue(
     room: dict | None = None,
     tts_settings: dict | None = None,
     with_lights_callback: Callable[[], Awaitable[None]] | None = None,
+    post_send_callback: Callable[[], Awaitable[None]] | None = None,
     blocking: bool = False,
 ) -> bool:
     """
-    Send TTS immediately if media player is ready (on, idle, standby).
+    Send TTS immediately if media player is ready (on, idle, standby) and not throttled.
     Otherwise enqueue and poll until ready.
+    post_send_callback runs after TTS is actually sent (when immediate or when dequeued).
     Returns True if sent immediately, False if enqueued.
     """
     if not message or not message.strip():
@@ -128,7 +151,11 @@ async def async_send_tts_or_queue(
         _LOGGER.warning("No media player specified for TTS")
         return False
 
-    if is_media_player_ready_for_tts(hass, media_player):
+    queue = get_tts_queue(hass)
+    min_interval = float(tts_settings.get("min_interval_seconds", MIN_TTS_INTERVAL)) if tts_settings else MIN_TTS_INTERVAL
+
+    if is_media_player_ready_for_tts(hass, media_player) and queue._can_send_now(media_player, min_interval):
+        queue._sending.add(media_player)
         try:
             if with_lights_callback:
                 await with_lights_callback()
@@ -142,10 +169,15 @@ async def async_send_tts_or_queue(
                     tts_entity=tts_entity,
                     blocking=blocking,
                 )
+            queue._last_send_time[media_player] = time.monotonic()
+            if post_send_callback:
+                await post_send_callback()
             return True
         except Exception as e:
             _LOGGER.error("TTS send failed: %s", e)
             raise
+        finally:
+            queue._sending.discard(media_player)
 
     item = TTSPendingItem(
         media_player=media_player,
@@ -156,9 +188,9 @@ async def async_send_tts_or_queue(
         room=room,
         tts_settings=tts_settings or {},
         with_lights_callback=with_lights_callback,
+        post_send_callback=post_send_callback,
         blocking=blocking,
     )
-    queue = get_tts_queue(hass)
     await queue.enqueue(item)
-    _LOGGER.debug("TTS enqueued for %s (player not ready)", media_player)
+    _LOGGER.debug("TTS enqueued for %s (player not ready or throttled)", media_player)
     return False
