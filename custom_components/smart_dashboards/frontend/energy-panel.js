@@ -5,6 +5,23 @@
 
 import { sharedStyles, icons, showToast, passcodeModalStyles, showPasscodeModal, renderCustomSelect, initCustomSelects } from './shared-utils.js';
 
+// TTS message defaults (must match const.py, periods and commas only for TTS)
+const TTS_DEFAULTS = {
+  prefix: 'Message from Home Energy.',
+  room_warn_msg: '{prefix} {room_name} is using {watts} watts out of {threshold} watt room threshold, reduce your usage.',
+  outlet_warn_msg: '{prefix} {outlet_name} in {room_name} is using {watts} watts out of {threshold} watt outlet threshold, reduce your usage.',
+  budget_exceeded_msg: '{prefix} {room_name} at {kwh_used} kWh, power alerts are on.',
+  shutoff_msg: '{prefix} {room_name} {outlet_name} {plug} reset after overload, reduce power use.',
+  breaker_warn_msg: '{prefix} {breaker_name} is using {watts} watts out of {max_load} watt limit, reduce your usage.',
+  breaker_shutoff_msg: '{prefix} {breaker_name} at limit, {watts} watts, max {max_load} watts. Shutoff enabled.',
+  phase1_warn_msg: '{prefix} {room_name} has exceeded threshold {warning_count} times. Volume will rise until power stays under {threshold} watts.',
+  phase2_warn_msg: '{prefix} {room_name} has exceeded threshold {warning_count} times. Cycling all outlets now, turn off devices.',
+  phase2_after_msg: '{prefix} Cycle complete in {room_name}. Stay under limit or outlets cycle again.',
+  phase_reset_msg: '{prefix} {room_name} under limit, enforcement reset.',
+  room_kwh_warn_msg: '{prefix} {room_name} used {kwh_limit} kWh today, {percentage} percent of home, reduce use.',
+  home_kwh_warn_msg: '{prefix} Home over {kwh_limit} kWh today, reduce consumption.',
+};
+
 class EnergyPanel extends HTMLElement {
   constructor() {
     super();
@@ -3468,7 +3485,7 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Message Prefix</div>
                 <div class="tts-msg-desc">Added to the beginning of all alert messages</div>
                 <input type="text" class="form-input" id="tts-prefix" 
-                  value="${ttsSettings.prefix || 'Message from Home Energy.'}" 
+                  value="${ttsSettings.prefix || TTS_DEFAULTS.prefix}" 
                   placeholder="Message from Home Energy.">
               </div>
               
@@ -3476,10 +3493,10 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Room Warning Message</div>
                 <div class="tts-msg-desc">Spoken when room total exceeds threshold</div>
                 <input type="text" class="form-input" id="tts-room-warn" 
-                  value="${ttsSettings.room_warn_msg || ''}" 
-                  placeholder="{room_name} over power limit at {watts} watts — turn off devices.">
+                  value="${ttsSettings.room_warn_msg || TTS_DEFAULTS.room_warn_msg}" 
+                  placeholder="{room_name} is using {watts} watts — over your {threshold} watt limit.">
                 <div class="tts-var-help">
-                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{watts}</code>
+                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{watts}</code> <code>{threshold}</code>
                 </div>
               </div>
               
@@ -3487,10 +3504,10 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Outlet Warning Message</div>
                 <div class="tts-msg-desc">Spoken when outlet total exceeds threshold</div>
                 <input type="text" class="form-input" id="tts-outlet-warn" 
-                  value="${ttsSettings.outlet_warn_msg || ''}" 
-                  placeholder="{outlet_name} in {room_name} over limit at {watts} watts — reduce use.">
+                  value="${ttsSettings.outlet_warn_msg || TTS_DEFAULTS.outlet_warn_msg}" 
+                  placeholder="{outlet_name} in {room_name} is using {watts} watts — over the {threshold} watt limit.">
                 <div class="tts-var-help">
-                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{watts}</code>
+                  Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{watts}</code> <code>{threshold}</code>
                 </div>
               </div>
 
@@ -3498,7 +3515,7 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Budget Exceeded Message</div>
                 <div class="tts-msg-desc">Spoken when room first meets its daily kWh budget and threshold warnings become active</div>
                 <input type="text" class="form-input" id="tts-budget-exceeded" 
-                  value="${ttsSettings.budget_exceeded_msg || ''}" 
+                  value="${ttsSettings.budget_exceeded_msg || TTS_DEFAULTS.budget_exceeded_msg}" 
                   placeholder="{room_name} at {kwh_used} kWh — power alerts are on.">
                 <div class="tts-var-help">
                   Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{kwh_used}</code>
@@ -3509,8 +3526,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Shutoff Reset Message</div>
                 <div class="tts-msg-desc">Spoken when a plug is shut off and reset due to overload</div>
                 <input type="text" class="form-input" id="tts-shutoff" 
-                  value="${ttsSettings.shutoff_msg || '{prefix} {room_name} {outlet_name} {plug} has been reset to protect circuit from overload'}" 
-                  placeholder="{prefix} {room_name} {outlet_name} {plug} has been reset to protect circuit from overload">
+                  value="${ttsSettings.shutoff_msg || TTS_DEFAULTS.shutoff_msg}" 
+                  placeholder="{room_name} {outlet_name} {plug} reset after overload — reduce power use.">
                 <div class="tts-var-help">
                   Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{plug}</code>
                 </div>
@@ -3587,23 +3604,23 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Phase 1 Warning (Volume Escalation)</div>
                 <div class="tts-msg-desc">Spoken when warning count triggers volume escalation phase</div>
                 <input type="text" class="form-input" id="tts-phase1-warn" 
-                  value="${ttsSettings.phase1_warn_msg || ''}" 
-                  placeholder="{room_name} exceeded the limit repeatedly. Volume will rise until under {threshold} watts.">
+                  value="${ttsSettings.phase1_warn_msg || TTS_DEFAULTS.phase1_warn_msg}" 
+                  placeholder="{room_name} has exceeded electricity threshold {warning_count} times. Volume will rise until under {threshold} watts.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code> <code>{threshold}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Phase 2 Warning (Power Cycling)</div>
                 <div class="tts-msg-desc">Spoken before power cycle (outlets will be cycled)</div>
                 <input type="text" class="form-input" id="tts-phase2-warn" 
-                  value="${ttsSettings.phase2_warn_msg || ''}" 
-                  placeholder="{room_name} over limit too many times. Cycling outlets now — turn off devices.">
+                  value="${ttsSettings.phase2_warn_msg || TTS_DEFAULTS.phase2_warn_msg}" 
+                  placeholder="{room_name} has exceeded electricity threshold {warning_count} times. Cycling outlets now.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Phase 2 After Message</div>
                 <div class="tts-msg-desc">Spoken after power cycle completes (adhere to warning)</div>
                 <input type="text" class="form-input" id="tts-phase2-after" 
-                  value="${ttsSettings.phase2_after_msg || ''}" 
+                  value="${ttsSettings.phase2_after_msg || TTS_DEFAULTS.phase2_after_msg}" 
                   placeholder="Cycle complete in {room_name}. Stay under limit.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code></div>
               </div>
@@ -3611,24 +3628,24 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Phase Reset Message</div>
                 <div class="tts-msg-desc">Spoken when room maintains power below threshold for reset time</div>
                 <input type="text" class="form-input" id="tts-phase-reset" 
-                  value="${ttsSettings.phase_reset_msg || ''}" 
-                  placeholder="{prefix} {room_name} has maintained power below threshold...">
+                  value="${ttsSettings.phase_reset_msg || TTS_DEFAULTS.phase_reset_msg}" 
+                  placeholder="{room_name} under limit — enforcement reset.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Room kWh Warning</div>
                 <div class="tts-msg-desc">Spoken when room exceeds daily kWh interval</div>
                 <input type="text" class="form-input" id="tts-room-kwh-warn" 
-                  value="${ttsSettings.room_kwh_warn_msg || ''}" 
-                  placeholder="{prefix} {room_name} has exceeded {kwh_limit} kWh...">
+                  value="${ttsSettings.room_kwh_warn_msg || TTS_DEFAULTS.room_kwh_warn_msg}" 
+                  placeholder="{room_name} used {kwh_limit} kWh today ({percentage}% of home) — reduce use.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{kwh_limit}</code> <code>{percentage}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Home kWh Warning</div>
                 <div class="tts-msg-desc">Spoken when home exceeds daily kWh limit</div>
                 <input type="text" class="form-input" id="tts-home-kwh-warn" 
-                  value="${ttsSettings.home_kwh_warn_msg || ''}" 
-                  placeholder="{prefix} Your home has exceeded {kwh_limit} kWh...">
+                  value="${ttsSettings.home_kwh_warn_msg || TTS_DEFAULTS.home_kwh_warn_msg}" 
+                  placeholder="Home over {kwh_limit} kWh today — reduce consumption.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{kwh_limit}</code></div>
               </div>
             </div>
