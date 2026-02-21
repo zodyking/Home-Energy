@@ -226,6 +226,7 @@ class EnergyMonitor:
                             room=room,
                             outlet_name=outlet_name,
                             current_watts=outlet_total_watts,
+                            outlet_threshold=outlet_threshold,
                             media_player=media_player,
                             volume=room_volume,
                             tts_settings=tts_settings,
@@ -294,6 +295,7 @@ class EnergyMonitor:
                         room=room,
                         outlet_name=outlet_name,
                         current_watts=outlet_total_watts,
+                        outlet_threshold=outlet_threshold,
                         media_player=media_player,
                         volume=room_volume,
                         tts_settings=tts_settings,
@@ -714,9 +716,10 @@ class EnergyMonitor:
                     prefix=prefix,
                     room_name=room_name,
                     watts=int(current_watts),
+                    threshold=int(room_threshold) if room_threshold is not None else 0,
                 )
             except (KeyError, ValueError):
-                message = f"{prefix} {room_name} over power limit at {int(current_watts)} watts — turn off unused devices."
+                message = f"{prefix} {room_name} is using {int(current_watts)} watts out of {int(room_threshold or 0)} watt room threshold, reduce your usage."
 
         # Power cycle runs in post_send_callback after TTS actually plays (incl. when queued).
         # Flow: TTS (before) -> power cycle ALL outlets -> TTS (after, adhere message)
@@ -812,6 +815,7 @@ class EnergyMonitor:
         room: dict,
         outlet_name: str,
         current_watts: float,
+        outlet_threshold: int,
         media_player: str | None,
         volume: float,
         tts_settings: dict,
@@ -841,6 +845,7 @@ class EnergyMonitor:
             room_name=room_name,
             outlet_name=outlet_name,
             watts=int(current_watts),
+            threshold=outlet_threshold,
         )
 
         try:
@@ -1008,6 +1013,8 @@ class EnergyMonitor:
                     message = msg_template.format(
                         prefix=prefix,
                         breaker_name=breaker_name,
+                        watts=int(breaker_total_watts),
+                        max_load=max_load,
                     )
                     
                     if media_player:
@@ -1047,6 +1054,8 @@ class EnergyMonitor:
                     message = msg_template.format(
                         prefix=prefix,
                         breaker_name=breaker_name,
+                        watts=int(breaker_total_watts),
+                        max_load=max_load,
                     )
                     
                     if media_player:
