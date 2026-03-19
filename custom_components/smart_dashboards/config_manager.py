@@ -76,8 +76,10 @@ class ConfigManager:
         self._event_counts: dict[str, Any] = {
             "total_warnings": 0,
             "total_shutoffs": 0,
+            "total_power_cycles": 0,
             "room_warnings": {},  # room_id -> count (today only)
             "room_shutoffs": {},  # room_id -> count (today only)
+            "room_power_cycles": {},  # room_id -> enforcement phase-2 cycle initiations (today)
         }
         self._daily_totals: dict[str, Any] = {}
         self._billing_history: dict[str, Any] = {
@@ -579,17 +581,20 @@ class ConfigManager:
         if room_id:
             warnings = self._event_counts.get("room_warnings", {}).get(room_id, 0)
             shutoffs = self._event_counts.get("room_shutoffs", {}).get(room_id, 0)
+            power_cycles = self._event_counts.get("room_power_cycles", {}).get(room_id, 0)
             total_warnings = 0
             total_shutoffs = 0
             rooms_data = {}
         else:
             total_warnings = self._event_counts.get("total_warnings", 0)
             total_shutoffs = self._event_counts.get("total_shutoffs", 0)
+            total_power_cycles = self._event_counts.get("total_power_cycles", 0)
             rooms_data = {}
             for rid in (r.get("id", r["name"].lower().replace(" ", "_")) for r in self.energy_config.get("rooms", [])):
                 rooms_data[rid] = {
                     "warnings": self._event_counts.get("room_warnings", {}).get(rid, 0),
                     "shutoffs": self._event_counts.get("room_shutoffs", {}).get(rid, 0),
+                    "power_cycles": self._event_counts.get("room_power_cycles", {}).get(rid, 0),
                 }
         # Cumulative 0..total over 24 hours (linear distribution for chart continuity)
         def _cumul(n: int) -> list[float]:
@@ -601,13 +606,19 @@ class ConfigManager:
                 "timestamps": timestamps,
                 "warnings": _cumul(warnings),
                 "shutoffs": _cumul(shutoffs),
+                "power_cycles": _cumul(power_cycles),
             }
         return {
             "timestamps": timestamps,
             "total_warnings": _cumul(total_warnings),
             "total_shutoffs": _cumul(total_shutoffs),
+            "total_power_cycles": _cumul(total_power_cycles),
             "rooms": {
-                rid: {"warnings": _cumul(r["warnings"]), "shutoffs": _cumul(r["shutoffs"])}
+                rid: {
+                    "warnings": _cumul(r["warnings"]),
+                    "shutoffs": _cumul(r["shutoffs"]),
+                    "power_cycles": _cumul(r["power_cycles"]),
+                }
                 for rid, r in rooms_data.items()
             },
         }
@@ -620,8 +631,10 @@ class ConfigManager:
             self._event_counts = {
                 "total_warnings": 0,
                 "total_shutoffs": 0,
+                "total_power_cycles": 0,
                 "room_warnings": {},
                 "room_shutoffs": {},
+                "room_power_cycles": {},
             }
             self._event_counts_reset_date = today
 
@@ -637,11 +650,15 @@ class ConfigManager:
                 self._event_counts = {
                     "total_warnings": data.get("total_warnings", 0),
                     "total_shutoffs": data.get("total_shutoffs", 0),
+                    "total_power_cycles": data.get("total_power_cycles", 0),
                     "room_warnings": data.get("room_warnings", {}),
                     "room_shutoffs": data.get("room_shutoffs", {}),
+                    "room_power_cycles": data.get("room_power_cycles", {}),
                 }
         except (json.JSONDecodeError, IOError):
             pass
+        self._event_counts.setdefault("total_power_cycles", 0)
+        self._event_counts.setdefault("room_power_cycles", {})
         self._ensure_event_counts_for_today()
 
     async def _async_save_event_counts(self) -> None:
@@ -651,8 +668,10 @@ class ConfigManager:
             "last_reset_date": self._event_counts_reset_date or dt_util.now().strftime("%Y-%m-%d"),
             "total_warnings": self._event_counts.get("total_warnings", 0),
             "total_shutoffs": self._event_counts.get("total_shutoffs", 0),
+            "total_power_cycles": self._event_counts.get("total_power_cycles", 0),
             "room_warnings": self._event_counts.get("room_warnings", {}),
             "room_shutoffs": self._event_counts.get("room_shutoffs", {}),
+            "room_power_cycles": self._event_counts.get("room_power_cycles", {}),
         }
         try:
             await self.hass.async_add_executor_job(
@@ -678,6 +697,24 @@ class ConfigManager:
             self._event_counts["room_shutoffs"][room_id] = 0
         self._event_counts["room_shutoffs"][room_id] += 1
         await self._async_save_event_counts()
+
+    async def async_increment_power_cycle(self, room_id: str) -> None:
+        """Count one enforcement power-cycle run (phase 2, all outlets cycled together)."""
+        self._ensure_event_counts_for_today()
+        self._event_counts["total_power_cycles"] = self._event_counts.get("total_power_cycles", 0) + 1
+        if room_id not in self._event_counts["room_power_cycles"]:
+            self._event_counts["room_power_cycles"][room_id] = 0
+        self._event_counts["room_power_cycles"][room_id] += 1
+        await self._async_save_event_counts()
+
+    async def async_record_power_cycle_initiated(
+        self, room_id: str, room_name: str
+    ) -> None:
+        """One count when phase-2 outlet power cycle is initiated (not per plug)."""
+        await self.async_increment_power_cycle(room_id)
+        await self.async_add_event_log_entry(
+            room_id, room_name, "power_cycle", None, True
+        )
 
     def get_event_counts(self) -> dict[str, Any]:
         """Get event counts for current date only."""
@@ -709,7 +746,7 @@ class ConfigManager:
         self,
         room_id: str,
         room_name: str,
-        event_type: str,  # "warning" or "shutoff"
+        event_type: str,  # "warning", "shutoff", or "power_cycle"
         outlet_name: str | None,
         tts_succeeded: bool,
     ) -> None:
@@ -797,6 +834,7 @@ class ConfigManager:
                 "wh": round(room_wh, 2),
                 "warnings": self._event_counts.get("room_warnings", {}).get(room_id, 0),
                 "shutoffs": self._event_counts.get("room_shutoffs", {}).get(room_id, 0),
+                "power_cycles": self._event_counts.get("room_power_cycles", {}).get(room_id, 0),
             }
 
         total_wh = sum(r["wh"] for r in rooms_data.values())
@@ -804,6 +842,7 @@ class ConfigManager:
             "total_wh": round(total_wh, 2),
             "total_warnings": self._event_counts.get("total_warnings", 0),
             "total_shutoffs": self._event_counts.get("total_shutoffs", 0),
+            "total_power_cycles": self._event_counts.get("total_power_cycles", 0),
             "rooms": rooms_data,
         }
         await self._async_save_daily_totals()
@@ -814,8 +853,10 @@ class ConfigManager:
         self._event_counts = {
             "total_warnings": 0,
             "total_shutoffs": 0,
+            "total_power_cycles": 0,
             "room_warnings": {},
             "room_shutoffs": {},
+            "room_power_cycles": {},
         }
         self._event_counts_reset_date = today
         await self._async_save_energy_tracking()
@@ -843,12 +884,14 @@ class ConfigManager:
                 "wh": round(room_wh, 2),
                 "warnings": self._event_counts.get("room_warnings", {}).get(rid, 0),
                 "shutoffs": self._event_counts.get("room_shutoffs", {}).get(rid, 0),
+                "power_cycles": self._event_counts.get("room_power_cycles", {}).get(rid, 0),
             }
         total_wh = sum(r["wh"] for r in rooms_data.values())
         return {
             "total_wh": round(total_wh, 2),
             "total_warnings": self._event_counts.get("total_warnings", 0),
             "total_shutoffs": self._event_counts.get("total_shutoffs", 0),
+            "total_power_cycles": self._event_counts.get("total_power_cycles", 0),
             "rooms": rooms_data,
         }
 
@@ -861,9 +904,16 @@ class ConfigManager:
             r.get("id", r["name"].lower().replace(" ", "_"))
             for r in self.energy_config.get("rooms", [])
         }
-        result = {"dates": [], "total_wh": [], "total_warnings": [], "total_shutoffs": [], "rooms": {}}
+        result = {
+            "dates": [],
+            "total_wh": [],
+            "total_warnings": [],
+            "total_shutoffs": [],
+            "total_power_cycles": [],
+            "rooms": {},
+        }
         for rid in all_room_ids:
-            result["rooms"][rid] = {"wh": [], "warnings": [], "shutoffs": []}
+            result["rooms"][rid] = {"wh": [], "warnings": [], "shutoffs": [], "power_cycles": []}
 
         # Collect only dates that have data (in _daily_totals or today)
         candidates = []
@@ -881,12 +931,14 @@ class ConfigManager:
             result["total_wh"].append(row.get("total_wh", 0))
             result["total_warnings"].append(row.get("total_warnings", 0))
             result["total_shutoffs"].append(row.get("total_shutoffs", 0))
+            result["total_power_cycles"].append(row.get("total_power_cycles", 0))
             row_rooms = row.get("rooms") or {}
             for rid in all_room_ids:
                 rdata = row_rooms.get(rid, {})
                 result["rooms"][rid]["wh"].append(rdata.get("wh", 0))
                 result["rooms"][rid]["warnings"].append(rdata.get("warnings", 0))
                 result["rooms"][rid]["shutoffs"].append(rdata.get("shutoffs", 0))
+                result["rooms"][rid]["power_cycles"].append(rdata.get("power_cycles", 0))
 
         return result
 
@@ -960,7 +1012,8 @@ class ConfigManager:
         self, date_start: str | None = None, date_end: str | None = None
     ) -> tuple[str | None, str | None, bool]:
         """Resolve final date range. Returns (start, end, is_narrowed).
-        Uses billing cycle dates; includes today if there's live data."""
+        Uses billing cycle dates; includes today if billing end is in the past.
+        Optional date_start/date_end (YYYY-MM-DD) narrow the range, clamped to billing/base."""
         today = dt_util.now().strftime("%Y-%m-%d")
         billing_start, billing_end = self.get_billing_date_range()
 
@@ -978,8 +1031,21 @@ class ConfigManager:
         elif today > base_end:
             base_end = today  # extend to today if billing end is in the past
 
-        is_narrowed = False
-        return (base_start, base_end, is_narrowed)
+        ds = (date_start or "").strip() or None
+        de = (date_end or "").strip() or None
+        if (
+            ds
+            and de
+            and self._is_valid_date(ds)
+            and self._is_valid_date(de)
+            and ds <= de
+        ):
+            u_start = max(ds, base_start)
+            u_end = min(de, base_end)
+            if u_start <= u_end:
+                return (u_start, u_end, True)
+
+        return (base_start, base_end, False)
 
     async def record_billing_cycle_if_changed(self, start: str, end: str) -> bool:
         """If billing dates differ from last known, append to cycles and save. Returns True if changed."""

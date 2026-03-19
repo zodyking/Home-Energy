@@ -15,9 +15,12 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# Server-side cache for get_statistics (60s TTL) to avoid heavy recorder queries
+# Server-side cache for get_statistics to avoid heavy recorder queries
+# Short TTL while range includes "today" (live); longer TTL for past-only ranges
 _STATISTICS_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
-_STATISTICS_CACHE_TTL = 60.0
+_STATISTICS_CACHE_TTL_LIVE = 60.0
+_STATISTICS_CACHE_TTL_PAST = 3600.0
+_STATISTICS_QUERY_CONCURRENCY = 6
 
 
 @callback
@@ -265,6 +268,7 @@ async def websocket_get_power_data(
         "rooms": [],
         "total_warnings": event_counts.get("total_warnings", 0),
         "total_shutoffs": event_counts.get("total_shutoffs", 0),
+        "total_power_cycles": event_counts.get("total_power_cycles", 0),
     }
 
     for room in config_manager.energy_config.get("rooms", []):
@@ -276,6 +280,7 @@ async def websocket_get_power_data(
             "total_day_wh": 0,
             "warnings": event_counts.get("room_warnings", {}).get(room_id, 0),
             "shutoffs": event_counts.get("room_shutoffs", {}).get(room_id, 0),
+            "power_cycles": event_counts.get("room_power_cycles", {}).get(room_id, 0),
             "outlets": [],
         }
 
@@ -507,44 +512,151 @@ def _parse_power_from_state(state_value: str, unit: str | None) -> float:
     return val  # W or default
 
 
-def _integrate_power_to_wh(
-    entity_states: list, entity_id: str
-) -> float:
-    """Integrate power (W) over time using trapezoidal rule. Returns Wh."""
-    if not entity_states or len(entity_states) < 2:
+def _parse_power_from_state_object(state) -> float:
+    """Watts from a recorder State; supports switch.current_power_w on plug-style switches."""
+    try:
+        eid = state.entity_id
+        if eid.startswith("switch.") and state.attributes:
+            cp = state.attributes.get("current_power_w")
+            if cp is not None and str(cp) not in ("unknown", "unavailable", ""):
+                return float(cp)
+        unit = state.attributes.get("unit_of_measurement")
+        return _parse_power_from_state(state.state, unit)
+    except (AttributeError, TypeError, ValueError):
         return 0.0
+
+
+def _integrate_power_to_wh_clipped(states: list, start_dt, end_dt) -> float:
+    """Integrate power (W) to Wh using trapezoids between states, clipped to [start_dt, end_dt]."""
+    if not states:
+        return 0.0
+    states = sorted(states, key=lambda s: s.last_updated)
     total_wh = 0.0
-    for i in range(1, len(entity_states)):
-        s1, s2 = entity_states[i - 1], entity_states[i]
-        try:
-            unit1 = s1.attributes.get("unit_of_measurement") if hasattr(s1, "attributes") else None
-            unit2 = s2.attributes.get("unit_of_measurement") if hasattr(s2, "attributes") else None
-            w1 = _parse_power_from_state(s1.state, unit1)
-            w2 = _parse_power_from_state(s2.state, unit2)
-        except (AttributeError, TypeError):
+
+    def w_at(s):
+        return _parse_power_from_state_object(s)
+
+    t_first = states[0].last_updated
+    if t_first > start_dt:
+        w0 = w_at(states[0])
+        seg_end = min(t_first, end_dt)
+        if seg_end > start_dt:
+            total_wh += w0 * (seg_end - start_dt).total_seconds() / 3600.0
+
+    for i in range(len(states) - 1):
+        s1, s2 = states[i], states[i + 1]
+        a, b = s1.last_updated, s2.last_updated
+        if b <= a:
             continue
-        dt_sec = (s2.last_updated - s1.last_updated).total_seconds()
-        if dt_sec <= 0:
+        w1, w2 = w_at(s1), w_at(s2)
+        overlap_start = max(a, start_dt)
+        overlap_end = min(b, end_dt)
+        if overlap_end <= overlap_start:
             continue
-        # Trapezoidal: (w1 + w2) / 2 * hours
-        total_wh += (w1 + w2) / 2.0 * (dt_sec / 3600.0)
+        dur = (b - a).total_seconds()
+        if dur <= 0:
+            continue
+
+        def w_linear(t):
+            frac = (t - a).total_seconds() / dur
+            return w1 + (w2 - w1) * frac
+
+        wa = w_linear(overlap_start)
+        wb = w_linear(overlap_end)
+        dt_sec = (overlap_end - overlap_start).total_seconds()
+        total_wh += (wa + wb) / 2.0 * (dt_sec / 3600.0)
+
+    t_last = states[-1].last_updated
+    if t_last < end_dt:
+        wn = w_at(states[-1])
+        overlap_start = max(t_last, start_dt)
+        overlap_end = end_dt
+        if overlap_end > overlap_start:
+            total_wh += wn * (overlap_end - overlap_start).total_seconds() / 3600.0
+
     return total_wh
 
 
-def _compute_kwh_from_history_sync(
+def _is_switch_on_state(state_str: str | None) -> bool:
+    if not state_str:
+        return False
+    return str(state_str).lower() in ("on", "true", "yes", "1")
+
+
+def _integrate_switch_constant_wh(
+    states: list, start_dt, end_dt, watts: float
+) -> float:
+    """Rectangle rule: constant watts while switch state is on, clipped to [start_dt, end_dt]."""
+    if watts <= 0 or not states:
+        return 0.0
+    states = sorted(states, key=lambda s: s.last_updated)
+    total_wh = 0.0
+    for i, s in enumerate(states):
+        t0 = s.last_updated
+        t1 = states[i + 1].last_updated if i + 1 < len(states) else end_dt
+        if not _is_switch_on_state(s.state):
+            continue
+        seg_start = max(t0, start_dt)
+        seg_end = min(t1, end_dt)
+        if seg_end > seg_start:
+            total_wh += watts * (seg_end - seg_start).total_seconds() / 3600.0
+    return total_wh
+
+
+def _collect_statistics_energy_sources(
+    config_manager,
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    """Map plug power entities to rooms; list switch-based constant loads (lights, vents).
+    Last mapping wins if the same plug entity appears twice (same as legacy behavior)."""
+    entity_to_room: dict[str, str] = {}
+    switch_specs: list[dict[str, Any]] = []
+
+    for room in config_manager.energy_config.get("rooms", []):
+        room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+        for outlet in room.get("outlets", []):
+            otype = outlet.get("type", "outlet")
+            if otype == "light":
+                sw = (outlet.get("switch_entity") or "").strip()
+                if not sw:
+                    continue
+                total_w = 0.0
+                for le in outlet.get("light_entities") or []:
+                    if isinstance(le, dict) and str(le.get("entity_id", "")).startswith(
+                        "light."
+                    ):
+                        total_w += float(le.get("watts", 0) or 0)
+                if total_w > 0:
+                    switch_specs.append({
+                        "room_id": room_id,
+                        "switch_entity": sw,
+                        "watts": total_w,
+                    })
+            elif otype == "ceiling_vent_fan":
+                sw = (outlet.get("switch_entity") or "").strip()
+                w_on = float(outlet.get("watts_when_on", 0) or 0)
+                if sw and w_on > 0:
+                    switch_specs.append({
+                        "room_id": room_id,
+                        "switch_entity": sw,
+                        "watts": w_on,
+                    })
+            else:
+                for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
+                    if eid and isinstance(eid, str) and eid.strip():
+                        entity_to_room[eid.strip()] = room_id
+
+    return entity_to_room, switch_specs
+
+
+def _sync_integrate_entity_wh(
     hass: HomeAssistant,
-    entity_to_room: dict[str, str],
-    start_dt,  # datetime
-    end_dt,  # datetime
-) -> tuple[float, dict[str, float]]:
-    """Synchronous core: query recorder history and integrate power to Wh.
-    Returns (total_wh, room_wh_map)."""
+    entity_id: str,
+    start_dt,
+    end_dt,
+) -> float:
+    """Load one entity's history and integrate W -> Wh."""
     from homeassistant.components.recorder.history import get_significant_states_with_session
     from homeassistant.components.recorder.util import session_scope
-
-    entity_ids = list(entity_to_room.keys())
-    if not entity_ids:
-        return 0.0, {}
 
     with session_scope(hass=hass, read_only=True) as session:
         states_dict = get_significant_states_with_session(
@@ -552,23 +664,52 @@ def _compute_kwh_from_history_sync(
             session,
             start_dt,
             end_dt,
-            entity_ids,
+            [entity_id],
             None,
             include_start_time_state=True,
-            significant_changes_only=False,
+            significant_changes_only=True,
             minimal_response=False,
             no_attributes=False,
         )
+    states = states_dict.get(entity_id) or []
+    return _integrate_power_to_wh_clipped(states, start_dt, end_dt)
 
-    room_wh: dict[str, float] = {}
-    total_wh = 0.0
-    for eid, states in states_dict.items():
-        wh = _integrate_power_to_wh(states, eid)
-        room_id = entity_to_room.get(eid)
-        if room_id:
-            room_wh[room_id] = room_wh.get(room_id, 0.0) + wh
-        total_wh += wh
-    return total_wh, room_wh
+
+def _sync_integrate_switch_constant_wh(
+    hass: HomeAssistant,
+    switch_entity: str,
+    watts: float,
+    start_dt,
+    end_dt,
+) -> float:
+    from homeassistant.components.recorder.history import get_significant_states_with_session
+    from homeassistant.components.recorder.util import session_scope
+
+    with session_scope(hass=hass, read_only=True) as session:
+        states_dict = get_significant_states_with_session(
+            hass,
+            session,
+            start_dt,
+            end_dt,
+            [switch_entity],
+            None,
+            include_start_time_state=True,
+            significant_changes_only=True,
+            minimal_response=False,
+            no_attributes=False,
+        )
+    states = states_dict.get(switch_entity) or []
+    return _integrate_switch_constant_wh(states, start_dt, end_dt, watts)
+
+
+def _statistics_cache_ttl_seconds(end_date_str: str) -> float:
+    """Past-only ranges can cache longer; ranges through today stay short."""
+    from homeassistant.util import dt as dt_util
+
+    today = dt_util.now().strftime("%Y-%m-%d")
+    if end_date_str < today:
+        return _STATISTICS_CACHE_TTL_PAST
+    return _STATISTICS_CACHE_TTL_LIVE
 
 
 async def _compute_kwh_from_history(
@@ -577,26 +718,12 @@ async def _compute_kwh_from_history(
     start_date: str,
     end_date: str,
 ) -> tuple[float, dict[str, float]]:
-    """Compute kWh from HA recorder history over start_date..end_date.
+    """Compute kWh from HA recorder history over start_date..end_date (monitored loads).
     Returns (total_wh, room_wh_map)."""
-    from homeassistant.components.recorder import get_instance
     from homeassistant.util import dt as dt_util
 
-    # Collect entity_ids and room mapping from room config
-    entity_to_room: dict[str, str] = {}
-    for room in config_manager.energy_config.get("rooms", []):
-        room_id = room.get("id", room["name"].lower().replace(" ", "_"))
-        for outlet in room.get("outlets", []):
-            if outlet.get("type") == "light":
-                continue
-            for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
-                if eid and isinstance(eid, str) and eid.strip():
-                    entity_to_room[eid.strip()] = room_id
+    entity_to_room, switch_specs = _collect_statistics_energy_sources(config_manager)
 
-    if not entity_to_room:
-        return 0.0, {}
-
-    # Parse date range to UTC datetimes
     try:
         start_dt = dt_util.parse_datetime(f"{start_date} 00:00:00")
         end_dt = dt_util.parse_datetime(f"{end_date} 23:59:59")
@@ -607,13 +734,43 @@ async def _compute_kwh_from_history(
     except (ValueError, TypeError):
         return 0.0, {}
 
-    return await get_instance(hass).async_add_executor_job(
-        _compute_kwh_from_history_sync,
-        hass,
-        entity_to_room,
-        start_dt,
-        end_dt,
-    )
+    if not entity_to_room and not switch_specs:
+        return 0.0, {}
+
+    sem = asyncio.Semaphore(_STATISTICS_QUERY_CONCURRENCY)
+
+    async def one_plug(eid: str, room_id: str) -> tuple[str, float]:
+        async with sem:
+            wh = await hass.async_add_executor_job(
+                _sync_integrate_entity_wh, hass, eid, start_dt, end_dt
+            )
+        return room_id, float(wh)
+
+    async def one_switch(spec: dict[str, Any]) -> tuple[str, float]:
+        async with sem:
+            wh = await hass.async_add_executor_job(
+                _sync_integrate_switch_constant_wh,
+                hass,
+                spec["switch_entity"],
+                float(spec["watts"]),
+                start_dt,
+                end_dt,
+            )
+        return spec["room_id"], float(wh)
+
+    coros: list = [one_plug(eid, rid) for eid, rid in entity_to_room.items()]
+    coros.extend(one_switch(s) for s in switch_specs)
+    if not coros:
+        return 0.0, {}
+
+    results = await asyncio.gather(*coros)
+    room_wh: dict[str, float] = {}
+    total_wh = 0.0
+    for room_id, wh in results:
+        total_wh += wh
+        room_wh[room_id] = room_wh.get(room_id, 0.0) + wh
+
+    return total_wh, room_wh
 
 
 @websocket_api.websocket_command(
@@ -644,11 +801,12 @@ async def websocket_get_statistics(
     # Return cached result if valid (avoids heavy recorder query)
     cache_key = (start or "", end or "")
     now = time.monotonic()
+    cache_ttl = _statistics_cache_ttl_seconds(end or "")
     if cache_key[0] and cache_key[1]:
         entry = _STATISTICS_CACHE.get(cache_key)
         if entry:
             cached_at, cached_result = entry
-            if now - cached_at < _STATISTICS_CACHE_TTL:
+            if now - cached_at < cache_ttl:
                 connection.send_result(msg["id"], cached_result)
                 return
 
@@ -659,6 +817,7 @@ async def websocket_get_statistics(
         "total_kwh": 0.0,
         "total_warnings": 0,
         "total_shutoffs": 0,
+        "total_power_cycles": 0,
         "rooms": [],
         "sensor_values": {
             "current_usage": None,
@@ -699,6 +858,7 @@ async def websocket_get_statistics(
 
     total_warnings = 0
     total_shutoffs = 0
+    total_power_cycles = 0
     room_sums: dict[str, dict[str, Any]] = {}
 
     for rid in room_wh_map:
@@ -706,6 +866,7 @@ async def websocket_get_statistics(
             "kwh": room_wh_map[rid] / 1000.0,
             "warnings": 0,
             "shutoffs": 0,
+            "power_cycles": 0,
         }
 
     for d in range_dates:
@@ -715,22 +876,33 @@ async def websocket_get_statistics(
             row = daily_totals.get(d, {})
         total_warnings += int(row.get("total_warnings", 0))
         total_shutoffs += int(row.get("total_shutoffs", 0))
+        total_power_cycles += int(row.get("total_power_cycles", 0))
         row_rooms = row.get("rooms") or {}
         for rid, rdata in row_rooms.items():
             if rid not in room_sums:
-                room_sums[rid] = {"kwh": 0.0, "warnings": 0, "shutoffs": 0}
+                room_sums[rid] = {
+                    "kwh": 0.0,
+                    "warnings": 0,
+                    "shutoffs": 0,
+                    "power_cycles": 0,
+                }
             room_sums[rid]["warnings"] += int(rdata.get("warnings", 0))
             room_sums[rid]["shutoffs"] += int(rdata.get("shutoffs", 0))
+            room_sums[rid]["power_cycles"] += int(rdata.get("power_cycles", 0))
     result["total_kwh"] = round(total_kwh, 2)
     result["total_warnings"] = total_warnings
     result["total_shutoffs"] = total_shutoffs
+    result["total_power_cycles"] = total_power_cycles
 
     # Build rooms list with name and percentage
     rooms_config = config_manager.energy_config.get("rooms", [])
     for room in rooms_config:
         rid = room.get("id", room["name"].lower().replace(" ", "_"))
         name = room.get("name", rid)
-        rsum = room_sums.get(rid, {"kwh": 0.0, "warnings": 0, "shutoffs": 0})
+        rsum = room_sums.get(
+            rid,
+            {"kwh": 0.0, "warnings": 0, "shutoffs": 0, "power_cycles": 0},
+        )
         kwh = round(rsum["kwh"], 2)
         pct = round((kwh / total_kwh * 100) if total_kwh > 0 else 0, 1)
         result["rooms"].append({
@@ -740,6 +912,7 @@ async def websocket_get_statistics(
             "pct": pct,
             "warnings": rsum["warnings"],
             "shutoffs": rsum["shutoffs"],
+            "power_cycles": rsum.get("power_cycles", 0),
         })
 
     # Add any rooms in daily totals that aren't in config
@@ -755,6 +928,7 @@ async def websocket_get_statistics(
                 "pct": pct,
                 "warnings": rsum["warnings"],
                 "shutoffs": rsum["shutoffs"],
+                "power_cycles": rsum.get("power_cycles", 0),
             })
 
     # Read live sensor values (sensors + input_text, input_number helpers)
