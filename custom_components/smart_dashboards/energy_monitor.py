@@ -796,6 +796,8 @@ class EnergyMonitor:
 
         # Turn all off, wait, turn all on
         try:
+            room_name = str(room.get("name") or room_id)
+            await self.config_manager.async_record_power_cycle_initiated(room_id, room_name)
             _LOGGER.info("Power cycling %d outlets in %s for enforcement", len(switch_entities), room_id)
             await self.hass.services.async_call(
                 "switch", "turn_off", {"entity_id": switch_entities}, blocking=True

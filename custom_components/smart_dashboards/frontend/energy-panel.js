@@ -170,17 +170,20 @@ class EnergyPanel extends HTMLElement {
     const totalKwh = s.total_kwh ?? 0;
     const totalWarnings = s.total_warnings ?? 0;
     const totalShutoffs = s.total_shutoffs ?? 0;
+    const totalPowerCycles = s.total_power_cycles ?? 0;
     const kwhEl = this.shadowRoot.querySelector('#stat-total-kwh');
     const warnEl = this.shadowRoot.querySelector('#stat-total-warnings');
     const shutEl = this.shadowRoot.querySelector('#stat-total-shutoffs');
+    const pcEl = this.shadowRoot.querySelector('#stat-total-power-cycles');
     if (kwhEl) kwhEl.textContent = totalKwh.toFixed(2);
     if (warnEl) warnEl.textContent = totalWarnings;
     if (shutEl) shutEl.textContent = totalShutoffs;
+    if (pcEl) pcEl.textContent = totalPowerCycles;
     const rooms = s.rooms || [];
     const tbody = this.shadowRoot.querySelector('#stat-rooms-tbody');
     if (tbody) {
       tbody.innerHTML = rooms.length === 0
-        ? '<tr><td colspan="5" class="statistics-empty">No room data for this range.</td></tr>'
+        ? '<tr><td colspan="6" class="statistics-empty">No room data for this range.</td></tr>'
         : rooms.map(r => `
           <tr>
             <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
@@ -188,6 +191,7 @@ class EnergyPanel extends HTMLElement {
             <td>${(r.pct ?? 0).toFixed(1)}%</td>
             <td>${r.warnings ?? 0}</td>
             <td>${r.shutoffs ?? 0}</td>
+            <td>${r.power_cycles ?? 0}</td>
           </tr>
         `).join('');
     }
@@ -226,11 +230,13 @@ class EnergyPanel extends HTMLElement {
     const totalDayEl = this.shadowRoot.querySelector('#summary-total-day');
     const totalWarningsEl = this.shadowRoot.querySelector('#summary-warnings');
     const totalShutoffsEl = this.shadowRoot.querySelector('#summary-shutoffs');
+    const totalPowerCyclesEl = this.shadowRoot.querySelector('#summary-power-cycles');
     
     if (totalWattsEl) totalWattsEl.textContent = `${totalWatts.toFixed(1)} W`;
     if (totalDayEl) totalDayEl.textContent = `${(totalDayWh / 1000).toFixed(2)} kWh`;
     if (totalWarningsEl) totalWarningsEl.textContent = `${this._powerData.total_warnings || 0}`;
     if (totalShutoffsEl) totalShutoffsEl.textContent = `${this._powerData.total_shutoffs || 0}`;
+    if (totalPowerCyclesEl) totalPowerCyclesEl.textContent = `${this._powerData.total_power_cycles || 0}`;
     
     rooms.forEach(room => {
       const roomCard = this.shadowRoot.querySelector(`.room-card[data-room-id="${room.id}"]`);
@@ -252,13 +258,12 @@ class EnergyPanel extends HTMLElement {
       }
 
       // Update per-room event counts
-      const eventCounts = roomCard.querySelectorAll('.event-count');
-      if (eventCounts.length >= 2) {
-        const warnings = room.warnings || 0;
-        const shutoffs = room.shutoffs || 0;
-        eventCounts[0].textContent = `Warnings: ${warnings}`;
-        eventCounts[1].textContent = `Shutoffs: ${shutoffs}`;
-      }
+      const wEl = roomCard.querySelector('.event-count[data-event="warnings"]');
+      const sEl = roomCard.querySelector('.event-count[data-event="shutoffs"]');
+      const pEl = roomCard.querySelector('.event-count[data-event="power_cycles"]');
+      if (wEl) wEl.textContent = `Warnings: ${room.warnings || 0}`;
+      if (sEl) sEl.textContent = `Shutoffs: ${room.shutoffs || 0}`;
+      if (pEl) pEl.textContent = `Cycles: ${room.power_cycles || 0}`;
 
       // Update individual devices
       (room.outlets || []).forEach((outlet, i) => {
@@ -351,12 +356,14 @@ class EnergyPanel extends HTMLElement {
       
       .summary-stats {
         display: flex;
+        flex-wrap: wrap;
         gap: 10px;
         margin-bottom: 12px;
       }
 
       .stat-card {
         flex: 1;
+        min-width: 120px;
         background: var(--card-bg);
         border-radius: 8px;
         border: 1px solid var(--card-border);
@@ -444,7 +451,26 @@ class EnergyPanel extends HTMLElement {
         border: 1px solid var(--card-border);
         padding: 14px 16px;
       }
-      .statistics-card-title { font-size: 12px; font-weight: 600; margin: 0 0 12px; color: var(--panel-accent); }
+      .statistics-card-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--primary-text-color); }
+      .statistics-card-sub { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--panel-accent); margin: 0 0 8px; }
+      .statistics-card-hint {
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--secondary-text-color);
+        margin: 0 0 12px;
+        opacity: 0.9;
+      }
+      .statistics-kpi-big {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        margin-bottom: 10px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--card-border);
+      }
+      .statistics-kpi-big .val { font-size: clamp(22px, 5vw, 28px); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--primary-text-color); line-height: 1.1; }
+      .statistics-kpi-big .lbl { font-size: 11px; color: var(--secondary-text-color); }
       .statistics-sensor-grid,
       .statistics-totals-grid {
         display: flex;
@@ -1954,9 +1980,9 @@ class EnergyPanel extends HTMLElement {
         background: var(--card-bg, #1c1c1c);
         border-radius: clamp(8px, 2vw, 12px);
         border: 1px solid var(--card-border, rgba(255,255,255,0.12));
-        width: min(95vw, 600px);
+        width: min(95vw, 640px);
         max-width: 100%;
-        max-height: min(85vh, 400px);
+        max-height: min(90vh, 560px);
         display: flex;
         flex-direction: column;
         box-shadow: 0 8px 32px rgba(0,0,0,0.5);
@@ -2005,7 +2031,7 @@ class EnergyPanel extends HTMLElement {
       }
       .graph-chart-container {
         flex: 1;
-        min-height: clamp(200px, 45vw, 280px);
+        min-height: clamp(220px, 50vw, 320px);
         width: 100%;
       }
       .graph-dates {
@@ -2492,6 +2518,7 @@ class EnergyPanel extends HTMLElement {
     // Get event counts
     const totalWarnings = this._powerData?.total_warnings || 0;
     const totalShutoffs = this._powerData?.total_shutoffs || 0;
+    const totalPowerCycles = this._powerData?.total_power_cycles || 0;
 
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
@@ -2536,6 +2563,10 @@ class EnergyPanel extends HTMLElement {
                 <div class="stat-value" id="summary-shutoffs">${totalShutoffs}</div>
                 <div class="stat-label">Safety Shutoffs</div>
               </div>
+              <div class="stat-card graph-clickable" data-graph-type="total_power_cycles">
+                <div class="stat-value" id="summary-power-cycles">${totalPowerCycles}</div>
+                <div class="stat-label">Power Cycles</div>
+              </div>
             </div>
             <div class="rooms-grid">
               ${rooms.map((room) => this._renderRoomCard(room)).join('')}
@@ -2551,7 +2582,8 @@ class EnergyPanel extends HTMLElement {
   }
 
   _isEventLogType(type) {
-    return type === 'total_warnings' || type === 'total_shutoffs' || type === 'room_warnings' || type === 'room_shutoffs';
+    return type === 'total_warnings' || type === 'total_shutoffs' || type === 'total_power_cycles'
+      || type === 'room_warnings' || type === 'room_shutoffs' || type === 'room_power_cycles';
   }
 
   _renderGraphModal() {
@@ -2562,14 +2594,18 @@ class EnergyPanel extends HTMLElement {
     const labels = {
       total_wh: 'Usage (kWh)', total_watts_intraday: 'Current Power (W)', total_wh_intraday: "Today's Usage (kWh)",
       total_warnings: 'Threshold Warnings (24h)', total_shutoffs: 'Safety Shutoffs (24h)',
-      room_wh: `${roomName} Usage (kWh)`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`
+      total_power_cycles: 'Power Cycles (24h)',
+      room_wh: `${roomName} Usage (kWh)`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`,
+      room_power_cycles: `${roomName} Power Cycles (24h)`,
     };
     const title = labels[type] || '30-Day History';
     const isEventLog = this._isEventLogType(type);
     let bodyContent = '';
     if (isEventLog) {
       const events = this._graphData.events || [];
-      const filterType = type.includes('warnings') ? 'warning' : 'shutoff';
+      let filterType = 'warning';
+      if (type.includes('shutoffs')) filterType = 'shutoff';
+      else if (type.includes('power_cycles')) filterType = 'power_cycle';
       const filtered = events.filter(e => e.type === filterType);
       bodyContent = `
         <div class="event-log-container" style="max-height: 360px; overflow-y: auto; padding: 16px;">
@@ -2577,15 +2613,19 @@ class EnergyPanel extends HTMLElement {
             ? '<p style="color: var(--secondary-text-color); text-align: center; padding: 24px;">No events in the last 24 hours</p>'
             : `
             <ul class="event-log-list" style="list-style: none; margin: 0; padding: 0;">
-              ${filtered.map(e => `
+              ${filtered.map(e => {
+                const isPc = e.type === 'power_cycle';
+                const badgeStyle = isPc
+                  ? 'background: rgba(3, 169, 244, 0.2); color: var(--panel-accent, #03a9f4);'
+                  : (e.tts_succeeded ? 'background: rgba(76, 175, 80, 0.2); color: #4caf50;' : 'background: rgba(244, 67, 54, 0.2); color: #f44336;');
+                const badgeText = isPc ? 'Outlets cycled' : (e.tts_succeeded ? 'TTS Succeeded' : 'TTS Failed');
+                return `
                 <li class="event-log-entry" style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--card-border); font-size: 14px;">
                   <span style="color: var(--secondary-text-color); min-width: 70px;">${e.ts ? e.ts.replace('T', ' ').slice(0, 19) : '—'}</span>
                   <span style="flex: 1;">${e.room_name || ''}${e.outlet_name ? ' – ' + e.outlet_name : ''}</span>
-                  <span class="tts-badge" style="padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; ${e.tts_succeeded ? 'background: rgba(76, 175, 80, 0.2); color: #4caf50;' : 'background: rgba(244, 67, 54, 0.2); color: #f44336;'}">
-                    ${e.tts_succeeded ? 'TTS Succeeded' : 'TTS Failed'}
-                  </span>
-                </li>
-              `).join('')}
+                  <span class="tts-badge" style="padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; ${badgeStyle}">${badgeText}</span>
+                </li>`;
+              }).join('')}
             </ul>
           `}
         </div>
@@ -2642,34 +2682,72 @@ class EnergyPanel extends HTMLElement {
     if (!container || !this._graphData || !this._graphOpen) return;
     const type = this._graphOpen.type;
     const roomId = this._graphOpen.roomId;
-    let values = [];
-    let dates = [];
+
     const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
-    const isIntradayEvents = type === 'total_warnings' || type === 'total_shutoffs' || type === 'room_warnings' || type === 'room_shutoffs';
+
+    let seriesData = [];
+    let seriesName = 'Value';
+    let yFormatter = (v) => {
+      if (v == null || Number.isNaN(v)) return '—';
+      const n = Number(v);
+      return Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(2);
+    };
+    let strokeCurve = 'smooth';
+
     if (isIntraday) {
-      dates = this._graphData.timestamps || [];
+      const timestamps = this._graphData.timestamps || [];
       const watts = this._graphData.watts || [];
+      const n = Math.min(timestamps.length, watts.length);
       if (type === 'total_wh_intraday' || type === 'room_wh') {
-        let cum = 0;
-        values = watts.map(w => { cum += (w || 0) / 60000; return cum; }); // kWh per minute = watts/60/1000
+        seriesName = 'kWh (cumulative today)';
+        const cum = this._cumulativeKwhFromPowerSamples(timestamps, watts);
+        seriesData = [];
+        for (let i = 0; i < n; i++) {
+          const x = this._parseChartTimeMs(timestamps[i]);
+          if (!Number.isNaN(x)) seriesData.push([x, cum[i]]);
+        }
+        strokeCurve = 'straight';
+        yFormatter = (v) => (v == null ? '—' : `${Number(v).toFixed(3)} kWh`);
       } else {
-        values = watts.map(w => w || 0);
+        seriesName = 'W';
+        seriesData = [];
+        for (let i = 0; i < n; i++) {
+          const x = this._parseChartTimeMs(timestamps[i]);
+          if (!Number.isNaN(x)) seriesData.push([x, Number(watts[i]) || 0]);
+        }
+        yFormatter = (v) => (v == null ? '—' : `${Math.round(Number(v))} W`);
       }
-    } else if (isIntradayEvents) {
-      dates = this._graphData.timestamps || [];
-      if (type === 'total_warnings') values = this._graphData.total_warnings || [];
-      else if (type === 'total_shutoffs') values = this._graphData.total_shutoffs || [];
-      else if (type === 'room_warnings') values = roomId ? (this._graphData.warnings || this._graphData.rooms?.[roomId]?.warnings || []) : [];
-      else values = roomId ? (this._graphData.shutoffs || this._graphData.rooms?.[roomId]?.shutoffs || []) : [];
     } else if (type.startsWith('room_')) {
       const key = type.replace('room_', '');
-      values = (this._graphData.rooms?.[roomId]?.[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
-      dates = this._graphData.dates || [];
+      const raw = this._graphData.rooms?.[roomId]?.[key] || [];
+      const dates = this._graphData.dates || [];
+      seriesName = key === 'wh' ? 'kWh' : key;
+      const values = raw.map((v) => (key === 'wh' ? v / 1000 : v));
+      seriesData = [];
+      const m = Math.min(dates.length, values.length);
+      for (let i = 0; i < m; i++) {
+        const x = this._parseChartTimeMs(dates[i]);
+        if (!Number.isNaN(x)) seriesData.push([x, values[i]]);
+      }
+      strokeCurve = 'straight';
+      if (key === 'wh') yFormatter = (v) => `${Number(v).toFixed(2)} kWh`;
     } else {
-      const key = type.replace('total_', '');
-      values = (this._graphData[key] || []).map(v => (key === 'wh' ? v / 1000 : v));
-      dates = this._graphData.dates || [];
+      const tail = type.replace(/^total_/, '');
+      const dailyKey = tail === 'wh' ? 'total_wh' : `total_${tail}`;
+      const rawArr = this._graphData[dailyKey] || [];
+      const dates = this._graphData.dates || [];
+      const values = rawArr.map((v) => (dailyKey === 'total_wh' ? v / 1000 : v));
+      seriesName = dailyKey === 'total_wh' ? 'kWh' : dailyKey.replace('total_', '');
+      seriesData = [];
+      const m = Math.min(dates.length, values.length);
+      for (let i = 0; i < m; i++) {
+        const x = this._parseChartTimeMs(dates[i]);
+        if (!Number.isNaN(x)) seriesData.push([x, values[i]]);
+      }
+      strokeCurve = 'straight';
+      if (dailyKey === 'total_wh') yFormatter = (v) => `${Number(v).toFixed(2)} kWh`;
     }
+
     if (this._apexChartInstance) {
       this._apexChartInstance.destroy();
       this._apexChartInstance = null;
@@ -2679,81 +2757,71 @@ class EnergyPanel extends HTMLElement {
       const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
       const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
       const gridColor = getComputedStyle(this).getPropertyValue('--card-border').trim() || 'rgba(255,255,255,0.08)';
-      const useHourLabels = isIntraday || isIntradayEvents;
+
       const options = {
         chart: {
           type: 'area',
-          height: 260,
+          height: 300,
           fontFamily: 'inherit',
           background: 'transparent',
           toolbar: { show: false },
           zoom: { enabled: false },
           animations: { enabled: true },
         },
-        series: [{ name: type.includes('wh') ? 'kWh' : (type.includes('watts') ? 'W' : 'Count'), data: values }],
+        series: [{ name: seriesName, data: seriesData }],
         xaxis: {
-          categories: dates,
+          type: 'datetime',
           labels: {
             style: { colors: textColor, fontSize: '11px' },
-            rotate: -45,
-            rotateAlways: dates.length > 10,
-            formatter: useHourLabels ? (val) => {
-              if (!val || typeof val !== 'string') return '';
-              const m = val.match(/^\d{4}-\d{2}-\d{2}\s+(\d{1,2}):(\d{2})$/);
-              if (!m) return val;
-              const h = parseInt(m[1], 10);
-              const min = parseInt(m[2], 10);
-              if (min !== 0) return '';
-              if (h === 0) return '12am';
-              if (h === 12) return '12pm';
-              return h < 12 ? `${h}am` : `${h - 12}pm`;
-            } : undefined,
+            datetimeUTC: false,
           },
           axisBorder: { show: true, color: gridColor },
           axisTicks: { show: true, color: gridColor },
         },
         yaxis: {
           labels: {
-            show: false,
-            formatter: () => '',
+            show: true,
+            style: { colors: textColor, fontSize: '11px' },
+            formatter: (val) => yFormatter(val),
+            maxWidth: 56,
           },
           axisBorder: { show: false },
-          crosshairs: { show: false },
         },
         colors: [accent],
         fill: {
           type: 'gradient',
-          gradient: { shadeIntensity: 0.3, opacityFrom: 0.5, opacityTo: 0.05 },
+          gradient: { shadeIntensity: 0.25, opacityFrom: 0.45, opacityTo: 0.04 },
         },
-        stroke: { curve: 'smooth', width: 2 },
+        stroke: { curve: strokeCurve, width: 2 },
         grid: {
           borderColor: gridColor,
           strokeDashArray: 4,
+          padding: { right: 8 },
           xaxis: { lines: { show: false } },
           yaxis: { lines: { show: true } },
         },
         dataLabels: { enabled: false },
         tooltip: {
           theme: 'dark',
-          x: { format: useHourLabels ? 'MMM dd HH:mm' : 'dd MMM yyyy' },
-          y: {
+          x: {
             formatter: (val) => {
-              if (val == null) return '—';
-              const n = Number(val);
-              return isNaN(n) ? String(val) : (n % 1 === 0 ? n : n.toFixed(2));
+              const d = new Date(val);
+              return isIntraday
+                ? d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
             },
           },
+          y: { formatter: (val) => yFormatter(val) },
         },
         plotOptions: {
           area: { fillTo: 'origin' },
-          line: { dataLabels: { enabled: false } },
         },
         markers: {
-          size: values.length <= 5 ? 4 : 0,
-          hover: { size: 6 },
+          size: seriesData.length <= 8 ? 3 : 0,
+          hover: { size: 5 },
         },
       };
-      if (dates.length === 0 || values.length === 0) {
+      if (!seriesData.length) {
         options.noData = { text: 'No data yet', style: { color: textColor } };
       }
       this._apexChartInstance = new ApexCharts(container, options);
@@ -2789,6 +2857,39 @@ class EnergyPanel extends HTMLElement {
     return `${m.padStart(2, '0')}/${d.padStart(2, '0')}/${y}`;
   }
 
+  /** Parse HA date or "YYYY-MM-DD HH:mm" to epoch ms (local wall time). */
+  _parseChartTimeMs(ts) {
+    if (ts == null || ts === '') return NaN;
+    if (typeof ts === 'number' && !Number.isNaN(ts)) return ts;
+    const s = String(ts).trim();
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s]+(\d{1,2}):(\d{2}))?/);
+    if (!m) return Date.parse(s);
+    const y = +m[1];
+    const mo = +m[2] - 1;
+    const d = +m[3];
+    if (m[4] === undefined) return new Date(y, mo, d, 12, 0, 0, 0).getTime();
+    return new Date(y, mo, d, +m[4], +m[5], 0, 0).getTime();
+  }
+
+  /** Cumulative kWh from W samples and uneven minute timestamps (trapezoid between points). */
+  _cumulativeKwhFromPowerSamples(timestamps, watts) {
+    const n = Math.min(timestamps.length, watts.length);
+    if (n === 0) return [];
+    const cum = new Array(n).fill(0);
+    let totalKwh = 0;
+    for (let i = 1; i < n; i++) {
+      const t0 = this._parseChartTimeMs(timestamps[i - 1]);
+      const t1 = this._parseChartTimeMs(timestamps[i]);
+      if (!(t1 > t0)) continue;
+      const dtH = (t1 - t0) / 3600000;
+      const w0 = Number(watts[i - 1]) || 0;
+      const w1 = Number(watts[i]) || 0;
+      totalKwh += ((w0 + w1) / 2) * dtH / 1000;
+      cum[i] = totalKwh;
+    }
+    return cum;
+  }
+
   _renderStatisticsView() {
     const s = this._statsData || {};
     const dateStart = s.date_start || '';
@@ -2806,6 +2907,7 @@ class EnergyPanel extends HTMLElement {
     const totalKwh = s.total_kwh ?? 0;
     const totalWarnings = s.total_warnings ?? 0;
     const totalShutoffs = s.total_shutoffs ?? 0;
+    const totalPowerCycles = s.total_power_cycles ?? 0;
     const rooms = s.rooms || [];
 
     const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
@@ -2813,60 +2915,71 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="statistics-view">
         <div class="statistics-banner">
-          <span class="statistics-range" id="stat-range-banner">${rangeBanner}</span>
-          <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Narrowed from billing cycle.</span>
+          <span><strong>Period</strong> · <span class="statistics-range" id="stat-range-banner">${rangeBanner}</span></span>
+          <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Custom range (within billing).</span>
         </div>
         <div class="statistics-cards">
           <div class="statistics-sensor-card card">
-            <h3 class="statistics-card-title">Utility Sensors</h3>
+            <p class="statistics-card-sub">Utility meter</p>
+            <h3 class="statistics-card-title">Billing / supplier</h3>
+            <p class="statistics-card-hint">Optional sensors (whole-home). Shown for reference — not summed into monitored kWh below.</p>
             <div class="statistics-sensor-grid">
               <div class="statistics-sensor-item">
-                <span class="statistics-sensor-label">Current Usage</span>
+                <span class="statistics-sensor-label">Current</span>
                 <span class="statistics-sensor-value" id="stat-current-usage">${fmt(currentUsage)} kWh</span>
               </div>
               <div class="statistics-sensor-item">
-                <span class="statistics-sensor-label">Projected Usage</span>
+                <span class="statistics-sensor-label">Projected</span>
                 <span class="statistics-sensor-value" id="stat-projected-usage">${fmt(projectedUsage)} kWh</span>
               </div>
               <div class="statistics-sensor-item">
-                <span class="statistics-sensor-label">kWh Cost</span>
+                <span class="statistics-sensor-label">Cost / kWh</span>
                 <span class="statistics-sensor-value" id="stat-kwh-cost">$${fmt(kwhCost)}</span>
               </div>
             </div>
           </div>
           <div class="statistics-totals-card card">
-            <h3 class="statistics-card-title">Totals (from sensor history)</h3>
+            <p class="statistics-card-sub">This integration</p>
+            <h3 class="statistics-card-title">Monitored energy</h3>
+            <p class="statistics-card-hint">From Home Assistant history for devices in your room config (plugs, lights, vents). Room % is share of this total.</p>
+            <div class="statistics-kpi-big">
+              <span class="lbl">Total (billing period)</span>
+              <span class="val"><span id="stat-total-kwh">${totalKwh.toFixed(2)}</span> <span style="font-size:0.55em;font-weight:600;opacity:0.85">kWh</span></span>
+            </div>
             <div class="statistics-totals-grid">
               <div class="statistics-total-item">
-                <span class="statistics-total-value" id="stat-total-kwh">${totalKwh.toFixed(2)}</span>
-                <span class="statistics-total-label">kWh</span>
-              </div>
-              <div class="statistics-total-item">
+                <span class="statistics-total-label">Threshold warnings</span>
                 <span class="statistics-total-value" id="stat-total-warnings">${totalWarnings}</span>
-                <span class="statistics-total-label">Warnings</span>
               </div>
               <div class="statistics-total-item">
+                <span class="statistics-total-label">Safety shutoffs</span>
                 <span class="statistics-total-value" id="stat-total-shutoffs">${totalShutoffs}</span>
-                <span class="statistics-total-label">Shutoffs</span>
+              </div>
+              <div class="statistics-total-item">
+                <span class="statistics-total-label">Power cycles</span>
+                <span class="statistics-total-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
               </div>
             </div>
           </div>
         </div>
         <div class="statistics-rooms-card card">
-          <h3 class="statistics-card-title">Room Breakdown</h3>
+          <p class="statistics-card-sub">By room</p>
+          <h3 class="statistics-card-title">Usage &amp; events</h3>
           <div class="statistics-table-wrap">
-            <table class="statistics-table">
+            <table class="statistics-table" aria-describedby="stat-table-desc">
+              <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">% = share of monitored kWh (from HA history). Event columns = sums over this period (daily snapshots).</caption>
               <thead>
                 <tr>
-                  <th>Room</th>
-                  <th>kWh</th>
-                  <th>%</th>
-                  <th>Warnings</th>
-                  <th>Shutoffs</th>
+                  <th scope="col">Room</th>
+                  <th scope="col">kWh</th>
+                  <th scope="col">% of monitored</th>
+                  <th scope="col">Warnings</th>
+                  <th scope="col">Shutoffs</th>
+                  <th scope="col">Cycles</th>
                 </tr>
               </thead>
               <tbody id="stat-rooms-tbody">
-                ${rooms.length === 0 ? '<tr><td colspan="5" class="statistics-empty">No room data for this range.</td></tr>' : ''}
+                ${rooms.length === 0 ? '<tr><td colspan="6" class="statistics-empty">No room data for this range.</td></tr>' : ''}
                 ${rooms.map(r => `
                   <tr>
                     <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
@@ -2874,6 +2987,7 @@ class EnergyPanel extends HTMLElement {
                     <td>${(r.pct ?? 0).toFixed(1)}%</td>
                     <td>${r.warnings ?? 0}</td>
                     <td>${r.shutoffs ?? 0}</td>
+                    <td>${r.power_cycles ?? 0}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -2905,12 +3019,14 @@ class EnergyPanel extends HTMLElement {
       total_day_wh: 0,
       warnings: 0,
       shutoffs: 0,
+      power_cycles: 0,
       outlets: [],
     };
 
     const isOverThreshold = room.threshold > 0 && roomData.total_watts > room.threshold;
     const warnings = roomData.warnings || 0;
     const shutoffs = roomData.shutoffs || 0;
+    const powerCycles = roomData.power_cycles || 0;
     const pe = this._config?.power_enforcement || {};
     const roomsEnabled = pe.rooms_enabled || [];
     const isEnforcementEnabled = pe.enabled && roomsEnabled.includes(roomId);
@@ -2932,8 +3048,9 @@ class EnergyPanel extends HTMLElement {
                     ${room.threshold}W limit
                   </span>
                 ` : ''}
-                <span class="event-count graph-clickable has-tooltip" data-graph-type="room_warnings" data-room-id="${roomId}" title="TTS threshold warning count today">Warnings: ${warnings}</span>
-                <span class="event-count graph-clickable has-tooltip" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety plug shutoff count today">Shutoffs: ${shutoffs}</span>
+                <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="TTS threshold warning count today">Warnings: ${warnings}</span>
+                <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety plug shutoff count today">Shutoffs: ${shutoffs}</span>
+                <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement power cycles today (whole room)">Cycles: ${powerCycles}</span>
                 ${isEnforcementEnabled && icons && icons.shield ? `
                   <span class="meta-right">
                     <span class="enforcement-badge has-tooltip" title="Power enforcement is active; volume escalation and power cycling may occur on repeated threshold breaches">
