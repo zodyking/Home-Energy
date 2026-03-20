@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
 from typing import Any
 
 import voluptuous as vol
@@ -827,6 +828,8 @@ async def websocket_get_statistics(
     start, end, is_narrowed = config_manager.get_statistics_date_range(
         date_start=date_start, date_end=date_end
     )
+    billing_a, billing_b = config_manager.get_billing_date_range()
+    period_source = "billing" if (billing_a and billing_b) else "rolling"
 
     # Return cached result if valid (avoids heavy recorder query)
     cache_key = (start or "", end or "")
@@ -837,13 +840,16 @@ async def websocket_get_statistics(
         if entry:
             cached_at, cached_result = entry
             if now - cached_at < cache_ttl:
-                connection.send_result(msg["id"], cached_result)
+                connection.send_result(
+                    msg["id"], {**cached_result, "period_source": period_source}
+                )
                 return
 
     result: dict[str, Any] = {
         "date_start": start,
         "date_end": end,
         "is_narrowed": is_narrowed,
+        "period_source": period_source,
         "total_kwh": 0.0,
         "total_warnings": 0,
         "total_shutoffs": 0,
@@ -854,12 +860,44 @@ async def websocket_get_statistics(
             "projected_usage": None,
             "kwh_cost": None,
         },
+        "sensor_meta": {"supplier_last_updated": None},
     }
 
     # Record billing cycle if changed
-    billing_start, billing_end = config_manager.get_billing_date_range()
-    if billing_start and billing_end:
-        await config_manager.record_billing_cycle_if_changed(billing_start, billing_end)
+    if billing_a and billing_b:
+        await config_manager.record_billing_cycle_if_changed(billing_a, billing_b)
+
+    # Utility / supplier sensors (always, so UI can show values without a billing range)
+    from homeassistant.util import dt as dt_util
+
+    stats_settings = config_manager.energy_config.get("statistics_settings", {})
+    supplier_latest: datetime | None = None
+    for key, sensor_key in [
+        ("current_usage", "current_usage_sensor"),
+        ("projected_usage", "projected_usage_sensor"),
+        ("kwh_cost", "kwh_cost_sensor"),
+    ]:
+        ent = (stats_settings.get(sensor_key) or "").strip()
+        if not ent:
+            continue
+        state = hass.states.get(ent)
+        if state is None:
+            continue
+        lu = state.last_updated
+        if lu and (supplier_latest is None or lu > supplier_latest):
+            supplier_latest = lu
+        if state.state not in ("unknown", "unavailable", ""):
+            try:
+                val = str(state.state).strip()
+                if key == "kwh_cost":
+                    val = val.replace("$", "").replace(",", "").strip()
+                result["sensor_values"][key] = float(val)
+            except (ValueError, TypeError):
+                pass
+    if supplier_latest is not None:
+        result["sensor_meta"]["supplier_last_updated"] = dt_util.as_local(
+            supplier_latest
+        ).isoformat()
 
     if not start or not end:
         connection.send_result(msg["id"], result)
@@ -877,7 +915,6 @@ async def websocket_get_statistics(
     total_kwh = total_wh / 1000.0 if total_wh else 0.0
 
     # Warnings and shutoffs from daily_totals
-    from homeassistant.util import dt as dt_util
     today = dt_util.now().strftime("%Y-%m-%d")
     daily_totals = config_manager.daily_totals
     all_dates = set(daily_totals.keys())
@@ -960,25 +997,6 @@ async def websocket_get_statistics(
                 "shutoffs": rsum["shutoffs"],
                 "power_cycles": rsum.get("power_cycles", 0),
             })
-
-    # Read live sensor values (sensors + input_text, input_number helpers)
-    stats = config_manager.energy_config.get("statistics_settings", {})
-    for key, sensor_key in [
-        ("current_usage", "current_usage_sensor"),
-        ("projected_usage", "projected_usage_sensor"),
-        ("kwh_cost", "kwh_cost_sensor"),
-    ]:
-        ent = (stats.get(sensor_key) or "").strip()
-        if ent:
-            state = hass.states.get(ent)
-            if state and state.state not in ("unknown", "unavailable", ""):
-                try:
-                    val = str(state.state).strip()
-                    if key == "kwh_cost":
-                        val = val.replace("$", "").replace(",", "").strip()
-                    result["sensor_values"][key] = float(val)
-                except (ValueError, TypeError):
-                    pass
 
     if cache_key[0] and cache_key[1]:
         _STATISTICS_CACHE[cache_key] = (now, result)
