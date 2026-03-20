@@ -17,6 +17,12 @@ const TTS_DEFAULTS = {
   phase1_warn_msg: '{prefix} {room_name} has exceeded threshold {warning_count} times. Volume will rise until power stays under {threshold} watts.',
   phase2_warn_msg: '{prefix} {room_name} has exceeded threshold {warning_count} times. Cycling all outlets now, turn off devices.',
   phase2_after_msg: '{prefix} Cycle complete in {room_name}. Stay under limit or outlets cycle again.',
+  minisplit_phase2_warn_msg:
+    '{prefix} {room_name} is over the {room_threshold} watt room limit. Turning off {outlet_name} to protect the circuit. It will stay off at least {restore_delay} seconds for compressor safety, and will only turn back on when the room is under the limit. Other outlets may still cycle if the room stays high.',
+  minisplit_phase2_after_msg:
+    '{prefix} Enforcement step complete in {room_name}. {outlet_name} stays off until total room power is under {room_threshold} watts.',
+  minisplit_phase2_restore_msg:
+    '{prefix} Room power is under {room_threshold} watts. Restoring power to {outlet_name}.',
   phase_reset_msg: '{prefix} {room_name} under limit, enforcement reset.',
   room_kwh_warn_msg: '{prefix} {room_name} used {kwh_limit} kWh today, {percentage} percent of home, reduce use.',
   home_kwh_warn_msg: '{prefix} Home over {kwh_limit} kWh today, reduce consumption.',
@@ -213,7 +219,7 @@ class EnergyPanel extends HTMLElement {
           const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
           const rid = String(r.id || '').replace(/"/g, '&quot;');
           const billBtn = ds && de
-            ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Daily kWh per calendar day in this billing period">Chart</button>'
+            ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Room daily kWh in this billing window">Open</button>'
             : '—';
           return `
           <tr>
@@ -388,18 +394,29 @@ class EnergyPanel extends HTMLElement {
       
       .summary-stats {
         display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
+        flex-wrap: nowrap;
+        gap: clamp(6px, 2vw, 10px);
         margin-bottom: 12px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 6px;
+        scrollbar-width: thin;
+      }
+      .summary-stats::-webkit-scrollbar {
+        height: 4px;
+      }
+      .summary-stats::-webkit-scrollbar-thumb {
+        background: var(--card-border);
+        border-radius: 4px;
       }
 
       .stat-card {
-        flex: 1;
-        min-width: 120px;
+        flex: 1 0 auto;
+        min-width: clamp(72px, 17vw, 118px);
         background: var(--card-bg);
         border-radius: 8px;
         border: 1px solid var(--card-border);
-        padding: 10px 14px;
+        padding: clamp(8px, 2vw, 12px) clamp(8px, 2.2vw, 14px);
         text-align: center;
       }
       .stat-card.graph-clickable, .graph-clickable {
@@ -410,18 +427,20 @@ class EnergyPanel extends HTMLElement {
       }
 
       .stat-value {
-        font-size: 18px;
+        font-size: clamp(14px, 3.8vw, 18px);
         font-weight: 600;
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
+        line-height: 1.15;
       }
 
       .stat-label {
-        font-size: 9px;
+        font-size: clamp(7px, 1.85vw, 9px);
         color: var(--secondary-text-color);
-        margin-top: 2px;
+        margin-top: 3px;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.04em;
+        line-height: 1.2;
       }
 
       .view-tabs {
@@ -550,8 +569,21 @@ class EnergyPanel extends HTMLElement {
       .statistics-narrowed { margin-left: 8px; font-size: 11px; opacity: 0.9; }
       .statistics-cards {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-        gap: clamp(12px, 3vw, 16px);
+        grid-template-columns: 1fr;
+        gap: clamp(10px, 2.5vw, 14px);
+        max-width: min(100%, 560px);
+        margin: 0 auto;
+        width: 100%;
+      }
+      @media (min-width: 640px) {
+        .statistics-cards {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          max-width: 100%;
+        }
+      }
+      .statistics-rooms-fullbleed {
+        max-width: 100%;
+        width: 100%;
       }
       .statistics-sensor-card,
       .statistics-totals-card,
@@ -559,7 +591,7 @@ class EnergyPanel extends HTMLElement {
         background: var(--card-bg);
         border-radius: 10px;
         border: 1px solid var(--card-border);
-        padding: 14px 16px;
+        padding: clamp(12px, 3vw, 16px);
       }
       .statistics-card-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--primary-text-color); }
       .statistics-card-sub { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--panel-accent); margin: 0 0 8px; }
@@ -597,10 +629,16 @@ class EnergyPanel extends HTMLElement {
       .statistics-total-label { font-size: 11px; color: var(--secondary-text-color); }
       .statistics-sensor-value,
       .statistics-total-value { font-size: 13px; font-weight: 500; }
-      .statistics-table-wrap { overflow-x: auto; }
-      .statistics-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-      .statistics-table th, .statistics-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--card-border); }
+      .statistics-table-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 0 -4px;
+        padding: 0 4px;
+      }
+      .statistics-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: clamp(11px, 2.4vw, 12px); }
+      .statistics-table th, .statistics-table td { padding: clamp(6px, 1.5vw, 10px) clamp(6px, 2vw, 10px); text-align: left; border-bottom: 1px solid var(--card-border); }
       .statistics-table th { font-weight: 600; color: var(--secondary-text-color); }
+      .statistics-table th abbr { text-decoration: none; border-bottom: 1px dotted var(--secondary-text-color); cursor: help; }
       .statistics-empty { color: var(--secondary-text-color); text-align: center; padding: 16px !important; }
 
       .rooms-grid {
@@ -620,17 +658,68 @@ class EnergyPanel extends HTMLElement {
 
       .room-header {
         display: flex;
+        flex-wrap: nowrap;
         align-items: center;
         justify-content: space-between;
-        padding: 10px 14px;
+        gap: clamp(4px, 1.5vw, 12px);
+        padding: clamp(8px, 2vw, 12px) clamp(10px, 2.5vw, 14px);
         background: linear-gradient(135deg, rgba(3, 169, 244, 0.06) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
       }
 
-      .room-info {
+      .room-header-left {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: clamp(6px, 1.8vw, 10px);
+        min-width: 0;
+        flex: 1;
+      }
+
+      .room-header-body {
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: clamp(6px, 1.5vw, 10px);
+        min-width: 0;
+        flex: 1;
+      }
+
+      .room-meta-scroll {
+        min-width: 0;
+        flex: 1;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+      }
+      .room-meta-scroll::-webkit-scrollbar {
+        height: 3px;
+      }
+      .room-meta-scroll::-webkit-scrollbar-thumb {
+        background: var(--card-border);
+        border-radius: 3px;
+      }
+
+      .room-meta-inner {
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: clamp(4px, 1.2vw, 8px);
+        width: max-content;
+        padding-right: 8px;
+      }
+
+      .room-meta-inner .threshold-badge {
+        flex-shrink: 0;
+        white-space: nowrap;
+        font-size: clamp(8px, 2vw, 10px);
+      }
+
+      .room-header-right {
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: clamp(6px, 1.8vw, 10px);
+        flex-shrink: 0;
       }
 
       .room-icon {
@@ -650,48 +739,49 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-name {
-        font-size: 13px;
-        font-weight: 500;
-        margin: 0 0 2px;
+        font-size: clamp(11px, 2.9vw, 14px);
+        font-weight: 600;
+        margin: 0;
         white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        flex-shrink: 0;
+        line-height: 1.2;
       }
 
       .room-meta {
-        font-size: 10px;
+        font-size: clamp(9px, 2.35vw, 11px);
         color: var(--secondary-text-color);
         display: flex;
         align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      .room-meta .meta-right {
-        margin-left: auto;
+        gap: clamp(4px, 1.2vw, 8px);
+        flex-wrap: nowrap;
       }
 
       .room-meta svg {
-        width: 10px;
-        height: 10px;
+        width: clamp(9px, 2.2vw, 10px);
+        height: clamp(9px, 2.2vw, 10px);
         fill: currentColor;
         margin-right: 2px;
+        flex-shrink: 0;
       }
 
       .event-count {
         display: inline-flex;
         align-items: center;
         gap: 2px;
-        font-size: 9px;
+        font-size: clamp(8px, 2.1vw, 10px);
         color: var(--secondary-text-color);
-        padding: 2px 4px;
+        padding: 2px clamp(3px, 1vw, 6px);
         background: rgba(255, 255, 255, 0.05);
-        border-radius: 3px;
+        border-radius: 4px;
         white-space: nowrap;
       }
 
       .room-stats {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
         text-align: right;
+        flex-shrink: 0;
       }
 
       .view-tabs {
@@ -938,12 +1028,12 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-total-watts {
-        font-size: 16px;
-        font-weight: 600;
+        font-size: clamp(14px, 4vw, 18px);
+        font-weight: 700;
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
-        overflow: hidden;
+        line-height: 1.1;
       }
 
       .room-total-watts.over-threshold {
@@ -957,12 +1047,12 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-total-day {
-        font-size: 9px;
+        font-size: clamp(9px, 2.4vw, 12px);
         color: var(--secondary-text-color);
         margin-top: 2px;
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
-        overflow: hidden;
+        cursor: pointer;
       }
 
       .room-content {
@@ -1394,15 +1484,17 @@ class EnergyPanel extends HTMLElement {
         display: inline-flex;
         align-items: center;
         gap: 3px;
-        font-size: 9px;
+        font-size: clamp(7px, 1.9vw, 9px);
         font-weight: 600;
-        padding: 2px 6px;
+        padding: 2px clamp(4px, 1.2vw, 8px);
         border-radius: 8px;
         color: #fff;
         background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
         box-shadow: 0 1px 3px rgba(255, 152, 0, 0.3);
         text-transform: uppercase;
-        letter-spacing: 0.3px;
+        letter-spacing: 0.03em;
+        white-space: nowrap;
+        flex-shrink: 0;
       }
 
       .enforcement-badge svg {
@@ -2657,25 +2749,25 @@ class EnergyPanel extends HTMLElement {
           ${showStatistics ? this._renderStatisticsView() : ''}
           ${!showStatistics ? (rooms.length === 0 ? this._renderEmptyState() : `
             <div class="summary-stats">
-              <div class="stat-card graph-clickable" data-graph-type="total_watts_intraday">
+              <div class="stat-card graph-clickable" data-graph-type="total_watts_intraday" title="Power draw right now (tap for chart)">
                 <div class="stat-value" id="summary-total-watts">${totalWatts.toFixed(1)} W</div>
-                <div class="stat-label">Current Power</div>
+                <div class="stat-label">Now</div>
               </div>
-              <div class="stat-card graph-clickable" data-graph-type="total_wh_intraday">
+              <div class="stat-card graph-clickable" data-graph-type="total_wh_intraday" title="Home kWh since midnight (tap for chart)">
                 <div class="stat-value" id="summary-total-day">${(totalDayWh / 1000).toFixed(2)} kWh</div>
-                <div class="stat-label">Today's Usage</div>
+                <div class="stat-label">Today</div>
               </div>
-              <div class="stat-card graph-clickable" data-graph-type="total_warnings">
+              <div class="stat-card graph-clickable" data-graph-type="total_warnings" title="Threshold voice alerts today">
                 <div class="stat-value" id="summary-warnings">${totalWarnings}</div>
-                <div class="stat-label">Threshold Warnings</div>
+                <div class="stat-label">Warn</div>
               </div>
-              <div class="stat-card graph-clickable" data-graph-type="total_shutoffs">
+              <div class="stat-card graph-clickable" data-graph-type="total_shutoffs" title="Safety plug shutoffs today">
                 <div class="stat-value" id="summary-shutoffs">${totalShutoffs}</div>
-                <div class="stat-label">Safety Shutoffs</div>
+                <div class="stat-label">Shutoff</div>
               </div>
-              <div class="stat-card graph-clickable" data-graph-type="total_power_cycles">
+              <div class="stat-card graph-clickable" data-graph-type="total_power_cycles" title="Enforcement outlet cycles today">
                 <div class="stat-value" id="summary-power-cycles">${totalPowerCycles}</div>
-                <div class="stat-label">Power Cycles</div>
+                <div class="stat-label">Cycles</div>
               </div>
             </div>
             <div class="rooms-grid">
@@ -2702,7 +2794,7 @@ class EnergyPanel extends HTMLElement {
     const roomId = this._graphOpen.roomId;
     const roomName = this._graphOpen.roomName || '';
     const labels = {
-      total_wh: 'Usage (kWh)', total_watts_intraday: 'Current Power (W)', total_wh_intraday: "Today's Usage (kWh)",
+      total_wh: 'Usage (kWh)', total_watts_intraday: 'Power now (W)', total_wh_intraday: 'Home kWh today (minute data)',
       total_warnings: 'Threshold Warnings (24h)', total_shutoffs: 'Safety Shutoffs (24h)',
       total_power_cycles: 'Power Cycles (24h)',
       room_wh: `${roomName} Usage (kWh) today`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`,
@@ -2821,6 +2913,8 @@ class EnergyPanel extends HTMLElement {
     const roomName = this._graphOpen.roomName || '';
 
     const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
+    /** Set for intraday kWh charts: tighter y-axis + label precision */
+    let intradayKwhYMax = null;
 
     let seriesData = [];
     let seriesName = 'Value';
@@ -2855,7 +2949,10 @@ class EnergyPanel extends HTMLElement {
         }
         seriesData.sort((a, b) => a[0] - b[0]);
         strokeCurve = 'straight';
-        yFormatter = (v) => (v == null ? '—' : `${Number(v).toFixed(2)} kWh`);
+        const peakKwh = seriesData.reduce((m, p) => Math.max(m, Number(p[1]) || 0), 0);
+        intradayKwhYMax = peakKwh <= 0 ? 1 : Math.max(peakKwh * 1.2, 0.005);
+        const decimals = intradayKwhYMax <= 0.02 ? 3 : intradayKwhYMax <= 0.5 ? 2 : 2;
+        yFormatter = (v) => (v == null ? '—' : `${Number(v).toFixed(decimals)} kWh`);
       } else {
         seriesName = 'W';
         seriesData = [];
@@ -2953,9 +3050,17 @@ class EnergyPanel extends HTMLElement {
             show: true,
             style: { colors: textColor, fontSize: '11px' },
             formatter: (val) => yFormatter(val),
-            maxWidth: 56,
+            maxWidth: 64,
           },
           axisBorder: { show: false },
+          ...(intradayKwhYMax != null
+            ? {
+                min: 0,
+                max: intradayKwhYMax,
+                tickAmount: 5,
+                decimalsInFloat: intradayKwhYMax <= 0.02 ? 3 : 2,
+              }
+            : {}),
         },
         colors: [accent],
         fill: {
@@ -3102,72 +3207,72 @@ class EnergyPanel extends HTMLElement {
         </div>
         <div class="statistics-view">
         <div class="statistics-banner">
-          <span><strong>Period</strong> · <span class="statistics-range" id="stat-range-banner">${rangeBanner}</span></span>
-          <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Custom range (within billing).</span>
+          <span><strong>Billing period</strong> · <span class="statistics-range" id="stat-range-banner">${rangeBanner}</span></span>
+          <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Narrowed to dates you picked.</span>
         </div>
         <div class="statistics-cards">
           <div class="statistics-sensor-card card">
-            <p class="statistics-card-sub">Utility meter</p>
-            <h3 class="statistics-card-title">Billing / supplier</h3>
-            <p class="statistics-card-hint">Optional sensors (whole-home). Shown for reference — not summed into monitored kWh below.</p>
+            <p class="statistics-card-sub">Supplier (optional)</p>
+            <h3 class="statistics-card-title">Utility read</h3>
+            <p class="statistics-card-hint">From your meter entities only. Not added to tracked kWh.</p>
             <div class="statistics-sensor-grid">
               <div class="statistics-sensor-item">
-                <span class="statistics-sensor-label">Current</span>
+                <span class="statistics-sensor-label">So far</span>
                 <span class="statistics-sensor-value" id="stat-current-usage">${fmt(currentUsage)} kWh</span>
               </div>
               <div class="statistics-sensor-item">
-                <span class="statistics-sensor-label">Projected</span>
+                <span class="statistics-sensor-label">Estimate end</span>
                 <span class="statistics-sensor-value" id="stat-projected-usage">${fmt(projectedUsage)} kWh</span>
               </div>
               <div class="statistics-sensor-item">
-                <span class="statistics-sensor-label">Cost / kWh</span>
+                <span class="statistics-sensor-label">$/kWh</span>
                 <span class="statistics-sensor-value" id="stat-kwh-cost">$${fmt(kwhCost)}</span>
               </div>
             </div>
           </div>
           <div class="statistics-totals-card card">
-            <p class="statistics-card-sub">This integration</p>
-            <h3 class="statistics-card-title">Monitored energy</h3>
-            <p class="statistics-card-hint">From Home Assistant history for devices in your room config (plugs, lights, vents). Room % is share of this total.</p>
+            <p class="statistics-card-sub">What we measure</p>
+            <h3 class="statistics-card-title">Tracked usage</h3>
+            <p class="statistics-card-hint">Plugs, lights, and vents in your room list (HA history). Table % is share of this number.</p>
             <div class="statistics-kpi-big">
-              <span class="lbl">Total (billing period)</span>
+              <span class="lbl">Total this period</span>
               <span class="val"><span id="stat-total-kwh">${totalKwh.toFixed(2)}</span> <span style="font-size:0.55em;font-weight:600;opacity:0.85">kWh</span></span>
             </div>
             <div class="statistics-totals-grid">
               <div class="statistics-total-item">
-                <span class="statistics-total-label">Threshold warnings</span>
+                <span class="statistics-total-label">Voice warnings</span>
                 <span class="statistics-total-value" id="stat-total-warnings">${totalWarnings}</span>
               </div>
               <div class="statistics-total-item">
-                <span class="statistics-total-label">Safety shutoffs</span>
+                <span class="statistics-total-label">Plug shutoffs</span>
                 <span class="statistics-total-value" id="stat-total-shutoffs">${totalShutoffs}</span>
               </div>
               <div class="statistics-total-item">
-                <span class="statistics-total-label">Power cycles</span>
+                <span class="statistics-total-label">Enforcement cycles</span>
                 <span class="statistics-total-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
               </div>
             </div>
             ${dateStart && dateEnd ? `
             <div class="statistics-chart-actions">
-              <button type="button" class="btn-stat-chart" id="stat-chart-billing-home" title="One point per day, summed for the billing period">Chart: home daily kWh (billing period)</button>
+              <button type="button" class="btn-stat-chart" id="stat-chart-billing-home" title="Daily kWh per day in this billing window">Daily kWh chart (whole home)</button>
             </div>` : ''}
           </div>
         </div>
-        <div class="statistics-rooms-card card">
-          <p class="statistics-card-sub">By room</p>
-          <h3 class="statistics-card-title">Usage &amp; events</h3>
+        <div class="statistics-rooms-card card statistics-rooms-fullbleed">
+          <p class="statistics-card-sub">Rooms</p>
+          <h3 class="statistics-card-title">kWh and events</h3>
           <div class="statistics-table-wrap">
             <table class="statistics-table" aria-describedby="stat-table-desc">
-              <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">% = share of monitored kWh (from HA history). Event columns = sums over this period (daily snapshots).</caption>
+              <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">% = share of tracked kWh above. Warn / shutoff / cycle = totals from daily snapshots in this period.</caption>
               <thead>
                 <tr>
                   <th scope="col">Room</th>
                   <th scope="col">kWh</th>
-                  <th scope="col">% of monitored</th>
-                  <th scope="col">Warnings</th>
-                  <th scope="col">Shutoffs</th>
-                  <th scope="col">Cycles</th>
-                  <th scope="col">Daily (bill)</th>
+                  <th scope="col"><abbr title="Percent of tracked kWh this period">% trk</abbr></th>
+                  <th scope="col"><abbr title="Voice threshold warnings">Warn</abbr></th>
+                  <th scope="col"><abbr title="Safety plug shutoffs">Off</abbr></th>
+                  <th scope="col"><abbr title="Enforcement outlet cycles">Cyc</abbr></th>
+                  <th scope="col"><abbr title="Daily kWh chart for billing window">Chart</abbr></th>
                 </tr>
               </thead>
               <tbody id="stat-rooms-tbody">
@@ -3176,7 +3281,7 @@ class EnergyPanel extends HTMLElement {
                   const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
                   const rid = String(r.id || '').replace(/"/g, '&quot;');
                   const billBtn = dateStart && dateEnd
-                    ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Daily kWh per calendar day in this billing period">Chart</button>'
+                    ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Room daily kWh in this billing window">Open</button>'
                     : '—';
                   return `
                   <tr>
@@ -3234,37 +3339,39 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="room-card" data-room-id="${roomId}">
         <div class="room-header">
-          <div class="room-info">
+          <div class="room-header-left">
             <div class="room-icon">
               <svg viewBox="0 0 24 24">${icons.room}</svg>
             </div>
-            <div>
+            <div class="room-header-body">
               <h3 class="room-name">${(room.name || '').replace(/</g, '&lt;')}</h3>
-              <div class="room-meta">
-                <span class="has-tooltip" title="Number of outlets and devices in this room">${(room.outlets || []).length} devices</span>
-                ${room.threshold > 0 ? `
-                  <span class="threshold-badge has-tooltip" title="Room power threshold; TTS alert when exceeded">
-                    <svg viewBox="0 0 24 24">${icons.warning}</svg>
-                    ${room.threshold}W limit
-                  </span>
-                ` : ''}
-                <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="TTS threshold warning count today">Warnings: ${warnings}</span>
-                <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety plug shutoff count today">Shutoffs: ${shutoffs}</span>
-                <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement power cycles today (whole room)">Cycles: ${powerCycles}</span>
-                ${isEnforcementEnabled && icons && icons.shield ? `
-                  <span class="meta-right">
-                    <span class="enforcement-badge has-tooltip" title="Power enforcement is active; volume escalation and power cycling may occur on repeated threshold breaches">
-                      <svg viewBox="0 0 24 24" style="width: 12px; height: 12px; fill: #fff;">${icons.shield}</svg>
-                      Enforced
+              <div class="room-meta-scroll" title="Scroll for room details">
+                <div class="room-meta-inner room-meta">
+                  <span class="has-tooltip" title="Devices in this room">${(room.outlets || []).length} dev</span>
+                  ${room.threshold > 0 ? `
+                    <span class="threshold-badge has-tooltip" title="Room power limit; spoken alert when exceeded">
+                      <svg viewBox="0 0 24 24">${icons.warning}</svg>
+                      ${room.threshold}W
                     </span>
-                  </span>
-                ` : ''}
+                  ` : ''}
+                  <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W:${warnings}</span>
+                  <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S:${shutoffs}</span>
+                  <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C:${powerCycles}</span>
+                </div>
               </div>
             </div>
           </div>
-          <div class="room-stats">
-            <div class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</div>
-            <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</div>
+          <div class="room-header-right">
+            <div class="room-stats">
+              <div class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</div>
+              <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</div>
+            </div>
+            ${isEnforcementEnabled && icons && icons.shield ? `
+              <span class="enforcement-badge has-tooltip" title="Enforcement on: volume may rise and outlets may cycle if limits are ignored">
+                <svg viewBox="0 0 24 24" style="width: clamp(10px, 2.5vw, 12px); height: clamp(10px, 2.5vw, 12px); fill: #fff;">${icons.shield}</svg>
+                On
+              </span>
+            ` : ''}
           </div>
         </div>
 
@@ -3942,6 +4049,30 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code></div>
               </div>
               <div class="tts-msg-group">
+                <div class="tts-msg-title">Phase 2 — Mini-Split Warning</div>
+                <div class="tts-msg-desc">When a qualifying mini-split is cut first (room overload attributed to that unit). Uses spoken cardinals for {restore_delay} and {room_threshold}.</div>
+                <input type="text" class="form-input" id="tts-minisplit-phase2-warn"
+                  value="${(ttsSettings.minisplit_phase2_warn_msg ?? TTS_DEFAULTS.minisplit_phase2_warn_msg).replace(/"/g, '&quot;')}"
+                  placeholder="Mini-split enforcement warning...">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{warning_count}</code> <code>{restore_delay}</code> <code>{room_threshold}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Phase 2 — Mini-Split After Message</div>
+                <div class="tts-msg-desc">After minimum off time and any excluded outlet cycle</div>
+                <input type="text" class="form-input" id="tts-minisplit-phase2-after"
+                  value="${(ttsSettings.minisplit_phase2_after_msg ?? TTS_DEFAULTS.minisplit_phase2_after_msg).replace(/"/g, '&quot;')}"
+                  placeholder="Mini-split after message...">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{room_threshold}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Phase 2 — Mini-Split Restore (optional)</div>
+                <div class="tts-msg-desc">When room is back under threshold and power is restored. Leave empty for silent restore.</div>
+                <input type="text" class="form-input" id="tts-minisplit-phase2-restore"
+                  value="${(ttsSettings.minisplit_phase2_restore_msg ?? TTS_DEFAULTS.minisplit_phase2_restore_msg).replace(/"/g, '&quot;')}"
+                  placeholder="Restore announcement...">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{room_threshold}</code></div>
+              </div>
+              <div class="tts-msg-group">
                 <div class="tts-msg-title">Phase Reset Message</div>
                 <div class="tts-msg-desc">Spoken when room maintains power below threshold for reset time</div>
                 <input type="text" class="form-input" id="tts-phase-reset" 
@@ -4429,6 +4560,16 @@ class EnergyPanel extends HTMLElement {
                 <button class="test-switch-btn" data-switch="${device.plug1_switch || ''}" title="Test switch">
                   <svg viewBox="0 0 24 24">${icons.power}</svg>
                 </button>
+              </div>
+              <div class="form-group" style="margin-top: 12px;">
+                <label class="form-label">Enforcement minimum off (seconds)</label>
+                <input type="number" class="form-input minisplit-enforcement-off-seconds" value="${device.minisplit_enforcement_off_seconds ?? 60}" min="30" max="600" style="width: 90px;">
+                <div class="tts-var-help" style="margin-top: 4px;">Compressor safety: stays off at least this long before other steps. Power restores only when room total is under the room threshold.</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Min watts to count as HVAC load (0 = off)</label>
+                <input type="number" class="form-input minisplit-enforcement-min-watts" value="${device.minisplit_enforcement_min_watts ?? 0}" min="0" max="2000" style="width: 90px;">
+                <div class="tts-var-help" style="margin-top: 4px;">If set, reported plug power must be at least this high to qualify for mini-split-first enforcement (ignores low fan-only draw when math alone would qualify).</div>
               </div>
             </div>
           </div>
@@ -5216,7 +5357,11 @@ class EnergyPanel extends HTMLElement {
       newOutlet.switch_entity = '';
       newOutlet.watts_when_on = 25;
     }
-    
+    if (deviceType === 'minisplit') {
+      newOutlet.minisplit_enforcement_off_seconds = 60;
+      newOutlet.minisplit_enforcement_min_watts = 0;
+    }
+
     // Render as expanded (not collapsed)
     const html = this._renderDeviceSettings(newOutlet, 0, sensors, roomIndex, roomOutlets, false);
     
@@ -5570,6 +5715,14 @@ class EnergyPanel extends HTMLElement {
             device.plug2_switch = null;
             device.plug1_shutoff = plug1Shutoff;
             device.plug2_shutoff = 0;
+            const offEl = item.querySelector('.minisplit-enforcement-off-seconds');
+            const minWEl = item.querySelector('.minisplit-enforcement-min-watts');
+            device.minisplit_enforcement_off_seconds = offEl
+              ? Math.max(30, Math.min(600, parseInt(offEl.value, 10) || 60))
+              : 60;
+            device.minisplit_enforcement_min_watts = minWEl
+              ? Math.max(0, Math.min(2000, parseInt(minWEl.value, 10) || 0))
+              : 0;
           } else if (deviceTypeFromItem === 'fridge') {
             device.type = 'fridge';
             device.plug2_entity = null;
@@ -5654,6 +5807,9 @@ class EnergyPanel extends HTMLElement {
     const ttsPhase1Warn = this.shadowRoot.querySelector('#tts-phase1-warn')?.value || '';
     const ttsPhase2Warn = this.shadowRoot.querySelector('#tts-phase2-warn')?.value || '';
     const ttsPhase2After = this.shadowRoot.querySelector('#tts-phase2-after')?.value || '';
+    const ttsMinisplitPhase2Warn = this.shadowRoot.querySelector('#tts-minisplit-phase2-warn')?.value ?? '';
+    const ttsMinisplitPhase2After = this.shadowRoot.querySelector('#tts-minisplit-phase2-after')?.value ?? '';
+    const ttsMinisplitPhase2Restore = this.shadowRoot.querySelector('#tts-minisplit-phase2-restore')?.value ?? '';
     const ttsPhaseReset = this.shadowRoot.querySelector('#tts-phase-reset')?.value || '';
     const ttsRoomKwhWarn = this.shadowRoot.querySelector('#tts-room-kwh-warn')?.value || '';
     const ttsHomeKwhWarn = this.shadowRoot.querySelector('#tts-home-kwh-warn')?.value || '';
@@ -5723,6 +5879,9 @@ class EnergyPanel extends HTMLElement {
         phase1_warn_msg: ttsPhase1Warn,
         phase2_warn_msg: ttsPhase2Warn,
         phase2_after_msg: ttsPhase2After,
+        minisplit_phase2_warn_msg: ttsMinisplitPhase2Warn,
+        minisplit_phase2_after_msg: ttsMinisplitPhase2After,
+        minisplit_phase2_restore_msg: ttsMinisplitPhase2Restore,
         phase_reset_msg: ttsPhaseReset,
         room_kwh_warn_msg: ttsRoomKwhWarn,
         home_kwh_warn_msg: ttsHomeKwhWarn,
@@ -5843,6 +6002,14 @@ class EnergyPanel extends HTMLElement {
           device.plug2_switch = null;
           device.plug1_shutoff = plug1Shutoff;
           device.plug2_shutoff = 0;
+          const offEl2 = item.querySelector('.minisplit-enforcement-off-seconds');
+          const minWEl2 = item.querySelector('.minisplit-enforcement-min-watts');
+          device.minisplit_enforcement_off_seconds = offEl2
+            ? Math.max(30, Math.min(600, parseInt(offEl2.value, 10) || 60))
+            : 60;
+          device.minisplit_enforcement_min_watts = minWEl2
+            ? Math.max(0, Math.min(2000, parseInt(minWEl2.value, 10) || 0))
+            : 0;
         } else if (deviceTypeFromItem === 'fridge') {
           device.type = 'fridge';
           device.plug2_entity = null;

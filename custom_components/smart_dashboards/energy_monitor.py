@@ -31,9 +31,13 @@ from .const import (
     DEFAULT_STOVE_AUTO_OFF_MSG,
     DEFAULT_MICROWAVE_CUT_MSG,
     DEFAULT_MICROWAVE_RESTORE_MSG,
+    DEFAULT_MINISPLIT_PHASE2_WARN_MSG,
+    DEFAULT_MINISPLIT_PHASE2_AFTER_MSG,
+    DEFAULT_MINISPLIT_PHASE2_RESTORE_MSG,
 )
 from .tts_helper import async_send_tts
 from .tts_queue import async_send_tts_or_queue
+from .tts_numbers import spoken_cardinal
 
 if TYPE_CHECKING:
     from .config_manager import ConfigManager
@@ -73,6 +77,8 @@ class EnergyMonitor:
         self._power_listener_unsub: list = []  # Unsubscribe callbacks for state listeners
         self._room_budget_announced: set[str] = set()
         self._room_budget_announced_date: str = ""
+        # Phase-2 mini-split hold: room_id -> {switches: set[str], outlet_name, volume}
+        self._minisplit_hold: dict[str, dict] = {}
 
     def _get_power_entity_ids(self) -> list[str]:
         """Collect all power entity IDs we track for daily energy."""
@@ -166,7 +172,7 @@ class EnergyMonitor:
                     message = msg_template.format(
                         prefix=prefix,
                         room_name=room_name,
-                        kwh_used=round(room_day_kwh, 1),
+                        kwh_used=spoken_cardinal(round(room_day_kwh)),
                     )
                     await self._async_send_tts_with_lights(
                         room, media_player, message, room_volume, tts_settings
@@ -301,6 +307,16 @@ class EnergyMonitor:
                         tts_settings=tts_settings,
                     )
 
+            await self._maybe_restore_minisplit_hold(
+                room_id=room_id,
+                room_name=room_name,
+                room_total_watts=room_total_watts,
+                room_threshold=float(room_threshold or 0),
+                media_player=media_player,
+                volume=room_volume,
+                tts_settings=tts_settings,
+            )
+
             # Check room threshold (only when budget exceeded)
             if budget_exceeded and room_threshold > 0 and room_total_watts > room_threshold:
                 await self._send_room_alert(
@@ -352,6 +368,280 @@ class EnergyMonitor:
                 return 0.0
 
         return 0.0
+
+    def _get_room_by_id(self, room_id: str) -> dict | None:
+        """Latest room dict from config (by id or slug from name)."""
+        for r in self.config_manager.energy_config.get("rooms", []):
+            rid = r.get("id", r["name"].lower().replace(" ", "_"))
+            if rid == room_id:
+                return r
+        return None
+
+    def _sum_room_total_watts_only(self, room: dict) -> float:
+        """Current room total watts without energy accounting side effects."""
+        room_total_watts = 0.0
+        for outlet in room.get("outlets", []):
+            outlet_total_watts = 0.0
+            if outlet.get("type") == "light":
+                switch_entity = outlet.get("switch_entity")
+                if switch_entity:
+                    state = self.hass.states.get(switch_entity)
+                    is_on = state is not None and (state.state or "off").lower() in ("on",)
+                    if is_on:
+                        for le in outlet.get("light_entities") or []:
+                            if isinstance(le, dict) and le.get("entity_id", "").startswith("light."):
+                                outlet_total_watts += float(le.get("watts", 0) or 0)
+                room_total_watts += outlet_total_watts
+                continue
+            if outlet.get("type") == "ceiling_vent_fan":
+                switch_entity = outlet.get("switch_entity")
+                watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
+                if switch_entity and watts_when_on > 0:
+                    state = self.hass.states.get(switch_entity)
+                    is_on = state is not None and (state.state or "off").lower() in ("on",)
+                    if is_on:
+                        outlet_total_watts = watts_when_on
+                room_total_watts += outlet_total_watts
+                continue
+            if outlet.get("plug1_entity"):
+                outlet_total_watts += self._get_power_value(outlet["plug1_entity"])
+            if outlet.get("plug2_entity"):
+                outlet_total_watts += self._get_power_value(outlet["plug2_entity"])
+            room_total_watts += outlet_total_watts
+        return room_total_watts
+
+    def _select_minisplit_enforcement_target(
+        self, room: dict, current_watts: float, room_threshold: float
+    ) -> dict | None:
+        """Pick one minisplit outlet if it can clear the room threshold when turned off."""
+        thr = float(room_threshold or 0)
+        if thr <= 0:
+            return None
+        best: dict | None = None
+        best_w = -1.0
+        for outlet in room.get("outlets", []):
+            if outlet.get("type") != "minisplit":
+                continue
+            sw = outlet.get("plug1_switch")
+            if not sw or not str(sw).startswith("switch."):
+                continue
+            state = self.hass.states.get(sw)
+            is_on = state is not None and (state.state or "off").lower() in ("on",)
+            if not is_on:
+                continue
+            plug_ent = outlet.get("plug1_entity")
+            w = self._get_power_value(plug_ent) if plug_ent else 0.0
+            min_w = int(outlet.get("minisplit_enforcement_min_watts", 0) or 0)
+            if min_w > 0 and w < min_w:
+                continue
+            if current_watts - w > thr:
+                continue
+            if w > best_w:
+                best_w = w
+                best = outlet
+        return best
+
+    def _format_minisplit_phase2_warn(
+        self,
+        tts_settings: dict,
+        prefix: str,
+        room_name: str,
+        ms_outlet: dict,
+        warning_count: int,
+        room_threshold: float | int,
+    ) -> str:
+        tmpl = (tts_settings.get("minisplit_phase2_warn_msg") or "").strip()
+        if not tmpl:
+            tmpl = DEFAULT_MINISPLIT_PHASE2_WARN_MSG
+        off_sec = int(ms_outlet.get("minisplit_enforcement_off_seconds", 60) or 60)
+        try:
+            return tmpl.format(
+                prefix=prefix,
+                room_name=room_name,
+                outlet_name=ms_outlet.get("name") or "Mini-split",
+                warning_count=warning_count,
+                restore_delay=spoken_cardinal(off_sec),
+                room_threshold=spoken_cardinal(int(room_threshold or 0)),
+            )
+        except (KeyError, ValueError):
+            return ""
+
+    async def _maybe_restore_minisplit_hold(
+        self,
+        room_id: str,
+        room_name: str,
+        room_total_watts: float,
+        room_threshold: float,
+        media_player: str | None,
+        volume: float,
+        tts_settings: dict,
+    ) -> None:
+        """Turn held mini-split(s) back on when room total is at or under threshold."""
+        if room_id not in self._minisplit_hold:
+            return
+        if room_threshold <= 0:
+            return
+        if room_total_watts > room_threshold:
+            return
+        hold = self._minisplit_hold.pop(room_id)
+        switches = hold.get("switches") or set()
+        outlet_name = hold.get("outlet_name") or "Mini-split"
+        eff_vol = float(hold.get("volume", volume))
+        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        try:
+            for sw in switches:
+                if sw and str(sw).startswith("switch."):
+                    await self.hass.services.async_call(
+                        "switch", "turn_on", {"entity_id": sw}, blocking=True
+                    )
+            _LOGGER.info(
+                "Minisplit hold released (room under threshold): %s switches=%s",
+                room_id,
+                switches,
+            )
+        except Exception as e:
+            _LOGGER.error("Minisplit hold restore failed: %s", e)
+            return
+        rest_tmpl = (tts_settings.get("minisplit_phase2_restore_msg") or "").strip()
+        if not media_player or not rest_tmpl:
+            return
+        try:
+            rmsg = rest_tmpl.format(
+                prefix=prefix,
+                room_name=room_name,
+                outlet_name=outlet_name,
+                room_threshold=spoken_cardinal(int(room_threshold)),
+            )
+            await async_send_tts_or_queue(
+                self.hass,
+                media_player=media_player,
+                message=rmsg,
+                language=tts_settings.get("language"),
+                volume=eff_vol,
+                tts_settings=tts_settings,
+            )
+        except (KeyError, ValueError) as e:
+            _LOGGER.warning("Minisplit restore TTS format failed: %s", e)
+
+    async def _run_phase2_minisplit_enforcement(
+        self,
+        room_id: str,
+        room_name: str,
+        room: dict,
+        ms_outlet: dict,
+        media_player: str | None,
+        volume: float,
+        tts_settings: dict,
+        prefix: str,
+        phase2_delay: int,
+    ) -> None:
+        """Minisplit-first phase-2: off, min wait, optional excluded full-room cycle, conditional restore."""
+        sw = ms_outlet.get("plug1_switch")
+        if not sw or not str(sw).startswith("switch."):
+            await self._power_cycle_room_outlets(room_id, room, phase2_delay)
+            return
+
+        off_sec = int(ms_outlet.get("minisplit_enforcement_off_seconds", 60) or 60)
+        outlet_name = ms_outlet.get("name") or "Mini-split"
+        room_name_log = str(room.get("name") or room_id)
+
+        try:
+            await self.config_manager.async_record_power_cycle_initiated(
+                room_id, room_name_log
+            )
+            await self.hass.services.async_call(
+                "switch", "turn_off", {"entity_id": sw}, blocking=True
+            )
+            _LOGGER.warning(
+                "Phase-2 minisplit enforcement: turned off %s in %s",
+                sw,
+                room_id,
+            )
+            if room_id in self._minisplit_hold:
+                self._minisplit_hold[room_id]["switches"].add(sw)
+            else:
+                self._minisplit_hold[room_id] = {
+                    "switches": {sw},
+                    "outlet_name": outlet_name,
+                    "volume": volume,
+                }
+
+            await asyncio.sleep(off_sec)
+
+            room_live = self._get_room_by_id(room_id) or room
+            total = self._sum_room_total_watts_only(room_live)
+            thr = float(room_live.get("threshold") or 0)
+            hold_sw = frozenset(
+                self._minisplit_hold.get(room_id, {}).get("switches", set())
+            )
+            if total > thr and hold_sw:
+                await self._power_cycle_room_outlets(
+                    room_id,
+                    room_live,
+                    phase2_delay,
+                    exclude_switch_entities=hold_sw,
+                    record_cycle=False,
+                )
+
+            hold_oname = self._minisplit_hold.get(room_id, {}).get(
+                "outlet_name", outlet_name
+            )
+            after_tmpl = (tts_settings.get("minisplit_phase2_after_msg") or "").strip()
+            if not after_tmpl:
+                after_tmpl = (tts_settings.get("phase2_after_msg") or "").strip()
+            if not after_tmpl:
+                after_tmpl = DEFAULT_MINISPLIT_PHASE2_AFTER_MSG
+            if media_player:
+                try:
+                    after_msg = after_tmpl.format(
+                        prefix=prefix,
+                        room_name=room_name,
+                        outlet_name=hold_oname,
+                        room_threshold=spoken_cardinal(int(thr)),
+                    )
+                except (KeyError, ValueError):
+                    after_msg = ""
+                if after_msg:
+                    await async_send_tts_or_queue(
+                        self.hass,
+                        media_player=media_player,
+                        message=after_msg,
+                        language=tts_settings.get("language"),
+                        volume=volume,
+                        tts_settings=tts_settings,
+                    )
+
+            room_live = self._get_room_by_id(room_id) or room_live
+            total = self._sum_room_total_watts_only(room_live)
+            thr = float(room_live.get("threshold") or 0)
+            if room_id in self._minisplit_hold and thr > 0 and total <= thr:
+                hold = self._minisplit_hold.pop(room_id)
+                for s in hold.get("switches", set()):
+                    if s and str(s).startswith("switch."):
+                        await self.hass.services.async_call(
+                            "switch", "turn_on", {"entity_id": s}, blocking=True
+                        )
+                rest_tmpl = (tts_settings.get("minisplit_phase2_restore_msg") or "").strip()
+                if media_player and rest_tmpl:
+                    try:
+                        rmsg = rest_tmpl.format(
+                            prefix=prefix,
+                            room_name=room_name,
+                            outlet_name=hold.get("outlet_name", outlet_name),
+                            room_threshold=spoken_cardinal(int(thr)),
+                        )
+                        await async_send_tts_or_queue(
+                            self.hass,
+                            media_player=media_player,
+                            message=rmsg,
+                            language=tts_settings.get("language"),
+                            volume=volume,
+                            tts_settings=tts_settings,
+                        )
+                    except (KeyError, ValueError) as e:
+                        _LOGGER.warning("Minisplit immediate restore TTS failed: %s", e)
+        except Exception as e:
+            _LOGGER.error("Phase-2 minisplit enforcement failed: %s", e)
 
     async def _handle_plug_shutoff(
         self,
@@ -670,15 +960,28 @@ class EnergyMonitor:
             # Check for phase 2 (power cycling) - set message; power cycle happens AFTER TTS
             if phase2_enabled and warnings_in_phase2_window >= phase2_count and phase < 2:
                 await self.config_manager.async_set_enforcement_phase(room_id, 2)
-                msg_template = tts_settings.get("phase2_warn_msg") or ""
-                try:
-                    message = msg_template.format(
-                        prefix=prefix,
-                        room_name=room_name,
-                        warning_count=warnings_in_phase2_window,
+                ms_o = self._select_minisplit_enforcement_target(
+                    room, float(current_watts), float(room_threshold or 0)
+                )
+                if ms_o:
+                    message = self._format_minisplit_phase2_warn(
+                        tts_settings,
+                        prefix,
+                        room_name,
+                        ms_o,
+                        warnings_in_phase2_window,
+                        room_threshold,
                     )
-                except (KeyError, ValueError):
-                    message = ""
+                if not message:
+                    msg_template = tts_settings.get("phase2_warn_msg") or ""
+                    try:
+                        message = msg_template.format(
+                            prefix=prefix,
+                            room_name=room_name,
+                            warning_count=warnings_in_phase2_window,
+                        )
+                    except (KeyError, ValueError):
+                        message = ""
 
             # Check for phase 1 (volume escalation)
             elif phase1_enabled and warnings_in_phase1_window >= phase1_count and phase < 1:
@@ -688,11 +991,45 @@ class EnergyMonitor:
                     message = msg_template.format(
                         prefix=prefix,
                         room_name=room_name,
-                        warning_count=warnings_in_phase1_window,
-                        threshold=int(room_threshold) if room_threshold is not None else 0,
+                        warning_count=spoken_cardinal(warnings_in_phase1_window),
+                        threshold=spoken_cardinal(
+                            int(room_threshold) if room_threshold is not None else 0
+                        ),
                     )
                 except (KeyError, ValueError):
                     message = ""
+
+            # Already phase 2: use minisplit or generic phase-2 warn when repeating
+            phase = int(self.config_manager.get_enforcement_state(room_id).get("phase", 0) or 0)
+            if (
+                enforcement_enabled
+                and phase2_enabled
+                and phase >= 2
+                and warnings_in_phase2_window >= phase2_count
+                and not message
+            ):
+                ms_o = self._select_minisplit_enforcement_target(
+                    room, float(current_watts), float(room_threshold or 0)
+                )
+                if ms_o:
+                    message = self._format_minisplit_phase2_warn(
+                        tts_settings,
+                        prefix,
+                        room_name,
+                        ms_o,
+                        warnings_in_phase2_window,
+                        room_threshold,
+                    )
+                if not message:
+                    msg_template = tts_settings.get("phase2_warn_msg") or ""
+                    try:
+                        message = msg_template.format(
+                            prefix=prefix,
+                            room_name=room_name,
+                            warning_count=warnings_in_phase2_window,
+                        )
+                    except (KeyError, ValueError):
+                        message = ""
 
             # If in phase 1+, increase volume (re-fetch phase after possible phase change)
             phase = int(self.config_manager.get_enforcement_state(room_id).get("phase", 0) or 0)
@@ -729,25 +1066,44 @@ class EnergyMonitor:
             if phase_now == 2:
                 delay_sec = pe.get("phase2_cycle_delay_seconds", 5)
                 after_template = tts_settings.get("phase2_after_msg") or ""
+                ms_target = self._select_minisplit_enforcement_target(
+                    room, float(current_watts), float(room_threshold or 0)
+                )
 
                 async def _power_cycle_and_tts_after() -> None:
-                    await self._power_cycle_room_outlets(room_id, room, delay_sec)
-                    if media_player and after_template:
-                        try:
-                            after_msg = after_template.format(
-                                prefix=prefix,
-                                room_name=room_name,
-                            )
-                        except (KeyError, ValueError):
-                            after_msg = f"{prefix} Cycle complete in {room_name}. Stay under limit or outlets cycle again."
-                        await async_send_tts_or_queue(
-                            self.hass,
-                            media_player=media_player,
-                            message=after_msg,
-                            language=tts_settings.get("language"),
-                            volume=effective_volume,
-                            tts_settings=tts_settings,
+                    if ms_target:
+                        await self._run_phase2_minisplit_enforcement(
+                            room_id,
+                            room_name,
+                            room,
+                            ms_target,
+                            media_player,
+                            effective_volume,
+                            tts_settings,
+                            prefix,
+                            delay_sec,
                         )
+                    else:
+                        await self._power_cycle_room_outlets(room_id, room, delay_sec)
+                        if media_player and after_template:
+                            try:
+                                after_msg = after_template.format(
+                                    prefix=prefix,
+                                    room_name=room_name,
+                                )
+                            except (KeyError, ValueError):
+                                after_msg = (
+                                    f"{prefix} Cycle complete in {room_name}. "
+                                    "Stay under limit or outlets cycle again."
+                                )
+                            await async_send_tts_or_queue(
+                                self.hass,
+                                media_player=media_player,
+                                message=after_msg,
+                                language=tts_settings.get("language"),
+                                volume=effective_volume,
+                                tts_settings=tts_settings,
+                            )
 
                 post_send_cb = _power_cycle_and_tts_after
 
@@ -774,31 +1130,54 @@ class EnergyMonitor:
                 room_id, room_name, "warning", None, False
             )
 
-    async def _power_cycle_room_outlets(self, room_id: str, room: dict, delay_seconds: int) -> None:
-        """Power cycle ALL outlets in the room that have a switch (stove/microwave excluded for safety)."""
+    async def _power_cycle_room_outlets(
+        self,
+        room_id: str,
+        room: dict,
+        delay_seconds: int,
+        *,
+        exclude_switch_entities: frozenset[str] | None = None,
+        record_cycle: bool = True,
+    ) -> None:
+        """Power cycle outlets with switches (stove/microwave excluded for safety)."""
+        exclude = exclude_switch_entities or frozenset()
         switch_entities: list[str] = []
         seen: set[str] = set()
         for outlet in room.get("outlets", []):
             if outlet.get("type") in ("stove", "microwave"):
-                continue  # Skip stove and microwave for safety
+                continue
             for switch in (
                 outlet.get("plug1_switch"),
                 outlet.get("plug2_switch"),
                 outlet.get("switch_entity"),
             ):
-                if switch and switch.startswith("switch.") and switch not in seen:
+                if (
+                    switch
+                    and switch.startswith("switch.")
+                    and switch not in seen
+                    and switch not in exclude
+                ):
                     seen.add(switch)
                     switch_entities.append(switch)
 
         if not switch_entities:
-            _LOGGER.debug("No switchable outlets in room %s for power cycle", room_id)
+            _LOGGER.debug(
+                "No switchable outlets in room %s for power cycle (after exclusions)",
+                room_id,
+            )
             return
 
-        # Turn all off, wait, turn all on
         try:
             room_name = str(room.get("name") or room_id)
-            await self.config_manager.async_record_power_cycle_initiated(room_id, room_name)
-            _LOGGER.info("Power cycling %d outlets in %s for enforcement", len(switch_entities), room_id)
+            if record_cycle:
+                await self.config_manager.async_record_power_cycle_initiated(
+                    room_id, room_name
+                )
+            _LOGGER.info(
+                "Power cycling %d outlets in %s for enforcement",
+                len(switch_entities),
+                room_id,
+            )
             await self.hass.services.async_call(
                 "switch", "turn_off", {"entity_id": switch_entities}, blocking=True
             )
@@ -806,7 +1185,11 @@ class EnergyMonitor:
             await self.hass.services.async_call(
                 "switch", "turn_on", {"entity_id": switch_entities}, blocking=True
             )
-            _LOGGER.warning("Power cycled all %d outlets in %s for enforcement", len(switch_entities), room_id)
+            _LOGGER.warning(
+                "Power cycled %d outlets in %s for enforcement",
+                len(switch_entities),
+                room_id,
+            )
         except Exception as e:
             _LOGGER.error("Failed to power cycle outlets in %s: %s", room_id, e)
 
@@ -846,8 +1229,8 @@ class EnergyMonitor:
             prefix=prefix,
             room_name=room_name,
             outlet_name=outlet_name,
-            watts=int(current_watts),
-            threshold=outlet_threshold,
+            watts=spoken_cardinal(current_watts),
+            threshold=spoken_cardinal(outlet_threshold),
         )
 
         try:
@@ -954,7 +1337,7 @@ class EnergyMonitor:
                     total_kwh = self.config_manager.get_total_day_kwh()
                     message = msg_template.format(
                         prefix=prefix,
-                        kwh_limit=home_limit,
+                        kwh_limit=spoken_cardinal(home_limit),
                     )
                     try:
                         volume = float(room_for_tts.get("volume", 0.7))
@@ -1056,8 +1439,8 @@ class EnergyMonitor:
                     message = msg_template.format(
                         prefix=prefix,
                         breaker_name=breaker_name,
-                        watts=int(breaker_total_watts),
-                        max_load=max_load,
+                        watts=spoken_cardinal(breaker_total_watts),
+                        max_load=spoken_cardinal(max_load),
                     )
                     
                     if media_player:
@@ -1322,8 +1705,9 @@ class EnergyMonitor:
                                 await async_send_tts_or_queue(
                                     self.hass, media_player=media_player,
                                     message=msg_template.format(
-                                        prefix=prefix, cooking_time_minutes=cooking_time_minutes,
-                                        final_warning_seconds=final_warning_sec,
+                                        prefix=prefix,
+                                        cooking_time_minutes=spoken_cardinal(cooking_time_minutes),
+                                        final_warning_seconds=spoken_cardinal(final_warning_sec),
                                     ),
                                     language=tts_settings.get("language"), volume=volume,
                                 )
@@ -1367,8 +1751,9 @@ class EnergyMonitor:
                                     await async_send_tts_or_queue(
                                         self.hass, media_player=media_player,
                                         message=msg_template.format(
-                                            prefix=prefix, cooking_time_minutes=cooking_time_minutes,
-                                            final_warning_seconds=final_warning_sec,
+                                            prefix=prefix,
+                                            cooking_time_minutes=spoken_cardinal(cooking_time_minutes),
+                                            final_warning_seconds=spoken_cardinal(final_warning_sec),
                                         ),
                                         language=tts_settings.get("language"), volume=volume,
                                     )

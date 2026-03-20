@@ -442,14 +442,25 @@ async def websocket_get_intraday_history(
             if room_id and rid != room_id:
                 continue
             for outlet in room.get("outlets", []):
-                if outlet.get("type") == "ceiling_vent_fan":
+                otype = outlet.get("type") or "outlet"
+                if otype == "light":
+                    switch_entity = outlet.get("switch_entity")
+                    if switch_entity:
+                        state = hass.states.get(switch_entity)
+                        if state and (state.state or "off").lower() in ("on",):
+                            for le in outlet.get("light_entities") or []:
+                                if isinstance(le, dict) and str(
+                                    le.get("entity_id", "")
+                                ).startswith("light."):
+                                    current_watts += float(le.get("watts", 0) or 0)
+                elif otype == "ceiling_vent_fan":
                     switch_entity = outlet.get("switch_entity")
                     watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
                     if switch_entity and watts_when_on > 0:
                         state = hass.states.get(switch_entity)
                         if state and (state.state or "off").lower() in ("on",):
                             current_watts += watts_when_on
-                elif outlet.get("type") != "light":
+                else:
                     for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
                         if eid:
                             current_watts += _get_power(eid)

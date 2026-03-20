@@ -46,6 +46,18 @@ DEFAULT_MICROWAVE_RESTORE_MSG = "{prefix} Microwave is off. Stove power restored
 DEFAULT_PHASE1_WARN_MSG = "{prefix} {room_name} has exceeded threshold {warning_count} times. Volume will rise until power stays under {threshold} watts."
 DEFAULT_PHASE2_WARN_MSG = "{prefix} {room_name} has exceeded threshold {warning_count} times. Cycling all outlets now, turn off devices."
 DEFAULT_PHASE2_AFTER_MSG = "{prefix} Cycle complete in {room_name}. Stay under limit or outlets cycle again."
+DEFAULT_MINISPLIT_PHASE2_WARN_MSG = (
+    "{prefix} {room_name} is over the {room_threshold} watt room limit. "
+    "Turning off {outlet_name} to protect the circuit. It will stay off at least {restore_delay} seconds for compressor safety, "
+    "and will only turn back on when the room is under the limit. Other outlets may still cycle if the room stays high."
+)
+DEFAULT_MINISPLIT_PHASE2_AFTER_MSG = (
+    "{prefix} Enforcement step complete in {room_name}. "
+    "{outlet_name} stays off until total room power is under {room_threshold} watts."
+)
+DEFAULT_MINISPLIT_PHASE2_RESTORE_MSG = (
+    "{prefix} Room power is under {room_threshold} watts. Restoring power to {outlet_name}."
+)
 DEFAULT_PHASE_RESET_MSG = "{prefix} {room_name} under limit, enforcement reset."
 DEFAULT_ROOM_KWH_WARN_MSG = "{prefix} {room_name} used {kwh_limit} kWh today, {percentage} percent of home, reduce use."
 DEFAULT_HOME_KWH_WARN_MSG = "{prefix} Home over {kwh_limit} kWh today, reduce consumption."
@@ -77,6 +89,9 @@ DEFAULT_CONFIG = {
             "phase1_warn_msg": DEFAULT_PHASE1_WARN_MSG,
             "phase2_warn_msg": DEFAULT_PHASE2_WARN_MSG,
             "phase2_after_msg": DEFAULT_PHASE2_AFTER_MSG,
+            "minisplit_phase2_warn_msg": DEFAULT_MINISPLIT_PHASE2_WARN_MSG,
+            "minisplit_phase2_after_msg": DEFAULT_MINISPLIT_PHASE2_AFTER_MSG,
+            "minisplit_phase2_restore_msg": DEFAULT_MINISPLIT_PHASE2_RESTORE_MSG,
             "phase_reset_msg": DEFAULT_PHASE_RESET_MSG,
             "room_kwh_warn_msg": DEFAULT_ROOM_KWH_WARN_MSG,
             "home_kwh_warn_msg": DEFAULT_HOME_KWH_WARN_MSG,
