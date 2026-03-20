@@ -13,6 +13,7 @@ from .const import (
     DOMAIN,
     ALERT_COOLDOWN,
     DEFAULT_BUDGET_EXCEEDED_MSG,
+    DEFAULT_BUDGET_BOOST_SCHEDULED_MSG,
     ENERGY_CHECK_INTERVAL,
     SHUTOFF_RESET_DELAY,
     STOVE_WARNING_TIMER,
@@ -77,8 +78,114 @@ class EnergyMonitor:
         self._power_listener_unsub: list = []  # Unsubscribe callbacks for state listeners
         self._room_budget_announced: set[str] = set()
         self._room_budget_announced_date: str = ""
+        self._budget_boost_scheduled_fired_date: str = ""
         # Phase-2 mini-split hold: room_id -> {switches: set[str], outlet_name, volume}
         self._minisplit_hold: dict[str, dict] = {}
+
+    @staticmethod
+    def _budget_boost_period_label(weekdays: list) -> str:
+        """Phrase for TTS: weekend only when Sat+Sun; else 'on Monday and Tuesday' style."""
+        names = [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ]
+        try:
+            wk = sorted({int(d) for d in weekdays if 0 <= int(d) <= 6})
+        except (TypeError, ValueError):
+            wk = []
+        if not wk:
+            return "on selected days"
+        if set(wk) == {5, 6}:
+            return "for the weekend"
+        if len(wk) == 1:
+            return f"on {names[wk[0]]}"
+        return f"on {names[wk[0]]} and {names[wk[1]]}"
+
+    def _is_budget_boost_day(self, now: datetime, tts_settings: dict) -> bool:
+        if not tts_settings.get("budget_boost_enabled"):
+            return False
+        mult = float(tts_settings.get("budget_boost_multiplier") or 1)
+        if mult <= 1:
+            return False
+        days = tts_settings.get("budget_boost_weekdays") or []
+        if not days:
+            return False
+        return now.weekday() in days
+
+    def _effective_kwh_budget(self, base: float, now: datetime, tts_settings: dict) -> float:
+        base = float(base or 0)
+        if base <= 0:
+            return base
+        if not self._is_budget_boost_day(now, tts_settings):
+            return base
+        mult = float(tts_settings.get("budget_boost_multiplier") or 2)
+        mult = max(1.0, min(5.0, mult))
+        return round(base * mult, 4)
+
+    @staticmethod
+    def _budget_multiplier_tts_str(mult: float) -> str:
+        if mult == int(mult):
+            return str(int(mult))
+        return str(mult).rstrip("0").rstrip(".")
+
+    async def _maybe_fire_budget_boost_scheduled(
+        self, now: datetime, today: str, tts_settings: dict
+    ) -> None:
+        """Once per local calendar day on boost days, after announce time, optional global TTS."""
+        if not self._is_budget_boost_day(now, tts_settings):
+            return
+        if self._budget_boost_scheduled_fired_date == today:
+            return
+        mp = (tts_settings.get("budget_boost_announce_media_player") or "").strip()
+        if not mp:
+            return
+        time_str = tts_settings.get("budget_boost_announce_time") or "09:00"
+        try:
+            parts = str(time_str).strip().replace(".", ":").split(":")
+            h = int(parts[0])
+            mi = int(parts[1]) if len(parts) > 1 else 0
+            target = now.replace(hour=h, minute=mi, second=0, microsecond=0)
+        except (ValueError, IndexError, TypeError):
+            return
+        if now < target:
+            return
+        tmpl = (tts_settings.get("budget_boost_scheduled_msg") or "").strip()
+        if not tmpl:
+            tmpl = DEFAULT_BUDGET_BOOST_SCHEDULED_MSG
+        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        weekdays = tts_settings.get("budget_boost_weekdays") or []
+        period = self._budget_boost_period_label(weekdays)
+        mult = float(tts_settings.get("budget_boost_multiplier") or 2)
+        mult_s = self._budget_multiplier_tts_str(max(1.0, min(5.0, mult)))
+        try:
+            message = tmpl.format(
+                prefix=prefix,
+                period_label=period,
+                budget_multiplier=mult_s,
+            )
+        except (KeyError, ValueError) as e:
+            _LOGGER.warning("Budget boost scheduled message format failed: %s", e)
+            return
+        vol = float(tts_settings.get("volume", 0.7) or 0.7)
+        try:
+            await async_send_tts_or_queue(
+                self.hass,
+                media_player=mp,
+                message=message,
+                language=tts_settings.get("language"),
+                volume=vol,
+                tts_settings=tts_settings,
+                room=None,
+            )
+        except Exception as e:
+            _LOGGER.error("Budget boost scheduled TTS failed: %s", e)
+            return
+        self._budget_boost_scheduled_fired_date = today
 
     def _get_power_entity_ids(self) -> list[str]:
         """Collect all power entity IDs we track for daily energy."""
@@ -138,13 +245,15 @@ class EnergyMonitor:
     async def _check_energy(self) -> None:
         """Check energy consumption for all rooms and outlets."""
         await self.config_manager.async_snapshot_day_and_reset_if_rolled_over()
-        today = dt_util.now().strftime("%Y-%m-%d")
+        now = dt_util.now()
+        today = now.strftime("%Y-%m-%d")
         if self._room_budget_announced_date != today:
             self._room_budget_announced.clear()
             self._room_budget_announced_date = today
         energy_config = self.config_manager.energy_config
         rooms = energy_config.get("rooms", [])
         tts_settings = energy_config.get("tts_settings", {})
+        await self._maybe_fire_budget_boost_scheduled(now, today, tts_settings)
 
         for room in rooms:
             room_id = room.get("id", room["name"].lower().replace(" ", "_"))
@@ -154,9 +263,10 @@ class EnergyMonitor:
             media_player = room.get("media_player")
             room_volume = room.get("volume", tts_settings.get("volume", 0.7))
 
-            # Room budget: no warnings/shutoffs until room uses this much today (default 5 kWh)
+            # Room budget: no warnings/shutoffs until room uses this much today (boost days scale budget)
             room_day_kwh = self.config_manager.get_room_day_kwh(room_id)
-            budget_exceeded = kwh_budget <= 0 or room_day_kwh >= kwh_budget
+            effective_kwh_budget = self._effective_kwh_budget(kwh_budget, now, tts_settings)
+            budget_exceeded = effective_kwh_budget <= 0 or room_day_kwh >= effective_kwh_budget
 
             # TTS when room first exceeds budget (once per day per room)
             if (
@@ -1020,18 +1130,45 @@ class EnergyMonitor:
             # Check for phase 1 (volume escalation)
             elif phase1_enabled and warnings_in_phase1_window >= phase1_count and phase < 1:
                 await self.config_manager.async_set_enforcement_phase(room_id, 1)
-                msg_template = tts_settings.get("phase1_warn_msg") or ""
-                try:
-                    message = msg_template.format(
-                        prefix=prefix,
-                        room_name=room_name,
-                        warning_count=spoken_cardinal(warnings_in_phase1_window),
-                        threshold=spoken_cardinal(
-                            int(room_threshold) if room_threshold is not None else 0
-                        ),
-                    )
-                except (KeyError, ValueError):
+                now_p1 = dt_util.now()
+                boost_tmpl = (tts_settings.get("phase1_warn_msg_boost_day") or "").strip()
+                if self._is_budget_boost_day(now_p1, tts_settings) and boost_tmpl:
+                    base_b = float(room.get("kwh_budget", 5) or 5)
+                    eff_b = self._effective_kwh_budget(base_b, now_p1, tts_settings)
+                    mult = float(tts_settings.get("budget_boost_multiplier") or 2)
+                    mult_s = self._budget_multiplier_tts_str(max(1.0, min(5.0, mult)))
+                    weekdays = tts_settings.get("budget_boost_weekdays") or []
+                    period = self._budget_boost_period_label(weekdays)
+                    try:
+                        message = boost_tmpl.format(
+                            prefix=prefix,
+                            room_name=room_name,
+                            warning_count=spoken_cardinal(warnings_in_phase1_window),
+                            threshold=spoken_cardinal(
+                                int(room_threshold) if room_threshold is not None else 0
+                            ),
+                            kwh_budget=spoken_cardinal(round(base_b)),
+                            kwh_budget_effective=spoken_cardinal(round(eff_b)),
+                            budget_multiplier=mult_s,
+                            period_label=period,
+                        )
+                    except (KeyError, ValueError):
+                        message = ""
+                else:
                     message = ""
+                if not message:
+                    msg_template = tts_settings.get("phase1_warn_msg") or ""
+                    try:
+                        message = msg_template.format(
+                            prefix=prefix,
+                            room_name=room_name,
+                            warning_count=spoken_cardinal(warnings_in_phase1_window),
+                            threshold=spoken_cardinal(
+                                int(room_threshold) if room_threshold is not None else 0
+                            ),
+                        )
+                    except (KeyError, ValueError):
+                        message = ""
 
             # Already phase 2: use minisplit or generic phase-2 warn when repeating
             phase = int(self.config_manager.get_enforcement_state(room_id).get("phase", 0) or 0)
