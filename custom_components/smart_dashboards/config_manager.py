@@ -91,7 +91,6 @@ class ConfigManager:
         # Intraday history: minute-by-minute power readings for 24-hour charts
         # Structure: {entity_id: [(timestamp_minute, watts), ...]} - keeps last 1440 entries (24h)
         self._intraday_history: dict[str, list] = {}
-        self._intraday_last_minute: str = ""  # Last minute we recorded
 
         # Power enforcement tracking
         # Structure: {room_id: {"warnings": [(timestamp, watts), ...], "phase": 0|1|2, "volume_offset": 0, "last_phase_change": timestamp, "kwh_alerts_sent": [5, 10, ...]}}
@@ -325,7 +324,21 @@ class ConfigManager:
                                 ]
                             else:
                                 item["light_entities"] = []
-                        elif outlet_type in ("single_outlet", "minisplit", "fridge"):
+                        elif outlet_type == "minisplit":
+                            item["plug2_entity"] = None
+                            item["plug1_switch"] = outlet.get("plug1_switch")
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = int(outlet.get("plug1_shutoff", 0))
+                            item["plug2_shutoff"] = 0
+                            item["minisplit_enforcement_off_seconds"] = max(
+                                30,
+                                min(600, int(outlet.get("minisplit_enforcement_off_seconds", 60))),
+                            )
+                            item["minisplit_enforcement_min_watts"] = max(
+                                0,
+                                min(2000, int(outlet.get("minisplit_enforcement_min_watts", 0))),
+                            )
+                        elif outlet_type in ("single_outlet", "fridge"):
                             item["plug2_entity"] = None
                             item["plug1_switch"] = outlet.get("plug1_switch")
                             item["plug2_switch"] = None
@@ -393,6 +406,18 @@ class ConfigManager:
             "phase1_warn_msg": tts.get("phase1_warn_msg", default_tts.get("phase1_warn_msg", "")),
             "phase2_warn_msg": tts.get("phase2_warn_msg", default_tts.get("phase2_warn_msg", "")),
             "phase2_after_msg": tts.get("phase2_after_msg", default_tts.get("phase2_after_msg", "")),
+            "minisplit_phase2_warn_msg": tts.get(
+                "minisplit_phase2_warn_msg",
+                default_tts.get("minisplit_phase2_warn_msg", ""),
+            ),
+            "minisplit_phase2_after_msg": tts.get(
+                "minisplit_phase2_after_msg",
+                default_tts.get("minisplit_phase2_after_msg", ""),
+            ),
+            "minisplit_phase2_restore_msg": tts.get(
+                "minisplit_phase2_restore_msg",
+                default_tts.get("minisplit_phase2_restore_msg", ""),
+            ),
             "phase_reset_msg": tts.get("phase_reset_msg", default_tts.get("phase_reset_msg", "")),
             "room_kwh_warn_msg": tts.get("room_kwh_warn_msg", default_tts.get("room_kwh_warn_msg", "")),
             "home_kwh_warn_msg": tts.get("home_kwh_warn_msg", default_tts.get("home_kwh_warn_msg", "")),
@@ -497,22 +522,19 @@ class ConfigManager:
         self._day_energy_data[entity_id]["energy"] += (watts * elapsed_seconds) / 3600.0
 
     def record_intraday_power(self, entity_id: str, watts: float) -> None:
-        """Record minute-by-minute power for 24-hour charts. Called from poll loop."""
+        """Record minute-by-minute power for 24-hour charts. Called from poll loop.
+        Per-entity minute bucket: update in place for same minute, append when minute advances."""
         now = dt_util.now()
         minute_key = now.strftime("%Y-%m-%d %H:%M")
-        # Only record once per minute to avoid duplicates
-        if minute_key == self._intraday_last_minute and entity_id in self._intraday_history:
-            # Update current minute value instead of adding new entry
-            if self._intraday_history[entity_id]:
-                self._intraday_history[entity_id][-1] = (minute_key, watts)
-            return
-        self._intraday_last_minute = minute_key
         if entity_id not in self._intraday_history:
             self._intraday_history[entity_id] = []
-        self._intraday_history[entity_id].append((minute_key, watts))
-        # Keep only last 1440 minutes (24 hours)
-        if len(self._intraday_history[entity_id]) > 1440:
-            self._intraday_history[entity_id] = self._intraday_history[entity_id][-1440:]
+        hist = self._intraday_history[entity_id]
+        if hist and hist[-1][0] == minute_key:
+            hist[-1] = (minute_key, watts)
+        else:
+            hist.append((minute_key, watts))
+        if len(hist) > 1440:
+            self._intraday_history[entity_id] = hist[-1440:]
 
     def get_intraday_history(self, entity_id: str, minutes: int = 1440) -> list:
         """Get last N minutes of power history for an entity. Returns [(minute_key, watts), ...]"""
@@ -1338,7 +1360,6 @@ class ConfigManager:
         today = dt_util.now().strftime("%Y-%m-%d")
         payload = {
             "date": today,
-            "last_minute": self._intraday_last_minute,
             "history": self._intraday_history,
         }
         try:
