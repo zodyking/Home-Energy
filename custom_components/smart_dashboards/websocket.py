@@ -350,6 +350,11 @@ async def websocket_get_power_data(
 
         room_data["total_watts"] = round(room_data["total_watts"], 1)
         room_data["total_day_wh"] = round(room_data["total_day_wh"], 2)
+        if config_manager.is_room_enforcement_enabled(room_id):
+            phase = int(
+                config_manager.get_enforcement_state(room_id).get("phase", 0) or 0
+            )
+            room_data["enforcement_phase"] = max(0, min(2, phase))
         result["rooms"].append(room_data)
 
     connection.send_result(msg["id"], result)

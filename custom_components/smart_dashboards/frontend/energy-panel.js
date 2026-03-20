@@ -52,6 +52,8 @@ class EnergyPanel extends HTMLElement {
     this._statsLoading = false;
     this._statsFetchedAt = null; // ms — last successful get_statistics
     this._statsFetchError = null;
+    this._statsRoomsView = 'table'; // 'table' | 'pie' — statistics rooms card only
+    this._statsRoomsPieInstance = null;
   }
 
   set hass(hass) {
@@ -72,6 +74,7 @@ class EnergyPanel extends HTMLElement {
 
   disconnectedCallback() {
     this._stopRefresh();
+    this._destroyStatsRoomsPie();
   }
 
   _startRefresh() {
@@ -233,6 +236,114 @@ class EnergyPanel extends HTMLElement {
           </tr>`;
         }).join('');
     }
+    void this._syncStatsRoomsPie();
+  }
+
+  _destroyStatsRoomsPie() {
+    if (this._statsRoomsPieInstance) {
+      try {
+        this._statsRoomsPieInstance.destroy();
+      } catch (_e) {
+        /* stale DOM */
+      }
+      this._statsRoomsPieInstance = null;
+    }
+  }
+
+  async _syncStatsRoomsPie() {
+    if (this._showSettings || this._dashboardView !== 'statistics') {
+      this._destroyStatsRoomsPie();
+      return;
+    }
+    const container = this.shadowRoot?.getElementById('stat-rooms-pie-chart');
+    if (!container) {
+      this._destroyStatsRoomsPie();
+      return;
+    }
+    if (this._statsRoomsView !== 'pie') {
+      this._destroyStatsRoomsPie();
+      return;
+    }
+    const rooms = this._statsData?.rooms || [];
+    const pairs = rooms
+      .map((r) => ({
+        label: String(r.name || r.id || 'Room'),
+        kwh: Number(r.kwh) || 0,
+      }))
+      .filter((x) => x.kwh > 0);
+
+    this._destroyStatsRoomsPie();
+    container.innerHTML = '';
+
+    if (pairs.length === 0) {
+      container.innerHTML =
+        '<p class="statistics-pie-empty">No room kWh in this period.</p>';
+      return;
+    }
+
+    try {
+      const ApexCharts = (await import('https://cdn.jsdelivr.net/npm/apexcharts@3.45.1/dist/apexcharts.esm.min.js')).default;
+      const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
+      const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
+      const muted = getComputedStyle(this).getPropertyValue('--secondary-text-color').trim() || '#9e9e9e';
+      const sliceColors = [
+        accent,
+        '#26a69a',
+        '#7e57c2',
+        '#ff9800',
+        '#ec407a',
+        '#66bb6a',
+        '#5c6bc0',
+        '#ef5350',
+        '#29b6f6',
+        '#ab47bc',
+      ];
+      const labels = pairs.map((p) => p.label);
+      const series = pairs.map((p) => p.kwh);
+      const options = {
+        chart: {
+          type: 'pie',
+          height: 300,
+          fontFamily: 'inherit',
+          background: 'transparent',
+          toolbar: { show: false },
+          animations: { enabled: true },
+        },
+        labels,
+        series,
+        colors: sliceColors,
+        legend: {
+          position: 'bottom',
+          fontSize: '11px',
+          labels: { colors: textColor },
+          markers: { width: 10, height: 10 },
+        },
+        plotOptions: {
+          pie: {
+            dataLabels: { minAngleToShowLabel: 12 },
+          },
+        },
+        dataLabels: {
+          enabled: true,
+          style: { fontSize: '11px', colors: ['#fff'] },
+          dropShadow: { enabled: false },
+          formatter: (val) => `${Number(val).toFixed(1)}%`,
+        },
+        stroke: { width: 1, colors: ['rgba(0,0,0,0.25)'] },
+        tooltip: {
+          theme: 'dark',
+          y: {
+            formatter: (val) => `${Number(val).toFixed(2)} kWh`,
+          },
+        },
+        theme: { mode: 'dark' },
+      };
+      this._statsRoomsPieInstance = new ApexCharts(container, options);
+      await this._statsRoomsPieInstance.render();
+    } catch (e) {
+      console.error('Statistics rooms pie chart failed:', e);
+      container.innerHTML = `<p class="statistics-pie-empty" style="color:${muted}">Chart failed to load.</p>`;
+    }
   }
 
   async _loadStoveData() {
@@ -295,13 +406,32 @@ class EnergyPanel extends HTMLElement {
         totalDaySpan.textContent = `${(room.total_day_wh / 1000).toFixed(2)} kWh today`;
       }
 
+      const pe = this._config?.power_enforcement || {};
+      const enfOn = pe.enabled && (pe.rooms_enabled || []).includes(room.id);
+      const badge = roomCard.querySelector('.enforcement-badge');
+      if (badge && enfOn) {
+        const p = typeof room.enforcement_phase === 'number'
+          ? Math.max(0, Math.min(2, room.enforcement_phase))
+          : 0;
+        const titles = [
+          'Enforcement on: volume may rise and outlets may cycle if limits are ignored.',
+          'Phase 1: TTS volume escalates with repeated threshold warnings.',
+          'Phase 2: outlets may be power-cycled when warnings continue.',
+        ];
+        const labels = ['On', 'Phase 1', 'Phase 2'];
+        badge.className = `enforcement-badge enforcement-phase-${p} has-tooltip`;
+        badge.setAttribute('title', titles[p]);
+        const lbl = badge.querySelector('.enforcement-badge-label');
+        if (lbl) lbl.textContent = labels[p];
+      }
+
       // Update per-room event counts
       const wEl = roomCard.querySelector('.event-count[data-event="warnings"]');
       const sEl = roomCard.querySelector('.event-count[data-event="shutoffs"]');
       const pEl = roomCard.querySelector('.event-count[data-event="power_cycles"]');
-      if (wEl) wEl.textContent = `Warnings: ${room.warnings || 0}`;
-      if (sEl) sEl.textContent = `Shutoffs: ${room.shutoffs || 0}`;
-      if (pEl) pEl.textContent = `Cycles: ${room.power_cycles || 0}`;
+      if (wEl) wEl.textContent = `W:${room.warnings || 0}`;
+      if (sEl) sEl.textContent = `S:${room.shutoffs || 0}`;
+      if (pEl) pEl.textContent = `C:${room.power_cycles || 0}`;
 
       // Update individual devices
       (room.outlets || []).forEach((outlet, i) => {
@@ -393,30 +523,20 @@ class EnergyPanel extends HTMLElement {
       ${passcodeModalStyles}
       
       .summary-stats {
-        display: flex;
-        flex-wrap: nowrap;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 68px), 1fr));
         gap: clamp(6px, 2vw, 10px);
         margin-bottom: 12px;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        padding-bottom: 6px;
-        scrollbar-width: thin;
-      }
-      .summary-stats::-webkit-scrollbar {
-        height: 4px;
-      }
-      .summary-stats::-webkit-scrollbar-thumb {
-        background: var(--card-border);
-        border-radius: 4px;
+        overflow-x: hidden;
+        width: 100%;
       }
 
       .stat-card {
-        flex: 1 0 auto;
-        min-width: clamp(72px, 17vw, 118px);
+        min-width: 0;
         background: var(--card-bg);
         border-radius: 8px;
         border: 1px solid var(--card-border);
-        padding: clamp(8px, 2vw, 12px) clamp(8px, 2.2vw, 14px);
+        padding: clamp(8px, 2vw, 12px) clamp(6px, 1.8vw, 12px);
         text-align: center;
       }
       .stat-card.graph-clickable, .graph-clickable {
@@ -641,6 +761,53 @@ class EnergyPanel extends HTMLElement {
       .statistics-table th abbr { text-decoration: none; border-bottom: 1px dotted var(--secondary-text-color); cursor: help; }
       .statistics-empty { color: var(--secondary-text-color); text-align: center; padding: 16px !important; }
 
+      .stat-rooms-segment-wrap {
+        display: flex;
+        gap: 4px;
+        margin: 0 0 12px;
+        padding: 4px;
+        background: rgba(0, 0, 0, 0.18);
+        border-radius: 8px;
+        border: 1px solid var(--card-border);
+      }
+      .stat-rooms-segment {
+        flex: 1;
+        padding: 8px 12px;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--secondary-text-color);
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s, color 0.2s;
+      }
+      .stat-rooms-segment:hover {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--primary-text-color);
+      }
+      .stat-rooms-segment.active {
+        background: var(--panel-accent);
+        color: #fff;
+      }
+      .stat-rooms-panel { min-width: 0; }
+      .stat-rooms-pie-mount {
+        min-height: 280px;
+        width: 100%;
+      }
+      .statistics-pie-empty,
+      .stat-pie-caption {
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        text-align: center;
+        margin: 0;
+        padding: 12px 8px 0;
+        line-height: 1.4;
+      }
+      .statistics-pie-empty {
+        padding: 32px 16px;
+      }
+
       .rooms-grid {
         display: flex;
         flex-direction: column;
@@ -658,13 +825,14 @@ class EnergyPanel extends HTMLElement {
 
       .room-header {
         display: flex;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         gap: clamp(4px, 1.5vw, 12px);
         padding: clamp(8px, 2vw, 12px) clamp(10px, 2.5vw, 14px);
         background: linear-gradient(135deg, rgba(3, 169, 244, 0.06) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
+        overflow-x: hidden;
       }
 
       .room-header-left {
@@ -687,25 +855,15 @@ class EnergyPanel extends HTMLElement {
       .room-meta-scroll {
         min-width: 0;
         flex: 1;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: thin;
-      }
-      .room-meta-scroll::-webkit-scrollbar {
-        height: 3px;
-      }
-      .room-meta-scroll::-webkit-scrollbar-thumb {
-        background: var(--card-border);
-        border-radius: 3px;
+        overflow: hidden;
       }
 
       .room-meta-inner {
         display: flex;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         align-items: center;
         gap: clamp(4px, 1.2vw, 8px);
-        width: max-content;
-        padding-right: 8px;
+        max-width: 100%;
       }
 
       .room-meta-inner .threshold-badge {
@@ -716,10 +874,12 @@ class EnergyPanel extends HTMLElement {
 
       .room-header-right {
         display: flex;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         align-items: center;
+        justify-content: flex-end;
         gap: clamp(6px, 1.8vw, 10px);
         flex-shrink: 0;
+        max-width: 100%;
       }
 
       .room-icon {
@@ -1489,12 +1649,25 @@ class EnergyPanel extends HTMLElement {
         padding: 2px clamp(4px, 1.2vw, 8px);
         border-radius: 8px;
         color: #fff;
-        background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
-        box-shadow: 0 1px 3px rgba(255, 152, 0, 0.3);
         text-transform: uppercase;
         letter-spacing: 0.03em;
         white-space: nowrap;
         flex-shrink: 0;
+      }
+
+      .enforcement-badge.enforcement-phase-0 {
+        background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+        box-shadow: 0 1px 3px rgba(255, 152, 0, 0.35);
+      }
+
+      .enforcement-badge.enforcement-phase-1 {
+        background: linear-gradient(135deg, #e53935 0%, #b71c1c 100%);
+        box-shadow: 0 1px 3px rgba(229, 57, 53, 0.35);
+      }
+
+      .enforcement-badge.enforcement-phase-2 {
+        background: linear-gradient(135deg, #7e57c2 0%, #4527a0 100%);
+        box-shadow: 0 1px 3px rgba(126, 87, 194, 0.35);
       }
 
       .enforcement-badge svg {
@@ -2231,6 +2404,63 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
       }
+      .event-log-container {
+        max-height: 360px;
+        overflow-y: auto;
+        padding: 16px;
+      }
+      .event-log-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .event-log-entry {
+        padding: 10px 0;
+        border-bottom: 1px solid var(--card-border);
+        font-size: 14px;
+      }
+      .event-log-entry-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .event-log-ts {
+        color: var(--secondary-text-color);
+        font-size: 13px;
+        min-width: 8.5em;
+        font-variant-numeric: tabular-nums;
+      }
+      .event-log-who {
+        flex: 1;
+        min-width: 0;
+        font-size: 14px;
+      }
+      .event-log-badge {
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .event-log-detail {
+        margin-top: 8px;
+        width: 100%;
+      }
+      .event-log-message {
+        margin: 0 0 6px;
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.45;
+      }
+      .event-log-readings {
+        margin: 0;
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        opacity: 0.95;
+        line-height: 1.4;
+      }
       .graph-chart-container {
         flex: 1;
         min-height: clamp(220px, 50vw, 320px);
@@ -2643,6 +2873,8 @@ class EnergyPanel extends HTMLElement {
       }
     `;
 
+    this._destroyStatsRoomsPie();
+
     if (this._loading) {
       this.shadowRoot.innerHTML = `
         <style>${styles}</style>
@@ -2751,19 +2983,19 @@ class EnergyPanel extends HTMLElement {
             <div class="summary-stats">
               <div class="stat-card graph-clickable" data-graph-type="total_watts_intraday" title="Power draw right now (tap for chart)">
                 <div class="stat-value" id="summary-total-watts">${totalWatts.toFixed(1)} W</div>
-                <div class="stat-label">Now</div>
+                <div class="stat-label">Load</div>
               </div>
               <div class="stat-card graph-clickable" data-graph-type="total_wh_intraday" title="Home kWh since midnight (tap for chart)">
                 <div class="stat-value" id="summary-total-day">${(totalDayWh / 1000).toFixed(2)} kWh</div>
-                <div class="stat-label">Today</div>
+                <div class="stat-label">Usage</div>
               </div>
               <div class="stat-card graph-clickable" data-graph-type="total_warnings" title="Threshold voice alerts today">
                 <div class="stat-value" id="summary-warnings">${totalWarnings}</div>
-                <div class="stat-label">Warn</div>
+                <div class="stat-label">Warnings</div>
               </div>
               <div class="stat-card graph-clickable" data-graph-type="total_shutoffs" title="Safety plug shutoffs today">
                 <div class="stat-value" id="summary-shutoffs">${totalShutoffs}</div>
-                <div class="stat-label">Shutoff</div>
+                <div class="stat-label">Shutoffs</div>
               </div>
               <div class="stat-card graph-clickable" data-graph-type="total_power_cycles" title="Enforcement outlet cycles today">
                 <div class="stat-value" id="summary-power-cycles">${totalPowerCycles}</div>
@@ -2781,11 +3013,61 @@ class EnergyPanel extends HTMLElement {
     `;
 
     this._attachEventListeners();
+    if (this._dashboardView === 'statistics' && this._statsRoomsView === 'pie') {
+      queueMicrotask(() => void this._syncStatsRoomsPie());
+    }
   }
 
   _isEventLogType(type) {
     return type === 'total_warnings' || type === 'total_shutoffs' || type === 'total_power_cycles'
       || type === 'room_warnings' || type === 'room_shutoffs' || type === 'room_power_cycles';
+  }
+
+  _eventLogEscape(s) {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  _eventLogReadingsLine(e) {
+    const parts = [];
+    const addW = (label, v) => {
+      if (v == null || v === '') return;
+      const n = Number(v);
+      if (Number.isNaN(n)) return;
+      parts.push(`${label} ${Math.round(n)} W`);
+    };
+    addW('Load', e.room_watts);
+    if (e.room_threshold != null && e.room_threshold !== '') {
+      const t = Number(e.room_threshold);
+      if (!Number.isNaN(t)) parts.push(`Threshold ${Math.round(t)} W`);
+    }
+    addW('Outlet', e.outlet_watts);
+    if (e.outlet_threshold != null && e.outlet_threshold !== '') {
+      const ot = Number(e.outlet_threshold);
+      if (!Number.isNaN(ot)) parts.push(`Limit ${Math.round(ot)} W`);
+    }
+    if (e.enforcement_phase != null && e.enforcement_phase !== '') {
+      const p = Number(e.enforcement_phase);
+      if (!Number.isNaN(p)) parts.push(`Phase ${Math.round(p)}`);
+    }
+    if (e.volume_percent != null && e.volume_percent !== '') {
+      const v = Number(e.volume_percent);
+      if (!Number.isNaN(v)) parts.push(`Volume ${Math.round(v)}%`);
+    }
+    if (e.outlets_cycled != null && e.outlets_cycled !== '') {
+      const c = Number(e.outlets_cycled);
+      if (!Number.isNaN(c)) parts.push(`${Math.round(c)} outlet(s) cycled`);
+    }
+    return parts.join(' · ');
+  }
+
+  _eventLogEntryHasDetails(e) {
+    const msg = e.tts_message;
+    const hasMsg = msg != null && String(msg).trim() !== '';
+    return hasMsg || !!this._eventLogReadingsLine(e);
   }
 
   _renderGraphModal() {
@@ -2816,22 +3098,37 @@ class EnergyPanel extends HTMLElement {
       else if (type.includes('power_cycles')) filterType = 'power_cycle';
       const filtered = events.filter(e => e.type === filterType);
       bodyContent = `
-        <div class="event-log-container" style="max-height: 360px; overflow-y: auto; padding: 16px;">
+        <div class="event-log-container">
           ${filtered.length === 0
             ? '<p style="color: var(--secondary-text-color); text-align: center; padding: 24px;">No events in the last 24 hours</p>'
             : `
-            <ul class="event-log-list" style="list-style: none; margin: 0; padding: 0;">
-              ${filtered.map(e => {
+            <ul class="event-log-list">
+              ${filtered.map((e) => {
                 const isPc = e.type === 'power_cycle';
                 const badgeStyle = isPc
                   ? 'background: rgba(3, 169, 244, 0.2); color: var(--panel-accent, #03a9f4);'
                   : (e.tts_succeeded ? 'background: rgba(76, 175, 80, 0.2); color: #4caf50;' : 'background: rgba(244, 67, 54, 0.2); color: #f44336;');
                 const badgeText = isPc ? 'Outlets cycled' : (e.tts_succeeded ? 'TTS Succeeded' : 'TTS Failed');
+                const who = `${e.room_name || ''}${e.outlet_name ? ' – ' + e.outlet_name : ''}`;
+                const hasDetail = this._eventLogEntryHasDetails(e);
+                const readings = this._eventLogReadingsLine(e);
+                const msgHtml = e.tts_message != null && String(e.tts_message).trim() !== ''
+                  ? `<p class="event-log-message">${this._eventLogEscape(e.tts_message)}</p>`
+                  : '';
+                const readingsHtml = readings
+                  ? `<p class="event-log-readings">${this._eventLogEscape(readings)}</p>`
+                  : '';
+                const detailBlock = hasDetail
+                  ? `<div class="event-log-detail">${msgHtml}${readingsHtml}</div>`
+                  : '';
                 return `
-                <li class="event-log-entry" style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--card-border); font-size: 14px;">
-                  <span style="color: var(--secondary-text-color); min-width: 70px;">${e.ts ? e.ts.replace('T', ' ').slice(0, 19) : '—'}</span>
-                  <span style="flex: 1;">${e.room_name || ''}${e.outlet_name ? ' – ' + e.outlet_name : ''}</span>
-                  <span class="tts-badge" style="padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; ${badgeStyle}">${badgeText}</span>
+                <li class="event-log-entry">
+                  <div class="event-log-entry-row">
+                    <span class="event-log-ts">${e.ts ? e.ts.replace('T', ' ').slice(0, 19) : '—'}</span>
+                    <span class="event-log-who">${this._eventLogEscape(who)}</span>
+                    <span class="event-log-badge tts-badge" style="${badgeStyle}">${badgeText}</span>
+                  </div>
+                  ${detailBlock}
                 </li>`;
               }).join('')}
             </ul>
@@ -3188,6 +3485,7 @@ class EnergyPanel extends HTMLElement {
     const totalShutoffs = s.total_shutoffs ?? 0;
     const totalPowerCycles = s.total_power_cycles ?? 0;
     const rooms = s.rooms || [];
+    const roomsPieView = this._statsRoomsView === 'pie';
 
     const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
     const showOverlay = this._statsLoading;
@@ -3261,23 +3559,28 @@ class EnergyPanel extends HTMLElement {
         <div class="statistics-rooms-card card statistics-rooms-fullbleed">
           <p class="statistics-card-sub">Rooms</p>
           <h3 class="statistics-card-title">kWh and events</h3>
-          <div class="statistics-table-wrap">
-            <table class="statistics-table" aria-describedby="stat-table-desc">
-              <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">% = share of tracked kWh above. Warn / shutoff / cycle = totals from daily snapshots in this period.</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Room</th>
-                  <th scope="col">kWh</th>
-                  <th scope="col"><abbr title="Percent of tracked kWh this period">% trk</abbr></th>
-                  <th scope="col"><abbr title="Voice threshold warnings">Warn</abbr></th>
-                  <th scope="col"><abbr title="Safety plug shutoffs">Off</abbr></th>
-                  <th scope="col"><abbr title="Enforcement outlet cycles">Cyc</abbr></th>
-                  <th scope="col"><abbr title="Daily kWh chart for billing window">Chart</abbr></th>
-                </tr>
-              </thead>
-              <tbody id="stat-rooms-tbody">
-                ${rooms.length === 0 ? '<tr><td colspan="7" class="statistics-empty">No room data for this range.</td></tr>' : ''}
-                ${rooms.map((r) => {
+          <div class="stat-rooms-segment-wrap" role="tablist" aria-label="Rooms data view">
+            <button type="button" role="tab" class="stat-rooms-segment ${!roomsPieView ? 'active' : ''}" id="stat-rooms-tab-table" data-stat-rooms-view="table" aria-selected="${!roomsPieView}" aria-controls="stat-rooms-panel-table">Table</button>
+            <button type="button" role="tab" class="stat-rooms-segment ${roomsPieView ? 'active' : ''}" id="stat-rooms-tab-chart" data-stat-rooms-view="pie" aria-selected="${roomsPieView}" aria-controls="stat-rooms-panel-pie">Chart</button>
+          </div>
+          <div id="stat-rooms-panel-table" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-table" style="display:${roomsPieView ? 'none' : 'block'}">
+            <div class="statistics-table-wrap">
+              <table class="statistics-table" aria-describedby="stat-table-desc">
+                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Usage = share of tracked kWh above. Warnings / shutoffs / cycles = totals from daily snapshots in this period.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Room</th>
+                    <th scope="col"><abbr title="kWh this period">Load</abbr></th>
+                    <th scope="col"><abbr title="Percent of tracked kWh this period">Usage</abbr></th>
+                    <th scope="col"><abbr title="Voice threshold warnings">Warnings</abbr></th>
+                    <th scope="col"><abbr title="Safety plug shutoffs">Shutoffs</abbr></th>
+                    <th scope="col"><abbr title="Enforcement outlet cycles">Cycles</abbr></th>
+                    <th scope="col"><abbr title="Daily kWh chart for billing window">Chart</abbr></th>
+                  </tr>
+                </thead>
+                <tbody id="stat-rooms-tbody">
+                  ${rooms.length === 0 ? '<tr><td colspan="7" class="statistics-empty">No room data for this range.</td></tr>' : ''}
+                  ${rooms.map((r) => {
                   const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
                   const rid = String(r.id || '').replace(/"/g, '&quot;');
                   const billBtn = dateStart && dateEnd
@@ -3294,13 +3597,38 @@ class EnergyPanel extends HTMLElement {
                     <td>${billBtn}</td>
                   </tr>`;
                 }).join('')}
-              </tbody>
-            </table>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div id="stat-rooms-panel-pie" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-chart" style="display:${roomsPieView ? 'block' : 'none'}">
+            <div id="stat-rooms-pie-chart" class="stat-rooms-pie-mount" aria-hidden="${roomsPieView ? 'false' : 'true'}"></div>
+            <p id="stat-pie-desc" class="stat-pie-caption">Slices show each room’s share of tracked kWh this period (same as Load in the table). Open billing charts from the table view.</p>
           </div>
         </div>
         </div>
       </div>
     `;
+  }
+
+  _enforcementBadgeHtml(roomId, phase) {
+    const pe = this._config?.power_enforcement || {};
+    const roomsEnabled = pe.rooms_enabled || [];
+    const enabled = pe.enabled && roomsEnabled.includes(roomId);
+    if (!enabled || !icons?.shield) return '';
+    const p = Math.max(0, Math.min(2, Number(phase) || 0));
+    const titles = [
+      'Enforcement on: volume may rise and outlets may cycle if limits are ignored.',
+      'Phase 1: TTS volume escalates with repeated threshold warnings.',
+      'Phase 2: outlets may be power-cycled when warnings continue.',
+    ];
+    const labels = ['On', 'Phase 1', 'Phase 2'];
+    const esc = (s) => String(s).replace(/"/g, '&quot;');
+    return `
+              <span class="enforcement-badge enforcement-phase-${p} has-tooltip" title="${esc(titles[p])}">
+                <svg viewBox="0 0 24 24" style="width: clamp(10px, 2.5vw, 12px); height: clamp(10px, 2.5vw, 12px); fill: #fff;">${icons.shield}</svg>
+                <span class="enforcement-badge-label">${labels[p]}</span>
+              </span>`;
   }
 
   _renderEmptyState() {
@@ -3332,9 +3660,7 @@ class EnergyPanel extends HTMLElement {
     const warnings = roomData.warnings || 0;
     const shutoffs = roomData.shutoffs || 0;
     const powerCycles = roomData.power_cycles || 0;
-    const pe = this._config?.power_enforcement || {};
-    const roomsEnabled = pe.rooms_enabled || [];
-    const isEnforcementEnabled = pe.enabled && roomsEnabled.includes(roomId);
+    const enfPhase = typeof roomData.enforcement_phase === 'number' ? roomData.enforcement_phase : 0;
 
     return `
       <div class="room-card" data-room-id="${roomId}">
@@ -3345,7 +3671,7 @@ class EnergyPanel extends HTMLElement {
             </div>
             <div class="room-header-body">
               <h3 class="room-name">${(room.name || '').replace(/</g, '&lt;')}</h3>
-              <div class="room-meta-scroll" title="Scroll for room details">
+              <div class="room-meta-scroll" title="Room details">
                 <div class="room-meta-inner room-meta">
                   <span class="has-tooltip" title="Devices in this room">${(room.outlets || []).length} dev</span>
                   ${room.threshold > 0 ? `
@@ -3362,16 +3688,11 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
           <div class="room-header-right">
+            ${this._enforcementBadgeHtml(roomId, enfPhase)}
             <div class="room-stats">
               <div class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</div>
               <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</div>
             </div>
-            ${isEnforcementEnabled && icons && icons.shield ? `
-              <span class="enforcement-badge has-tooltip" title="Enforcement on: volume may rise and outlets may cycle if limits are ignored">
-                <svg viewBox="0 0 24 24" style="width: clamp(10px, 2.5vw, 12px); height: clamp(10px, 2.5vw, 12px); fill: #fff;">${icons.shield}</svg>
-                On
-              </span>
-            ` : ''}
           </div>
         </div>
 
@@ -4927,6 +5248,30 @@ class EnergyPanel extends HTMLElement {
         if (ds && de && rid) {
           this._openGraph('stat_room_wh', rid, rname, { date_start: ds, date_end: de });
         }
+      });
+    });
+
+    this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((seg) => {
+      seg.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const mode = seg.dataset.statRoomsView;
+        if (mode !== 'table' && mode !== 'pie') return;
+        this._statsRoomsView = mode;
+        const pie = mode === 'pie';
+        this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((b) => {
+          const on = b.dataset.statRoomsView === mode;
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        const panelTable = this.shadowRoot.getElementById('stat-rooms-panel-table');
+        const panelPie = this.shadowRoot.getElementById('stat-rooms-panel-pie');
+        if (panelTable) panelTable.style.display = pie ? 'none' : 'block';
+        if (panelPie) panelPie.style.display = pie ? 'block' : 'none';
+        const pieMount = this.shadowRoot.getElementById('stat-rooms-pie-chart');
+        if (pieMount) pieMount.setAttribute('aria-hidden', pie ? 'false' : 'true');
+        if (pie) void this._syncStatsRoomsPie();
+        else this._destroyStatsRoomsPie();
       });
     });
 
