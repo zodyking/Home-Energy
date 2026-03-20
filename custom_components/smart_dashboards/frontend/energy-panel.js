@@ -26,6 +26,10 @@ const TTS_DEFAULTS = {
   phase_reset_msg: '{prefix} {room_name} under limit, enforcement reset.',
   room_kwh_warn_msg: '{prefix} {room_name} used {kwh_limit} kWh today, {percentage} percent of home, reduce use.',
   home_kwh_warn_msg: '{prefix} Home over {kwh_limit} kWh today, reduce consumption.',
+  budget_boost_scheduled_msg:
+    '{prefix} Room kilo watt hour budgets are {budget_multiplier} times higher {period_label}, because usage is usually higher those days.',
+  phase1_warn_msg_boost_day:
+    '{prefix} {room_name} has exceeded threshold {warning_count} times. Kilo watt hour budget is {budget_multiplier} times higher {period_label}, effective {kwh_budget_effective} versus usual {kwh_budget} kilo watt hours. Volume will rise until power stays under {threshold} watts.',
 };
 
 class EnergyPanel extends HTMLElement {
@@ -55,6 +59,7 @@ class EnergyPanel extends HTMLElement {
     this._statsRoomsView = 'pie'; // 'table' | 'pie' — statistics rooms card only
     this._statsRoomsPieInstance = null;
     this._statsPieRoomRows = null; // aligned with pie series for tooltips / selection
+    this._summaryStatsResizeObs = null;
   }
 
   set hass(hass) {
@@ -76,6 +81,10 @@ class EnergyPanel extends HTMLElement {
   disconnectedCallback() {
     this._stopRefresh();
     this._destroyStatsRoomsPie();
+    if (this._summaryStatsResizeObs) {
+      this._summaryStatsResizeObs.disconnect();
+      this._summaryStatsResizeObs = null;
+    }
   }
 
   _startRefresh() {
@@ -179,7 +188,7 @@ class EnergyPanel extends HTMLElement {
     return `${d} day${d === 1 ? '' : 's'} ago`;
   }
 
-  /** Format HA ISO timestamp from sensor_meta.supplier_last_updated for the statistics card. */
+  /** Format HA ISO from sensor_meta.supplier_last_updated (bill-cycle usage sensor last_changed). */
   _formatSupplierLastUpdated(iso) {
     if (!iso || typeof iso !== 'string') return '—';
     const ms = Date.parse(iso);
@@ -200,33 +209,6 @@ class EnergyPanel extends HTMLElement {
     return `${abs} · ${relPart}`;
   }
 
-  /** Plain-text explainer: tracked totals vs supplier reads, billing cycle vs rolling window. */
-  _statisticsPeriodExplainer(s) {
-    const ds = s.date_start || '';
-    const de = s.date_end || '';
-    const narrowed = s.is_narrowed === true;
-    const src = s.period_source === 'billing' ? 'billing' : 'rolling';
-    let base = '';
-    if (ds && de) {
-      if (src === 'billing') {
-        base =
-          'Tracked kWh, room loads, warnings, shutoffs, and enforcement cycles are summed from the first date through the last date above — your current utility billing cycle (from billing start/end sensors). Room percentages are shares of that tracked total.';
-      } else {
-        base =
-          'Tracked kWh, room loads, warnings, shutoffs, and enforcement cycles are summed across the dates above: a rolling window (~31 days through today) because billing start/end sensors are not set — this is not a calendar month. Add billing sensors in Settings to match your bill. Room percentages are shares of that tracked total.';
-      }
-    } else {
-      base =
-        'Set billing start and end sensors in Settings so tracked totals align with your utility billing cycle.';
-    }
-    if (narrowed && ds && de) {
-      base += ' You are viewing a narrowed sub-range you picked (still clipped to that base window).';
-    }
-    base +=
-      ' Supplier “So far / estimate / $/kWh” values come from your utility entities and describe your supplier’s cycle; they are not added into tracked kWh.';
-    return base;
-  }
-
   _updateStatisticsDisplay() {
     if (!this._statsData || this._showSettings) return;
     const s = this._statsData;
@@ -241,11 +223,9 @@ class EnergyPanel extends HTMLElement {
     const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
     const rangeEl = this.shadowRoot.querySelector('#stat-range-banner');
     const narrowedEl = this.shadowRoot.querySelector('#stat-narrowed');
-    const explainerEl = this.shadowRoot.querySelector('#stat-period-explainer');
     const periodLabelEl = this.shadowRoot.querySelector('#stat-period-label');
     if (rangeEl) rangeEl.textContent = rangeBanner;
     if (narrowedEl) narrowedEl.style.display = isNarrowed ? '' : 'none';
-    if (explainerEl) explainerEl.textContent = this._statisticsPeriodExplainer(s);
     if (periodLabelEl) {
       periodLabelEl.textContent =
         s.period_source === 'billing'
@@ -262,7 +242,7 @@ class EnergyPanel extends HTMLElement {
     if (supUpd) {
       const iso = sensorMeta.supplier_last_updated;
       supUpd.textContent = iso
-        ? `Utility entities last updated · ${this._formatSupplierLastUpdated(iso)}`
+        ? `Bill cycle usage last changed · ${this._formatSupplierLastUpdated(iso)}`
         : 'Configure supplier sensors in Settings to show live utility reads.';
     }
     const totalKwh = s.total_kwh ?? 0;
@@ -288,7 +268,7 @@ class EnergyPanel extends HTMLElement {
           const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
           const rid = String(r.id || '').replace(/"/g, '&quot;');
           const billBtn = ds && de
-            ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Room daily kWh for the date range at the top">Open</button>'
+            ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Room daily kWh for the date range at the top">Open usage graph</button>'
             : '—';
           return `
           <tr>
@@ -319,7 +299,7 @@ class EnergyPanel extends HTMLElement {
   _resetStatPieSelectionPanel() {
     const el = this.shadowRoot?.getElementById('stat-pie-selection');
     if (!el) return;
-    el.innerHTML = '<p class="stat-pie-selection-meta">Tap a slice for full room stats (same as the table). Hover the chart for a quick summary. Rooms with 0 kWh this period appear in the table only.</p>';
+    el.innerHTML = '<p class="stat-pie-selection-meta">Tap a slice to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>';
   }
 
   _fillStatPieSelection(dataPointIndex) {
@@ -335,11 +315,10 @@ class EnergyPanel extends HTMLElement {
     const rname = String(r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     const title = this._eventLogEscape(String(r.name || r.id || 'Room'));
     const open = ds && de
-      ? `<div class="stat-pie-selection-actions"><button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="${rid}" data-room-name="${rname}" title="Room daily kWh for the date range at the top">Open billing chart</button></div>`
+      ? `<div class="stat-pie-selection-actions"><button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="${rid}" data-room-name="${rname}" title="Room daily kWh for the date range at the top">Open usage graph</button></div>`
       : '';
     el.innerHTML = `
       <div class="stat-pie-selection-title">${title}</div>
-      <p class="stat-pie-selection-meta">Load ${r.kwh.toFixed(2)} kWh · Usage ${Number(r.pct).toFixed(1)}% · Warnings ${r.warnings} · Shutoffs ${r.shutoffs} · Cycles ${r.power_cycles}</p>
       ${open}`;
     const btn = el.querySelector('.stat-room-billing-chart');
     if (btn) {
@@ -534,7 +513,12 @@ class EnergyPanel extends HTMLElement {
         totalWattsSpan.classList.toggle('over-threshold', threshold > 0 && room.total_watts > threshold);
       }
       if (totalDaySpan) {
-        totalDaySpan.textContent = `${(room.total_day_wh / 1000).toFixed(2)} kWh today`;
+        const numEl = totalDaySpan.querySelector('.room-kwh-num');
+        if (numEl) {
+          numEl.textContent = `${(room.total_day_wh / 1000).toFixed(2)} kWh`;
+        } else {
+          totalDaySpan.textContent = `${(room.total_day_wh / 1000).toFixed(2)} kWh today`;
+        }
       }
 
       const pe = this._config?.power_enforcement || {};
@@ -641,6 +625,49 @@ class EnergyPanel extends HTMLElement {
         }
       });
     });
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => this._fitSummaryStatValues());
+    });
+  }
+
+  _fitSummaryStatValues() {
+    const root = this.shadowRoot?.querySelector('.summary-stats');
+    if (!root) return;
+    const values = [...root.querySelectorAll('.stat-value')];
+    if (!values.length) return;
+    const minPx = 7;
+    const maxPx = 18;
+    const step = 0.5;
+    const fits = (px) => {
+      root.style.setProperty('--summary-stat-value-px', `${px}px`);
+      void root.offsetWidth;
+      return values.every((el) => el.scrollWidth <= el.clientWidth + 0.5);
+    };
+    if (fits(maxPx)) {
+      root.style.setProperty('--summary-stat-value-px', `${maxPx}px`);
+      return;
+    }
+    for (let px = maxPx - step; px >= minPx; px -= step) {
+      if (fits(px)) {
+        root.style.setProperty('--summary-stat-value-px', `${px}px`);
+        return;
+      }
+    }
+    root.style.setProperty('--summary-stat-value-px', `${minPx}px`);
+  }
+
+  _attachSummaryStatsResize() {
+    if (this._summaryStatsResizeObs) {
+      this._summaryStatsResizeObs.disconnect();
+      this._summaryStatsResizeObs = null;
+    }
+    const el = this.shadowRoot?.querySelector('.summary-stats');
+    if (!el) return;
+    this._summaryStatsResizeObs = new ResizeObserver(() => {
+      this._fitSummaryStatValues();
+    });
+    this._summaryStatsResizeObs.observe(el);
   }
 
   _getRoomConfig(roomId) {
@@ -660,6 +687,8 @@ class EnergyPanel extends HTMLElement {
         margin-bottom: 12px;
         overflow-x: hidden;
         width: 100%;
+        container-type: inline-size;
+        --summary-stat-value-px: clamp(11px, 2.6vw + 0.35rem, 17px);
       }
 
       .stat-card {
@@ -687,6 +716,11 @@ class EnergyPanel extends HTMLElement {
         overflow: hidden;
         text-overflow: ellipsis;
         max-width: 100%;
+      }
+
+      .summary-stats .stat-value {
+        font-size: var(--summary-stat-value-px);
+        text-overflow: clip;
       }
 
       .stat-label {
@@ -820,9 +854,6 @@ class EnergyPanel extends HTMLElement {
         background: var(--input-bg);
         border-radius: 8px;
         border: 1px solid var(--card-border);
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
       }
       .statistics-banner-row {
         display: flex;
@@ -838,13 +869,6 @@ class EnergyPanel extends HTMLElement {
       .statistics-range {
         font-weight: 600;
         color: var(--primary-text-color);
-      }
-      .statistics-period-explainer {
-        margin: 0;
-        font-size: clamp(11px, 2.2vw, 13px);
-        line-height: 1.45;
-        color: var(--secondary-text-color);
-        max-width: 72ch;
       }
       .statistics-narrowed { font-size: 11px; opacity: 0.9; }
       .statistics-cards {
@@ -892,13 +916,6 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-card-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--primary-text-color); }
       .statistics-card-sub { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--panel-accent); margin: 0 0 8px; }
-      .statistics-card-hint {
-        font-size: 11px;
-        line-height: 1.4;
-        color: var(--secondary-text-color);
-        margin: 0 0 12px;
-        opacity: 0.9;
-      }
       .statistics-kpi-big {
         display: flex;
         flex-direction: column;
@@ -1026,37 +1043,43 @@ class EnergyPanel extends HTMLElement {
 
       .room-header {
         display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: clamp(4px, 1.5vw, 12px);
-        padding: clamp(8px, 2vw, 12px) clamp(10px, 2.5vw, 14px);
+        flex-direction: column;
+        gap: clamp(8px, 2vw, 12px);
+        padding: clamp(10px, 2.2vw, 14px) clamp(10px, 2.5vw, 14px);
         background: linear-gradient(135deg, rgba(3, 169, 244, 0.06) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
         overflow-x: hidden;
       }
 
-      .room-header-left {
+      .room-header-top {
         display: flex;
-        align-items: center;
-        gap: clamp(6px, 1.8vw, 10px);
+        align-items: flex-start;
+        gap: clamp(8px, 2vw, 12px);
         min-width: 0;
-        flex: 1;
       }
 
-      .room-header-body {
+      .room-header-bottom {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: clamp(6px, 1.5vw, 10px);
+        justify-content: space-between;
+        gap: clamp(8px, 2vw, 12px);
         min-width: 0;
-        flex: 1;
       }
 
-      .room-meta-scroll {
+      .room-header-meta {
         min-width: 0;
-        flex: 1;
-        overflow: hidden;
+        flex: 1 1 140px;
+      }
+
+      .room-header-trailing {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: clamp(8px, 1.8vw, 12px);
+        flex: 0 1 auto;
+        min-width: 0;
       }
 
       .room-meta-inner {
@@ -1071,16 +1094,6 @@ class EnergyPanel extends HTMLElement {
         flex-shrink: 0;
         white-space: nowrap;
         font-size: clamp(8px, 2vw, 10px);
-      }
-
-      .room-header-right {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: flex-end;
-        gap: clamp(6px, 1.8vw, 10px);
-        flex-shrink: 0;
-        max-width: 100%;
       }
 
       .room-icon {
@@ -1100,12 +1113,18 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-name {
-        font-size: clamp(11px, 2.9vw, 14px);
-        font-weight: 600;
+        flex: 1;
+        min-width: 0;
         margin: 0;
-        white-space: nowrap;
-        flex-shrink: 0;
-        line-height: 1.2;
+        font-size: clamp(12px, 3.1vw, 15px);
+        font-weight: 600;
+        line-height: 1.3;
+        white-space: normal;
+        word-break: break-word;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
       }
 
       .room-meta {
@@ -1143,6 +1162,7 @@ class EnergyPanel extends HTMLElement {
         align-items: flex-end;
         text-align: right;
         flex-shrink: 0;
+        min-width: 0;
       }
 
       .view-tabs {
@@ -1389,12 +1409,13 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-total-watts {
-        font-size: clamp(12px, 3.2vw, 17px);
+        font-size: clamp(11px, 2.9vw, 16px);
         font-weight: 700;
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
-        line-height: 1.1;
+        line-height: 1.15;
+        max-width: 100%;
       }
 
       .room-total-watts.over-threshold {
@@ -1408,12 +1429,30 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-total-day {
-        font-size: clamp(8px, 2vw, 11px);
-        color: var(--secondary-text-color);
-        margin-top: 2px;
-        font-variant-numeric: tabular-nums;
-        white-space: nowrap;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 1px;
+        margin-top: 4px;
         cursor: pointer;
+        min-width: 0;
+        max-width: 100%;
+      }
+
+      .room-kwh-num {
+        font-size: clamp(9px, 2.4vw, 12px);
+        font-weight: 600;
+        color: var(--secondary-text-color);
+        font-variant-numeric: tabular-nums;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+
+      .room-kwh-label {
+        font-size: clamp(8px, 2vw, 10px);
+        color: var(--secondary-text-color);
+        opacity: 0.88;
+        line-height: 1.1;
       }
 
       .room-content {
@@ -3282,8 +3321,8 @@ class EnergyPanel extends HTMLElement {
       total_power_cycles: 'Power Cycles (24h)',
       room_wh: `${roomName} Usage (kWh) today`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`,
       room_power_cycles: `${roomName} Power Cycles (24h)`,
-      stat_total_wh: 'Home daily kWh (same dates as Statistics)',
-      stat_room_wh: `${roomName || 'Room'} daily kWh (same dates as Statistics)`,
+      stat_total_wh: 'Home daily usage',
+      stat_room_wh: `${roomName || 'Room'} daily usage`,
     };
     let title = labels[type] || 'History';
     const go = this._graphOpen;
@@ -3411,6 +3450,7 @@ class EnergyPanel extends HTMLElement {
     const roomName = this._graphOpen.roomName || '';
 
     const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
+    const isStatBillingModal = type === 'stat_total_wh' || type === 'stat_room_wh';
     /** Set for intraday kWh charts: tighter y-axis + label precision */
     let intradayKwhYMax = null;
 
@@ -3447,6 +3487,19 @@ class EnergyPanel extends HTMLElement {
         }
         seriesData.sort((a, b) => a[0] - b[0]);
         strokeCurve = 'straight';
+        const refKwh = Number(this._graphData.reference_kwh_today);
+        if (
+          Number.isFinite(refKwh) &&
+          refKwh >= 0 &&
+          seriesData.length > 0
+        ) {
+          const lastIntegrated =
+            Number(seriesData[seriesData.length - 1][1]) || 0;
+          const offset = refKwh - lastIntegrated;
+          for (let i = 0; i < seriesData.length; i++) {
+            seriesData[i][1] = (Number(seriesData[i][1]) || 0) + offset;
+          }
+        }
         const peakKwh = seriesData.reduce((m, p) => Math.max(m, Number(p[1]) || 0), 0);
         intradayKwhYMax = peakKwh <= 0 ? 1 : Math.max(peakKwh * 1.2, 0.005);
         const decimals = intradayKwhYMax <= 0.02 ? 3 : intradayKwhYMax <= 0.5 ? 2 : 2;
@@ -3467,10 +3520,10 @@ class EnergyPanel extends HTMLElement {
       let raw;
       if (type === 'stat_total_wh') {
         raw = this._graphData.total_wh || [];
-        seriesName = 'kWh (home)';
+        seriesName = 'kWh per day (home)';
       } else {
         raw = this._graphData.rooms?.[roomId]?.wh || [];
-        seriesName = `${roomName || 'Room'} kWh`;
+        seriesName = `${roomName || 'Room'} kWh per day`;
       }
       const values = raw.map((v) => v / 1000);
       seriesData = [];
@@ -3525,7 +3578,7 @@ class EnergyPanel extends HTMLElement {
 
       const options = {
         chart: {
-          type: 'area',
+          type: isStatBillingModal ? 'bar' : 'area',
           height: 300,
           fontFamily: 'inherit',
           background: 'transparent',
@@ -3558,14 +3611,20 @@ class EnergyPanel extends HTMLElement {
                 tickAmount: 5,
                 decimalsInFloat: intradayKwhYMax <= 0.02 ? 3 : 2,
               }
-            : {}),
+            : isStatBillingModal
+              ? { min: 0 }
+              : {}),
         },
         colors: [accent],
-        fill: {
-          type: 'gradient',
-          gradient: { shadeIntensity: 0.25, opacityFrom: 0.45, opacityTo: 0.04 },
-        },
-        stroke: { curve: strokeCurve, width: 2 },
+        fill: isStatBillingModal
+          ? { opacity: 1 }
+          : {
+              type: 'gradient',
+              gradient: { shadeIntensity: 0.25, opacityFrom: 0.45, opacityTo: 0.04 },
+            },
+        stroke: isStatBillingModal
+          ? { width: 0 }
+          : { curve: strokeCurve, width: 2 },
         grid: {
           borderColor: gridColor,
           strokeDashArray: 4,
@@ -3586,13 +3645,15 @@ class EnergyPanel extends HTMLElement {
           },
           y: { formatter: (val) => yFormatter(val) },
         },
-        plotOptions: {
-          area: { fillTo: 'origin' },
-        },
-        markers: {
-          size: seriesData.length <= 8 ? 3 : 0,
-          hover: { size: 5 },
-        },
+        plotOptions: isStatBillingModal
+          ? { bar: { borderRadius: 4, columnWidth: '70%' } }
+          : { area: { fillTo: 'origin' } },
+        markers: isStatBillingModal
+          ? { size: 0, hover: { size: 0 } }
+          : {
+              size: seriesData.length <= 8 ? 3 : 0,
+              hover: { size: 5 },
+            },
       };
       if (!seriesData.length) {
         options.noData = { text: 'No data yet', style: { color: textColor } };
@@ -3689,7 +3750,7 @@ class EnergyPanel extends HTMLElement {
     const roomsPieView = this._statsRoomsView === 'pie';
     const sensorMeta = s.sensor_meta || {};
     const supplierUpdLine = sensorMeta.supplier_last_updated
-      ? `Utility entities last updated · ${this._formatSupplierLastUpdated(sensorMeta.supplier_last_updated)}`
+      ? `Bill cycle usage last changed · ${this._formatSupplierLastUpdated(sensorMeta.supplier_last_updated)}`
       : 'Configure supplier sensors in Settings to show live utility reads.';
 
     const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
@@ -3715,7 +3776,6 @@ class EnergyPanel extends HTMLElement {
             <span class="statistics-range" id="stat-range-banner">${rangeBanner}</span>
             <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Narrowed to dates you picked.</span>
           </div>
-          <p class="statistics-period-explainer" id="stat-period-explainer">${this._statisticsPeriodExplainer(s).replace(/</g, '&lt;')}</p>
         </div>
         <div class="statistics-cards">
           <div class="statistics-overview-card card">
@@ -3723,7 +3783,6 @@ class EnergyPanel extends HTMLElement {
               <div class="statistics-overview-col--supplier">
                 <p class="statistics-card-sub">Supplier (optional)</p>
                 <h3 class="statistics-card-title">Utility read</h3>
-                <p class="statistics-card-hint">Utility-reported values for your supplier’s bill cycle (when sensors are set). Not summed into tracked kWh below.</p>
                 <div class="statistics-sensor-grid">
                   <div class="statistics-sensor-item">
                     <span class="statistics-sensor-label">So far <span class="statistics-sensor-sublabel">(bill cycle)</span></span>
@@ -3743,7 +3802,6 @@ class EnergyPanel extends HTMLElement {
               <div class="statistics-overview-col--tracked">
                 <p class="statistics-card-sub">What we measure</p>
                 <h3 class="statistics-card-title">Tracked usage</h3>
-                <p class="statistics-card-hint">Plugs, lights, and vents in your room list — integrated from HA history across the dates at the top. Table % is share of this tracked total.</p>
                 <div class="statistics-kpi-big">
                   <span class="lbl">Tracked total for dates above</span>
                   <span class="val"><span id="stat-total-kwh">${totalKwh.toFixed(2)}</span> <span style="font-size:0.55em;font-weight:600;opacity:0.85">kWh</span></span>
@@ -3764,7 +3822,7 @@ class EnergyPanel extends HTMLElement {
                 </div>
                 ${dateStart && dateEnd ? `
                 <div class="statistics-chart-actions">
-                  <button type="button" class="btn-stat-chart" id="stat-chart-billing-home" title="Daily kWh per day for the date range at the top">Daily kWh chart (whole home)</button>
+                  <button type="button" class="btn-stat-chart" id="stat-chart-billing-home" title="Daily kWh per day for the date range at the top">Open usage graph (whole home)</button>
                 </div>` : ''}
               </div>
             </div>
@@ -3789,7 +3847,7 @@ class EnergyPanel extends HTMLElement {
                     <th scope="col"><abbr title="Voice threshold warnings">Warnings</abbr></th>
                     <th scope="col"><abbr title="Safety plug shutoffs">Shutoffs</abbr></th>
                     <th scope="col"><abbr title="Enforcement outlet cycles">Cycles</abbr></th>
-                    <th scope="col"><abbr title="Daily kWh chart for the date range at the top">Chart</abbr></th>
+                    <th scope="col"><abbr title="Daily usage graph for the date range at the top">Graph</abbr></th>
                   </tr>
                 </thead>
                 <tbody id="stat-rooms-tbody">
@@ -3798,7 +3856,7 @@ class EnergyPanel extends HTMLElement {
                   const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
                   const rid = String(r.id || '').replace(/"/g, '&quot;');
                   const billBtn = dateStart && dateEnd
-                    ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Room daily kWh for the date range at the top">Open</button>'
+                    ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Room daily kWh for the date range at the top">Open usage graph</button>'
                     : '—';
                   return `
                   <tr>
@@ -3818,9 +3876,9 @@ class EnergyPanel extends HTMLElement {
           <div id="stat-rooms-panel-pie" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-chart" style="display:${roomsPieView ? 'block' : 'none'}">
             <div id="stat-rooms-pie-chart" class="stat-rooms-pie-mount" aria-hidden="${roomsPieView ? 'false' : 'true'}"></div>
             <div id="stat-pie-selection" class="stat-pie-selection" role="region" aria-live="polite">
-              <p class="stat-pie-selection-meta">Tap a slice for full room stats (same as the table). Hover the chart for a quick summary. Rooms with 0 kWh this period appear in the table only.</p>
+              <p class="stat-pie-selection-meta">Tap a slice to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>
             </div>
-            <p id="stat-pie-desc" class="stat-pie-caption">Pie shares use the same tracked kWh total and dates as the banner above (non-zero rooms only). Use the table for every room, billing charts, and zero-load rows.</p>
+            <p id="stat-pie-desc" class="stat-pie-caption">Pie shares use the same tracked kWh total and dates as the banner above (non-zero rooms only). Use the table for every room, usage graphs, and zero-load rows.</p>
           </div>
         </div>
         </div>
@@ -3882,32 +3940,35 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="room-card" data-room-id="${roomId}">
         <div class="room-header">
-          <div class="room-header-left">
+          <div class="room-header-top">
             <div class="room-icon">
               <svg viewBox="0 0 24 24">${icons.room}</svg>
             </div>
-            <div class="room-header-body">
-              <h3 class="room-name">${(room.name || '').replace(/</g, '&lt;')}</h3>
-              <div class="room-meta-scroll" title="Threshold and events">
-                <div class="room-meta-inner room-meta">
-                  ${room.threshold > 0 ? `
-                    <span class="threshold-badge has-tooltip" title="Room power limit; spoken alert when exceeded">
-                      <svg viewBox="0 0 24 24">${icons.warning}</svg>
-                      ${room.threshold}W
-                    </span>
-                  ` : ''}
-                  <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W:${warnings}</span>
-                  <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S:${shutoffs}</span>
-                  <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C:${powerCycles}</span>
-                </div>
+            <h3 class="room-name">${(room.name || '').replace(/</g, '&lt;')}</h3>
+          </div>
+          <div class="room-header-bottom">
+            <div class="room-header-meta" title="Threshold and events">
+              <div class="room-meta-inner room-meta">
+                ${room.threshold > 0 ? `
+                  <span class="threshold-badge has-tooltip" title="Room power limit; spoken alert when exceeded">
+                    <svg viewBox="0 0 24 24">${icons.warning}</svg>
+                    ${room.threshold}W
+                  </span>
+                ` : ''}
+                <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W:${warnings}</span>
+                <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S:${shutoffs}</span>
+                <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C:${powerCycles}</span>
               </div>
             </div>
-          </div>
-          <div class="room-header-right">
-            ${this._enforcementBadgeHtml(roomId, enfPhase)}
-            <div class="room-stats">
-              <div class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</div>
-              <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</div>
+            <div class="room-header-trailing">
+              ${this._enforcementBadgeHtml(roomId, enfPhase)}
+              <div class="room-stats">
+                <div class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</div>
+                <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}">
+                  <span class="room-kwh-num">${(roomData.total_day_wh / 1000).toFixed(2)} kWh</span>
+                  <span class="room-kwh-label">today</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -4280,6 +4341,21 @@ class EnergyPanel extends HTMLElement {
     const statsSettings = this._config?.statistics_settings || {};
     const pe = this._config?.power_enforcement || {};
     const roomsEnabled = pe.rooms_enabled || [];
+    const bbwRaw = ttsSettings.budget_boost_weekdays;
+    let budgetBoostWeekdays;
+    if (Array.isArray(bbwRaw)) {
+      budgetBoostWeekdays = bbwRaw
+        .map((n) => Number(n))
+        .filter((n) => !Number.isNaN(n) && n >= 0 && n <= 6)
+        .slice(0, 2);
+    } else {
+      budgetBoostWeekdays = [5, 6];
+    }
+    const bbD0 = budgetBoostWeekdays[0];
+    const bbD1 = budgetBoostWeekdays[1];
+    const bbSel = (d, i) => (d === i ? 'selected' : '');
+    const bbNone0 = bbD0 === undefined ? 'selected' : '';
+    const bbNone1 = bbD1 === undefined ? 'selected' : '';
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -4481,6 +4557,80 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-var-help">
                   Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{kwh_used}</code>
                 </div>
+              </div>
+
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Budget boost days</div>
+                <div class="tts-msg-desc">
+                  On up to two weekdays, each room's daily kWh budget is multiplied before power alerts apply.
+                  If both days are Saturday and Sunday, messages use "weekend" wording; otherwise they name the days.
+                  Scheduled reminder plays once per day after the set time on boost days (requires media player below).
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                  <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="tts-budget-boost-enabled" ${ttsSettings.budget_boost_enabled ? 'checked' : ''}>
+                    Enable budget boost
+                  </label>
+                </div>
+                <div class="grid-2" style="margin-bottom:10px;">
+                  <div class="form-group">
+                    <label class="form-label">Budget multiplier</label>
+                    <input type="number" class="form-input" id="tts-budget-boost-mult" min="1" max="5" step="0.1"
+                      value="${ttsSettings.budget_boost_multiplier ?? 2}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Announce time (local, 24h)</label>
+                    <input type="text" class="form-input" id="tts-budget-boost-time" placeholder="09:00"
+                      value="${(ttsSettings.budget_boost_announce_time || '09:00').replace(/"/g, '&quot;')}">
+                  </div>
+                </div>
+                <div class="grid-2" style="margin-bottom:10px;">
+                  <div class="form-group">
+                    <label class="form-label">Boost weekday 1</label>
+                    <select class="form-select" id="tts-budget-boost-day-0">
+                      <option value="" ${bbNone0}>—</option>
+                      <option value="0" ${bbSel(bbD0, 0)}>Monday</option>
+                      <option value="1" ${bbSel(bbD0, 1)}>Tuesday</option>
+                      <option value="2" ${bbSel(bbD0, 2)}>Wednesday</option>
+                      <option value="3" ${bbSel(bbD0, 3)}>Thursday</option>
+                      <option value="4" ${bbSel(bbD0, 4)}>Friday</option>
+                      <option value="5" ${bbSel(bbD0, 5)}>Saturday</option>
+                      <option value="6" ${bbSel(bbD0, 6)}>Sunday</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Boost weekday 2 (optional)</label>
+                    <select class="form-select" id="tts-budget-boost-day-1">
+                      <option value="" ${bbNone1}>—</option>
+                      <option value="0" ${bbSel(bbD1, 0)}>Monday</option>
+                      <option value="1" ${bbSel(bbD1, 1)}>Tuesday</option>
+                      <option value="2" ${bbSel(bbD1, 2)}>Wednesday</option>
+                      <option value="3" ${bbSel(bbD1, 3)}>Thursday</option>
+                      <option value="4" ${bbSel(bbD1, 4)}>Friday</option>
+                      <option value="5" ${bbSel(bbD1, 5)}>Saturday</option>
+                      <option value="6" ${bbSel(bbD1, 6)}>Sunday</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                  <label class="form-label">Media player for scheduled reminder</label>
+                  ${this._renderEntityAutocomplete(
+                    ttsSettings.budget_boost_announce_media_player || '',
+                    'media_player',
+                    'tts',
+                    'tts-budget-boost-mp',
+                    'media_player.living_room',
+                  )}
+                </div>
+                <div class="tts-msg-title" style="margin-top:12px;">Scheduled reminder message</div>
+                <input type="text" class="form-input" id="tts-budget-boost-scheduled"
+                  value="${(ttsSettings.budget_boost_scheduled_msg || TTS_DEFAULTS.budget_boost_scheduled_msg).replace(/"/g, '&quot;')}">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{budget_multiplier}</code> <code>{period_label}</code></div>
+                <div class="tts-msg-title" style="margin-top:12px;">Phase 1 message on boost days</div>
+                <div class="tts-msg-desc">Used when entering volume escalation on a boost day (per room). Leave empty to use the standard Phase 1 message only.</div>
+                <input type="text" class="form-input" id="tts-phase1-boost-day"
+                  value="${(ttsSettings.phase1_warn_msg_boost_day || TTS_DEFAULTS.phase1_warn_msg_boost_day).replace(/"/g, '&quot;')}">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code> <code>{threshold}</code> <code>{kwh_budget}</code> <code>{kwh_budget_effective}</code> <code>{budget_multiplier}</code> <code>{period_label}</code></div>
               </div>
               
               <div class="tts-msg-group">
@@ -5525,6 +5675,10 @@ class EnergyPanel extends HTMLElement {
       });
     }
 
+    this._attachSummaryStatsResize();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => this._fitSummaryStatValues());
+    });
   }
 
   _attachMenuButton() {
@@ -5753,6 +5907,10 @@ class EnergyPanel extends HTMLElement {
     }
     if (entityType === 'binary_sensor') {
       const list = (this._entities?.binary_sensors || []).filter(b => (b.entity_id || '').startsWith('binary_sensor.'));
+      return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+    }
+    if (entityType === 'media_player') {
+      const list = this._entities?.media_players || [];
       return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
     }
     return [];
@@ -6377,6 +6535,24 @@ class EnergyPanel extends HTMLElement {
     const ttsPhaseReset = this.shadowRoot.querySelector('#tts-phase-reset')?.value || '';
     const ttsRoomKwhWarn = this.shadowRoot.querySelector('#tts-room-kwh-warn')?.value || '';
     const ttsHomeKwhWarn = this.shadowRoot.querySelector('#tts-home-kwh-warn')?.value || '';
+    const ttsBudgetBoostEnabled = this.shadowRoot.querySelector('#tts-budget-boost-enabled')?.checked === true;
+    const ttsBudgetBoostMult = Math.max(1, Math.min(5, parseFloat(this.shadowRoot.querySelector('#tts-budget-boost-mult')?.value) || 2));
+    let ttsBudgetBoostTime = (this.shadowRoot.querySelector('#tts-budget-boost-time')?.value || '09:00').trim();
+    if (!/^\d{1,2}:\d{2}$/.test(ttsBudgetBoostTime)) ttsBudgetBoostTime = '09:00';
+    const ttsBudgetBoostMp = (this.shadowRoot.querySelector('.entity-datalist-input.tts-budget-boost-mp')?.value || '').trim();
+    const ttsBudgetBoostDay0 = this.shadowRoot.querySelector('#tts-budget-boost-day-0')?.value;
+    const ttsBudgetBoostDay1 = this.shadowRoot.querySelector('#tts-budget-boost-day-1')?.value;
+    const budgetBoostWeekdaysSave = [];
+    if (ttsBudgetBoostDay0 !== '' && ttsBudgetBoostDay0 != null) {
+      budgetBoostWeekdaysSave.push(parseInt(ttsBudgetBoostDay0, 10));
+    }
+    if (ttsBudgetBoostDay1 !== '' && ttsBudgetBoostDay1 != null) {
+      const n = parseInt(ttsBudgetBoostDay1, 10);
+      if (!budgetBoostWeekdaysSave.includes(n)) budgetBoostWeekdaysSave.push(n);
+    }
+    budgetBoostWeekdaysSave.sort((a, b) => a - b);
+    const ttsBudgetBoostScheduled = this.shadowRoot.querySelector('#tts-budget-boost-scheduled')?.value ?? '';
+    const ttsPhase1BoostDay = this.shadowRoot.querySelector('#tts-phase1-boost-day')?.value ?? '';
 
     const tabStats = this.shadowRoot.querySelector('#tab-statistics');
     const _si = (cls) => (tabStats?.querySelector(`input.${cls}`)?.value ?? '').trim();
@@ -6449,6 +6625,13 @@ class EnergyPanel extends HTMLElement {
         phase_reset_msg: ttsPhaseReset,
         room_kwh_warn_msg: ttsRoomKwhWarn,
         home_kwh_warn_msg: ttsHomeKwhWarn,
+        budget_boost_enabled: ttsBudgetBoostEnabled,
+        budget_boost_multiplier: ttsBudgetBoostMult,
+        budget_boost_weekdays: budgetBoostWeekdaysSave,
+        budget_boost_announce_time: ttsBudgetBoostTime,
+        budget_boost_announce_media_player: ttsBudgetBoostMp,
+        budget_boost_scheduled_msg: ttsBudgetBoostScheduled,
+        phase1_warn_msg_boost_day: ttsPhase1BoostDay,
       },
       power_enforcement,
     };

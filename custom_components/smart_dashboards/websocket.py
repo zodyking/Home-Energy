@@ -471,7 +471,13 @@ async def websocket_get_intraday_history(
                         if eid:
                             current_watts += _get_power(eid)
         data = {"timestamps": [now], "watts": [current_watts]}
-    
+
+    data["reference_kwh_today"] = (
+        config_manager.get_room_day_kwh(room_id)
+        if room_id
+        else config_manager.get_total_day_kwh()
+    )
+
     connection.send_result(msg["id"], data)
 
 
@@ -871,7 +877,9 @@ async def websocket_get_statistics(
     from homeassistant.util import dt as dt_util
 
     stats_settings = config_manager.energy_config.get("statistics_settings", {})
-    supplier_latest: datetime | None = None
+    # UI freshness: last time state *value* changed (not last poll / attribute update).
+    usage_last_changed: datetime | None = None
+    fallback_last_changed: datetime | None = None
     for key, sensor_key in [
         ("current_usage", "current_usage_sensor"),
         ("projected_usage", "projected_usage_sensor"),
@@ -883,9 +891,13 @@ async def websocket_get_statistics(
         state = hass.states.get(ent)
         if state is None:
             continue
-        lu = state.last_updated
-        if lu and (supplier_latest is None or lu > supplier_latest):
-            supplier_latest = lu
+        lc = state.last_changed
+        if lc:
+            if key == "current_usage":
+                usage_last_changed = lc
+            elif key in ("projected_usage", "kwh_cost"):
+                if fallback_last_changed is None or lc > fallback_last_changed:
+                    fallback_last_changed = lc
         if state.state not in ("unknown", "unavailable", ""):
             try:
                 val = str(state.state).strip()
@@ -894,9 +906,10 @@ async def websocket_get_statistics(
                 result["sensor_values"][key] = float(val)
             except (ValueError, TypeError):
                 pass
-    if supplier_latest is not None:
+    supplier_meta_ts = usage_last_changed or fallback_last_changed
+    if supplier_meta_ts is not None:
         result["sensor_meta"]["supplier_last_updated"] = dt_util.as_local(
-            supplier_latest
+            supplier_meta_ts
         ).isoformat()
 
     if not start or not end:

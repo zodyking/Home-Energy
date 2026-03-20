@@ -62,6 +62,16 @@ DEFAULT_PHASE_RESET_MSG = "{prefix} {room_name} under limit, enforcement reset."
 DEFAULT_ROOM_KWH_WARN_MSG = "{prefix} {room_name} used {kwh_limit} kWh today, {percentage} percent of home, reduce use."
 DEFAULT_HOME_KWH_WARN_MSG = "{prefix} Home over {kwh_limit} kWh today, reduce consumption."
 DEFAULT_BUDGET_EXCEEDED_MSG = "{prefix} {room_name} at {kwh_used} kWh, power alerts are on."
+DEFAULT_BUDGET_BOOST_SCHEDULED_MSG = (
+    "{prefix} Room kilo watt hour budgets are {budget_multiplier} times higher {period_label}, "
+    "because usage is usually higher those days."
+)
+DEFAULT_PHASE1_WARN_BOOST_DAY_MSG = (
+    "{prefix} {room_name} has exceeded threshold {warning_count} times. "
+    "Kilo watt hour budget is {budget_multiplier} times higher {period_label}, "
+    "effective {kwh_budget_effective} versus usual {kwh_budget} kilo watt hours. "
+    "Volume will rise until power stays under {threshold} watts."
+)
 
 # Default config structure
 DEFAULT_CONFIG = {
@@ -97,6 +107,13 @@ DEFAULT_CONFIG = {
             "home_kwh_warn_msg": DEFAULT_HOME_KWH_WARN_MSG,
             "budget_exceeded_msg": DEFAULT_BUDGET_EXCEEDED_MSG,
             "min_interval_seconds": 3,
+            "budget_boost_enabled": False,
+            "budget_boost_multiplier": 2.0,
+            "budget_boost_weekdays": [5, 6],
+            "budget_boost_announce_time": "09:00",
+            "budget_boost_announce_media_player": "",
+            "budget_boost_scheduled_msg": DEFAULT_BUDGET_BOOST_SCHEDULED_MSG,
+            "phase1_warn_msg_boost_day": DEFAULT_PHASE1_WARN_BOOST_DAY_MSG,
         },
         "power_enforcement": {
             "enabled": False,

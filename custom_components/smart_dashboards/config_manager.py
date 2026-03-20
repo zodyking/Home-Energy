@@ -37,6 +37,33 @@ def _safe_float(val: Any, default: float) -> float:
         return default
 
 
+def _normalize_budget_boost_weekdays(raw: Any) -> list[int]:
+    """Unique weekdays Monday=0..Sunday=6, max two entries."""
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for x in raw:
+        try:
+            n = int(x)
+            if 0 <= n <= 6 and n not in out:
+                out.append(n)
+        except (TypeError, ValueError):
+            continue
+    out.sort()
+    return out[:2]
+
+
+def _validate_budget_boost_announce_time(raw: Any, default: str) -> str:
+    s = (str(raw).strip() if raw is not None else "") or default
+    m = re.match(r"^(\d{1,2}):(\d{2})$", s)
+    if not m:
+        return default
+    h, mi = int(m.group(1)), int(m.group(2))
+    if not (0 <= h <= 23 and 0 <= mi <= 59):
+        return default
+    return f"{h:02d}:{mi:02d}"
+
+
 def _validate_rgb(val: Any) -> list[int]:
     """Validate and return RGB list [r, g, b] 0-255."""
     if isinstance(val, list) and len(val) >= 3:
@@ -423,6 +450,29 @@ class ConfigManager:
             "home_kwh_warn_msg": tts.get("home_kwh_warn_msg", default_tts.get("home_kwh_warn_msg", "")),
             "budget_exceeded_msg": tts.get("budget_exceeded_msg", default_tts.get("budget_exceeded_msg", "")),
             "min_interval_seconds": max(1.0, min(60.0, _safe_float(tts.get("min_interval_seconds"), default_tts.get("min_interval_seconds", 3)))),
+            "budget_boost_enabled": bool(tts.get("budget_boost_enabled", default_tts.get("budget_boost_enabled", False))),
+            "budget_boost_multiplier": max(
+                1.0,
+                min(5.0, _safe_float(tts.get("budget_boost_multiplier"), default_tts.get("budget_boost_multiplier", 2.0))),
+            ),
+            "budget_boost_weekdays": _normalize_budget_boost_weekdays(
+                tts.get("budget_boost_weekdays", default_tts.get("budget_boost_weekdays", []))
+            ),
+            "budget_boost_announce_time": _validate_budget_boost_announce_time(
+                tts.get("budget_boost_announce_time"),
+                default_tts.get("budget_boost_announce_time", "09:00"),
+            ),
+            "budget_boost_announce_media_player": str(
+                tts.get("budget_boost_announce_media_player", default_tts.get("budget_boost_announce_media_player", "")) or ""
+            ).strip(),
+            "budget_boost_scheduled_msg": tts.get(
+                "budget_boost_scheduled_msg",
+                default_tts.get("budget_boost_scheduled_msg", ""),
+            ),
+            "phase1_warn_msg_boost_day": tts.get(
+                "phase1_warn_msg_boost_day",
+                default_tts.get("phase1_warn_msg_boost_day", ""),
+            ),
         }
 
         # Validate power enforcement settings
