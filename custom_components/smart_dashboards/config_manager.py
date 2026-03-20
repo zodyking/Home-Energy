@@ -730,12 +730,16 @@ class ConfigManager:
         await self._async_save_event_counts()
 
     async def async_record_power_cycle_initiated(
-        self, room_id: str, room_name: str
+        self,
+        room_id: str,
+        room_name: str,
+        *,
+        extra: dict[str, Any] | None = None,
     ) -> None:
         """One count when phase-2 outlet power cycle is initiated (not per plug)."""
         await self.async_increment_power_cycle(room_id)
         await self.async_add_event_log_entry(
-            room_id, room_name, "power_cycle", None, True
+            room_id, room_name, "power_cycle", None, True, extra=extra
         )
 
     def get_event_counts(self) -> dict[str, Any]:
@@ -771,6 +775,8 @@ class ConfigManager:
         event_type: str,  # "warning", "shutoff", or "power_cycle"
         outlet_name: str | None,
         tts_succeeded: bool,
+        *,
+        extra: dict[str, Any] | None = None,
     ) -> None:
         """Add an event to the log (threshold warning or shutoff with TTS result)."""
         now = dt_util.now()
@@ -782,6 +788,8 @@ class ConfigManager:
             "outlet_name": outlet_name,
             "tts_succeeded": tts_succeeded,
         }
+        if extra:
+            entry.update({k: v for k, v in extra.items() if v is not None})
         self._event_log.append(entry)
         if len(self._event_log) > self._event_log_max_entries:
             self._event_log = self._event_log[-self._event_log_max_entries :]
