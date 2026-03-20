@@ -359,6 +359,8 @@ async def websocket_get_power_data(
     {
         vol.Required("type"): "smart_dashboards/get_daily_history",
         vol.Optional("days", default=30): int,
+        vol.Optional("date_start"): str,
+        vol.Optional("date_end"): str,
     }
 )
 @websocket_api.async_response
@@ -367,13 +369,18 @@ async def websocket_get_daily_history(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Get last N days of daily totals for 30-day graphs."""
+    """Get daily totals: either last N days, or every day in [date_start, date_end] (billing charts)."""
     config_manager = hass.data[DOMAIN].get("config_manager")
     if not config_manager:
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
         return
-    days = min(45, max(1, msg.get("days", 30)))
-    result = config_manager.get_daily_history(days=days)
+    date_start = (msg.get("date_start") or "").strip() or None
+    date_end = (msg.get("date_end") or "").strip() or None
+    if date_start and date_end:
+        result = config_manager.get_daily_history_for_range(date_start, date_end)
+    else:
+        days = min(45, max(1, msg.get("days", 30)))
+        result = config_manager.get_daily_history(days=days)
     connection.send_result(msg["id"], result)
 
 
