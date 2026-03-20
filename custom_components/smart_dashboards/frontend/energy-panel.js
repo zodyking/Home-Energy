@@ -34,12 +34,12 @@ const TTS_DEFAULTS = {
 
 /** Tooltip + visible label for room header enforcement badge (index = phase 0–2). */
 const ENFORCEMENT_PHASE_TITLES = [
-  'Power enforcement is on: volume may rise and outlets may cycle if limits are ignored.',
+  'Power enforcement Phase 0: monitoring on; volume may rise and outlets may cycle if limits are ignored.',
   'Power enforcement Phase 1: TTS volume escalates with repeated threshold warnings.',
   'Power enforcement Phase 2: outlets may be power-cycled when warnings continue.',
 ];
 const ENFORCEMENT_PHASE_LABELS = [
-  'Power enforcement on',
+  'Power enforcement + Phase 0',
   'Power enforcement + Phase 1',
   'Power enforcement + Phase 2',
 ];
@@ -1101,44 +1101,37 @@ class EnergyPanel extends HTMLElement {
 
       .room-header {
         display: flex;
-        flex-wrap: wrap;
+        flex-direction: row;
+        flex-wrap: nowrap;
         align-items: center;
-        justify-content: space-between;
-        gap: clamp(8px, 2vw, 14px);
+        gap: clamp(8px, 2vw, 12px);
         padding: clamp(10px, 2.2vw, 14px) clamp(10px, 2.5vw, 14px);
         background: linear-gradient(135deg, rgba(3, 169, 244, 0.06) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
-        overflow-x: hidden;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
       }
 
-      .room-header-main {
+      .room-meta-strip {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
-        gap: clamp(6px, 1.8vw, 10px);
-        min-width: 0;
-        flex: 1 1 180px;
+        gap: clamp(4px, 1.2vw, 8px);
+        flex-shrink: 0;
       }
 
       .room-header-aside {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
         justify-content: flex-end;
         gap: clamp(8px, 1.8vw, 12px);
-        flex: 0 1 auto;
-        min-width: 0;
+        flex-shrink: 0;
+        margin-left: auto;
       }
 
-      .room-meta-inner {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: clamp(4px, 1.2vw, 8px);
-        max-width: 100%;
-      }
-
-      .room-meta-inner .threshold-badge {
+      .room-meta-strip .threshold-badge {
         flex-shrink: 0;
         white-space: nowrap;
         font-size: clamp(8px, 2vw, 10px);
@@ -1161,12 +1154,13 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-name {
-        flex: 1 1 auto;
+        flex: 0 1 auto;
         min-width: 0;
+        max-width: min(38vw, 220px);
         margin: 0;
-        font-size: clamp(12px, 3.1vw, 15px);
+        font-size: clamp(12px, 3vw, 15px);
         font-weight: 600;
-        line-height: 1.25;
+        line-height: 1.2;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -3994,22 +3988,20 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="room-card" data-room-id="${roomId}">
         <div class="room-header">
-          <div class="room-header-main">
-            <div class="room-icon">
-              <svg viewBox="0 0 24 24">${icons.room}</svg>
-            </div>
-            <h3 class="room-name" title="${(room.name || '').replace(/"/g, '&quot;').replace(/</g, '&lt;')}">${(room.name || '').replace(/</g, '&lt;')}</h3>
-            <div class="room-meta-inner room-meta" title="Threshold and events">
-              ${room.threshold > 0 ? `
-                <span class="threshold-badge has-tooltip" title="Room power limit; spoken alert when exceeded">
-                  <svg viewBox="0 0 24 24">${icons.warning}</svg>
-                  ${room.threshold}W
-                </span>
-              ` : ''}
-              <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W:${warnings}</span>
-              <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S:${shutoffs}</span>
-              <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C:${powerCycles}</span>
-            </div>
+          <div class="room-icon">
+            <svg viewBox="0 0 24 24">${icons.room}</svg>
+          </div>
+          <h3 class="room-name" title="${(room.name || '').replace(/"/g, '&quot;').replace(/</g, '&lt;')}">${(room.name || '').replace(/</g, '&lt;')}</h3>
+          <div class="room-meta-strip room-meta" title="Threshold and events">
+            ${room.threshold > 0 ? `
+              <span class="threshold-badge has-tooltip" title="Room power limit; spoken alert when exceeded">
+                <svg viewBox="0 0 24 24">${icons.warning}</svg>
+                ${room.threshold}W
+              </span>
+            ` : ''}
+            <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W:${warnings}</span>
+            <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S:${shutoffs}</span>
+            <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C:${powerCycles}</span>
           </div>
           <div class="room-header-aside">
             ${this._enforcementBadgeHtml(roomId, enfPhase)}
@@ -4379,6 +4371,36 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  _escapeForSettingsTextarea(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  }
+
+  /** Budget boost schedule (enforcement tab); merged into tts_settings on save. */
+  _collectBudgetBoostFromDom() {
+    const root = this.shadowRoot;
+    const enabled = root.querySelector('#pe-budget-boost-enabled')?.checked === true;
+    const mult = Math.max(1, Math.min(5, parseFloat(root.querySelector('#pe-budget-boost-mult')?.value) || 2));
+    let timeStr = (root.querySelector('#pe-budget-boost-time')?.value || '09:00').trim();
+    if (!/^\d{1,2}:\d{2}$/.test(timeStr)) timeStr = '09:00';
+    const mp = (root.querySelector('.entity-datalist-input.pe-budget-boost-mp')?.value || '').trim();
+    const d0 = root.querySelector('#pe-budget-boost-day-0')?.value;
+    const d1 = root.querySelector('#pe-budget-boost-day-1')?.value;
+    const weekdays = [];
+    if (d0 !== '' && d0 != null) weekdays.push(parseInt(d0, 10));
+    if (d1 !== '' && d1 != null) {
+      const n = parseInt(d1, 10);
+      if (!weekdays.includes(n)) weekdays.push(n);
+    }
+    weekdays.sort((a, b) => a - b);
+    return {
+      budget_boost_enabled: enabled,
+      budget_boost_multiplier: mult,
+      budget_boost_weekdays: weekdays,
+      budget_boost_announce_time: timeStr,
+      budget_boost_announce_media_player: mp,
+    };
+  }
+
   _renderSettings(styles) {
     const rooms = this._config?.rooms || [];
     const mediaPlayers = this._entities?.media_players || [];
@@ -4403,6 +4425,12 @@ class EnergyPanel extends HTMLElement {
     const bbSel = (d, i) => (d === i ? 'selected' : '');
     const bbNone0 = bbD0 === undefined ? 'selected' : '';
     const bbNone1 = bbD1 === undefined ? 'selected' : '';
+    const schedEsc = this._escapeForSettingsTextarea(
+      ttsSettings.budget_boost_scheduled_msg || TTS_DEFAULTS.budget_boost_scheduled_msg,
+    );
+    const p1BoostEsc = this._escapeForSettingsTextarea(
+      ttsSettings.phase1_warn_msg_boost_day || TTS_DEFAULTS.phase1_warn_msg_boost_day,
+    );
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -4475,6 +4503,23 @@ class EnergyPanel extends HTMLElement {
           padding: 6px 8px;
           background: rgba(0, 0, 0, 0.2);
           border-radius: 4px;
+        }
+        .tts-msg-textarea {
+          width: 100%;
+          min-height: 92px;
+          resize: vertical;
+          font-family: inherit;
+          font-size: 13px;
+          line-height: 1.45;
+          padding: 10px 12px;
+          border-radius: 6px;
+          border: 1px solid var(--card-border);
+          background: var(--card-bg);
+          color: var(--primary-text-color);
+          box-sizing: border-box;
+        }
+        .pe-budget-boost-section {
+          margin-bottom: 16px;
         }
         
         .tts-var-help code {
@@ -4607,76 +4652,17 @@ class EnergyPanel extends HTMLElement {
               </div>
 
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Budget boost days</div>
+                <div class="tts-msg-title">Budget boost — TTS messages</div>
                 <div class="tts-msg-desc">
-                  On up to two weekdays, each room's daily kWh budget is multiplied before power alerts apply.
-                  If both days are Saturday and Sunday, messages use "weekend" wording; otherwise they name the days.
-                  Scheduled reminder plays once per day after the set time on boost days (requires media player below).
+                  Configure when budget is boosted and the reminder time under <strong>Enforcement</strong>.
+                  Here you only edit the spoken wording. If Saturday and Sunday are both selected there, templates may use “weekend” in <code>{period_label}</code>.
                 </div>
-                <div class="form-group" style="margin-bottom:10px;">
-                  <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                    <input type="checkbox" id="tts-budget-boost-enabled" ${ttsSettings.budget_boost_enabled ? 'checked' : ''}>
-                    Enable budget boost
-                  </label>
-                </div>
-                <div class="grid-2" style="margin-bottom:10px;">
-                  <div class="form-group">
-                    <label class="form-label">Budget multiplier</label>
-                    <input type="number" class="form-input" id="tts-budget-boost-mult" min="1" max="5" step="0.1"
-                      value="${ttsSettings.budget_boost_multiplier ?? 2}">
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label">Announce time (local, 24h)</label>
-                    <input type="text" class="form-input" id="tts-budget-boost-time" placeholder="09:00"
-                      value="${(ttsSettings.budget_boost_announce_time || '09:00').replace(/"/g, '&quot;')}">
-                  </div>
-                </div>
-                <div class="grid-2" style="margin-bottom:10px;">
-                  <div class="form-group">
-                    <label class="form-label">Boost weekday 1</label>
-                    <select class="form-select" id="tts-budget-boost-day-0">
-                      <option value="" ${bbNone0}>—</option>
-                      <option value="0" ${bbSel(bbD0, 0)}>Monday</option>
-                      <option value="1" ${bbSel(bbD0, 1)}>Tuesday</option>
-                      <option value="2" ${bbSel(bbD0, 2)}>Wednesday</option>
-                      <option value="3" ${bbSel(bbD0, 3)}>Thursday</option>
-                      <option value="4" ${bbSel(bbD0, 4)}>Friday</option>
-                      <option value="5" ${bbSel(bbD0, 5)}>Saturday</option>
-                      <option value="6" ${bbSel(bbD0, 6)}>Sunday</option>
-                    </select>
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label">Boost weekday 2 (optional)</label>
-                    <select class="form-select" id="tts-budget-boost-day-1">
-                      <option value="" ${bbNone1}>—</option>
-                      <option value="0" ${bbSel(bbD1, 0)}>Monday</option>
-                      <option value="1" ${bbSel(bbD1, 1)}>Tuesday</option>
-                      <option value="2" ${bbSel(bbD1, 2)}>Wednesday</option>
-                      <option value="3" ${bbSel(bbD1, 3)}>Thursday</option>
-                      <option value="4" ${bbSel(bbD1, 4)}>Friday</option>
-                      <option value="5" ${bbSel(bbD1, 5)}>Saturday</option>
-                      <option value="6" ${bbSel(bbD1, 6)}>Sunday</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="form-group" style="margin-bottom:10px;">
-                  <label class="form-label">Media player for scheduled reminder</label>
-                  ${this._renderEntityAutocomplete(
-                    ttsSettings.budget_boost_announce_media_player || '',
-                    'media_player',
-                    'tts',
-                    'tts-budget-boost-mp',
-                    'media_player.living_room',
-                  )}
-                </div>
-                <div class="tts-msg-title" style="margin-top:12px;">Scheduled reminder message</div>
-                <input type="text" class="form-input" id="tts-budget-boost-scheduled"
-                  value="${(ttsSettings.budget_boost_scheduled_msg || TTS_DEFAULTS.budget_boost_scheduled_msg).replace(/"/g, '&quot;')}">
+                <div class="tts-msg-title" style="margin-top:4px;">Scheduled reminder message</div>
+                <textarea class="tts-msg-textarea" id="tts-budget-boost-scheduled" rows="4" spellcheck="false">${schedEsc}</textarea>
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{budget_multiplier}</code> <code>{period_label}</code></div>
                 <div class="tts-msg-title" style="margin-top:12px;">Phase 1 message on boost days</div>
                 <div class="tts-msg-desc">Used when entering volume escalation on a boost day (per room). Leave empty to use the standard Phase 1 message only.</div>
-                <input type="text" class="form-input" id="tts-phase1-boost-day"
-                  value="${(ttsSettings.phase1_warn_msg_boost_day || TTS_DEFAULTS.phase1_warn_msg_boost_day).replace(/"/g, '&quot;')}">
+                <textarea class="tts-msg-textarea" id="tts-phase1-boost-day" rows="5" spellcheck="false">${p1BoostEsc}</textarea>
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code> <code>{threshold}</code> <code>{kwh_budget}</code> <code>{kwh_budget_effective}</code> <code>{budget_multiplier}</code> <code>{period_label}</code></div>
               </div>
               
@@ -4940,6 +4926,70 @@ class EnergyPanel extends HTMLElement {
                     <label class="form-label">Max Volume (%) in Phase 2</label>
                     <input type="number" class="form-input" id="pe-phase2-max-volume" value="${pe.phase2_max_volume ?? 100}" min="0" max="100" title="Cap TTS volume when in phase 2">
                   </div>
+                </div>
+              </div>
+              <div class="tts-msg-group pe-budget-boost-section" style="margin-bottom: 16px;">
+                <div class="tts-msg-title">Budget boost days</div>
+                <div class="tts-msg-desc">
+                  On up to two weekdays, each room's daily kWh budget is multiplied before power alerts apply.
+                  The daily reminder plays once after the set time on those days (requires media player).
+                  Edit the spoken messages on the <strong>TTS</strong> tab.
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                  <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="pe-budget-boost-enabled" ${ttsSettings.budget_boost_enabled ? 'checked' : ''}>
+                    Enable budget boost
+                  </label>
+                </div>
+                <div class="grid-2" style="margin-bottom:10px;">
+                  <div class="form-group">
+                    <label class="form-label">Budget multiplier</label>
+                    <input type="number" class="form-input" id="pe-budget-boost-mult" min="1" max="5" step="0.1"
+                      value="${ttsSettings.budget_boost_multiplier ?? 2}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Announce time (local, 24h)</label>
+                    <input type="text" class="form-input" id="pe-budget-boost-time" placeholder="09:00"
+                      value="${(ttsSettings.budget_boost_announce_time || '09:00').replace(/"/g, '&quot;')}">
+                  </div>
+                </div>
+                <div class="grid-2" style="margin-bottom:10px;">
+                  <div class="form-group">
+                    <label class="form-label">Boost weekday 1</label>
+                    <select class="form-select" id="pe-budget-boost-day-0">
+                      <option value="" ${bbNone0}>—</option>
+                      <option value="0" ${bbSel(bbD0, 0)}>Monday</option>
+                      <option value="1" ${bbSel(bbD0, 1)}>Tuesday</option>
+                      <option value="2" ${bbSel(bbD0, 2)}>Wednesday</option>
+                      <option value="3" ${bbSel(bbD0, 3)}>Thursday</option>
+                      <option value="4" ${bbSel(bbD0, 4)}>Friday</option>
+                      <option value="5" ${bbSel(bbD0, 5)}>Saturday</option>
+                      <option value="6" ${bbSel(bbD0, 6)}>Sunday</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Boost weekday 2 (optional)</label>
+                    <select class="form-select" id="pe-budget-boost-day-1">
+                      <option value="" ${bbNone1}>—</option>
+                      <option value="0" ${bbSel(bbD1, 0)}>Monday</option>
+                      <option value="1" ${bbSel(bbD1, 1)}>Tuesday</option>
+                      <option value="2" ${bbSel(bbD1, 2)}>Wednesday</option>
+                      <option value="3" ${bbSel(bbD1, 3)}>Thursday</option>
+                      <option value="4" ${bbSel(bbD1, 4)}>Friday</option>
+                      <option value="5" ${bbSel(bbD1, 5)}>Saturday</option>
+                      <option value="6" ${bbSel(bbD1, 6)}>Sunday</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                  <label class="form-label">Media player for scheduled reminder</label>
+                  ${this._renderEntityAutocomplete(
+                    ttsSettings.budget_boost_announce_media_player || '',
+                    'media_player',
+                    'enforcement',
+                    'pe-budget-boost-mp',
+                    'media_player.living_room',
+                  )}
                 </div>
               </div>
               <div class="tts-msg-group" style="margin-bottom: 16px;">
@@ -6369,16 +6419,22 @@ class EnergyPanel extends HTMLElement {
     this.shadowRoot.querySelectorAll('.pe-room-checkbox:checked').forEach(cb => {
       pe.rooms_enabled.push(cb.dataset.roomId);
     });
+    const ttsMerged = {
+      ...(this._config?.tts_settings || {}),
+      ...this._collectBudgetBoostFromDom(),
+    };
     try {
       const energyConfig = {
         ...this._config,
         power_enforcement: pe,
+        tts_settings: ttsMerged,
       };
       await this._hass.callWS({
         type: 'smart_dashboards/save_energy',
         config: energyConfig,
       });
       this._config.power_enforcement = pe;
+      this._config.tts_settings = ttsMerged;
       showToast(this.shadowRoot, 'Power enforcement settings saved!', 'success');
     } catch (e) {
       console.error('Failed to save enforcement settings:', e);
@@ -6580,22 +6636,7 @@ class EnergyPanel extends HTMLElement {
     const ttsPhaseReset = this.shadowRoot.querySelector('#tts-phase-reset')?.value || '';
     const ttsRoomKwhWarn = this.shadowRoot.querySelector('#tts-room-kwh-warn')?.value || '';
     const ttsHomeKwhWarn = this.shadowRoot.querySelector('#tts-home-kwh-warn')?.value || '';
-    const ttsBudgetBoostEnabled = this.shadowRoot.querySelector('#tts-budget-boost-enabled')?.checked === true;
-    const ttsBudgetBoostMult = Math.max(1, Math.min(5, parseFloat(this.shadowRoot.querySelector('#tts-budget-boost-mult')?.value) || 2));
-    let ttsBudgetBoostTime = (this.shadowRoot.querySelector('#tts-budget-boost-time')?.value || '09:00').trim();
-    if (!/^\d{1,2}:\d{2}$/.test(ttsBudgetBoostTime)) ttsBudgetBoostTime = '09:00';
-    const ttsBudgetBoostMp = (this.shadowRoot.querySelector('.entity-datalist-input.tts-budget-boost-mp')?.value || '').trim();
-    const ttsBudgetBoostDay0 = this.shadowRoot.querySelector('#tts-budget-boost-day-0')?.value;
-    const ttsBudgetBoostDay1 = this.shadowRoot.querySelector('#tts-budget-boost-day-1')?.value;
-    const budgetBoostWeekdaysSave = [];
-    if (ttsBudgetBoostDay0 !== '' && ttsBudgetBoostDay0 != null) {
-      budgetBoostWeekdaysSave.push(parseInt(ttsBudgetBoostDay0, 10));
-    }
-    if (ttsBudgetBoostDay1 !== '' && ttsBudgetBoostDay1 != null) {
-      const n = parseInt(ttsBudgetBoostDay1, 10);
-      if (!budgetBoostWeekdaysSave.includes(n)) budgetBoostWeekdaysSave.push(n);
-    }
-    budgetBoostWeekdaysSave.sort((a, b) => a - b);
+    const budgetBoostSchedule = this._collectBudgetBoostFromDom();
     const ttsBudgetBoostScheduled = this.shadowRoot.querySelector('#tts-budget-boost-scheduled')?.value ?? '';
     const ttsPhase1BoostDay = this.shadowRoot.querySelector('#tts-phase1-boost-day')?.value ?? '';
 
@@ -6670,11 +6711,7 @@ class EnergyPanel extends HTMLElement {
         phase_reset_msg: ttsPhaseReset,
         room_kwh_warn_msg: ttsRoomKwhWarn,
         home_kwh_warn_msg: ttsHomeKwhWarn,
-        budget_boost_enabled: ttsBudgetBoostEnabled,
-        budget_boost_multiplier: ttsBudgetBoostMult,
-        budget_boost_weekdays: budgetBoostWeekdaysSave,
-        budget_boost_announce_time: ttsBudgetBoostTime,
-        budget_boost_announce_media_player: ttsBudgetBoostMp,
+        ...budgetBoostSchedule,
         budget_boost_scheduled_msg: ttsBudgetBoostScheduled,
         phase1_warn_msg_boost_day: ttsPhase1BoostDay,
       },
