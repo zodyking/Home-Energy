@@ -39,10 +39,13 @@ class EnergyPanel extends HTMLElement {
     this._loading = true;
     this._error = null;
     this._draggedRoomCard = null;
-    this._graphOpen = null;  // { type, roomId?, roomName? }
+    this._graphOpen = null;  // { type, roomId?, roomName?, billingStart?, billingEnd? }
     this._graphData = null;  // from get_daily_history
     this._apexChartInstance = null;
     this._statsData = null;  // from get_statistics
+    this._statsLoading = false;
+    this._statsFetchedAt = null; // ms — last successful get_statistics
+    this._statsFetchError = null;
   }
 
   set hass(hass) {
@@ -132,18 +135,38 @@ class EnergyPanel extends HTMLElement {
 
   async _loadStatistics() {
     if (!this._hass || this._showSettings) return;
+    this._statsLoading = true;
+    this._statsFetchError = null;
+    if (this._dashboardView === 'statistics') {
+      this._render();
+    }
     try {
-      this._statsData = await this._hass.callWS({ type: 'smart_dashboards/get_statistics' });
-      if (this._dashboardView === 'statistics') {
-        if (this.shadowRoot.querySelector('.statistics-view')) {
-          this._updateStatisticsDisplay();
-        } else {
-          this._render();
-        }
-      }
+      const data = await this._hass.callWS({ type: 'smart_dashboards/get_statistics' });
+      this._statsData = data;
+      this._statsFetchedAt = Date.now();
     } catch (e) {
       console.error('Failed to load statistics:', e);
+      this._statsFetchError = e.message || 'Failed to load statistics';
+    } finally {
+      this._statsLoading = false;
+      if (this._dashboardView === 'statistics') {
+        this._render();
+      }
     }
+  }
+
+  /** Human-readable age of last stats fetch, e.g. "3 min ago". */
+  _statsDataAgeLabel() {
+    if (!this._statsFetchedAt) return '';
+    const sec = Math.floor((Date.now() - this._statsFetchedAt) / 1000);
+    if (sec < 10) return 'just now';
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min} min ago`;
+    const h = Math.floor(min / 60);
+    if (h < 48) return `${h} hr ago`;
+    const d = Math.floor(h / 24);
+    return `${d} day${d === 1 ? '' : 's'} ago`;
   }
 
   _updateStatisticsDisplay() {
@@ -182,9 +205,17 @@ class EnergyPanel extends HTMLElement {
     const rooms = s.rooms || [];
     const tbody = this.shadowRoot.querySelector('#stat-rooms-tbody');
     if (tbody) {
+      const ds = dateStart;
+      const de = dateEnd;
       tbody.innerHTML = rooms.length === 0
-        ? '<tr><td colspan="6" class="statistics-empty">No room data for this range.</td></tr>'
-        : rooms.map(r => `
+        ? '<tr><td colspan="7" class="statistics-empty">No room data for this range.</td></tr>'
+        : rooms.map((r) => {
+          const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+          const rid = String(r.id || '').replace(/"/g, '&quot;');
+          const billBtn = ds && de
+            ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Daily kWh per calendar day in this billing period">Chart</button>'
+            : '—';
+          return `
           <tr>
             <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
             <td>${(r.kwh ?? 0).toFixed(2)}</td>
@@ -192,8 +223,9 @@ class EnergyPanel extends HTMLElement {
             <td>${r.warnings ?? 0}</td>
             <td>${r.shutoffs ?? 0}</td>
             <td>${r.power_cycles ?? 0}</td>
-          </tr>
-        `).join('');
+            <td>${billBtn}</td>
+          </tr>`;
+        }).join('');
     }
   }
 
@@ -423,6 +455,84 @@ class EnergyPanel extends HTMLElement {
         color: white;
       }
 
+      .statistics-view-shell {
+        position: relative;
+        min-height: 180px;
+      }
+      .statistics-loading-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.42);
+        border-radius: 10px;
+        backdrop-filter: blur(3px);
+      }
+      .statistics-loading-inner {
+        text-align: center;
+        padding: 20px 24px;
+        max-width: 320px;
+      }
+      .statistics-loading-spinner {
+        width: 36px;
+        height: 36px;
+        margin: 0 auto 12px;
+        border: 3px solid rgba(255,255,255,0.15);
+        border-top-color: var(--panel-accent, #03a9f4);
+        border-radius: 50%;
+        animation: statistics-spin 0.85s linear infinite;
+      }
+      @keyframes statistics-spin {
+        to { transform: rotate(360deg); }
+      }
+      .statistics-loading-title {
+        margin: 0 0 8px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+      .statistics-loading-sub {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.4;
+        color: var(--secondary-text-color);
+      }
+      .statistics-loading-err {
+        margin: 10px 0 0;
+        font-size: 12px;
+        color: #ff8a80;
+      }
+      .statistics-chart-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .btn-stat-chart {
+        font-size: 12px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--card-border);
+        background: rgba(255,255,255,0.06);
+        color: var(--panel-accent);
+        cursor: pointer;
+        font-weight: 500;
+      }
+      .btn-stat-chart:hover {
+        background: rgba(255,255,255,0.1);
+      }
+      .btn-stat-chart:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .btn-stat-chart-sm {
+        font-size: 10px;
+        padding: 4px 8px;
+        margin-left: 6px;
+        vertical-align: middle;
+      }
       .statistics-view {
         display: flex;
         flex-direction: column;
@@ -2595,10 +2705,16 @@ class EnergyPanel extends HTMLElement {
       total_wh: 'Usage (kWh)', total_watts_intraday: 'Current Power (W)', total_wh_intraday: "Today's Usage (kWh)",
       total_warnings: 'Threshold Warnings (24h)', total_shutoffs: 'Safety Shutoffs (24h)',
       total_power_cycles: 'Power Cycles (24h)',
-      room_wh: `${roomName} Usage (kWh)`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`,
+      room_wh: `${roomName} Usage (kWh) today`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`,
       room_power_cycles: `${roomName} Power Cycles (24h)`,
+      stat_total_wh: 'Home daily kWh (billing period)',
+      stat_room_wh: `${roomName || 'Room'} daily kWh (billing period)`,
     };
-    const title = labels[type] || '30-Day History';
+    let title = labels[type] || 'History';
+    const go = this._graphOpen;
+    if ((type === 'stat_total_wh' || type === 'stat_room_wh') && go?.date_start && go?.date_end) {
+      title = `${title} · ${this._formatDateRange(go.date_start)} – ${this._formatDateRange(go.date_end)}`;
+    }
     const isEventLog = this._isEventLogType(type);
     let bodyContent = '';
     if (isEventLog) {
@@ -2648,15 +2764,29 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
-  async _openGraph(type, roomId = null, roomName = null) {
+  /** Start of local calendar day (ms). */
+  _startOfLocalDayMs() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+
+  async _openGraph(type, roomId = null, roomName = null, billingRange = null) {
     try {
       const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
+      const isStatBilling = type === 'stat_total_wh' || type === 'stat_room_wh';
       const isEventLog = this._isEventLogType(type);
       let result;
       if (isEventLog) {
         const payload = { type: 'smart_dashboards/get_event_log', since_hours: 24 };
         if (roomId) payload.room_id = roomId;
         result = await this._hass.callWS(payload);
+      } else if (isStatBilling && billingRange?.date_start && billingRange?.date_end) {
+        result = await this._hass.callWS({
+          type: 'smart_dashboards/get_daily_history',
+          date_start: billingRange.date_start,
+          date_end: billingRange.date_end,
+        });
       } else if (isIntraday) {
         const payload = { type: 'smart_dashboards/get_intraday_history', minutes: 1440 };
         if (roomId) payload.room_id = roomId;
@@ -2664,7 +2794,13 @@ class EnergyPanel extends HTMLElement {
       } else {
         result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 31 });
       }
-      this._graphOpen = { type, roomId, roomName };
+      this._graphOpen = {
+        type,
+        roomId,
+        roomName,
+        date_start: billingRange?.date_start || null,
+        date_end: billingRange?.date_end || null,
+      };
       this._graphData = result;
       this._render();
       this._attachGraphModalListeners();
@@ -2682,6 +2818,7 @@ class EnergyPanel extends HTMLElement {
     if (!container || !this._graphData || !this._graphOpen) return;
     const type = this._graphOpen.type;
     const roomId = this._graphOpen.roomId;
+    const roomName = this._graphOpen.roomName || '';
 
     const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
 
@@ -2698,25 +2835,58 @@ class EnergyPanel extends HTMLElement {
       const timestamps = this._graphData.timestamps || [];
       const watts = this._graphData.watts || [];
       const n = Math.min(timestamps.length, watts.length);
+      const dayStart = this._startOfLocalDayMs();
+      const dayEnd = Date.now();
       if (type === 'total_wh_intraday' || type === 'room_wh') {
         seriesName = 'kWh (cumulative today)';
-        const cum = this._cumulativeKwhFromPowerSamples(timestamps, watts);
-        seriesData = [];
+        const tsDay = [];
+        const wDay = [];
         for (let i = 0; i < n; i++) {
           const x = this._parseChartTimeMs(timestamps[i]);
+          if (Number.isNaN(x) || x < dayStart || x > dayEnd) continue;
+          tsDay.push(timestamps[i]);
+          wDay.push(watts[i]);
+        }
+        const cum = this._cumulativeKwhFromPowerSamples(tsDay, wDay);
+        seriesData = [];
+        for (let i = 0; i < tsDay.length; i++) {
+          const x = this._parseChartTimeMs(tsDay[i]);
           if (!Number.isNaN(x)) seriesData.push([x, cum[i]]);
         }
+        seriesData.sort((a, b) => a[0] - b[0]);
         strokeCurve = 'straight';
-        yFormatter = (v) => (v == null ? '—' : `${Number(v).toFixed(3)} kWh`);
+        yFormatter = (v) => (v == null ? '—' : `${Number(v).toFixed(2)} kWh`);
       } else {
         seriesName = 'W';
         seriesData = [];
         for (let i = 0; i < n; i++) {
           const x = this._parseChartTimeMs(timestamps[i]);
-          if (!Number.isNaN(x)) seriesData.push([x, Number(watts[i]) || 0]);
+          if (Number.isNaN(x) || x < dayStart || x > dayEnd) continue;
+          seriesData.push([x, Number(watts[i]) || 0]);
         }
+        seriesData.sort((a, b) => a[0] - b[0]);
         yFormatter = (v) => (v == null ? '—' : `${Math.round(Number(v))} W`);
       }
+    } else if (type === 'stat_total_wh' || type === 'stat_room_wh') {
+      const dates = this._graphData.dates || [];
+      let raw;
+      if (type === 'stat_total_wh') {
+        raw = this._graphData.total_wh || [];
+        seriesName = 'kWh (home)';
+      } else {
+        raw = this._graphData.rooms?.[roomId]?.wh || [];
+        seriesName = `${roomName || 'Room'} kWh`;
+      }
+      const values = raw.map((v) => v / 1000);
+      seriesData = [];
+      const m = Math.min(dates.length, values.length);
+      for (let i = 0; i < m; i++) {
+        const x = this._parseChartTimeMs(dates[i]);
+        if (!Number.isNaN(x)) seriesData.push([x, values[i]]);
+      }
+      seriesData.sort((a, b) => a[0] - b[0]);
+      strokeCurve = 'straight';
+      yFormatter = (v) => `${Number(v).toFixed(2)} kWh`;
     } else if (type.startsWith('room_')) {
       const key = type.replace('room_', '');
       const raw = this._graphData.rooms?.[roomId]?.[key] || [];
@@ -2824,6 +2994,10 @@ class EnergyPanel extends HTMLElement {
       if (!seriesData.length) {
         options.noData = { text: 'No data yet', style: { color: textColor } };
       }
+      if (isIntraday) {
+        options.xaxis.min = this._startOfLocalDayMs();
+        options.xaxis.max = Date.now();
+      }
       this._apexChartInstance = new ApexCharts(container, options);
       await this._apexChartInstance.render();
     } catch (e) {
@@ -2911,9 +3085,22 @@ class EnergyPanel extends HTMLElement {
     const rooms = s.rooms || [];
 
     const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
+    const showOverlay = this._statsLoading;
+    const staleLine = this._statsFetchedAt
+      ? `Showing last known values · updated ${this._statsDataAgeLabel()} · refreshing in background`
+      : 'Calculating from Home Assistant recorder — this can take a moment.';
 
     return `
-      <div class="statistics-view">
+      <div class="statistics-view-shell">
+        <div class="statistics-loading-overlay" id="statistics-loading-overlay" style="display:${showOverlay ? 'flex' : 'none'}">
+          <div class="statistics-loading-inner">
+            <div class="statistics-loading-spinner"></div>
+            <p class="statistics-loading-title">Updating statistics…</p>
+            <p class="statistics-loading-sub" id="statistics-loading-sub">${staleLine}</p>
+            ${this._statsFetchError ? `<p class="statistics-loading-err">${String(this._statsFetchError).replace(/</g, '&lt;')}</p>` : ''}
+          </div>
+        </div>
+        <div class="statistics-view">
         <div class="statistics-banner">
           <span><strong>Period</strong> · <span class="statistics-range" id="stat-range-banner">${rangeBanner}</span></span>
           <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Custom range (within billing).</span>
@@ -2960,6 +3147,10 @@ class EnergyPanel extends HTMLElement {
                 <span class="statistics-total-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
               </div>
             </div>
+            ${dateStart && dateEnd ? `
+            <div class="statistics-chart-actions">
+              <button type="button" class="btn-stat-chart" id="stat-chart-billing-home" title="One point per day, summed for the billing period">Chart: home daily kWh (billing period)</button>
+            </div>` : ''}
           </div>
         </div>
         <div class="statistics-rooms-card card">
@@ -2976,11 +3167,18 @@ class EnergyPanel extends HTMLElement {
                   <th scope="col">Warnings</th>
                   <th scope="col">Shutoffs</th>
                   <th scope="col">Cycles</th>
+                  <th scope="col">Daily (bill)</th>
                 </tr>
               </thead>
               <tbody id="stat-rooms-tbody">
-                ${rooms.length === 0 ? '<tr><td colspan="6" class="statistics-empty">No room data for this range.</td></tr>' : ''}
-                ${rooms.map(r => `
+                ${rooms.length === 0 ? '<tr><td colspan="7" class="statistics-empty">No room data for this range.</td></tr>' : ''}
+                ${rooms.map((r) => {
+                  const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+                  const rid = String(r.id || '').replace(/"/g, '&quot;');
+                  const billBtn = dateStart && dateEnd
+                    ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Daily kWh per calendar day in this billing period">Chart</button>'
+                    : '—';
+                  return `
                   <tr>
                     <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
                     <td>${(r.kwh ?? 0).toFixed(2)}</td>
@@ -2988,11 +3186,13 @@ class EnergyPanel extends HTMLElement {
                     <td>${r.warnings ?? 0}</td>
                     <td>${r.shutoffs ?? 0}</td>
                     <td>${r.power_cycles ?? 0}</td>
-                  </tr>
-                `).join('')}
+                    <td>${billBtn}</td>
+                  </tr>`;
+                }).join('')}
               </tbody>
             </table>
           </div>
+        </div>
         </div>
       </div>
     `;
@@ -4562,6 +4762,30 @@ class EnergyPanel extends HTMLElement {
         const roomId = el.dataset.roomId || null;
         const room = roomId ? this._config?.rooms?.find(r => r.id === roomId) : null;
         this._openGraph(type, roomId, room?.name || null);
+      });
+    });
+
+    const statHomeChart = this.shadowRoot.querySelector('#stat-chart-billing-home');
+    if (statHomeChart) {
+      statHomeChart.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const ds = this._statsData?.date_start;
+        const de = this._statsData?.date_end;
+        if (ds && de) {
+          this._openGraph('stat_total_wh', null, null, { date_start: ds, date_end: de });
+        }
+      });
+    }
+    this.shadowRoot.querySelectorAll('.stat-room-billing-chart').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const rid = btn.dataset.roomId;
+        const rname = btn.dataset.roomName || '';
+        const ds = this._statsData?.date_start;
+        const de = this._statsData?.date_end;
+        if (ds && de && rid) {
+          this._openGraph('stat_room_wh', rid, rname, { date_start: ds, date_end: de });
+        }
       });
     });
 

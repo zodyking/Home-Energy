@@ -942,6 +942,67 @@ class ConfigManager:
 
         return result
 
+    def get_daily_history_for_range(self, date_start: str, date_end: str) -> dict[str, Any]:
+        """Daily totals for each calendar day in [date_start, date_end] inclusive (YYYY-MM-DD).
+        Missing past days use zeros so charts span the full billing window."""
+        from datetime import datetime, timedelta
+
+        today = dt_util.now().strftime("%Y-%m-%d")
+        all_room_ids = {
+            r.get("id", r["name"].lower().replace(" ", "_"))
+            for r in self.energy_config.get("rooms", [])
+        }
+        result: dict[str, Any] = {
+            "dates": [],
+            "total_wh": [],
+            "total_warnings": [],
+            "total_shutoffs": [],
+            "total_power_cycles": [],
+            "rooms": {
+                rid: {"wh": [], "warnings": [], "shutoffs": [], "power_cycles": []}
+                for rid in all_room_ids
+            },
+        }
+        try:
+            cur = datetime.strptime(date_start, "%Y-%m-%d")
+            end_dt = datetime.strptime(date_end, "%Y-%m-%d")
+        except ValueError:
+            return result
+        if end_dt < cur:
+            return result
+
+        while cur <= end_dt:
+            d = cur.strftime("%Y-%m-%d")
+            if d > today:
+                break
+            if d == today:
+                row = self._build_today_totals()
+            else:
+                row = self._daily_totals.get(d)
+                if row is None:
+                    row = {
+                        "total_wh": 0,
+                        "total_warnings": 0,
+                        "total_shutoffs": 0,
+                        "total_power_cycles": 0,
+                        "rooms": {},
+                    }
+            result["dates"].append(d)
+            result["total_wh"].append(row.get("total_wh", 0))
+            result["total_warnings"].append(row.get("total_warnings", 0))
+            result["total_shutoffs"].append(row.get("total_shutoffs", 0))
+            result["total_power_cycles"].append(row.get("total_power_cycles", 0))
+            row_rooms = row.get("rooms") or {}
+            for rid in all_room_ids:
+                rdata = row_rooms.get(rid) or {}
+                result["rooms"][rid]["wh"].append(rdata.get("wh", 0))
+                result["rooms"][rid]["warnings"].append(rdata.get("warnings", 0))
+                result["rooms"][rid]["shutoffs"].append(rdata.get("shutoffs", 0))
+                result["rooms"][rid]["power_cycles"].append(rdata.get("power_cycles", 0))
+            cur += timedelta(days=1)
+
+        return result
+
     # Billing history (for new-cycle alerts)
     async def _async_load_billing_history(self) -> None:
         """Load billing history from file."""
