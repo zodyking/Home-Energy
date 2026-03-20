@@ -741,6 +741,13 @@ async def _compute_kwh_from_history(
     except (ValueError, TypeError):
         return 0.0, {}
 
+    now_utc = dt_util.utcnow()
+    if start_dt > now_utc:
+        return 0.0, {}
+    end_dt = min(end_dt, now_utc)
+    if end_dt < start_dt:
+        return 0.0, {}
+
     if not entity_to_room and not switch_specs:
         return 0.0, {}
 
