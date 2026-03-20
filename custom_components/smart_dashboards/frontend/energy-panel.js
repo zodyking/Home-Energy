@@ -32,6 +32,18 @@ const TTS_DEFAULTS = {
     '{prefix} {room_name} has exceeded threshold {warning_count} times. Kilo watt hour budget is {budget_multiplier} times higher {period_label}, effective {kwh_budget_effective} versus usual {kwh_budget} kilo watt hours. Volume will rise until power stays under {threshold} watts.',
 };
 
+/** Tooltip + visible label for room header enforcement badge (index = phase 0–2). */
+const ENFORCEMENT_PHASE_TITLES = [
+  'Power enforcement is on: volume may rise and outlets may cycle if limits are ignored.',
+  'Power enforcement Phase 1: TTS volume escalates with repeated threshold warnings.',
+  'Power enforcement Phase 2: outlets may be power-cycled when warnings continue.',
+];
+const ENFORCEMENT_PHASE_LABELS = [
+  'Power enforcement · on',
+  'Power enforcement · Phase 1',
+  'Power enforcement · Phase 2',
+];
+
 class EnergyPanel extends HTMLElement {
   constructor() {
     super();
@@ -60,6 +72,10 @@ class EnergyPanel extends HTMLElement {
     this._statsRoomsPieInstance = null;
     this._statsPieRoomRows = null; // aligned with pie series for tooltips / selection
     this._summaryStatsResizeObs = null;
+    this._summaryStatsWindowResizeBound = null;
+    this._summaryFitDebounce = null;
+    this._summaryFitZeroRetry = null;
+    this._summaryFitRaf = null;
   }
 
   set hass(hass) {
@@ -84,6 +100,22 @@ class EnergyPanel extends HTMLElement {
     if (this._summaryStatsResizeObs) {
       this._summaryStatsResizeObs.disconnect();
       this._summaryStatsResizeObs = null;
+    }
+    if (this._summaryStatsWindowResizeBound) {
+      window.removeEventListener('resize', this._summaryStatsWindowResizeBound);
+      this._summaryStatsWindowResizeBound = null;
+    }
+    if (this._summaryFitDebounce != null) {
+      clearTimeout(this._summaryFitDebounce);
+      this._summaryFitDebounce = null;
+    }
+    if (this._summaryFitZeroRetry != null) {
+      clearTimeout(this._summaryFitZeroRetry);
+      this._summaryFitZeroRetry = null;
+    }
+    if (this._summaryFitRaf != null) {
+      cancelAnimationFrame(this._summaryFitRaf);
+      this._summaryFitRaf = null;
     }
   }
 
@@ -528,16 +560,10 @@ class EnergyPanel extends HTMLElement {
         const p = typeof room.enforcement_phase === 'number'
           ? Math.max(0, Math.min(2, room.enforcement_phase))
           : 0;
-        const titles = [
-          'Enforcement on: volume may rise and outlets may cycle if limits are ignored.',
-          'Phase 1: TTS volume escalates with repeated threshold warnings.',
-          'Phase 2: outlets may be power-cycled when warnings continue.',
-        ];
-        const labels = ['On', 'Phase 1', 'Phase 2'];
         badge.className = `enforcement-badge enforcement-phase-${p} has-tooltip`;
-        badge.setAttribute('title', titles[p]);
+        badge.setAttribute('title', ENFORCEMENT_PHASE_TITLES[p]);
         const lbl = badge.querySelector('.enforcement-badge-label');
-        if (lbl) lbl.textContent = labels[p];
+        if (lbl) lbl.textContent = ENFORCEMENT_PHASE_LABELS[p];
       }
 
       // Update per-room event counts
@@ -626,9 +652,23 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => this._fitSummaryStatValues());
+    this._scheduleSummaryStatFit();
+  }
+
+  _scheduleSummaryStatFit() {
+    const run = () => this._fitSummaryStatValues();
+    run();
+    if (this._summaryFitRaf != null) cancelAnimationFrame(this._summaryFitRaf);
+    this._summaryFitRaf = requestAnimationFrame(() => {
+      this._summaryFitRaf = null;
+      run();
+      requestAnimationFrame(run);
     });
+    if (this._summaryFitDebounce != null) clearTimeout(this._summaryFitDebounce);
+    this._summaryFitDebounce = setTimeout(() => {
+      this._summaryFitDebounce = null;
+      run();
+    }, 150);
   }
 
   _fitSummaryStatValues() {
@@ -636,25 +676,36 @@ class EnergyPanel extends HTMLElement {
     if (!root) return;
     const values = [...root.querySelectorAll('.stat-value')];
     if (!values.length) return;
-    const minPx = 7;
-    const maxPx = 18;
-    const step = 0.5;
-    const fits = (px) => {
-      root.style.setProperty('--summary-stat-value-px', `${px}px`);
-      void root.offsetWidth;
-      return values.every((el) => el.scrollWidth <= el.clientWidth + 0.5);
-    };
-    if (fits(maxPx)) {
-      root.style.setProperty('--summary-stat-value-px', `${maxPx}px`);
+    if (values.some((el) => el.clientWidth <= 0)) {
+      if (this._summaryFitZeroRetry != null) clearTimeout(this._summaryFitZeroRetry);
+      this._summaryFitZeroRetry = setTimeout(() => {
+        this._summaryFitZeroRetry = null;
+        this._fitSummaryStatValues();
+      }, 100);
       return;
     }
+    const minPx = 6;
+    const maxPx = 18;
+    const step = 0.5;
+    const pad = 1;
+    const applyPx = (px) => {
+      root.style.setProperty('--summary-stat-value-px', `${px}px`);
+      values.forEach((el) => {
+        el.style.fontSize = `${px}px`;
+      });
+      void root.offsetWidth;
+    };
+    const fits = (px) => {
+      applyPx(px);
+      return values.every(
+        (el) => el.scrollWidth <= el.clientWidth + pad && el.clientWidth > 0,
+      );
+    };
+    if (fits(maxPx)) return;
     for (let px = maxPx - step; px >= minPx; px -= step) {
-      if (fits(px)) {
-        root.style.setProperty('--summary-stat-value-px', `${px}px`);
-        return;
-      }
+      if (fits(px)) return;
     }
-    root.style.setProperty('--summary-stat-value-px', `${minPx}px`);
+    applyPx(minPx);
   }
 
   _attachSummaryStatsResize() {
@@ -665,9 +716,13 @@ class EnergyPanel extends HTMLElement {
     const el = this.shadowRoot?.querySelector('.summary-stats');
     if (!el) return;
     this._summaryStatsResizeObs = new ResizeObserver(() => {
-      this._fitSummaryStatValues();
+      this._scheduleSummaryStatFit();
     });
     this._summaryStatsResizeObs.observe(el);
+    if (!this._summaryStatsWindowResizeBound) {
+      this._summaryStatsWindowResizeBound = () => this._scheduleSummaryStatFit();
+      window.addEventListener('resize', this._summaryStatsWindowResizeBound);
+    }
   }
 
   _getRoomConfig(roomId) {
@@ -682,7 +737,7 @@ class EnergyPanel extends HTMLElement {
       
       .summary-stats {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(min(100%, 68px), 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 76px), 1fr));
         gap: clamp(6px, 2vw, 10px);
         margin-bottom: 12px;
         overflow-x: hidden;
@@ -721,6 +776,9 @@ class EnergyPanel extends HTMLElement {
       .summary-stats .stat-value {
         font-size: var(--summary-stat-value-px);
         text-overflow: clip;
+        overflow: hidden;
+        max-width: 100%;
+        box-sizing: border-box;
       }
 
       .stat-label {
@@ -1056,6 +1114,8 @@ class EnergyPanel extends HTMLElement {
         align-items: flex-start;
         gap: clamp(8px, 2vw, 12px);
         min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
       }
 
       .room-header-bottom {
@@ -1065,6 +1125,11 @@ class EnergyPanel extends HTMLElement {
         justify-content: space-between;
         gap: clamp(8px, 2vw, 12px);
         min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
+        padding-top: clamp(6px, 1.5vw, 10px);
+        margin-top: 2px;
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
       }
 
       .room-header-meta {
@@ -1883,16 +1948,20 @@ class EnergyPanel extends HTMLElement {
       .enforcement-badge {
         display: inline-flex;
         align-items: center;
-        gap: 3px;
-        font-size: clamp(7px, 1.9vw, 9px);
+        justify-content: center;
+        gap: 4px;
+        font-size: clamp(8px, 2vw, 10px);
         font-weight: 600;
-        padding: 2px clamp(4px, 1.2vw, 8px);
+        padding: 4px clamp(6px, 1.5vw, 10px);
         border-radius: 8px;
         color: #fff;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-        white-space: nowrap;
-        flex-shrink: 0;
+        letter-spacing: 0.02em;
+        white-space: normal;
+        text-align: center;
+        line-height: 1.2;
+        max-width: min(168px, 46vw);
+        flex-shrink: 1;
+        text-transform: none;
       }
 
       .enforcement-badge.enforcement-phase-0 {
@@ -3892,17 +3961,11 @@ class EnergyPanel extends HTMLElement {
     const enabled = pe.enabled && roomsEnabled.includes(roomId);
     if (!enabled || !icons?.shield) return '';
     const p = Math.max(0, Math.min(2, Number(phase) || 0));
-    const titles = [
-      'Enforcement on: volume may rise and outlets may cycle if limits are ignored.',
-      'Phase 1: TTS volume escalates with repeated threshold warnings.',
-      'Phase 2: outlets may be power-cycled when warnings continue.',
-    ];
-    const labels = ['On', 'Phase 1', 'Phase 2'];
     const esc = (s) => String(s).replace(/"/g, '&quot;');
     return `
-              <span class="enforcement-badge enforcement-phase-${p} has-tooltip" title="${esc(titles[p])}">
-                <svg viewBox="0 0 24 24" style="width: clamp(10px, 2.5vw, 12px); height: clamp(10px, 2.5vw, 12px); fill: #fff;">${icons.shield}</svg>
-                <span class="enforcement-badge-label">${labels[p]}</span>
+              <span class="enforcement-badge enforcement-phase-${p} has-tooltip" title="${esc(ENFORCEMENT_PHASE_TITLES[p])}">
+                <svg viewBox="0 0 24 24" style="width: clamp(10px, 2.5vw, 12px); height: clamp(10px, 2.5vw, 12px); flex-shrink: 0; fill: #fff;">${icons.shield}</svg>
+                <span class="enforcement-badge-label">${ENFORCEMENT_PHASE_LABELS[p]}</span>
               </span>`;
   }
 
@@ -5676,9 +5739,7 @@ class EnergyPanel extends HTMLElement {
     }
 
     this._attachSummaryStatsResize();
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => this._fitSummaryStatValues());
-    });
+    this._scheduleSummaryStatFit();
   }
 
   _attachMenuButton() {
