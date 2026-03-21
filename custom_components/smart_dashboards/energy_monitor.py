@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -29,6 +31,7 @@ from .const import (
     DEFAULT_STOVE_TIMER_STARTED_MSG,
     DEFAULT_STOVE_15MIN_WARN_MSG,
     DEFAULT_STOVE_30SEC_WARN_MSG,
+    DEFAULT_STOVE_TIMER_PROGRESS_MSG,
     DEFAULT_STOVE_AUTO_OFF_MSG,
     DEFAULT_MICROWAVE_CUT_MSG,
     DEFAULT_MICROWAVE_RESTORE_MSG,
@@ -79,6 +82,8 @@ class EnergyMonitor:
         self._room_budget_announced: set[str] = set()
         self._room_budget_announced_date: str = ""
         self._budget_boost_scheduled_fired_date: str = ""
+        self._budget_boost_slots_fired: dict[str, list[int]] = {}
+        self._stove_progress_last_boundary: dict[str, int] = {}
         # Phase-2 mini-split hold: room_id -> {switches: set[str], outlet_name, volume}
         self._minisplit_hold: dict[str, dict] = {}
 
@@ -104,7 +109,9 @@ class EnergyMonitor:
             return "for the weekend"
         if len(wk) == 1:
             return f"on {names[wk[0]]}"
-        return f"on {names[wk[0]]} and {names[wk[1]]}"
+        if len(wk) == 2:
+            return f"on {names[wk[0]]} and {names[wk[1]]}"
+        return "on " + ", ".join(names[d] for d in wk[:-1]) + f", and {names[wk[-1]]}"
 
     def _is_budget_boost_day(self, now: datetime, tts_settings: dict) -> bool:
         if not tts_settings.get("budget_boost_enabled"):
@@ -126,58 +133,135 @@ class EnergyMonitor:
             return str(int(mult))
         return str(mult).rstrip("0").rstrip(".")
 
+    def _budget_boost_slots_path(self) -> str:
+        return self.hass.config.path("smart_dashboards_budget_boost_slots.json")
+
+    async def _async_load_budget_boost_slots(self) -> None:
+        path = self._budget_boost_slots_path()
+        try:
+            def _read() -> dict | None:
+                if not os.path.isfile(path):
+                    return None
+                with open(path, encoding="utf-8") as f:
+                    return json.load(f)
+
+            data = await self.hass.async_add_executor_job(_read)
+            if isinstance(data, dict):
+                self._budget_boost_slots_fired = {
+                    str(k): [int(x) for x in v]
+                    for k, v in data.items()
+                    if isinstance(v, list)
+                }
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as err:
+            _LOGGER.debug("Budget boost slots load skipped: %s", err)
+
+    async def _async_save_budget_boost_slots(self) -> None:
+        path = self._budget_boost_slots_path()
+
+        def _write() -> None:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self._budget_boost_slots_fired, f, indent=2)
+
+        try:
+            await self.hass.async_add_executor_job(_write)
+        except OSError as err:
+            _LOGGER.warning("Budget boost slots save failed: %s", err)
+
+    @staticmethod
+    def _parse_hhmm_to_minutes(s: str | None, default_h: int, default_m: int) -> int:
+        if not s:
+            return default_h * 60 + default_m
+        try:
+            parts = str(s).strip().replace(".", ":").split(":")
+            h = int(parts[0])
+            mi = int(parts[1]) if len(parts) > 1 else 0
+            if 0 <= h <= 23 and 0 <= mi <= 59:
+                return h * 60 + mi
+        except (ValueError, IndexError, TypeError):
+            pass
+        return default_h * 60 + default_m
+
+    @staticmethod
+    def _iter_budget_boost_slot_minutes(
+        t0: int, t1: int, repeat_min: int, minute_offset: int
+    ) -> list[int]:
+        """Slot start times as minutes from midnight, inclusive window [t0, t1]."""
+        if t1 < t0:
+            t0, t1 = t1, t0
+        repeat_min = max(15, repeat_min)
+        mo = max(0, min(59, minute_offset))
+        slots: list[int] = []
+        t = t0
+        while t % 60 != mo and t <= t1:
+            t += 1
+        while t <= t1:
+            slots.append(t)
+            t += repeat_min
+        return slots
+
     async def _maybe_fire_budget_boost_scheduled(
         self, now: datetime, today: str, tts_settings: dict
     ) -> None:
-        """Once per local calendar day on boost days, after announce time, optional global TTS."""
+        """On boost days, TTS at each repeat slot inside the configured time window."""
         if not self._is_budget_boost_day(now, tts_settings):
             return
-        if self._budget_boost_scheduled_fired_date == today:
-            return
-        mp = (tts_settings.get("budget_boost_announce_media_player") or "").strip()
+        mp = (
+            str(tts_settings.get("tts_default_media_player") or "").strip()
+            or str(tts_settings.get("budget_boost_announce_media_player") or "").strip()
+        )
         if not mp:
             return
-        time_str = tts_settings.get("budget_boost_announce_time") or "09:00"
-        try:
-            parts = str(time_str).strip().replace(".", ":").split(":")
-            h = int(parts[0])
-            mi = int(parts[1]) if len(parts) > 1 else 0
-            target = now.replace(hour=h, minute=mi, second=0, microsecond=0)
-        except (ValueError, IndexError, TypeError):
-            return
-        if now < target:
-            return
-        tmpl = (tts_settings.get("budget_boost_scheduled_msg") or "").strip()
-        if not tmpl:
-            tmpl = DEFAULT_BUDGET_BOOST_SCHEDULED_MSG
+        start_s = str(tts_settings.get("budget_boost_window_start") or "").strip() or str(
+            tts_settings.get("budget_boost_announce_time") or "09:00"
+        )
+        end_s = str(tts_settings.get("budget_boost_window_end") or "").strip() or "21:00"
+        t0 = self._parse_hhmm_to_minutes(start_s, 9, 0)
+        t1 = self._parse_hhmm_to_minutes(end_s, 21, 0)
+        repeat_min = int(tts_settings.get("budget_boost_repeat_minutes") or 120)
+        mo = int(tts_settings.get("budget_boost_minute_offset") or 0)
+        slot_minutes = self._iter_budget_boost_slot_minutes(t0, t1, repeat_min, mo)
+        now_min = now.hour * 60 + now.minute
+        fired = set(self._budget_boost_slots_fired.get(today, []))
+        tmpl = (tts_settings.get("budget_boost_scheduled_msg") or "").strip() or DEFAULT_BUDGET_BOOST_SCHEDULED_MSG
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
         weekdays = tts_settings.get("budget_boost_weekdays") or []
         period = self._budget_boost_period_label(weekdays)
         mult = float(tts_settings.get("budget_boost_multiplier") or 2)
         mult_s = self._budget_multiplier_tts_str(max(1.0, min(5.0, mult)))
-        try:
-            message = tmpl.format(
-                prefix=prefix,
-                period_label=period,
-                budget_multiplier=mult_s,
-            )
-        except (KeyError, ValueError) as e:
-            _LOGGER.warning("Budget boost scheduled message format failed: %s", e)
-            return
         vol = float(tts_settings.get("volume", 0.7) or 0.7)
-        try:
-            await async_send_tts_or_queue(
-                self.hass,
-                media_player=mp,
-                message=message,
-                language=tts_settings.get("language"),
-                volume=vol,
-                tts_settings=tts_settings,
-                room=None,
-            )
-        except Exception as e:
-            _LOGGER.error("Budget boost scheduled TTS failed: %s", e)
-            return
+        changed = False
+        for sm in slot_minutes:
+            if sm > now_min:
+                continue
+            if sm in fired:
+                continue
+            try:
+                message = tmpl.format(
+                    prefix=prefix,
+                    period_label=period,
+                    budget_multiplier=mult_s,
+                )
+            except (KeyError, ValueError) as e:
+                _LOGGER.warning("Budget boost scheduled message format failed: %s", e)
+                continue
+            try:
+                await async_send_tts_or_queue(
+                    self.hass,
+                    media_player=mp,
+                    message=message,
+                    language=tts_settings.get("language"),
+                    volume=vol,
+                    tts_settings=tts_settings,
+                    room=None,
+                )
+            except Exception as e:
+                _LOGGER.error("Budget boost scheduled TTS failed: %s", e)
+                continue
+            fired.add(sm)
+            changed = True
+        if changed:
+            self._budget_boost_slots_fired[today] = sorted(fired)
+            await self._async_save_budget_boost_slots()
         self._budget_boost_scheduled_fired_date = today
 
     def _get_power_entity_ids(self) -> list[str]:
@@ -204,6 +288,7 @@ class EnergyMonitor:
             return
 
         self._running = True
+        await self._async_load_budget_boost_slots()
         self._task = asyncio.create_task(self._monitor_loop())
 
         # Plug energy accumulated via poll loop every second (actual watts read each cycle).
@@ -1867,6 +1952,7 @@ class EnergyMonitor:
             self._stove_power_below_since.setdefault(key, None)
             self._stove_power_above_since.setdefault(key, None)
             self._stove_presence_window_start.setdefault(key, None)
+            self._stove_progress_last_boundary.setdefault(key, 0)
 
             stove_power_threshold = int(stove_outlet.get("stove_power_threshold", 100))
             stove_off_debounce = int(stove_outlet.get("stove_off_debounce_seconds", 10))
@@ -1919,6 +2005,7 @@ class EnergyMonitor:
                     self._stove_presence_window_start[key] = None
                     self._stove_15min_warn_sent[key] = False
                     self._stove_30sec_warn_sent[key] = False
+                    self._stove_progress_last_boundary[key] = 0
                     if not self._stove_powered_off_by_microwave[key] and media_player:
                         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                         msg_template = tts_settings.get("stove_off_msg", DEFAULT_STOVE_OFF_MSG)
@@ -1938,6 +2025,7 @@ class EnergyMonitor:
                     self._stove_timer_phase[key] = "none"
                     self._stove_15min_warn_sent[key] = False
                     self._stove_30sec_warn_sent[key] = False
+                    self._stove_progress_last_boundary[key] = 0
                     _LOGGER.info("Presence detected - timer reset")
                 self._stove_last_presence[key] = "on"
             else:
@@ -1975,6 +2063,36 @@ class EnergyMonitor:
                     now = dt_util.now()
                     elapsed = (now - self._stove_timer_start[key]).total_seconds()
                     if self._stove_timer_phase[key] == "15min":
+                        cfg_iv = int(stove_outlet.get("stove_timer_tts_interval_seconds", 0) or 0)
+                        interval_sec = cfg_iv if cfg_iv > 0 else max(60, cooking_time_sec // 4)
+                        if (
+                            media_player
+                            and interval_sec > 0
+                            and elapsed < cooking_time_sec - 0.5
+                        ):
+                            bnd = int(elapsed // interval_sec)
+                            last_b = self._stove_progress_last_boundary.get(key, 0)
+                            if bnd > last_b and bnd >= 1:
+                                rem = max(0, int(cooking_time_sec - elapsed))
+                                rm, rs = rem // 60, rem % 60
+                                prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                                msg_tmpl = (
+                                    tts_settings.get("stove_timer_progress_msg") or ""
+                                ).strip() or DEFAULT_STOVE_TIMER_PROGRESS_MSG
+                                room_name = room.get("name", "Kitchen")
+                                try:
+                                    message = msg_tmpl.format(
+                                        prefix=prefix,
+                                        room_name=room_name,
+                                        minutes_remaining=spoken_cardinal(rm),
+                                        seconds_remaining=spoken_cardinal(rs),
+                                    )
+                                    await self._async_send_tts_with_lights(
+                                        room, media_player, message, volume, tts_settings
+                                    )
+                                except (KeyError, ValueError) as e:
+                                    _LOGGER.warning("Stove timer progress TTS format failed: %s", e)
+                                self._stove_progress_last_boundary[key] = bnd
                         if elapsed >= cooking_time_sec:
                             if not self._stove_15min_warn_sent[key]:
                                 if media_player:
@@ -2038,6 +2156,7 @@ class EnergyMonitor:
                             self._stove_timer_phase[key] = "none"
                             self._stove_15min_warn_sent[key] = False
                             self._stove_30sec_warn_sent[key] = False
+                            self._stove_progress_last_boundary[key] = 0
 
 
 async def async_start_energy_monitor(

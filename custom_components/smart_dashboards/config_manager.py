@@ -38,7 +38,7 @@ def _safe_float(val: Any, default: float) -> float:
 
 
 def _normalize_budget_boost_weekdays(raw: Any) -> list[int]:
-    """Unique weekdays Monday=0..Sunday=6, max two entries."""
+    """Unique weekdays Monday=0..Sunday=6."""
     if not isinstance(raw, list):
         return []
     out: list[int] = []
@@ -50,7 +50,7 @@ def _normalize_budget_boost_weekdays(raw: Any) -> list[int]:
         except (TypeError, ValueError):
             continue
     out.sort()
-    return out[:2]
+    return out
 
 
 def _validate_budget_boost_announce_time(raw: Any, default: str) -> str:
@@ -363,6 +363,10 @@ class ConfigManager:
                             item["cooking_time_minutes"] = int(outlet.get("cooking_time_minutes", 15))
                             item["final_warning_seconds"] = int(outlet.get("final_warning_seconds", 30))
                             item["timer_start_window_seconds"] = max(1, min(120, int(outlet.get("timer_start_window_seconds", 10))))
+                            item["stove_timer_tts_interval_seconds"] = max(
+                                0,
+                                min(3600, int(outlet.get("stove_timer_tts_interval_seconds", 0))),
+                            )
                             item["presence_sensor"] = outlet.get("presence_sensor")
                         elif outlet_type == "microwave":
                             item["plug2_entity"] = None
@@ -511,6 +515,23 @@ class ConfigManager:
             "budget_boost_weekdays": _normalize_budget_boost_weekdays(
                 tts.get("budget_boost_weekdays", default_tts.get("budget_boost_weekdays", []))
             ),
+            "budget_boost_window_start": _validate_budget_boost_announce_time(
+                tts.get("budget_boost_window_start")
+                or tts.get("budget_boost_announce_time"),
+                default_tts.get("budget_boost_window_start", "09:00"),
+            ),
+            "budget_boost_window_end": _validate_budget_boost_announce_time(
+                tts.get("budget_boost_window_end"),
+                default_tts.get("budget_boost_window_end", "21:00"),
+            ),
+            "budget_boost_repeat_minutes": max(
+                15,
+                min(720, _safe_int(tts.get("budget_boost_repeat_minutes"), default_tts.get("budget_boost_repeat_minutes", 120))),
+            ),
+            "budget_boost_minute_offset": max(
+                0,
+                min(59, _safe_int(tts.get("budget_boost_minute_offset"), default_tts.get("budget_boost_minute_offset", 0))),
+            ),
             "budget_boost_announce_time": _validate_budget_boost_announce_time(
                 tts.get("budget_boost_announce_time"),
                 default_tts.get("budget_boost_announce_time", "09:00"),
@@ -518,6 +539,11 @@ class ConfigManager:
             "budget_boost_announce_media_player": str(
                 tts.get("budget_boost_announce_media_player", default_tts.get("budget_boost_announce_media_player", "")) or ""
             ).strip(),
+            "tts_default_media_player": (
+                str(tts.get("tts_default_media_player") or "").strip()
+                or str(tts.get("budget_boost_announce_media_player") or "").strip()
+                or str(default_tts.get("tts_default_media_player") or "").strip()
+            ),
             "budget_boost_scheduled_msg": tts.get(
                 "budget_boost_scheduled_msg",
                 default_tts.get("budget_boost_scheduled_msg", ""),
@@ -525,6 +551,10 @@ class ConfigManager:
             "phase1_warn_msg_boost_day": tts.get(
                 "phase1_warn_msg_boost_day",
                 default_tts.get("phase1_warn_msg_boost_day", ""),
+            ),
+            "stove_timer_progress_msg": tts.get(
+                "stove_timer_progress_msg",
+                default_tts.get("stove_timer_progress_msg", ""),
             ),
         }
 

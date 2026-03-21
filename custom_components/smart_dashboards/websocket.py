@@ -11,10 +11,45 @@ import voluptuous as vol
 
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _attach_stove_timer_to_outlet_data(
+    outlet_data: dict[str, Any],
+    outlet: dict[str, Any],
+    energy_monitor: Any,
+) -> None:
+    """Add timer_phase and time_remaining for stove outlets (matches get_stove_data logic)."""
+    if outlet.get("type") != "stove" or not outlet.get("plug1_entity"):
+        return
+    key = outlet["plug1_entity"]
+    cooking_time_minutes = int(outlet.get("cooking_time_minutes", 15))
+    final_warning_seconds = int(outlet.get("final_warning_seconds", 30))
+    cooking_time_sec = max(1, cooking_time_minutes) * 60
+    final_warning_sec = max(1, min(final_warning_seconds, 300))
+    outlet_data["timer_phase"] = "none"
+    outlet_data["time_remaining"] = 0
+    if not energy_monitor or not hasattr(energy_monitor, "_stove_timer_phase"):
+        return
+    outlet_data["timer_phase"] = energy_monitor._stove_timer_phase.get(key, "none")
+    timer_start = (
+        energy_monitor._stove_timer_start.get(key)
+        if isinstance(getattr(energy_monitor, "_stove_timer_start", None), dict)
+        else None
+    )
+    timer_phase = outlet_data["timer_phase"]
+    if timer_start and timer_phase != "none":
+        now = dt_util.now()
+        elapsed = (now - timer_start).total_seconds()
+        if timer_phase == "15min":
+            outlet_data["time_remaining"] = int(max(0, cooking_time_sec - elapsed))
+        elif timer_phase == "30sec":
+            outlet_data["time_remaining"] = int(max(0, final_warning_sec - elapsed))
+
 
 # Server-side cache for get_statistics to avoid heavy recorder queries
 # Short TTL while range includes "today" (live); longer TTL for past-only ranges
@@ -265,6 +300,7 @@ async def websocket_get_power_data(
         return
 
     event_counts = config_manager.get_event_counts()
+    energy_monitor = hass.data.get(DOMAIN, {}).get("energy_monitor")
     result: dict[str, Any] = {
         "rooms": [],
         "total_warnings": event_counts.get("total_warnings", 0),
@@ -347,6 +383,7 @@ async def websocket_get_power_data(
                     room_data["total_watts"] += watts
                     room_data["total_day_wh"] += day_wh
 
+            _attach_stove_timer_to_outlet_data(outlet_data, outlet, energy_monitor)
             room_data["outlets"].append(outlet_data)
 
         room_data["total_watts"] = round(room_data["total_watts"], 1)
