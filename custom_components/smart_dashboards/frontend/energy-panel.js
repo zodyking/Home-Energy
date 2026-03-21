@@ -1274,14 +1274,14 @@ class EnergyPanel extends HTMLElement {
       .room-budget-bar-track {
         position: relative;
         display: flex;
-        align-items: center;
-        min-height: clamp(28px, 6vw, 38px);
-        padding: 0 clamp(10px, 2.2vw, 14px);
+        align-items: flex-start;
+        min-height: clamp(40px, 8vw, 52px);
+        padding: 4px clamp(10px, 2.2vw, 14px) 15px;
         margin-bottom: clamp(12px, 3vw, 18px);
         border-radius: clamp(9px, 2.2vw, 14px);
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(0, 0, 0, 0.12) 100%);
         border: 1px solid var(--card-border);
-        overflow: visible;
+        overflow: hidden;
         box-sizing: border-box;
         box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.22);
         cursor: pointer;
@@ -1337,11 +1337,12 @@ class EnergyPanel extends HTMLElement {
         position: absolute;
         left: 50%;
         transform: translateX(-50%);
-        top: 0;
-        bottom: 0;
+        top: 2px;
+        bottom: 46%;
         width: 2px;
         border-radius: 2px;
         pointer-events: auto;
+        z-index: 1;
       }
 
       .room-budget-marker--interval {
@@ -1366,19 +1367,21 @@ class EnergyPanel extends HTMLElement {
 
       .room-budget-marker-label {
         position: absolute;
-        top: calc(100% + 2px);
+        top: auto;
+        bottom: 1px;
         left: 50%;
         transform: translateX(-50%);
-        font-size: clamp(6px, 1.5vw, 9px);
+        font-size: clamp(5px, 1.25vw, 8px);
         font-weight: 700;
-        line-height: 1.15;
+        line-height: 1.1;
         text-align: center;
-        max-width: min(28vw, 140px);
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        hyphens: auto;
+        max-width: min(18vw, 76px);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
         text-shadow: 0 0 6px rgba(0, 0, 0, 0.75), 0 1px 2px rgba(0, 0, 0, 0.9);
         pointer-events: none;
+        z-index: 2;
       }
 
       .room-budget-marker-label--audible {
@@ -1401,30 +1404,39 @@ class EnergyPanel extends HTMLElement {
 
       .room-budget-marker-label-stack {
         position: absolute;
-        top: calc(100% + 2px);
+        top: auto;
+        bottom: 1px;
         left: 50%;
         transform: translateX(-50%);
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 1px;
-        max-width: min(28vw, 140px);
+        gap: 0;
+        max-width: min(20vw, 84px);
         pointer-events: none;
+        z-index: 2;
       }
 
       .room-budget-marker-label-stack .room-budget-marker-label {
         position: static;
         transform: none;
         max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .room-budget-marker-sublabel {
-        font-size: clamp(5px, 1.35vw, 8px);
+        font-size: clamp(4px, 1.15vw, 7px);
         font-weight: 600;
         color: var(--secondary-text-color);
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
         text-shadow: 0 0 5px rgba(0, 0, 0, 0.65);
         text-align: center;
+        line-height: 1.05;
       }
 
       .room-budget-bar-fill::after {
@@ -4358,8 +4370,8 @@ class EnergyPanel extends HTMLElement {
         chunks.push(`<div class="room-budget-marker-wrap room-budget-marker-wrap--combined" data-kwh="${m.value}" style="left:${m.pct}%">
             <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${esc(`Audible kWh warnings from ${m.value} kWh · Daily budget ${budget.effKwh.toFixed(2)} kWh (effective)`)}"></span>
             <div class="room-budget-marker-label-stack">
-              <span class="room-budget-marker-label room-budget-marker-label--audible">Audible Warning Active</span>
-              <span class="room-budget-marker-sublabel">${budget.effKwh.toFixed(1)} kWh budget</span>
+              <span class="room-budget-marker-label room-budget-marker-label--audible">Audible</span>
+              <span class="room-budget-marker-sublabel">${budget.effKwh.toFixed(1)} kWh</span>
             </div>
           </div>`);
         continue;
@@ -4367,7 +4379,7 @@ class EnergyPanel extends HTMLElement {
       if (m.kind === 'audible') {
         chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
             <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${esc(`First voice warning tier at ${m.value} kWh (Daily kWh Warnings)`)}"></span>
-            <span class="room-budget-marker-label room-budget-marker-label--audible">Audible Warning Active</span>
+            <span class="room-budget-marker-label room-budget-marker-label--audible">Audible</span>
           </div>`);
         continue;
       }
