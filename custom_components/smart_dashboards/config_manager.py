@@ -277,9 +277,18 @@ class ConfigManager:
                     if k in pe_loaded and pe_loaded[k] is not None:
                         pe_result[k] = pe_loaded[k]
             if "statistics_settings" in energy:
+                ss_result = result["energy"]["statistics_settings"]
                 for k, v in energy["statistics_settings"].items():
-                    if k in result["energy"]["statistics_settings"] and v:
-                        result["energy"]["statistics_settings"][k] = str(v).strip()
+                    if k not in ss_result:
+                        continue
+                    if k == "statistics_refresh_seconds":
+                        if v is not None and str(v).strip() != "":
+                            try:
+                                ss_result[k] = int(float(str(v).strip()))
+                            except (ValueError, TypeError):
+                                pass
+                    elif v:
+                        ss_result[k] = str(v).strip()
 
         return result
 
@@ -543,12 +552,17 @@ class ConfigManager:
         # Validate statistics settings
         stats = config.get("statistics_settings", {})
         default_stats = DEFAULT_CONFIG["energy"]["statistics_settings"]
+        default_refresh = int(default_stats.get("statistics_refresh_seconds", 60))
         validated["statistics_settings"] = {
             "billing_start_sensor": (stats.get("billing_start_sensor") or "").strip(),
             "billing_end_sensor": (stats.get("billing_end_sensor") or "").strip(),
             "current_usage_sensor": (stats.get("current_usage_sensor") or "").strip(),
             "projected_usage_sensor": (stats.get("projected_usage_sensor") or "").strip(),
             "kwh_cost_sensor": (stats.get("kwh_cost_sensor") or "").strip(),
+            "statistics_refresh_seconds": max(
+                15,
+                min(600, _safe_int(stats.get("statistics_refresh_seconds"), default_refresh)),
+            ),
         }
 
         return validated
