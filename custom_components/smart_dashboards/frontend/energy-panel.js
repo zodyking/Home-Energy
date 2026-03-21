@@ -576,21 +576,16 @@ class EnergyPanel extends HTMLElement {
       }
       if (budgetSubEl) {
         if (!budgetState.showBar) {
-          budgetSubEl.textContent = 'Configure kWh intervals in Power Protection';
+          budgetSubEl.textContent = 'Configure kWh intervals';
         } else if (budgetState.over) {
-          budgetSubEl.textContent = 'Above daily range';
+          budgetSubEl.textContent = 'Over range';
         } else if (budgetState.overBudget) {
-          budgetSubEl.textContent = 'Over effective budget';
+          budgetSubEl.textContent = 'Over budget';
         } else if (budgetState.boost) {
-          budgetSubEl.textContent = 'Boost budget active';
+          budgetSubEl.textContent = 'Boost active';
         } else {
           budgetSubEl.textContent = '';
         }
-      }
-      if (scaleHintEl) {
-        scaleHintEl.textContent = budgetState.showBar
-          ? `0–${budgetState.maxInterval} kWh`
-          : '';
       }
       const maxIv = budgetState.maxInterval;
       roomCard.querySelectorAll('.room-budget-marker-wrap[data-kwh]').forEach((el) => {
@@ -4378,7 +4373,8 @@ class EnergyPanel extends HTMLElement {
       audiblePct != null &&
       Math.abs(budgetMarkerPct - audiblePct) < 0.9;
     const showSeparateBudget = Boolean(
-      budgetMarkerPct != null &&
+      !boost &&
+        budgetMarkerPct != null &&
         showBar &&
         effKwh > 0 &&
         !budgetCoincidesAudible,
@@ -4413,31 +4409,21 @@ class EnergyPanel extends HTMLElement {
     const esc = (s) => String(s).replace(/"/g, '&quot;');
     const chunks = [];
     for (const m of budget.plottedIntervalMarkers) {
-      if (m.kind === 'audible' && budget.budgetCoincidesAudible) {
-        chunks.push(`<div class="room-budget-marker-wrap room-budget-marker-wrap--combined" data-kwh="${m.value}" style="left:${m.pct}%">
-            <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${esc(`Audible kWh warnings from ${m.value} kWh · Daily budget ${budget.effKwh.toFixed(2)} kWh (effective)`)}"></span>
-            <div class="room-budget-marker-label-stack">
-              <span class="room-budget-marker-label room-budget-marker-label--audible">Audible Warning Active</span>
-              <span class="room-budget-marker-sublabel">${budget.effKwh.toFixed(1)} kWh budget</span>
-            </div>
-          </div>`);
-        continue;
-      }
       if (m.kind === 'audible') {
         chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
-            <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${esc(`First voice warning tier at ${m.value} kWh (Daily kWh Warnings)`)}"></span>
+            <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${esc(`Audible Warning Active · ${m.value} kWh tier`)}"></span>
             <span class="room-budget-marker-label room-budget-marker-label--audible">Audible Warning Active</span>
           </div>`);
         continue;
       }
       chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
-          <span class="room-budget-marker-tick room-budget-marker--interval has-tooltip" title="${esc(`Warning tier at ${m.value} kWh`)}"></span>
+          <span class="room-budget-marker-tick room-budget-marker--interval has-tooltip" title="${esc(`${m.value} kWh tier`)}"></span>
           <span class="room-budget-marker-label room-budget-marker-label--kwh">${m.value} kWh</span>
         </div>`);
     }
     if (budget.showSeparateBudget && budget.budgetMarkerPct != null) {
       chunks.push(`<div class="room-budget-marker-wrap room-budget-marker-wrap--budget-only" data-marker-role="budget" style="left:${budget.budgetMarkerPct}%">
-          <span class="room-budget-marker-tick room-budget-marker--budget-only has-tooltip" title="${esc(`Daily kWh budget (effective) ${budget.effKwh.toFixed(2)} kWh — before phase thresholds`)}"></span>
+          <span class="room-budget-marker-tick room-budget-marker--budget-only has-tooltip" title="${esc(`Daily budget ${budget.effKwh.toFixed(1)} kWh`)}"></span>
           <span class="room-budget-marker-label room-budget-marker-label--budget">Budget</span>
         </div>`);
     }
@@ -4502,13 +4488,13 @@ class EnergyPanel extends HTMLElement {
     else if (budget.overBudget) fillClass += ' over-budget';
     let budgetSub = '';
     if (!budget.showBar) {
-      budgetSub = 'Configure kWh intervals in Power Protection';
+      budgetSub = 'Configure kWh intervals';
     } else if (budget.over) {
-      budgetSub = 'Above daily range';
+      budgetSub = 'Over range';
     } else if (budget.overBudget) {
-      budgetSub = 'Over effective budget';
+      budgetSub = 'Over budget';
     } else if (budget.boost) {
-      budgetSub = 'Boost budget active';
+      budgetSub = 'Boost active';
     }
     const markersHtml = this._roomBudgetMarkersHtml(budget);
     const trackTitle =
@@ -4547,8 +4533,7 @@ class EnergyPanel extends HTMLElement {
                   ${markersHtml}
                   <div class="room-budget-bar-labels">
                     <span class="room-budget-values">${budget.showBar ? `${budget.usedKwh.toFixed(2)} kWh` : '—'}</span>
-                    <span class="room-budget-sub">${budgetSub}</span>
-                    <span class="room-budget-scale-hint">${budget.showBar ? `0–${budget.maxInterval} kWh` : ''}</span>
+                    ${budgetSub ? `<span class="room-budget-sub">${budgetSub}</span>` : ''}
                   </div>
                 </div>
               </div>
@@ -4945,17 +4930,31 @@ class EnergyPanel extends HTMLElement {
     return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   }
 
+  /** Parse AM/PM time string to 24h HH:MM. */
+  _parseAmPmTo24h(s, fallback = '12:00') {
+    if (!s) return fallback;
+    const match = String(s).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    if (!match) return fallback;
+    let h = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10);
+    const ampm = (match[3] || '').toUpperCase();
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    if (h < 0 || h > 23 || m < 0 || m > 59) return fallback;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+
   /** Budget boost schedule (enforcement tab); merged into tts_settings on save. */
   _collectBudgetBoostFromDom() {
     const root = this.shadowRoot;
     const enabled = root.querySelector('#pe-budget-boost-enabled')?.checked === true;
     const mult = Math.max(1, Math.min(5, parseFloat(root.querySelector('#pe-budget-boost-mult')?.value) || 2));
-    let winStart = (root.querySelector('#pe-budget-boost-win-start')?.value || '09:00').trim();
-    let winEnd = (root.querySelector('#pe-budget-boost-win-end')?.value || '21:00').trim();
-    if (!/^\d{1,2}:\d{2}$/.test(winStart)) winStart = '09:00';
-    if (!/^\d{1,2}:\d{2}$/.test(winEnd)) winEnd = '21:00';
+    const winStartRaw = (root.querySelector('#pe-budget-boost-win-start')?.value || '').trim();
+    const winEndRaw = (root.querySelector('#pe-budget-boost-win-end')?.value || '').trim();
+    const winStart = this._parseAmPmTo24h(winStartRaw, '09:00');
+    const winEnd = this._parseAmPmTo24h(winEndRaw, '21:00');
     const repeatMin = Math.max(
-      15,
+      60,
       Math.min(720, parseInt(root.querySelector('#pe-budget-boost-repeat')?.value, 10) || 120),
     );
     const mo = Math.max(0, Math.min(59, parseInt(root.querySelector('#pe-budget-boost-mo')?.value, 10) || 0));
@@ -4993,10 +4992,28 @@ class EnergyPanel extends HTMLElement {
         : [5, 6],
     );
     const bbDayChk = (d) => (budgetBoostWeekdaySet.has(d) ? 'checked' : '');
-    const bbWinStart = (ttsSettings.budget_boost_window_start || ttsSettings.budget_boost_announce_time || '09:00').replace(/"/g, '&quot;');
-    const bbWinEnd = (ttsSettings.budget_boost_window_end || '21:00').replace(/"/g, '&quot;');
+    const bbWinStart24 = ttsSettings.budget_boost_window_start || ttsSettings.budget_boost_announce_time || '09:00';
+    const bbWinEnd24 = ttsSettings.budget_boost_window_end || '21:00';
+    const toAmPm = (hhmm) => {
+      const [h, m] = (hhmm || '12:00').split(':').map(Number);
+      const hr = h % 12 || 12;
+      const ampm = h < 12 ? 'AM' : 'PM';
+      return `${hr}:${String(m || 0).padStart(2, '0')} ${ampm}`;
+    };
+    const bbWinStartAmPm = toAmPm(bbWinStart24);
+    const bbWinEndAmPm = toAmPm(bbWinEnd24);
     const bbRepeat = ttsSettings.budget_boost_repeat_minutes ?? 120;
     const bbMo = ttsSettings.budget_boost_minute_offset ?? 0;
+    const repeatOpts = [
+      { val: 60, label: 'Every Hour' },
+      { val: 120, label: 'Every 2 Hours' },
+      { val: 180, label: 'Every 3 Hours' },
+      { val: 240, label: 'Every 4 Hours' },
+      { val: 360, label: 'Every 6 Hours' },
+    ];
+    const repeatOptHtml = repeatOpts.map(
+      (o) => `<option value="${o.val}" ${bbRepeat === o.val ? 'selected' : ''}>${o.label}</option>`,
+    ).join('');
     const schedEsc = this._escapeForSettingsTextarea(
       ttsSettings.budget_boost_scheduled_msg || TTS_DEFAULTS.budget_boost_scheduled_msg,
     );
@@ -5565,22 +5582,23 @@ class EnergyPanel extends HTMLElement {
                 </div>
                 <div class="grid-2" style="margin-bottom:10px;">
                   <div class="form-group">
-                    <label class="form-label">Reminder window start (24h)</label>
-                    <input type="text" class="form-input" id="pe-budget-boost-win-start" placeholder="09:00" value="${bbWinStart}">
+                    <label class="form-label">Active hours start</label>
+                    <input type="text" class="form-input" id="pe-budget-boost-win-start" placeholder="9:00 AM" value="${bbWinStartAmPm}">
                   </div>
                   <div class="form-group">
-                    <label class="form-label">Reminder window end (24h)</label>
-                    <input type="text" class="form-input" id="pe-budget-boost-win-end" placeholder="21:00" value="${bbWinEnd}">
+                    <label class="form-label">Active hours end</label>
+                    <input type="text" class="form-input" id="pe-budget-boost-win-end" placeholder="9:00 PM" value="${bbWinEndAmPm}">
                   </div>
                 </div>
                 <div class="grid-2" style="margin-bottom:0;">
                   <div class="form-group">
-                    <label class="form-label">Repeat every (minutes)</label>
-                    <input type="number" class="form-input" id="pe-budget-boost-repeat" min="15" max="720" value="${bbRepeat}">
+                    <label class="form-label">Announce every</label>
+                    <select class="form-select" id="pe-budget-boost-repeat">${repeatOptHtml}</select>
                   </div>
                   <div class="form-group">
                     <label class="form-label">Minute offset (0–59)</label>
                     <input type="number" class="form-input" id="pe-budget-boost-mo" min="0" max="59" value="${bbMo}">
+                    <div style="font-size:10px;color:var(--secondary-text-color);margin-top:4px;">e.g. 30 = announcements on the :30</div>
                   </div>
                 </div>
               </div>
