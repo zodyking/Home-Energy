@@ -30,6 +30,8 @@ const TTS_DEFAULTS = {
     '{prefix} Room kilo watt hour budgets are {budget_multiplier} times higher {period_label}, because usage is usually higher those days.',
   phase1_warn_msg_boost_day:
     '{prefix} {room_name} has exceeded threshold {warning_count} times. Kilo watt hour budget is {budget_multiplier} times higher {period_label}, effective {kwh_budget_effective} versus usual {kwh_budget} kilo watt hours. Volume will rise until power stays under {threshold} watts.',
+  stove_timer_progress_msg:
+    '{prefix} Stove unattended timer: about {minutes_remaining} minutes and {seconds_remaining} seconds remaining.',
 };
 
 /** Tooltip + visible label for room header enforcement badge (index = phase 0–2). */
@@ -582,7 +584,7 @@ class EnergyPanel extends HTMLElement {
         } else if (budgetState.boost) {
           budgetSubEl.textContent = 'Boost budget active';
         } else {
-          budgetSubEl.textContent = "Tap for today's chart";
+          budgetSubEl.textContent = '';
         }
       }
       if (scaleHintEl) {
@@ -595,6 +597,14 @@ class EnergyPanel extends HTMLElement {
         const v = Number(el.dataset.kwh);
         if (!budgetState.showBar || !Number.isFinite(v)) return;
         if (budgetState.boost && v < budgetState.effKwh - 1e-6) {
+          el.style.display = 'none';
+          return;
+        }
+        if (
+          !budgetState.boost &&
+          budgetState.baseKwh > 0 &&
+          v < budgetState.baseKwh - 1e-6
+        ) {
           el.style.display = 'none';
           return;
         }
@@ -681,6 +691,17 @@ class EnergyPanel extends HTMLElement {
         if (stoveDoorWatts) {
           stoveDoorWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
           stoveDoorWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
+        }
+        const stoveTimerEl = deviceCard.querySelector('.stove-timer-remaining');
+        if (stoveTimerEl && deviceType === 'stove') {
+          const line = this._formatStoveTimerRemaining(outlet.timer_phase, outlet.time_remaining);
+          if (line) {
+            stoveTimerEl.textContent = line;
+            stoveTimerEl.style.display = '';
+          } else {
+            stoveTimerEl.textContent = '';
+            stoveTimerEl.style.display = 'none';
+          }
         }
         if (outletTotalEl && deviceType !== 'light') {
           outletTotalEl.textContent = `${outletTotal.toFixed(1)} W`;
@@ -2420,6 +2441,14 @@ class EnergyPanel extends HTMLElement {
         justify-content: center;
       }
 
+      .device-card.stove-card .stove-timer-remaining {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--panel-warning, #ff9800);
+        margin-top: 2px;
+        text-align: center;
+        line-height: 1.2;
+      }
       .device-card.stove-card .stove-door-watts {
         position: absolute;
         font-size: 10px;
@@ -4338,7 +4367,9 @@ class EnergyPanel extends HTMLElement {
           const first = intervalsSorted.find((v) => v >= effKwh - 1e-9);
           return first != null ? [first] : [];
         })()
-      : [...intervalsSorted];
+      : baseKwh > 0
+        ? intervalsSorted.filter((v) => v >= baseKwh - 1e-9)
+        : [...intervalsSorted];
     const audibleKwh = plottedIntervals.length ? plottedIntervals[0] : null;
     const audiblePct =
       audibleKwh != null && showBar
@@ -4481,8 +4512,6 @@ class EnergyPanel extends HTMLElement {
       budgetSub = 'Over effective budget';
     } else if (budget.boost) {
       budgetSub = 'Boost budget active';
-    } else {
-      budgetSub = "Tap for today's chart";
     }
     const markersHtml = this._roomBudgetMarkersHtml(budget);
     const trackTitle =
@@ -4558,11 +4587,28 @@ class EnergyPanel extends HTMLElement {
     return this._renderOutletCard(device, index, deviceData);
   }
 
+  _formatStoveTimerRemaining(phase, remSec) {
+    const r = remSec != null ? Number(remSec) : 0;
+    if (phase === '15min' && r > 0) {
+      const m = Math.floor(r / 60);
+      const s = Math.floor(r % 60);
+      return `${m}:${String(s).padStart(2, '0')} left`;
+    }
+    if (phase === '30sec' && r > 0) {
+      return `${Math.ceil(r)}s left`;
+    }
+    return '';
+  }
+
   _renderStoveCard(device, index, deviceData) {
     const data = deviceData || { plug1: { watts: 0 } };
     const watts = data.plug1?.watts || 0;
     const isOverThreshold = device.threshold > 0 && watts > device.threshold;
     const isActive = watts > 0.1;
+    const timerPhase = data.timer_phase || 'none';
+    const timerRem = data.time_remaining;
+    const timerLine = this._formatStoveTimerRemaining(timerPhase, timerRem);
+    const timerHidden = !timerLine;
 
     return `
       <div class="device-card stove-card" data-outlet-index="${index}">
@@ -4583,6 +4629,7 @@ class EnergyPanel extends HTMLElement {
               <div class="stove-handle"></div>
               <div class="stove-oven-window">
                 <div class="stove-door-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
+                <div class="stove-timer-remaining" style="${timerHidden ? 'display:none;' : ''}" title="Unattended cooking timer">${timerLine}</div>
               </div>
             </div>
             <div class="stove-lower-panel"></div>
@@ -4906,24 +4953,30 @@ class EnergyPanel extends HTMLElement {
     const root = this.shadowRoot;
     const enabled = root.querySelector('#pe-budget-boost-enabled')?.checked === true;
     const mult = Math.max(1, Math.min(5, parseFloat(root.querySelector('#pe-budget-boost-mult')?.value) || 2));
-    let timeStr = (root.querySelector('#pe-budget-boost-time')?.value || '09:00').trim();
-    if (!/^\d{1,2}:\d{2}$/.test(timeStr)) timeStr = '09:00';
-    const mp = (root.querySelector('.entity-datalist-input.pe-budget-boost-mp')?.value || '').trim();
-    const d0 = root.querySelector('#pe-budget-boost-day-0')?.value;
-    const d1 = root.querySelector('#pe-budget-boost-day-1')?.value;
+    let winStart = (root.querySelector('#pe-budget-boost-win-start')?.value || '09:00').trim();
+    let winEnd = (root.querySelector('#pe-budget-boost-win-end')?.value || '21:00').trim();
+    if (!/^\d{1,2}:\d{2}$/.test(winStart)) winStart = '09:00';
+    if (!/^\d{1,2}:\d{2}$/.test(winEnd)) winEnd = '21:00';
+    const repeatMin = Math.max(
+      15,
+      Math.min(720, parseInt(root.querySelector('#pe-budget-boost-repeat')?.value, 10) || 120),
+    );
+    const mo = Math.max(0, Math.min(59, parseInt(root.querySelector('#pe-budget-boost-mo')?.value, 10) || 0));
     const weekdays = [];
-    if (d0 !== '' && d0 != null) weekdays.push(parseInt(d0, 10));
-    if (d1 !== '' && d1 != null) {
-      const n = parseInt(d1, 10);
-      if (!weekdays.includes(n)) weekdays.push(n);
-    }
+    root.querySelectorAll('.pe-budget-boost-day:checked').forEach((cb) => {
+      const n = parseInt(cb.value, 10);
+      if (!Number.isNaN(n) && n >= 0 && n <= 6 && !weekdays.includes(n)) weekdays.push(n);
+    });
     weekdays.sort((a, b) => a - b);
     return {
       budget_boost_enabled: enabled,
       budget_boost_multiplier: mult,
       budget_boost_weekdays: weekdays,
-      budget_boost_announce_time: timeStr,
-      budget_boost_announce_media_player: mp,
+      budget_boost_window_start: winStart,
+      budget_boost_window_end: winEnd,
+      budget_boost_repeat_minutes: repeatMin,
+      budget_boost_minute_offset: mo,
+      budget_boost_announce_time: winStart,
     };
   }
 
@@ -4937,26 +4990,27 @@ class EnergyPanel extends HTMLElement {
     const pe = this._config?.power_enforcement || {};
     const roomsEnabled = pe.rooms_enabled || [];
     const bbwRaw = ttsSettings.budget_boost_weekdays;
-    let budgetBoostWeekdays;
-    if (Array.isArray(bbwRaw)) {
-      budgetBoostWeekdays = bbwRaw
-        .map((n) => Number(n))
-        .filter((n) => !Number.isNaN(n) && n >= 0 && n <= 6)
-        .slice(0, 2);
-    } else {
-      budgetBoostWeekdays = [5, 6];
-    }
-    const bbD0 = budgetBoostWeekdays[0];
-    const bbD1 = budgetBoostWeekdays[1];
-    const bbSel = (d, i) => (d === i ? 'selected' : '');
-    const bbNone0 = bbD0 === undefined ? 'selected' : '';
-    const bbNone1 = bbD1 === undefined ? 'selected' : '';
+    const budgetBoostWeekdaySet = new Set(
+      Array.isArray(bbwRaw)
+        ? bbwRaw.map((n) => Number(n)).filter((n) => !Number.isNaN(n) && n >= 0 && n <= 6)
+        : [5, 6],
+    );
+    const bbDayChk = (d) => (budgetBoostWeekdaySet.has(d) ? 'checked' : '');
+    const bbWinStart = (ttsSettings.budget_boost_window_start || ttsSettings.budget_boost_announce_time || '09:00').replace(/"/g, '&quot;');
+    const bbWinEnd = (ttsSettings.budget_boost_window_end || '21:00').replace(/"/g, '&quot;');
+    const bbRepeat = ttsSettings.budget_boost_repeat_minutes ?? 120;
+    const bbMo = ttsSettings.budget_boost_minute_offset ?? 0;
     const schedEsc = this._escapeForSettingsTextarea(
       ttsSettings.budget_boost_scheduled_msg || TTS_DEFAULTS.budget_boost_scheduled_msg,
     );
     const p1BoostEsc = this._escapeForSettingsTextarea(
       ttsSettings.phase1_warn_msg_boost_day || TTS_DEFAULTS.phase1_warn_msg_boost_day,
     );
+    const stoveProgressEsc = this._escapeForSettingsTextarea(
+      ttsSettings.stove_timer_progress_msg || TTS_DEFAULTS.stove_timer_progress_msg,
+    );
+    const ttsDefaultMpVal =
+      (ttsSettings.tts_default_media_player || ttsSettings.budget_boost_announce_media_player || '').trim();
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -5135,6 +5189,11 @@ class EnergyPanel extends HTMLElement {
                     title="Minimum seconds between TTS sends per media player. Prevents rapid repeated alerts from hanging.">
                 </div>
               </div>
+              <div class="form-group" style="margin-bottom: 16px;">
+                <label class="form-label">Default media player</label>
+                ${this._renderEntityAutocomplete(ttsDefaultMpVal, 'media_player', 'tts', 'tts-default-mp', 'media_player.living_room')}
+                <div class="tts-msg-desc" style="margin-top:6px;">Used for budget boost reminders and other announcements that are not tied to a room.</div>
+              </div>
               
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Message Prefix</div>
@@ -5180,8 +5239,8 @@ class EnergyPanel extends HTMLElement {
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Budget boost — TTS messages</div>
                 <div class="tts-msg-desc">
-                  Configure when budget is boosted and the reminder time under <strong>Enforcement</strong>.
-                  Here you only edit the spoken wording. If Saturday and Sunday are both selected there, templates may use “weekend” in <code>{period_label}</code>.
+                  Configure boost days, time window, and repeat interval under <strong>Enforcement</strong>.
+                  Set <strong>Default media player</strong> above for scheduled reminders. If Saturday and Sunday are both selected, templates may use “weekend” in <code>{period_label}</code>.
                 </div>
                 <div class="tts-msg-title" style="margin-top:4px;">Scheduled reminder message</div>
                 <textarea class="tts-msg-textarea" id="tts-budget-boost-scheduled" rows="4" spellcheck="false">${schedEsc}</textarea>
@@ -5234,6 +5293,13 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-var-help">
                   Variables: <code>{prefix}</code> <code>{cooking_time_minutes}</code> <code>{final_warning_seconds}</code>
                 </div>
+              </div>
+              
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Stove timer — progress announcements</div>
+                <div class="tts-msg-desc">Spoken periodically during the long unattended phase (before the final countdown). Interval is set per stove under room settings.</div>
+                <textarea class="tts-msg-textarea" id="tts-stove-timer-progress" rows="3" spellcheck="false">${stoveProgressEsc}</textarea>
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{minutes_remaining}</code> <code>{seconds_remaining}</code></div>
               </div>
               
               <div class="tts-msg-group">
@@ -5471,9 +5537,9 @@ class EnergyPanel extends HTMLElement {
               <div class="tts-msg-group pe-budget-boost-section" style="margin-bottom: 16px;">
                 <div class="tts-msg-title">Budget boost days</div>
                 <div class="tts-msg-desc">
-                  On up to two weekdays, each room's daily kWh budget is multiplied before power alerts apply.
-                  The daily reminder plays once after the set time on those days (requires media player).
-                  Edit the spoken messages on the <strong>TTS</strong> tab.
+                  On selected weekdays, each room's daily kWh budget is multiplied before power alerts apply.
+                  Scheduled reminders repeat inside the time window (set <strong>Default media player</strong> on the TTS tab).
+                  Edit spoken messages on the <strong>TTS</strong> tab.
                 </div>
                 <div class="form-group" style="margin-bottom:10px;">
                   <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
@@ -5487,49 +5553,38 @@ class EnergyPanel extends HTMLElement {
                     <input type="number" class="form-input" id="pe-budget-boost-mult" min="1" max="5" step="0.1"
                       value="${ttsSettings.budget_boost_multiplier ?? 2}">
                   </div>
-                  <div class="form-group">
-                    <label class="form-label">Announce time (local, 24h)</label>
-                    <input type="text" class="form-input" id="pe-budget-boost-time" placeholder="09:00"
-                      value="${(ttsSettings.budget_boost_announce_time || '09:00').replace(/"/g, '&quot;')}">
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                  <label class="form-label">Boost weekdays</label>
+                  <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox pe-budget-boost-day" value="0" ${bbDayChk(0)}> Mon</label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox pe-budget-boost-day" value="1" ${bbDayChk(1)}> Tue</label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox pe-budget-boost-day" value="2" ${bbDayChk(2)}> Wed</label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox pe-budget-boost-day" value="3" ${bbDayChk(3)}> Thu</label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox pe-budget-boost-day" value="4" ${bbDayChk(4)}> Fri</label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox pe-budget-boost-day" value="5" ${bbDayChk(5)}> Sat</label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox pe-budget-boost-day" value="6" ${bbDayChk(6)}> Sun</label>
                   </div>
                 </div>
                 <div class="grid-2" style="margin-bottom:10px;">
                   <div class="form-group">
-                    <label class="form-label">Boost weekday 1</label>
-                    <select class="form-select" id="pe-budget-boost-day-0">
-                      <option value="" ${bbNone0}>—</option>
-                      <option value="0" ${bbSel(bbD0, 0)}>Monday</option>
-                      <option value="1" ${bbSel(bbD0, 1)}>Tuesday</option>
-                      <option value="2" ${bbSel(bbD0, 2)}>Wednesday</option>
-                      <option value="3" ${bbSel(bbD0, 3)}>Thursday</option>
-                      <option value="4" ${bbSel(bbD0, 4)}>Friday</option>
-                      <option value="5" ${bbSel(bbD0, 5)}>Saturday</option>
-                      <option value="6" ${bbSel(bbD0, 6)}>Sunday</option>
-                    </select>
+                    <label class="form-label">Reminder window start (24h)</label>
+                    <input type="text" class="form-input" id="pe-budget-boost-win-start" placeholder="09:00" value="${bbWinStart}">
                   </div>
                   <div class="form-group">
-                    <label class="form-label">Boost weekday 2 (optional)</label>
-                    <select class="form-select" id="pe-budget-boost-day-1">
-                      <option value="" ${bbNone1}>—</option>
-                      <option value="0" ${bbSel(bbD1, 0)}>Monday</option>
-                      <option value="1" ${bbSel(bbD1, 1)}>Tuesday</option>
-                      <option value="2" ${bbSel(bbD1, 2)}>Wednesday</option>
-                      <option value="3" ${bbSel(bbD1, 3)}>Thursday</option>
-                      <option value="4" ${bbSel(bbD1, 4)}>Friday</option>
-                      <option value="5" ${bbSel(bbD1, 5)}>Saturday</option>
-                      <option value="6" ${bbSel(bbD1, 6)}>Sunday</option>
-                    </select>
+                    <label class="form-label">Reminder window end (24h)</label>
+                    <input type="text" class="form-input" id="pe-budget-boost-win-end" placeholder="21:00" value="${bbWinEnd}">
                   </div>
                 </div>
-                <div class="form-group" style="margin-bottom:0;">
-                  <label class="form-label">Media player for scheduled reminder</label>
-                  ${this._renderEntityAutocomplete(
-                    ttsSettings.budget_boost_announce_media_player || '',
-                    'media_player',
-                    'enforcement',
-                    'pe-budget-boost-mp',
-                    'media_player.living_room',
-                  )}
+                <div class="grid-2" style="margin-bottom:0;">
+                  <div class="form-group">
+                    <label class="form-label">Repeat every (minutes)</label>
+                    <input type="number" class="form-input" id="pe-budget-boost-repeat" min="15" max="720" value="${bbRepeat}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Minute offset (0–59)</label>
+                    <input type="number" class="form-input" id="pe-budget-boost-mo" min="0" max="59" value="${bbMo}">
+                  </div>
                 </div>
               </div>
               <div class="tts-msg-group" style="margin-bottom: 16px;">
@@ -6051,6 +6106,11 @@ class EnergyPanel extends HTMLElement {
               <input type="number" class="form-input stove-timer-window" value="${device.timer_start_window_seconds ?? 10}" min="1" max="120" placeholder="10">
               <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Wait before starting timer after leaving kitchen (brief absences ignored)</div>
             </div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Timer progress TTS interval (sec)</label>
+            <input type="number" class="form-input stove-timer-tts-interval" value="${device.stove_timer_tts_interval_seconds ?? 0}" min="0" max="3600" placeholder="0">
+            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">0 = auto (cooking duration ÷ 4, min 60s). Spoken during the long unattended phase.</div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Presence Sensor</label>
@@ -7039,6 +7099,10 @@ class EnergyPanel extends HTMLElement {
             device.final_warning_seconds = parseInt(item.querySelector('.stove-final-warning')?.value) || 30;
             device.timer_start_window_seconds = parseInt(item.querySelector('.stove-timer-window')?.value) || 10;
             device.presence_sensor = item.querySelector('.stove-presence-sensor')?.value || null;
+            const stiEl = item.querySelector('.stove-timer-tts-interval');
+            device.stove_timer_tts_interval_seconds = stiEl
+              ? Math.max(0, Math.min(3600, parseInt(stiEl.value, 10) || 0))
+              : 0;
           } else if (isMicrowave) {
             device.type = 'microwave';
             device.plug2_entity = null;
@@ -7164,6 +7228,7 @@ class EnergyPanel extends HTMLElement {
     const ttsStoveOn = this.shadowRoot.querySelector('#tts-stove-on')?.value || '{prefix} Stove has been turned on';
     const ttsStoveOff = this.shadowRoot.querySelector('#tts-stove-off')?.value || '{prefix} Stove has been turned off';
     const ttsStoveTimerStarted = this.shadowRoot.querySelector('#tts-stove-timer-started')?.value || '{prefix} The stove is on with no one in the kitchen. A {cooking_time_minutes} minute Unattended cooking timer has started.';
+    const ttsStoveTimerProgress = this.shadowRoot.querySelector('#tts-stove-timer-progress')?.value ?? '';
     const ttsStove15Min = this.shadowRoot.querySelector('#tts-stove-15min')?.value || '{prefix} Stove has been on for {cooking_time_minutes} minutes with no one in the kitchen. Stove will automatically turn off in {final_warning_seconds} seconds if no one returns';
     const ttsStove30Sec = this.shadowRoot.querySelector('#tts-stove-30sec')?.value || '{prefix} Stove will automatically turn off in {final_warning_seconds} seconds if no one returns to the kitchen';
     const ttsStoveAutoOff = this.shadowRoot.querySelector('#tts-stove-auto-off')?.value || '{prefix} Stove has been automatically turned off for safety';
@@ -7179,6 +7244,9 @@ class EnergyPanel extends HTMLElement {
     const budgetBoostSchedule = this._collectBudgetBoostFromDom();
     const ttsBudgetBoostScheduled = this.shadowRoot.querySelector('#tts-budget-boost-scheduled')?.value ?? '';
     const ttsPhase1BoostDay = this.shadowRoot.querySelector('#tts-phase1-boost-day')?.value ?? '';
+    const ttsDefaultMediaPlayer = (
+      this.shadowRoot.querySelector('.entity-datalist-input.tts-default-mp')?.value || ''
+    ).trim();
 
     const tabStats = this.shadowRoot.querySelector('#tab-statistics');
     const _si = (cls) => (tabStats?.querySelector(`input.${cls}`)?.value ?? '').trim();
@@ -7237,6 +7305,7 @@ class EnergyPanel extends HTMLElement {
         speed: this._config?.tts_settings?.speed ?? 1.0,
         volume: this._config?.tts_settings?.volume ?? 0.7,
         min_interval_seconds: Math.max(1, Math.min(60, parseInt(this.shadowRoot.querySelector('#tts-min-interval')?.value) || 3)),
+        tts_default_media_player: ttsDefaultMediaPlayer,
         prefix: ttsPrefix,
         room_warn_msg: ttsRoomWarn,
         outlet_warn_msg: ttsOutletWarn,
@@ -7245,6 +7314,7 @@ class EnergyPanel extends HTMLElement {
         stove_on_msg: ttsStoveOn,
         stove_off_msg: ttsStoveOff,
         stove_timer_started_msg: ttsStoveTimerStarted,
+        stove_timer_progress_msg: ttsStoveTimerProgress,
         stove_15min_warn_msg: ttsStove15Min,
         stove_30sec_warn_msg: ttsStove30Sec,
         stove_auto_off_msg: ttsStoveAutoOff,
@@ -7338,6 +7408,10 @@ class EnergyPanel extends HTMLElement {
           device.final_warning_seconds = parseInt(item.querySelector('.stove-final-warning')?.value) || 30;
           device.timer_start_window_seconds = parseInt(item.querySelector('.stove-timer-window')?.value) || 10;
           device.presence_sensor = item.querySelector('.stove-presence-sensor')?.value || null;
+          const stiEl2 = item.querySelector('.stove-timer-tts-interval');
+          device.stove_timer_tts_interval_seconds = stiEl2
+            ? Math.max(0, Math.min(3600, parseInt(stiEl2.value, 10) || 0))
+            : 0;
         } else if (isMicrowave) {
           device.type = 'microwave';
           device.plug2_entity = null;

@@ -39,6 +39,10 @@ DEFAULT_STOVE_TIMER_STARTED_MSG = "{prefix} The stove is on with no one in the k
 DEFAULT_STOVE_15MIN_WARN_MSG = "{prefix} Stove has been on for {cooking_time_minutes} minutes with no one in the kitchen. Stove will automatically turn off in {final_warning_seconds} seconds if no one returns"
 DEFAULT_STOVE_30SEC_WARN_MSG = "{prefix} Stove will automatically turn off in {final_warning_seconds} seconds if no one returns to the kitchen"
 DEFAULT_STOVE_AUTO_OFF_MSG = "{prefix} Stove has been automatically turned off for safety"
+DEFAULT_STOVE_TIMER_PROGRESS_MSG = (
+    "{prefix} Stove unattended timer: about {minutes_remaining} minutes "
+    "and {seconds_remaining} seconds remaining."
+)
 DEFAULT_MICROWAVE_CUT_MSG = "{prefix} Microwave is on. Stove power cut to protect circuit. Power will restore when microwave is off."
 DEFAULT_MICROWAVE_RESTORE_MSG = "{prefix} Microwave is off. Stove power restored."
 
@@ -107,13 +111,19 @@ DEFAULT_CONFIG = {
             "home_kwh_warn_msg": DEFAULT_HOME_KWH_WARN_MSG,
             "budget_exceeded_msg": DEFAULT_BUDGET_EXCEEDED_MSG,
             "min_interval_seconds": 3,
+            "tts_default_media_player": "",
             "budget_boost_enabled": False,
             "budget_boost_multiplier": 2.0,
             "budget_boost_weekdays": [5, 6],
+            "budget_boost_window_start": "09:00",
+            "budget_boost_window_end": "21:00",
+            "budget_boost_repeat_minutes": 120,
+            "budget_boost_minute_offset": 0,
             "budget_boost_announce_time": "09:00",
             "budget_boost_announce_media_player": "",
             "budget_boost_scheduled_msg": DEFAULT_BUDGET_BOOST_SCHEDULED_MSG,
             "phase1_warn_msg_boost_day": DEFAULT_PHASE1_WARN_BOOST_DAY_MSG,
+            "stove_timer_progress_msg": DEFAULT_STOVE_TIMER_PROGRESS_MSG,
         },
         "power_enforcement": {
             "enabled": False,
