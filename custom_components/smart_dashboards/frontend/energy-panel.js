@@ -121,12 +121,19 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  _statisticsRefreshMs() {
+    const raw = this._config?.statistics_settings?.statistics_refresh_seconds;
+    const n = typeof raw === 'number' ? raw : parseInt(String(raw ?? ''), 10);
+    const sec = Number.isFinite(n) ? n : 60;
+    return Math.max(15, Math.min(600, sec)) * 1000;
+  }
+
   _startRefresh() {
     this._stopRefresh();
     this._refreshInterval = setInterval(() => this._loadPowerData(), 1000);
     this._statsRefreshInterval = setInterval(() => {
       if (this._dashboardView === 'statistics') this._loadStatistics();
-    }, 30000);
+    }, this._statisticsRefreshMs());
   }
 
   _stopRefresh() {
@@ -584,16 +591,35 @@ class EnergyPanel extends HTMLElement {
           ? `0–${budgetState.maxInterval} kWh`
           : '';
       }
-      if (budgetMk) {
-        if (budgetState.budgetMarkerPct != null && budgetState.showBar) {
-          budgetMk.style.left = `${budgetState.budgetMarkerPct}%`;
-          budgetMk.style.display = '';
-          budgetMk.setAttribute(
+      const maxIv = budgetState.maxInterval;
+      roomCard.querySelectorAll('.room-budget-marker-wrap[data-kwh]').forEach((el) => {
+        const v = Number(el.dataset.kwh);
+        if (!budgetState.showBar || !Number.isFinite(v)) return;
+        if (budgetState.boost && v < budgetState.effKwh - 1e-6) {
+          el.style.display = 'none';
+          return;
+        }
+        el.style.display = '';
+        const pct = Math.min(100, (v / maxIv) * 100);
+        el.style.left = `${pct}%`;
+      });
+      const budgetOnlyWrap = roomCard.querySelector(
+        '.room-budget-marker-wrap[data-marker-role="budget"]',
+      );
+      if (budgetOnlyWrap) {
+        if (
+          budgetState.showSeparateBudget &&
+          budgetState.budgetMarkerPct != null &&
+          budgetState.showBar
+        ) {
+          budgetOnlyWrap.style.display = '';
+          budgetOnlyWrap.style.left = `${budgetState.budgetMarkerPct}%`;
+          budgetOnlyWrap.querySelector('.room-budget-marker-tick')?.setAttribute(
             'title',
             `Daily kWh budget (effective) ${budgetState.effKwh.toFixed(2)} kWh — before phase thresholds`,
           );
         } else {
-          budgetMk.style.display = 'none';
+          budgetOnlyWrap.style.display = 'none';
         }
       }
 
@@ -1150,6 +1176,7 @@ class EnergyPanel extends HTMLElement {
         background: linear-gradient(135deg, rgba(3, 169, 244, 0.05) 0%, transparent 55%);
         border-bottom: 1px solid var(--card-border);
         border-radius: 10px 10px 0 0;
+        overflow: visible;
       }
 
       .room-header-row {
@@ -1229,6 +1256,7 @@ class EnergyPanel extends HTMLElement {
       .room-budget-lane {
         flex: 1 1 160px;
         min-width: 0;
+        overflow: visible;
       }
 
       @media (max-width: 520px) {
@@ -1240,18 +1268,20 @@ class EnergyPanel extends HTMLElement {
 
       .room-budget-section {
         width: 100%;
+        overflow: visible;
       }
 
       .room-budget-bar-track {
         position: relative;
         display: flex;
         align-items: center;
-        min-height: clamp(26px, 5.5vw, 36px);
+        min-height: clamp(28px, 6vw, 38px);
         padding: 0 clamp(10px, 2.2vw, 14px);
+        margin-bottom: clamp(12px, 3vw, 18px);
         border-radius: clamp(9px, 2.2vw, 14px);
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(0, 0, 0, 0.12) 100%);
         border: 1px solid var(--card-border);
-        overflow: hidden;
+        overflow: visible;
         box-sizing: border-box;
         box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.22);
         cursor: pointer;
@@ -1293,27 +1323,108 @@ class EnergyPanel extends HTMLElement {
         pointer-events: none;
       }
 
-      .room-budget-marker {
+      .room-budget-marker-wrap {
         position: absolute;
-        bottom: 3px;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 0;
         transform: translateX(-50%);
+        pointer-events: none;
+      }
+
+      .room-budget-marker-tick {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        top: 0;
+        bottom: 0;
+        width: 2px;
         border-radius: 2px;
         pointer-events: auto;
       }
 
       .room-budget-marker--interval {
-        width: 2px;
-        height: 52%;
-        background: rgba(255, 255, 255, 0.38);
-        box-shadow: 0 0 4px rgba(0, 0, 0, 0.35);
+        background: rgba(255, 255, 255, 0.42);
+        box-shadow: 0 0 5px rgba(0, 0, 0, 0.4);
       }
 
-      .room-budget-marker--budget {
+      .room-budget-marker--audible {
         width: 3px;
-        height: 68%;
         background: linear-gradient(180deg, #fff 0%, var(--panel-accent) 100%);
-        box-shadow: 0 0 10px rgba(3, 169, 244, 0.65), 0 0 2px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 0 12px rgba(3, 169, 244, 0.7), 0 0 2px rgba(0, 0, 0, 0.5);
         z-index: 1;
+      }
+
+      .room-budget-marker--budget-only {
+        width: 0;
+        border-left: 2px dashed rgba(255, 255, 255, 0.55);
+        background: transparent;
+        box-shadow: none;
+        opacity: 0.95;
+      }
+
+      .room-budget-marker-label {
+        position: absolute;
+        top: calc(100% + 2px);
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: clamp(6px, 1.5vw, 9px);
+        font-weight: 700;
+        line-height: 1.15;
+        text-align: center;
+        max-width: min(28vw, 140px);
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        hyphens: auto;
+        text-shadow: 0 0 6px rgba(0, 0, 0, 0.75), 0 1px 2px rgba(0, 0, 0, 0.9);
+        pointer-events: none;
+      }
+
+      .room-budget-marker-label--audible {
+        color: #e1f5fe;
+        font-weight: 800;
+      }
+
+      .room-budget-marker-label--kwh {
+        color: var(--secondary-text-color);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .room-budget-marker-label--budget {
+        color: rgba(255, 255, 255, 0.75);
+        font-weight: 600;
+        font-size: clamp(6px, 1.4vw, 8px);
+      }
+
+      .room-budget-marker-label-stack {
+        position: absolute;
+        top: calc(100% + 2px);
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+        max-width: min(28vw, 140px);
+        pointer-events: none;
+      }
+
+      .room-budget-marker-label-stack .room-budget-marker-label {
+        position: static;
+        transform: none;
+        max-width: 100%;
+      }
+
+      .room-budget-marker-sublabel {
+        font-size: clamp(5px, 1.35vw, 8px);
+        font-weight: 600;
+        color: var(--secondary-text-color);
+        white-space: nowrap;
+        text-shadow: 0 0 5px rgba(0, 0, 0, 0.65);
+        text-align: center;
       }
 
       .room-budget-bar-fill::after {
@@ -4197,9 +4308,26 @@ class EnergyPanel extends HTMLElement {
       showBar && effKwh > 0
         ? Math.min(100, (effKwh / maxInterval) * 100)
         : null;
-    const intervalMarkers = intervalsSorted.map((value) => ({
+    const plottedIntervals = boost
+      ? intervalsSorted.filter((v) => v >= effKwh)
+      : [...intervalsSorted];
+    const audibleKwh = plottedIntervals.length ? plottedIntervals[0] : null;
+    const audiblePct =
+      audibleKwh != null && showBar
+        ? Math.min(100, (audibleKwh / maxInterval) * 100)
+        : null;
+    const budgetCoincidesAudible =
+      budgetMarkerPct != null &&
+      audiblePct != null &&
+      Math.abs(budgetMarkerPct - audiblePct) < 0.9;
+    const showSeparateBudget =
+      Boolean(
+        budgetMarkerPct != null && showBar && effKwh > 0 && !budgetCoincidesAudible,
+      );
+    const plottedIntervalMarkers = plottedIntervals.map((value) => ({
       value,
       pct: showBar ? Math.min(100, (value / maxInterval) * 100) : 0,
+      kind: audibleKwh !== null && value === audibleKwh ? 'audible' : 'interval',
     }));
     return {
       usedKwh,
@@ -4207,8 +4335,12 @@ class EnergyPanel extends HTMLElement {
       baseKwh,
       maxInterval,
       intervalsSorted,
-      intervalMarkers,
+      plottedIntervals,
+      audibleKwh,
+      plottedIntervalMarkers,
       budgetMarkerPct,
+      budgetCoincidesAudible,
+      showSeparateBudget,
       showBar,
       fillPct,
       over: overScale,
@@ -4219,17 +4351,38 @@ class EnergyPanel extends HTMLElement {
 
   _roomBudgetMarkersHtml(budget) {
     if (!budget.showBar) return '';
-    const iv = budget.intervalMarkers
-      .map(
-        ({ value, pct }) =>
-          `<span class="room-budget-marker room-budget-marker--interval has-tooltip" style="left:${pct}%" title="Daily kWh warning tier at ${value} kWh"></span>`,
-      )
-      .join('');
-    const b =
-      budget.budgetMarkerPct != null
-        ? `<span class="room-budget-marker room-budget-marker--budget has-tooltip" style="left:${budget.budgetMarkerPct}%" title="Daily kWh budget (effective) ${budget.effKwh.toFixed(2)} kWh — before phase thresholds"></span>`
-        : '';
-    return `<div class="room-budget-markers" aria-hidden="true">${iv}${b}</div>`;
+    const esc = (s) => String(s).replace(/"/g, '&quot;');
+    const chunks = [];
+    for (const m of budget.plottedIntervalMarkers) {
+      if (m.kind === 'audible' && budget.budgetCoincidesAudible) {
+        chunks.push(`<div class="room-budget-marker-wrap room-budget-marker-wrap--combined" data-kwh="${m.value}" style="left:${m.pct}%">
+            <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${esc(`Audible kWh warnings from ${m.value} kWh · Daily budget ${budget.effKwh.toFixed(2)} kWh (effective)`)}"></span>
+            <div class="room-budget-marker-label-stack">
+              <span class="room-budget-marker-label room-budget-marker-label--audible">Audible Warning Active</span>
+              <span class="room-budget-marker-sublabel">${budget.effKwh.toFixed(1)} kWh budget</span>
+            </div>
+          </div>`);
+        continue;
+      }
+      if (m.kind === 'audible') {
+        chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
+            <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${esc(`First voice warning tier at ${m.value} kWh (Daily kWh Warnings)`)}"></span>
+            <span class="room-budget-marker-label room-budget-marker-label--audible">Audible Warning Active</span>
+          </div>`);
+        continue;
+      }
+      chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
+          <span class="room-budget-marker-tick room-budget-marker--interval has-tooltip" title="${esc(`Warning tier at ${m.value} kWh`)}"></span>
+          <span class="room-budget-marker-label room-budget-marker-label--kwh">${m.value} kWh</span>
+        </div>`);
+    }
+    if (budget.showSeparateBudget && budget.budgetMarkerPct != null) {
+      chunks.push(`<div class="room-budget-marker-wrap room-budget-marker-wrap--budget-only" data-marker-role="budget" style="left:${budget.budgetMarkerPct}%">
+          <span class="room-budget-marker-tick room-budget-marker--budget-only has-tooltip" title="${esc(`Daily kWh budget (effective) ${budget.effKwh.toFixed(2)} kWh — before phase thresholds`)}"></span>
+          <span class="room-budget-marker-label room-budget-marker-label--budget">Budget</span>
+        </div>`);
+    }
+    return `<div class="room-budget-markers" aria-hidden="true">${chunks.join('')}</div>`;
   }
 
   _enforcementBadgeHtml(roomId, phase, inline = false) {
@@ -4304,7 +4457,8 @@ class EnergyPanel extends HTMLElement {
     const trackTitle =
       "Open today's kWh chart — scale 0–" +
       budget.maxInterval +
-      ' kWh; ticks = warning tiers, bright tick = daily budget';
+      ' kWh; blue tick = first audible warning tier' +
+      (budget.showSeparateBudget ? '; dashed tick = daily budget' : '');
 
     const thresholdPill = room.threshold > 0
       ? `<span class="room-threshold-pill has-tooltip" title="Room power threshold: spoken alert when exceeded">
@@ -5192,6 +5346,20 @@ class EnergyPanel extends HTMLElement {
                   <div class="form-group">
                     <label class="form-label">kWh Cost</label>
                     ${this._renderEntityAutocomplete(statsSettings.kwh_cost_sensor || '', 'cost_helper', 'stats', 'stats-kwh-cost', 'input_text.kwh_cost')}
+                  </div>
+                  <div class="form-group" style="grid-column: 1 / -1;">
+                    <label class="form-label" for="stats-refresh-seconds">Statistics view refresh (seconds)</label>
+                    <input type="number" id="stats-refresh-seconds" class="form-input" min="15" max="600" step="1"
+                      value="${(() => {
+                        const r = statsSettings.statistics_refresh_seconds;
+                        const n = typeof r === 'number' ? r : parseInt(String(r ?? ''), 10);
+                        const sec = Number.isFinite(n) ? Math.max(15, Math.min(600, n)) : 60;
+                        return sec;
+                      })()}"
+                      style="max-width: 140px;">
+                    <p style="color: var(--secondary-text-color); font-size: 10px; margin: 8px 0 0;">
+                      How often the Statistics tab reloads usage data while you stay on it (15–600). Default 60.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -6983,12 +7151,18 @@ class EnergyPanel extends HTMLElement {
 
     const tabStats = this.shadowRoot.querySelector('#tab-statistics');
     const _si = (cls) => (tabStats?.querySelector(`input.${cls}`)?.value ?? '').trim();
+    const statsRefreshEl = tabStats?.querySelector('#stats-refresh-seconds');
+    const statsRefreshParsed = parseInt(statsRefreshEl?.value, 10);
+    const statistics_refresh_seconds = Number.isFinite(statsRefreshParsed)
+      ? Math.max(15, Math.min(600, statsRefreshParsed))
+      : 60;
     const statistics_settings = {
       billing_start_sensor: _si('stats-billing-start'),
       billing_end_sensor: _si('stats-billing-end'),
       current_usage_sensor: _si('stats-current-usage'),
       projected_usage_sensor: _si('stats-projected-usage'),
       kwh_cost_sensor: _si('stats-kwh-cost'),
+      statistics_refresh_seconds,
     };
 
     const tabEnf = this.shadowRoot.querySelector('#tab-enforcement');

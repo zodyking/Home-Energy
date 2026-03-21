@@ -138,6 +138,7 @@ DEFAULT_CONFIG = {
             "current_usage_sensor": "",
             "projected_usage_sensor": "",
             "kwh_cost_sensor": "",
+            "statistics_refresh_seconds": 60,
         },
     },
 }
