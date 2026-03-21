@@ -588,7 +588,7 @@ class EnergyPanel extends HTMLElement {
         const p = typeof room.enforcement_phase === 'number'
           ? Math.max(0, Math.min(2, room.enforcement_phase))
           : 0;
-        badge.className = `enforcement-badge enforcement-phase-${p} has-tooltip`;
+        badge.className = `enforcement-badge enforcement-phase-${p} enforcement-badge--inline has-tooltip`;
         badge.setAttribute('title', ENFORCEMENT_PHASE_TITLES[p]);
         const lbl = badge.querySelector('.enforcement-badge-label');
         if (lbl) lbl.textContent = ENFORCEMENT_BADGE_LABELS[p];
@@ -1127,34 +1127,25 @@ class EnergyPanel extends HTMLElement {
         width: 100%;
       }
 
-      /* ===== Room header: 2-col grid (left=icon+name spanning, right=stats) ===== */
+      /* ===== Room header: single row + thick in-bar budget (compact) ===== */
       .room-header {
-        display: flex;
-        flex-direction: column;
-        gap: clamp(10px, 2.5vw, 14px);
-        padding: clamp(10px, 2.5vw, 16px);
-        background: linear-gradient(135deg, rgba(3, 169, 244, 0.06) 0%, transparent 60%);
+        padding: clamp(6px, 1.6vw, 10px) clamp(8px, 2vw, 12px);
+        background: linear-gradient(135deg, rgba(3, 169, 244, 0.05) 0%, transparent 55%);
         border-bottom: 1px solid var(--card-border);
         border-radius: 10px 10px 0 0;
       }
 
-      .room-header-main {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr);
-        column-gap: clamp(10px, 2.5vw, 16px);
-        align-items: center;
-      }
-
-      .room-header-left {
+      .room-header-row {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
-        gap: clamp(8px, 2vw, 12px);
+        gap: clamp(6px, 1.5vw, 10px);
       }
 
       .room-icon {
-        width: clamp(36px, 9vw, 48px);
-        height: clamp(36px, 9vw, 48px);
-        border-radius: clamp(8px, 2vw, 12px);
+        width: clamp(28px, 7vw, 40px);
+        height: clamp(28px, 7vw, 40px);
+        border-radius: clamp(6px, 1.5vw, 10px);
         background: var(--panel-accent-dim);
         display: flex;
         align-items: center;
@@ -1163,21 +1154,22 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-icon svg {
-        width: clamp(18px, 4.5vw, 24px);
-        height: clamp(18px, 4.5vw, 24px);
+        width: clamp(15px, 3.8vw, 20px);
+        height: clamp(15px, 3.8vw, 20px);
         fill: var(--panel-accent);
       }
 
-      .room-name-block {
+      .room-header-title-col {
         display: flex;
         flex-direction: column;
-        gap: clamp(2px, 0.6vw, 4px);
+        gap: clamp(2px, 0.5vw, 4px);
         min-width: 0;
+        flex: 0 1 auto;
       }
 
       .room-name {
         margin: 0;
-        font-size: clamp(13px, 3.2vw, 18px);
+        font-size: clamp(12px, 2.9vw, 16px);
         font-weight: 700;
         line-height: 1.2;
         word-break: break-word;
@@ -1186,42 +1178,169 @@ class EnergyPanel extends HTMLElement {
         letter-spacing: -0.01em;
       }
 
+      .room-header-badges {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: clamp(4px, 1vw, 6px);
+        min-height: 0;
+      }
+
+      .room-header-badges:empty {
+        display: none;
+      }
+
       .room-threshold-pill {
         display: inline-flex;
         align-items: center;
         gap: 3px;
-        font-size: clamp(8px, 1.9vw, 10px);
+        font-size: clamp(7px, 1.7vw, 9px);
         color: var(--secondary-text-color);
         background: rgba(255,255,255,0.06);
         border: 1px solid var(--card-border);
-        border-radius: 6px;
-        padding: 2px clamp(5px, 1.2vw, 8px);
-        width: fit-content;
+        border-radius: 5px;
+        padding: 1px clamp(4px, 1vw, 7px);
       }
 
       .room-threshold-pill svg {
-        width: clamp(9px, 2vw, 11px);
-        height: clamp(9px, 2vw, 11px);
+        width: clamp(8px, 1.8vw, 10px);
+        height: clamp(8px, 1.8vw, 10px);
         fill: currentColor;
         flex-shrink: 0;
       }
 
-      .room-header-right {
+      .room-budget-lane {
+        flex: 1 1 160px;
+        min-width: 0;
+      }
+
+      @media (max-width: 520px) {
+        .room-budget-lane {
+          flex: 1 1 100%;
+          order: 10;
+        }
+      }
+
+      .room-budget-section {
+        width: 100%;
+      }
+
+      .room-budget-bar-track {
+        position: relative;
         display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        justify-content: center;
-        text-align: right;
-        gap: clamp(2px, 0.6vw, 4px);
+        align-items: center;
+        min-height: clamp(22px, 5vw, 32px);
+        padding: 0 clamp(8px, 2vw, 12px);
+        border-radius: clamp(8px, 2vw, 12px);
+        background: rgba(255, 255, 255, 0.07);
+        border: 1px solid var(--card-border);
+        overflow: hidden;
+        box-sizing: border-box;
+      }
+
+      .room-budget-bar-fill {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--panel-accent) 0%, #26c6da 100%);
+        transition: width 0.35s ease, background 0.25s ease;
+        min-width: 0;
+        pointer-events: none;
+      }
+
+      .room-budget-bar-fill.over {
+        background: linear-gradient(90deg, #ff9800 0%, var(--panel-danger) 100%);
+      }
+
+      .room-budget-bar-fill::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(
+          105deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.22) 42%,
+          transparent 68%
+        );
+        background-size: 220% 100%;
+        animation: room-budget-surge 2.2s linear infinite;
+      }
+
+      .room-budget-bar-fill.over::after {
+        animation-duration: 1.35s;
+      }
+
+      @keyframes room-budget-surge {
+        0% { background-position: 120% 0; }
+        100% { background-position: -120% 0; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .room-budget-bar-fill::after {
+          animation: none;
+        }
+      }
+
+      .room-budget-section--na .room-budget-bar-track {
+        opacity: 0.45;
+      }
+
+      .room-budget-bar-labels {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: clamp(4px, 1.2vw, 8px);
+        width: 100%;
+        min-width: 0;
+        font-size: clamp(8px, 1.85vw, 11px);
+        line-height: 1.25;
+      }
+
+      .room-budget-values {
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        color: var(--primary-text-color);
+        text-shadow:
+          0 0 6px rgba(0, 0, 0, 0.55),
+          0 1px 2px rgba(0, 0, 0, 0.85);
+      }
+
+      .room-budget-sub {
+        font-variant-numeric: tabular-nums;
+        font-style: italic;
+        font-weight: 500;
+        color: var(--secondary-text-color);
+        text-shadow:
+          0 0 6px rgba(0, 0, 0, 0.5),
+          0 1px 2px rgba(0, 0, 0, 0.75);
+        flex: 1 1 auto;
+        min-width: 8ch;
+      }
+
+      .room-header-stats-inline {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: clamp(6px, 1.5vw, 10px);
+        flex-shrink: 0;
+        margin-left: auto;
       }
 
       .room-total-watts {
-        font-size: clamp(14px, 3.6vw, 22px);
+        font-size: clamp(12px, 3vw, 17px);
         font-weight: 800;
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
         line-height: 1.1;
         letter-spacing: -0.02em;
+        white-space: nowrap;
       }
 
       .room-total-watts.over-threshold {
@@ -1229,96 +1348,40 @@ class EnergyPanel extends HTMLElement {
         animation: pulse-danger 1s infinite;
       }
 
+      @keyframes pulse-danger {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+      }
+
       .room-total-day {
-        font-size: clamp(9px, 2.3vw, 12px);
+        font-size: clamp(8px, 2vw, 11px);
         font-weight: 500;
         color: var(--secondary-text-color);
         font-variant-numeric: tabular-nums;
         line-height: 1.2;
         cursor: pointer;
-      }
-
-      /* ===== Enforcement row (collapses when empty) ===== */
-      .room-enforcement-row {
-        display: flex;
-        justify-content: flex-end;
-      }
-
-      .room-enforcement-row:empty {
-        display: none;
-      }
-
-      /* ===== Budget bar section ===== */
-      .room-budget-section {
-        display: flex;
-        flex-direction: column;
-        gap: clamp(4px, 1vw, 6px);
-      }
-
-      .room-budget-bar-track {
-        height: clamp(6px, 1.6vw, 8px);
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.08);
-        overflow: hidden;
-        border: 1px solid var(--card-border);
-      }
-
-      .room-budget-bar-fill {
-        height: 100%;
-        border-radius: 999px;
-        background: linear-gradient(90deg, var(--panel-accent) 0%, #26c6da 100%);
-        transition: width 0.35s ease, background 0.25s ease;
-        min-width: 0;
-      }
-
-      .room-budget-bar-fill.over {
-        background: linear-gradient(90deg, #ff9800 0%, var(--panel-danger) 100%);
-      }
-
-      .room-budget-section--na .room-budget-bar-track {
-        opacity: 0.35;
-      }
-
-      .room-budget-bar-meta {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: clamp(6px, 1.5vw, 12px);
-        font-size: clamp(8px, 2vw, 11px);
-        color: var(--secondary-text-color);
-        line-height: 1.35;
-      }
-
-      .room-budget-values {
-        font-variant-numeric: tabular-nums;
-        font-weight: 600;
-        color: var(--primary-text-color);
-      }
-
-      .room-budget-sub {
-        font-style: italic;
-        opacity: 0.85;
+        white-space: nowrap;
       }
 
       .room-event-chips {
         display: flex;
         align-items: center;
-        gap: clamp(4px, 1vw, 8px);
-        margin-left: auto;
+        gap: clamp(3px, 0.8vw, 6px);
+        flex-shrink: 0;
       }
 
       .event-count {
         display: inline-flex;
         align-items: center;
         gap: 2px;
-        font-size: clamp(8px, 1.9vw, 10px);
+        font-size: clamp(7px, 1.7vw, 9px);
         color: var(--secondary-text-color);
-        padding: 2px clamp(4px, 1vw, 7px);
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 5px;
+        padding: 2px clamp(3px, 0.9vw, 6px);
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 4px;
         white-space: nowrap;
         font-variant-numeric: tabular-nums;
+        border: 1px solid var(--card-border);
       }
 
       .view-tabs {
@@ -1562,39 +1625,6 @@ class EnergyPanel extends HTMLElement {
         font-size: 14px;
         color: var(--secondary-text-color);
         margin: 0;
-      }
-
-      .room-total-watts {
-        font-size: clamp(10px, 2.7vw, 16px);
-        font-weight: 700;
-        color: var(--panel-accent);
-        font-variant-numeric: tabular-nums;
-        line-height: 1.15;
-        max-width: 100%;
-        text-align: right;
-      }
-
-      .room-total-watts.over-threshold {
-        color: var(--panel-danger);
-        animation: pulse-danger 1s infinite;
-      }
-
-      @keyframes pulse-danger {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.7; }
-      }
-
-      .room-total-day {
-        font-size: clamp(8px, 2vw, 11px);
-        font-weight: 500;
-        color: var(--secondary-text-color);
-        font-variant-numeric: tabular-nums;
-        line-height: 1.25;
-        cursor: pointer;
-        margin: 0;
-        max-width: 100%;
-        text-align: right;
-        word-break: break-word;
       }
 
       .room-content {
@@ -2038,6 +2068,13 @@ class EnergyPanel extends HTMLElement {
         line-height: 1.2;
         flex-shrink: 0;
         text-transform: none;
+      }
+
+      .enforcement-badge--inline {
+        padding: 1px clamp(4px, 1.1vw, 7px);
+        font-size: clamp(7px, 1.65vw, 9px);
+        border-radius: 5px;
+        gap: 2px;
       }
 
       .enforcement-badge.enforcement-phase-0 {
@@ -4078,16 +4115,20 @@ class EnergyPanel extends HTMLElement {
     return { usedKwh, effKwh, baseKwh, showBar, fillPct, over, boost };
   }
 
-  _enforcementBadgeHtml(roomId, phase) {
+  _enforcementBadgeHtml(roomId, phase, inline = false) {
     const pe = this._config?.power_enforcement || {};
     const roomsEnabled = pe.rooms_enabled || [];
     const enabled = pe.enabled && roomsEnabled.includes(roomId);
     if (!enabled || !icons?.shield) return '';
     const p = Math.max(0, Math.min(2, Number(phase) || 0));
     const esc = (s) => String(s).replace(/"/g, '&quot;');
+    const inlineCls = inline ? ' enforcement-badge--inline' : '';
+    const svgDim = inline
+      ? 'clamp(8px, 2vw, 10px)'
+      : 'clamp(10px, 2.5vw, 12px)';
     return `
-              <span class="enforcement-badge enforcement-phase-${p} has-tooltip" title="${esc(ENFORCEMENT_PHASE_TITLES[p])}">
-                <svg viewBox="0 0 24 24" style="width: clamp(10px, 2.5vw, 12px); height: clamp(10px, 2.5vw, 12px); flex-shrink: 0; fill: #fff;">${icons.shield}</svg>
+              <span class="enforcement-badge enforcement-phase-${p}${inlineCls} has-tooltip" title="${esc(ENFORCEMENT_PHASE_TITLES[p])}">
+                <svg viewBox="0 0 24 24" style="width: ${svgDim}; height: ${svgDim}; flex-shrink: 0; fill: #fff;">${icons.shield}</svg>
                 <span class="enforcement-badge-label">${ENFORCEMENT_BADGE_LABELS[p]}</span>
               </span>`;
   }
@@ -4127,7 +4168,6 @@ class EnergyPanel extends HTMLElement {
     const powerCycles = roomData.power_cycles || 0;
     const enfPhase = typeof roomData.enforcement_phase === 'number' ? roomData.enforcement_phase : 0;
     const budget = this._roomBudgetUiState(roomData, room);
-    const barRootClass = budget.showBar ? 'room-budget-bar' : 'room-budget-bar room-budget-bar--na';
     const fillClass = `room-budget-bar-fill${budget.over ? ' over' : ''}`;
     let budgetSub = '';
     if (!budget.showBar) {
@@ -4146,39 +4186,37 @@ class EnergyPanel extends HTMLElement {
          </span>`
       : '';
 
-    const enforcementRow = this._enforcementBadgeHtml(roomId, enfPhase);
+    const enforcementInline = this._enforcementBadgeHtml(roomId, enfPhase, true);
+    const badgesInner = `${thresholdPill}${enforcementInline}`.trim();
+    const badgesHtml = badgesInner
+      ? `<div class="room-header-badges">${badgesInner}</div>`
+      : '';
 
     return `
       <div class="room-card" data-room-id="${roomId}">
         <div class="room-header">
-          <!-- Main row: left (icon + name block) | right (stats) -->
-          <div class="room-header-main">
-            <div class="room-header-left">
-              <div class="room-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24">${icons.room}</svg>
+          <div class="room-header-row">
+            <div class="room-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">${icons.room}</svg>
+            </div>
+            <div class="room-header-title-col">
+              <h3 class="room-name">${(room.name || '').replace(/</g, '&lt;')}</h3>
+              ${badgesHtml}
+            </div>
+            <div class="room-budget-lane">
+              <div class="room-budget-section${budget.showBar ? '' : ' room-budget-section--na'}" role="group" aria-label="Daily kilowatt-hours versus budget">
+                <div class="room-budget-bar-track">
+                  <div class="${fillClass}" style="width: ${budget.showBar ? budget.fillPct : 0}%"></div>
+                  <div class="room-budget-bar-labels">
+                    <span class="room-budget-values">${budget.showBar ? `${budget.usedKwh.toFixed(2)} / ${budget.effKwh.toFixed(2)} kWh` : '—'}</span>
+                    <span class="room-budget-sub">${budgetSub}</span>
+                  </div>
+                </div>
               </div>
-              <div class="room-name-block">
-                <h3 class="room-name">${(room.name || '').replace(/</g, '&lt;')}</h3>
-                ${thresholdPill}
-              </div>
             </div>
-            <div class="room-header-right">
-              <div class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</div>
-              <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</div>
-            </div>
-          </div>
-
-          <!-- Enforcement badge row (collapses when empty) -->
-          <div class="room-enforcement-row">${enforcementRow}</div>
-
-          <!-- Budget bar section -->
-          <div class="room-budget-section${budget.showBar ? '' : ' room-budget-section--na'}" role="group" aria-label="Daily kilowatt-hours versus budget">
-            <div class="room-budget-bar-track">
-              <div class="${fillClass}" style="width: ${budget.showBar ? budget.fillPct : 0}%"></div>
-            </div>
-            <div class="room-budget-bar-meta">
-              <span class="room-budget-values">${budget.showBar ? `${budget.usedKwh.toFixed(2)} / ${budget.effKwh.toFixed(2)} kWh` : '—'}</span>
-              <span class="room-budget-sub">${budgetSub}</span>
+            <div class="room-header-stats-inline">
+              <span class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</span>
+              <span class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</span>
               <div class="room-event-chips">
                 <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W ${warnings}</span>
                 <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S ${shutoffs}</span>
