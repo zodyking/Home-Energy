@@ -1351,7 +1351,7 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: row;
         align-items: stretch;
-        gap: 3px;
+        gap: 2px;
         width: max-content;
         max-width: min(100%, calc(100% - 4px));
         transform: none;
@@ -1397,15 +1397,15 @@ class EnergyPanel extends HTMLElement {
         position: relative;
         flex: 0 1 auto;
         align-self: center;
-        font-size: clamp(5px, 1.2vw, 8px);
+        font-size: clamp(4px, 0.9vw, 7px);
         font-weight: 700;
-        line-height: 1.15;
+        line-height: 1.1;
         text-align: left;
-        max-width: min(22vw, 104px);
+        max-width: min(16vw, 80px);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        text-shadow: 0 0 6px rgba(0, 0, 0, 0.75), 0 1px 2px rgba(0, 0, 0, 0.9);
+        text-shadow: 0 0 5px rgba(0, 0, 0, 0.8), 0 1px 2px rgba(0, 0, 0, 0.95);
         pointer-events: none;
         z-index: 2;
       }
@@ -1425,6 +1425,7 @@ class EnergyPanel extends HTMLElement {
       .room-budget-marker-label--kwh {
         color: var(--secondary-text-color);
         font-weight: 600;
+        font-size: clamp(4px, 0.85vw, 6px);
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
       }
@@ -1432,7 +1433,7 @@ class EnergyPanel extends HTMLElement {
       .room-budget-marker-label--budget {
         color: rgba(255, 255, 255, 0.75);
         font-weight: 600;
-        font-size: clamp(6px, 1.4vw, 8px);
+        font-size: clamp(4px, 0.85vw, 6px);
       }
 
       .room-budget-marker-label-stack {
@@ -1444,7 +1445,7 @@ class EnergyPanel extends HTMLElement {
         align-items: flex-start;
         justify-content: center;
         gap: 0;
-        max-width: min(26vw, 120px);
+        max-width: min(18vw, 90px);
         min-width: 0;
         pointer-events: none;
         z-index: 2;
@@ -1461,7 +1462,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-budget-marker-sublabel {
-        font-size: clamp(4px, 1.1vw, 7px);
+        font-size: clamp(3px, 0.8vw, 6px);
         font-weight: 600;
         color: var(--secondary-text-color);
         white-space: nowrap;
@@ -1470,7 +1471,7 @@ class EnergyPanel extends HTMLElement {
         max-width: 100%;
         text-shadow: 0 0 5px rgba(0, 0, 0, 0.65);
         text-align: left;
-        line-height: 1.05;
+        line-height: 1;
       }
 
       .room-budget-bar-fill::after {
@@ -4363,10 +4364,7 @@ class EnergyPanel extends HTMLElement {
         ? Math.min(100, (effKwh / maxInterval) * 100)
         : null;
     const plottedIntervals = boost
-      ? (() => {
-          const first = intervalsSorted.find((v) => v >= effKwh - 1e-9);
-          return first != null ? [first] : [];
-        })()
+      ? intervalsSorted.filter((v) => v >= effKwh - 1e-9)
       : baseKwh > 0
         ? intervalsSorted.filter((v) => v >= baseKwh - 1e-9)
         : [...intervalsSorted];
@@ -4380,8 +4378,7 @@ class EnergyPanel extends HTMLElement {
       audiblePct != null &&
       Math.abs(budgetMarkerPct - audiblePct) < 0.9;
     const showSeparateBudget = Boolean(
-      !boost &&
-        budgetMarkerPct != null &&
+      budgetMarkerPct != null &&
         showBar &&
         effKwh > 0 &&
         !budgetCoincidesAudible,
