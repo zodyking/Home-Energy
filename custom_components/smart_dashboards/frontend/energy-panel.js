@@ -538,16 +538,11 @@ class EnergyPanel extends HTMLElement {
       const roomConfig = this._getRoomConfig(room.id);
       const threshold = roomConfig?.threshold || 0;
 
-      // Update room totals
+      // Update room totals (watts only in header; kWh is in the bar)
       const totalWattsSpan = roomCard.querySelector('.room-total-watts');
-      const totalDaySpan = roomCard.querySelector('.room-total-day');
-      
       if (totalWattsSpan) {
         totalWattsSpan.textContent = `${room.total_watts.toFixed(1)} W`;
         totalWattsSpan.classList.toggle('over-threshold', threshold > 0 && room.total_watts > threshold);
-      }
-      if (totalDaySpan) {
-        totalDaySpan.textContent = `${(room.total_day_wh / 1000).toFixed(2)} kWh today`;
       }
 
       // Budget bar updates
@@ -556,27 +551,49 @@ class EnergyPanel extends HTMLElement {
       const barFill = roomCard.querySelector('.room-budget-bar-fill');
       const budgetValEl = roomCard.querySelector('.room-budget-values');
       const budgetSubEl = roomCard.querySelector('.room-budget-sub');
+      const scaleHintEl = roomCard.querySelector('.room-budget-scale-hint');
+      const budgetMk = roomCard.querySelector('.room-budget-marker--budget');
       if (budgetSection) {
         budgetSection.classList.toggle('room-budget-section--na', !budgetState.showBar);
       }
       if (barFill) {
         barFill.style.width = `${budgetState.showBar ? budgetState.fillPct : 0}%`;
         barFill.classList.toggle('over', budgetState.over);
+        barFill.classList.toggle('over-budget', budgetState.overBudget && !budgetState.over);
       }
       if (budgetValEl) {
         budgetValEl.textContent = budgetState.showBar
-          ? `${budgetState.usedKwh.toFixed(2)} / ${budgetState.effKwh.toFixed(2)} kWh`
+          ? `${budgetState.usedKwh.toFixed(2)} kWh`
           : '—';
       }
       if (budgetSubEl) {
         if (!budgetState.showBar) {
-          budgetSubEl.textContent = 'Set a kWh budget in room settings';
+          budgetSubEl.textContent = 'Configure kWh intervals in Power Protection';
         } else if (budgetState.over) {
-          budgetSubEl.textContent = 'Over effective daily budget';
+          budgetSubEl.textContent = 'Above daily range';
+        } else if (budgetState.overBudget) {
+          budgetSubEl.textContent = 'Over effective budget';
         } else if (budgetState.boost) {
-          budgetSubEl.textContent = 'Boost day — budget raised before thresholds';
+          budgetSubEl.textContent = 'Boost budget active';
         } else {
-          budgetSubEl.textContent = 'Used vs budget (before phase thresholds)';
+          budgetSubEl.textContent = "Tap for today's chart";
+        }
+      }
+      if (scaleHintEl) {
+        scaleHintEl.textContent = budgetState.showBar
+          ? `0–${budgetState.maxInterval} kWh`
+          : '';
+      }
+      if (budgetMk) {
+        if (budgetState.budgetMarkerPct != null && budgetState.showBar) {
+          budgetMk.style.left = `${budgetState.budgetMarkerPct}%`;
+          budgetMk.style.display = '';
+          budgetMk.setAttribute(
+            'title',
+            `Daily kWh budget (effective) ${budgetState.effKwh.toFixed(2)} kWh — before phase thresholds`,
+          );
+        } else {
+          budgetMk.style.display = 'none';
         }
       }
 
@@ -1229,13 +1246,20 @@ class EnergyPanel extends HTMLElement {
         position: relative;
         display: flex;
         align-items: center;
-        min-height: clamp(22px, 5vw, 32px);
-        padding: 0 clamp(8px, 2vw, 12px);
-        border-radius: clamp(8px, 2vw, 12px);
-        background: rgba(255, 255, 255, 0.07);
+        min-height: clamp(26px, 5.5vw, 36px);
+        padding: 0 clamp(10px, 2.2vw, 14px);
+        border-radius: clamp(9px, 2.2vw, 14px);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(0, 0, 0, 0.12) 100%);
         border: 1px solid var(--card-border);
         overflow: hidden;
         box-sizing: border-box;
+        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.22);
+        cursor: pointer;
+      }
+
+      .room-budget-bar-track.graph-clickable:hover {
+        border-color: rgba(3, 169, 244, 0.45);
+        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(3, 169, 244, 0.2);
       }
 
       .room-budget-bar-fill {
@@ -1243,15 +1267,53 @@ class EnergyPanel extends HTMLElement {
         left: 0;
         top: 0;
         bottom: 0;
+        z-index: 0;
         border-radius: inherit;
-        background: linear-gradient(90deg, var(--panel-accent) 0%, #26c6da 100%);
+        background: linear-gradient(100deg, #0288d1 0%, var(--panel-accent) 35%, #26c6da 100%);
         transition: width 0.35s ease, background 0.25s ease;
         min-width: 0;
         pointer-events: none;
       }
 
+      .room-budget-bar-fill.over-budget {
+        background: linear-gradient(100deg, #f57c00 0%, #ff9800 55%, #ffb74d 100%);
+      }
+
       .room-budget-bar-fill.over {
-        background: linear-gradient(90deg, #ff9800 0%, var(--panel-danger) 100%);
+        background: linear-gradient(100deg, #e53935 0%, var(--panel-danger) 100%);
+      }
+
+      .room-budget-markers {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 2;
+        pointer-events: none;
+      }
+
+      .room-budget-marker {
+        position: absolute;
+        bottom: 3px;
+        transform: translateX(-50%);
+        border-radius: 2px;
+        pointer-events: auto;
+      }
+
+      .room-budget-marker--interval {
+        width: 2px;
+        height: 52%;
+        background: rgba(255, 255, 255, 0.38);
+        box-shadow: 0 0 4px rgba(0, 0, 0, 0.35);
+      }
+
+      .room-budget-marker--budget {
+        width: 3px;
+        height: 68%;
+        background: linear-gradient(180deg, #fff 0%, var(--panel-accent) 100%);
+        box-shadow: 0 0 10px rgba(3, 169, 244, 0.65), 0 0 2px rgba(0, 0, 0, 0.5);
+        z-index: 1;
       }
 
       .room-budget-bar-fill::after {
@@ -1290,7 +1352,7 @@ class EnergyPanel extends HTMLElement {
 
       .room-budget-bar-labels {
         position: relative;
-        z-index: 1;
+        z-index: 3;
         display: flex;
         flex-wrap: wrap;
         align-items: center;
@@ -1303,11 +1365,12 @@ class EnergyPanel extends HTMLElement {
 
       .room-budget-values {
         font-variant-numeric: tabular-nums;
-        font-weight: 700;
+        font-weight: 800;
         color: var(--primary-text-color);
+        letter-spacing: -0.02em;
         text-shadow:
-          0 0 6px rgba(0, 0, 0, 0.55),
-          0 1px 2px rgba(0, 0, 0, 0.85);
+          0 0 8px rgba(0, 0, 0, 0.65),
+          0 1px 3px rgba(0, 0, 0, 0.9);
       }
 
       .room-budget-sub {
@@ -1316,10 +1379,23 @@ class EnergyPanel extends HTMLElement {
         font-weight: 500;
         color: var(--secondary-text-color);
         text-shadow:
+          0 0 6px rgba(0, 0, 0, 0.55),
+          0 1px 2px rgba(0, 0, 0, 0.8);
+        flex: 1 1 8ch;
+        min-width: 0;
+      }
+
+      .room-budget-scale-hint {
+        margin-left: auto;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+        font-size: clamp(7px, 1.65vw, 10px);
+        color: var(--secondary-text-color);
+        opacity: 0.88;
+        text-shadow:
           0 0 6px rgba(0, 0, 0, 0.5),
           0 1px 2px rgba(0, 0, 0, 0.75);
-        flex: 1 1 auto;
-        min-width: 8ch;
+        white-space: nowrap;
       }
 
       .room-header-stats-inline {
@@ -1351,16 +1427,6 @@ class EnergyPanel extends HTMLElement {
       @keyframes pulse-danger {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.7; }
-      }
-
-      .room-total-day {
-        font-size: clamp(8px, 2vw, 11px);
-        font-weight: 500;
-        color: var(--secondary-text-color);
-        font-variant-numeric: tabular-nums;
-        line-height: 1.2;
-        cursor: pointer;
-        white-space: nowrap;
       }
 
       .room-event-chips {
@@ -4094,8 +4160,23 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
-  /** Used kWh today vs effective daily budget (boost days included when WS sends fields). */
+  /** Daily kWh bar: scale = max(room_kwh_intervals); fill vs scale; budget marker at effective kWh budget. */
   _roomBudgetUiState(roomData, roomConfig) {
+    const pe = this._config?.power_enforcement || {};
+    let rawIntervals = pe.room_kwh_intervals;
+    if (!Array.isArray(rawIntervals) || rawIntervals.length === 0) {
+      rawIntervals = [5, 10, 15, 20];
+    }
+    const intervalsSorted = [
+      ...new Set(
+        rawIntervals
+          .map((x) => Number(x))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    ].sort((a, b) => a - b);
+    const maxInterval =
+      intervalsSorted.length > 0 ? Math.max(...intervalsSorted) : 20;
+
     const baseRaw =
       roomData.kwh_budget != null
         ? Number(roomData.kwh_budget)
@@ -4107,12 +4188,48 @@ class EnergyPanel extends HTMLElement {
       if (Number.isFinite(e)) effKwh = Math.max(0, e);
     }
     const usedKwh = Math.max(0, (roomData.total_day_wh || 0) / 1000);
-    const showBar = effKwh > 0;
-    const ratio = showBar ? usedKwh / effKwh : 0;
-    const fillPct = showBar ? Math.min(100, ratio * 100) : 0;
-    const over = showBar && usedKwh > effKwh;
+    const showBar = maxInterval > 0;
+    const fillPct = showBar ? Math.min(100, (usedKwh / maxInterval) * 100) : 0;
+    const overScale = showBar && usedKwh > maxInterval;
+    const overBudget = showBar && effKwh > 0 && usedKwh > effKwh;
     const boost = baseKwh > 0 && effKwh > baseKwh + 0.0001;
-    return { usedKwh, effKwh, baseKwh, showBar, fillPct, over, boost };
+    const budgetMarkerPct =
+      showBar && effKwh > 0
+        ? Math.min(100, (effKwh / maxInterval) * 100)
+        : null;
+    const intervalMarkers = intervalsSorted.map((value) => ({
+      value,
+      pct: showBar ? Math.min(100, (value / maxInterval) * 100) : 0,
+    }));
+    return {
+      usedKwh,
+      effKwh,
+      baseKwh,
+      maxInterval,
+      intervalsSorted,
+      intervalMarkers,
+      budgetMarkerPct,
+      showBar,
+      fillPct,
+      over: overScale,
+      overBudget,
+      boost,
+    };
+  }
+
+  _roomBudgetMarkersHtml(budget) {
+    if (!budget.showBar) return '';
+    const iv = budget.intervalMarkers
+      .map(
+        ({ value, pct }) =>
+          `<span class="room-budget-marker room-budget-marker--interval has-tooltip" style="left:${pct}%" title="Daily kWh warning tier at ${value} kWh"></span>`,
+      )
+      .join('');
+    const b =
+      budget.budgetMarkerPct != null
+        ? `<span class="room-budget-marker room-budget-marker--budget has-tooltip" style="left:${budget.budgetMarkerPct}%" title="Daily kWh budget (effective) ${budget.effKwh.toFixed(2)} kWh — before phase thresholds"></span>`
+        : '';
+    return `<div class="room-budget-markers" aria-hidden="true">${iv}${b}</div>`;
   }
 
   _enforcementBadgeHtml(roomId, phase, inline = false) {
@@ -4168,17 +4285,26 @@ class EnergyPanel extends HTMLElement {
     const powerCycles = roomData.power_cycles || 0;
     const enfPhase = typeof roomData.enforcement_phase === 'number' ? roomData.enforcement_phase : 0;
     const budget = this._roomBudgetUiState(roomData, room);
-    const fillClass = `room-budget-bar-fill${budget.over ? ' over' : ''}`;
+    let fillClass = 'room-budget-bar-fill';
+    if (budget.over) fillClass += ' over';
+    else if (budget.overBudget) fillClass += ' over-budget';
     let budgetSub = '';
     if (!budget.showBar) {
-      budgetSub = 'Set a kWh budget in room settings';
+      budgetSub = 'Configure kWh intervals in Power Protection';
     } else if (budget.over) {
-      budgetSub = 'Over effective daily budget';
+      budgetSub = 'Above daily range';
+    } else if (budget.overBudget) {
+      budgetSub = 'Over effective budget';
     } else if (budget.boost) {
-      budgetSub = 'Boost day — budget raised before thresholds';
+      budgetSub = 'Boost budget active';
     } else {
-      budgetSub = 'Used vs budget (before phase thresholds)';
+      budgetSub = "Tap for today's chart";
     }
+    const markersHtml = this._roomBudgetMarkersHtml(budget);
+    const trackTitle =
+      "Open today's kWh chart — scale 0–" +
+      budget.maxInterval +
+      ' kWh; ticks = warning tiers, bright tick = daily budget';
 
     const thresholdPill = room.threshold > 0
       ? `<span class="room-threshold-pill has-tooltip" title="Room power threshold: spoken alert when exceeded">
@@ -4204,24 +4330,25 @@ class EnergyPanel extends HTMLElement {
               ${badgesHtml}
             </div>
             <div class="room-budget-lane">
-              <div class="room-budget-section${budget.showBar ? '' : ' room-budget-section--na'}" role="group" aria-label="Daily kilowatt-hours versus budget">
-                <div class="room-budget-bar-track">
+              <div class="room-budget-section${budget.showBar ? '' : ' room-budget-section--na'}" role="group" aria-label="Daily kilowatt-hours, scale and budget markers">
+                <div class="room-budget-bar-track graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}" title="${trackTitle.replace(/"/g, '&quot;')}">
                   <div class="${fillClass}" style="width: ${budget.showBar ? budget.fillPct : 0}%"></div>
+                  ${markersHtml}
                   <div class="room-budget-bar-labels">
-                    <span class="room-budget-values">${budget.showBar ? `${budget.usedKwh.toFixed(2)} / ${budget.effKwh.toFixed(2)} kWh` : '—'}</span>
+                    <span class="room-budget-values">${budget.showBar ? `${budget.usedKwh.toFixed(2)} kWh` : '—'}</span>
                     <span class="room-budget-sub">${budgetSub}</span>
+                    <span class="room-budget-scale-hint">${budget.showBar ? `0–${budget.maxInterval} kWh` : ''}</span>
                   </div>
                 </div>
               </div>
             </div>
             <div class="room-header-stats-inline">
-              <span class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</span>
-              <span class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</span>
               <div class="room-event-chips">
                 <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W ${warnings}</span>
                 <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S ${shutoffs}</span>
                 <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C ${powerCycles}</span>
               </div>
+              <span class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</span>
             </div>
           </div>
         </div>
