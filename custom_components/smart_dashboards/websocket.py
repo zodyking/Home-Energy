@@ -351,6 +351,9 @@ async def websocket_get_power_data(
 
         room_data["total_watts"] = round(room_data["total_watts"], 1)
         room_data["total_day_wh"] = round(room_data["total_day_wh"], 2)
+        base_k, eff_k = config_manager.get_room_kwh_budgets(room_id)
+        room_data["kwh_budget"] = round(base_k, 4)
+        room_data["kwh_budget_effective"] = round(eff_k, 4)
         if config_manager.is_room_enforcement_enabled(room_id):
             phase = int(
                 config_manager.get_enforcement_state(room_id).get("phase", 0) or 0

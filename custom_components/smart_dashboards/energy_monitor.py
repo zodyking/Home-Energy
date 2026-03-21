@@ -118,14 +118,7 @@ class EnergyMonitor:
         return now.weekday() in days
 
     def _effective_kwh_budget(self, base: float, now: datetime, tts_settings: dict) -> float:
-        base = float(base or 0)
-        if base <= 0:
-            return base
-        if not self._is_budget_boost_day(now, tts_settings):
-            return base
-        mult = float(tts_settings.get("budget_boost_multiplier") or 2)
-        mult = max(1.0, min(5.0, mult))
-        return round(base * mult, 4)
+        return self.config_manager.effective_kwh_budget_for_moment(base, now, tts_settings)
 
     @staticmethod
     def _budget_multiplier_tts_str(mult: float) -> str:
