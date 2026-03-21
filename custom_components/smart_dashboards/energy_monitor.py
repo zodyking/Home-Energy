@@ -222,6 +222,14 @@ class EnergyMonitor:
         slot_minutes = self._iter_budget_boost_slot_minutes(t0, t1, repeat_min, mo)
         now_min = now.hour * 60 + now.minute
         fired = set(self._budget_boost_slots_fired.get(today, []))
+        first_run_today = self._budget_boost_scheduled_fired_date != today
+        if first_run_today:
+            for sm in slot_minutes:
+                if sm < now_min:
+                    fired.add(sm)
+            self._budget_boost_slots_fired[today] = sorted(fired)
+            await self._async_save_budget_boost_slots()
+            self._budget_boost_scheduled_fired_date = today
         tmpl = (tts_settings.get("budget_boost_scheduled_msg") or "").strip() or DEFAULT_BUDGET_BOOST_SCHEDULED_MSG
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
         weekdays = tts_settings.get("budget_boost_weekdays") or []
@@ -235,6 +243,8 @@ class EnergyMonitor:
                 continue
             if sm in fired:
                 continue
+            if sm == now_min:
+                pass
             try:
                 message = tmpl.format(
                     prefix=prefix,
