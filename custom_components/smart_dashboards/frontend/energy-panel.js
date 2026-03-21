@@ -38,11 +38,8 @@ const ENFORCEMENT_PHASE_TITLES = [
   'Power enforcement Phase 1: TTS volume escalates with repeated threshold warnings.',
   'Power enforcement Phase 2: outlets may be power-cycled when warnings continue.',
 ];
-const ENFORCEMENT_PHASE_LABELS = [
-  'Power enforcement + Phase 0',
-  'Power enforcement + Phase 1',
-  'Power enforcement + Phase 2',
-];
+/** Short header label next to shield icon (index = phase 0–2). */
+const ENFORCEMENT_BADGE_LABELS = ['Enforced', 'Phase 1', 'Phase 2'];
 
 class EnergyPanel extends HTMLElement {
   constructor() {
@@ -553,6 +550,35 @@ class EnergyPanel extends HTMLElement {
         totalDaySpan.textContent = `${(room.total_day_wh / 1000).toFixed(2)} kWh today`;
       }
 
+      const budgetState = this._roomBudgetUiState(room, roomConfig);
+      const barRoot = roomCard.querySelector('.room-budget-bar');
+      const barFill = roomCard.querySelector('.room-budget-bar-fill');
+      const budgetValEl = roomCard.querySelector('.room-budget-values');
+      const budgetSubEl = roomCard.querySelector('.room-budget-sub');
+      if (barRoot) {
+        barRoot.classList.toggle('room-budget-bar--na', !budgetState.showBar);
+      }
+      if (barFill) {
+        barFill.style.width = `${budgetState.showBar ? budgetState.fillPct : 0}%`;
+        barFill.classList.toggle('over', budgetState.over);
+      }
+      if (budgetValEl) {
+        budgetValEl.textContent = budgetState.showBar
+          ? `${budgetState.usedKwh.toFixed(2)} / ${budgetState.effKwh.toFixed(2)} kWh`
+          : '—';
+      }
+      if (budgetSubEl) {
+        if (!budgetState.showBar) {
+          budgetSubEl.textContent = 'Set a kWh budget in room settings';
+        } else if (budgetState.over) {
+          budgetSubEl.textContent = 'Over effective daily budget';
+        } else if (budgetState.boost) {
+          budgetSubEl.textContent = 'Boost day — budget raised before thresholds';
+        } else {
+          budgetSubEl.textContent = 'Used vs budget (before phase thresholds)';
+        }
+      }
+
       const pe = this._config?.power_enforcement || {};
       const enfOn = pe.enabled && (pe.rooms_enabled || []).includes(room.id);
       const badge = roomCard.querySelector('.enforcement-badge');
@@ -563,7 +589,7 @@ class EnergyPanel extends HTMLElement {
         badge.className = `enforcement-badge enforcement-phase-${p} has-tooltip`;
         badge.setAttribute('title', ENFORCEMENT_PHASE_TITLES[p]);
         const lbl = badge.querySelector('.enforcement-badge-label');
-        if (lbl) lbl.textContent = ENFORCEMENT_PHASE_LABELS[p];
+        if (lbl) lbl.textContent = ENFORCEMENT_BADGE_LABELS[p];
       }
 
       // Update per-room event counts
@@ -1094,53 +1120,72 @@ class EnergyPanel extends HTMLElement {
         background: var(--card-bg);
         border-radius: 10px;
         border: 1px solid var(--card-border);
-        overflow: hidden;
+        overflow: visible;
         height: fit-content;
         width: 100%;
       }
 
       .room-header {
-        display: flex;
-        flex-direction: row;
-        flex-wrap: nowrap;
-        align-items: center;
-        gap: clamp(8px, 2vw, 12px);
-        padding: clamp(10px, 2.2vw, 14px) clamp(10px, 2.5vw, 14px);
-        background: linear-gradient(135deg, rgba(3, 169, 244, 0.06) 0%, transparent 100%);
+        padding: clamp(8px, 2vw, 14px) clamp(10px, 2.5vw, 14px);
+        background: linear-gradient(135deg, rgba(3, 169, 244, 0.07) 0%, transparent 55%);
         border-bottom: 1px solid var(--card-border);
-        overflow-x: auto;
-        overflow-y: hidden;
-        -webkit-overflow-scrolling: touch;
+        border-radius: 10px 10px 0 0;
+      }
+
+      .room-header-top {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-rows: auto auto;
+        column-gap: clamp(8px, 2vw, 12px);
+        row-gap: clamp(4px, 1.2vw, 6px);
+        align-items: start;
+      }
+
+      .room-header-icon {
+        grid-column: 1;
+        grid-row: 1 / span 2;
+        align-self: center;
+      }
+
+      .room-header-title {
+        grid-column: 2;
+        grid-row: 1;
+        min-width: 0;
+      }
+
+      .room-header-meta {
+        grid-column: 2;
+        grid-row: 2;
+        min-width: 0;
+      }
+
+      .room-header-stats {
+        grid-column: 3;
+        grid-row: 1 / span 2;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        justify-content: center;
+        gap: clamp(2px, 0.8vw, 5px);
+        min-width: 0;
+        text-align: right;
       }
 
       .room-meta-strip {
         display: flex;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         align-items: center;
         gap: clamp(4px, 1.2vw, 8px);
-        flex-shrink: 0;
-      }
-
-      .room-header-aside {
-        display: flex;
-        flex-wrap: nowrap;
-        align-items: center;
-        justify-content: flex-end;
-        gap: clamp(8px, 1.8vw, 12px);
-        flex-shrink: 0;
-        margin-left: auto;
       }
 
       .room-meta-strip .threshold-badge {
-        flex-shrink: 0;
-        white-space: nowrap;
         font-size: clamp(8px, 2vw, 10px);
       }
 
       .room-icon {
-        width: 28px;
-        height: 28px;
-        border-radius: 6px;
+        width: clamp(26px, 7vw, 34px);
+        height: clamp(26px, 7vw, 34px);
+        border-radius: clamp(5px, 1.2vw, 8px);
         background: var(--panel-accent-dim);
         display: flex;
         align-items: center;
@@ -1148,31 +1193,28 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-icon svg {
-        width: 16px;
-        height: 16px;
+        width: clamp(14px, 3.8vw, 18px);
+        height: clamp(14px, 3.8vw, 18px);
         fill: var(--panel-accent);
       }
 
       .room-name {
-        flex: 0 1 auto;
-        min-width: 0;
-        max-width: min(38vw, 220px);
         margin: 0;
-        font-size: clamp(12px, 3vw, 15px);
+        font-size: clamp(11px, 2.8vw, 16px);
         font-weight: 600;
-        line-height: 1.2;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        line-height: 1.25;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        hyphens: auto;
       }
 
       .room-meta {
-        font-size: clamp(9px, 2.35vw, 11px);
+        font-size: clamp(8px, 2.2vw, 11px);
         color: var(--secondary-text-color);
         display: flex;
         align-items: center;
         gap: clamp(4px, 1.2vw, 8px);
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
       }
 
       .room-meta svg {
@@ -1195,15 +1237,58 @@ class EnergyPanel extends HTMLElement {
         white-space: nowrap;
       }
 
-      .room-stats {
+      .room-budget-bar {
+        margin-top: clamp(8px, 2vw, 11px);
         display: flex;
         flex-direction: column;
-        align-items: flex-end;
-        justify-content: center;
-        text-align: right;
-        flex-shrink: 0;
+        gap: clamp(3px, 1vw, 5px);
         min-width: 0;
-        gap: 2px;
+      }
+
+      .room-budget-bar--na .room-budget-bar-track {
+        opacity: 0.35;
+      }
+
+      .room-budget-bar-track {
+        height: clamp(5px, 1.4vw, 7px);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+        border: 1px solid var(--card-border);
+      }
+
+      .room-budget-bar-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--panel-accent) 0%, #26c6da 100%);
+        transition: width 0.35s ease, background 0.25s ease;
+        min-width: 0;
+      }
+
+      .room-budget-bar-fill.over {
+        background: linear-gradient(90deg, #ff9800 0%, var(--panel-danger) 100%);
+      }
+
+      .room-budget-bar-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: clamp(4px, 1.5vw, 10px);
+        font-size: clamp(8px, 2vw, 11px);
+        color: var(--secondary-text-color);
+        line-height: 1.3;
+      }
+
+      .room-budget-values {
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+
+      .room-budget-sub {
+        font-variant-numeric: tabular-nums;
+        opacity: 0.9;
       }
 
       .view-tabs {
@@ -1450,13 +1535,13 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-total-watts {
-        font-size: clamp(11px, 2.9vw, 16px);
+        font-size: clamp(10px, 2.7vw, 16px);
         font-weight: 700;
         color: var(--panel-accent);
         font-variant-numeric: tabular-nums;
-        white-space: nowrap;
         line-height: 1.15;
         max-width: 100%;
+        text-align: right;
       }
 
       .room-total-watts.over-threshold {
@@ -1470,19 +1555,21 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-total-day {
-        font-size: clamp(9px, 2.2vw, 11px);
+        font-size: clamp(8px, 2vw, 11px);
         font-weight: 500;
         color: var(--secondary-text-color);
         font-variant-numeric: tabular-nums;
-        line-height: 1.2;
-        white-space: nowrap;
+        line-height: 1.25;
         cursor: pointer;
         margin: 0;
         max-width: 100%;
+        text-align: right;
+        word-break: break-word;
       }
 
       .room-content {
         padding: 10px 12px;
+        border-radius: 0 0 10px 10px;
         overflow-x: auto;
         overflow-y: hidden;
         /* Hide scrollbar for Chrome, Safari and Opera */
@@ -3940,6 +4027,27 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  /** Used kWh today vs effective daily budget (boost days included when WS sends fields). */
+  _roomBudgetUiState(roomData, roomConfig) {
+    const baseRaw =
+      roomData.kwh_budget != null
+        ? Number(roomData.kwh_budget)
+        : Number(roomConfig?.kwh_budget ?? 5);
+    const baseKwh = Number.isFinite(baseRaw) ? Math.max(0, baseRaw) : 0;
+    let effKwh = baseKwh;
+    if (roomData.kwh_budget_effective != null) {
+      const e = Number(roomData.kwh_budget_effective);
+      if (Number.isFinite(e)) effKwh = Math.max(0, e);
+    }
+    const usedKwh = Math.max(0, (roomData.total_day_wh || 0) / 1000);
+    const showBar = effKwh > 0;
+    const ratio = showBar ? usedKwh / effKwh : 0;
+    const fillPct = showBar ? Math.min(100, ratio * 100) : 0;
+    const over = showBar && usedKwh > effKwh;
+    const boost = baseKwh > 0 && effKwh > baseKwh + 0.0001;
+    return { usedKwh, effKwh, baseKwh, showBar, fillPct, over, boost };
+  }
+
   _enforcementBadgeHtml(roomId, phase) {
     const pe = this._config?.power_enforcement || {};
     const roomsEnabled = pe.rooms_enabled || [];
@@ -3950,7 +4058,7 @@ class EnergyPanel extends HTMLElement {
     return `
               <span class="enforcement-badge enforcement-phase-${p} has-tooltip" title="${esc(ENFORCEMENT_PHASE_TITLES[p])}">
                 <svg viewBox="0 0 24 24" style="width: clamp(10px, 2.5vw, 12px); height: clamp(10px, 2.5vw, 12px); flex-shrink: 0; fill: #fff;">${icons.shield}</svg>
-                <span class="enforcement-badge-label">${ENFORCEMENT_PHASE_LABELS[p]}</span>
+                <span class="enforcement-badge-label">${ENFORCEMENT_BADGE_LABELS[p]}</span>
               </span>`;
   }
 
@@ -3970,6 +4078,8 @@ class EnergyPanel extends HTMLElement {
 
   _renderRoomCard(room) {
     const roomId = room.id || (room.name || '').toLowerCase().replace(/\s+/g, '_');
+    const baseBudget = Number(room.kwh_budget);
+    const fallbackBudget = Number.isFinite(baseBudget) ? baseBudget : 5;
     const roomData = this._powerData?.rooms?.find(r => r.id === roomId) || {
       total_watts: 0,
       total_day_wh: 0,
@@ -3977,6 +4087,8 @@ class EnergyPanel extends HTMLElement {
       shutoffs: 0,
       power_cycles: 0,
       outlets: [],
+      kwh_budget: fallbackBudget,
+      kwh_budget_effective: fallbackBudget,
     };
 
     const isOverThreshold = room.threshold > 0 && roomData.total_watts > room.threshold;
@@ -3984,30 +4096,58 @@ class EnergyPanel extends HTMLElement {
     const shutoffs = roomData.shutoffs || 0;
     const powerCycles = roomData.power_cycles || 0;
     const enfPhase = typeof roomData.enforcement_phase === 'number' ? roomData.enforcement_phase : 0;
+    const budget = this._roomBudgetUiState(roomData, room);
+    const barRootClass = budget.showBar ? 'room-budget-bar' : 'room-budget-bar room-budget-bar--na';
+    const fillClass = `room-budget-bar-fill${budget.over ? ' over' : ''}`;
+    let budgetSub = '';
+    if (!budget.showBar) {
+      budgetSub = 'Set a kWh budget in room settings';
+    } else if (budget.over) {
+      budgetSub = 'Over effective daily budget';
+    } else if (budget.boost) {
+      budgetSub = 'Boost day — budget raised before thresholds';
+    } else {
+      budgetSub = 'Used vs budget (before phase thresholds)';
+    }
 
     return `
       <div class="room-card" data-room-id="${roomId}">
         <div class="room-header">
-          <div class="room-icon">
-            <svg viewBox="0 0 24 24">${icons.room}</svg>
-          </div>
-          <h3 class="room-name" title="${(room.name || '').replace(/"/g, '&quot;').replace(/</g, '&lt;')}">${(room.name || '').replace(/</g, '&lt;')}</h3>
-          <div class="room-meta-strip room-meta" title="Threshold and events">
-            ${room.threshold > 0 ? `
-              <span class="threshold-badge has-tooltip" title="Room power limit; spoken alert when exceeded">
-                <svg viewBox="0 0 24 24">${icons.warning}</svg>
-                ${room.threshold}W
-              </span>
-            ` : ''}
-            <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W:${warnings}</span>
-            <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S:${shutoffs}</span>
-            <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C:${powerCycles}</span>
-          </div>
-          <div class="room-header-aside">
-            ${this._enforcementBadgeHtml(roomId, enfPhase)}
-            <div class="room-stats">
+          <div class="room-header-top">
+            <div class="room-header-icon">
+              <div class="room-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">${icons.room}</svg>
+              </div>
+            </div>
+            <div class="room-header-title">
+              <h3 class="room-name">${(room.name || '').replace(/</g, '&lt;')}</h3>
+            </div>
+            <div class="room-header-meta">
+              <div class="room-meta-strip room-meta">
+                ${room.threshold > 0 ? `
+                  <span class="threshold-badge has-tooltip" title="Room power limit; spoken alert when exceeded">
+                    <svg viewBox="0 0 24 24">${icons.warning}</svg>
+                    ${room.threshold}W
+                  </span>
+                ` : ''}
+                <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W:${warnings}</span>
+                <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S:${shutoffs}</span>
+                <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C:${powerCycles}</span>
+              </div>
+            </div>
+            <div class="room-header-stats">
+              ${this._enforcementBadgeHtml(roomId, enfPhase)}
               <div class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</div>
               <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}">${(roomData.total_day_wh / 1000).toFixed(2)} kWh today</div>
+            </div>
+          </div>
+          <div class="${barRootClass}" role="group" aria-label="Daily kilowatt-hours versus budget">
+            <div class="room-budget-bar-track">
+              <div class="${fillClass}" style="width: ${budget.showBar ? budget.fillPct : 0}%"></div>
+            </div>
+            <div class="room-budget-bar-meta">
+              <span class="room-budget-values">${budget.showBar ? `${budget.usedKwh.toFixed(2)} / ${budget.effKwh.toFixed(2)} kWh` : '—'}</span>
+              <span class="room-budget-sub">${budgetSub}</span>
             </div>
           </div>
         </div>

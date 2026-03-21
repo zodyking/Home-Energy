@@ -149,6 +149,50 @@ class ConfigManager:
         pe = self.energy_config.get("power_enforcement", {})
         return bool(pe.get("enabled", False)) and room_id in pe.get("rooms_enabled", [])
 
+    @staticmethod
+    def _is_budget_boost_day(now, tts_settings: dict) -> bool:
+        """True when today's weekday matches budget boost schedule and multiplier > 1."""
+        if not tts_settings.get("budget_boost_enabled"):
+            return False
+        mult = float(tts_settings.get("budget_boost_multiplier") or 1)
+        if mult <= 1:
+            return False
+        days = tts_settings.get("budget_boost_weekdays") or []
+        if not days:
+            return False
+        try:
+            return now.weekday() in days
+        except (TypeError, AttributeError):
+            return False
+
+    @classmethod
+    def effective_kwh_budget_for_moment(
+        cls, base_kwh: float, now, tts_settings: dict | None
+    ) -> float:
+        """Daily kWh budget after boost multiplier (matches energy_monitor logic)."""
+        base = float(base_kwh or 0)
+        if base <= 0:
+            return base
+        tts = tts_settings or {}
+        if not cls._is_budget_boost_day(now, tts):
+            return base
+        mult = float(tts.get("budget_boost_multiplier") or 2)
+        mult = max(1.0, min(5.0, mult))
+        return round(base * mult, 4)
+
+    def get_room_kwh_budgets(self, room_id: str) -> tuple[float, float]:
+        """Return (base_kwh_budget, effective_kwh_budget) for local now."""
+        now = dt_util.now()
+        base = 0.0
+        for r in self.energy_config.get("rooms", []):
+            rid = r.get("id", r["name"].lower().replace(" ", "_"))
+            if rid == room_id:
+                base = float(r.get("kwh_budget", 5) or 0)
+                break
+        tts = self.energy_config.get("tts_settings") or {}
+        eff = self.effective_kwh_budget_for_moment(base, now, tts)
+        return (base, eff)
+
     async def async_load(self) -> None:
         """Load configuration from file."""
         try:
