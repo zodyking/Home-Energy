@@ -1619,12 +1619,15 @@ class EnergyMonitor:
         # Check phase resets for each room
         phase1_reset = pe.get("phase1_reset_minutes", 60)
         phase2_reset = pe.get("phase2_reset_minutes", 30)
+        now_pe = dt_util.now()
+        raw_kwh_intervals = pe.get("room_kwh_intervals", [5, 10, 15, 20])
 
         for room in rooms:
             room_id = room.get("id", room["name"].lower().replace(" ", "_"))
             room_name = room.get("name", room_id)
             media_player = room.get("media_player")
             volume = float(room.get("volume", 0.7))
+            base_kwh_budget = float(room.get("kwh_budget", 5) or 5)
 
             if room_id not in rooms_enabled:
                 continue
@@ -1650,9 +1653,18 @@ class EnergyMonitor:
                     except Exception as e:
                         _LOGGER.error("Failed to send phase reset TTS: %s", e)
 
-            # Check room kWh intervals
-            intervals = pe.get("room_kwh_intervals", [5, 10, 15, 20])
-            interval_hit = await self.config_manager.async_should_send_room_kwh_alert(room_id, intervals)
+            # Check room kWh intervals (same tier filter as dashboard bar / boost)
+            filtered_intervals = self.config_manager.filter_room_kwh_intervals_for_alerts(
+                raw_kwh_intervals,
+                base_kwh_budget,
+                now_pe,
+                tts_settings,
+            )
+            interval_hit = None
+            if filtered_intervals:
+                interval_hit = await self.config_manager.async_should_send_room_kwh_alert(
+                    room_id, filtered_intervals
+                )
             if interval_hit is not None and media_player:
                 percentage = self.config_manager.get_room_percentage_of_total(room_id)
                 msg_template = tts_settings.get("room_kwh_warn_msg", "")
