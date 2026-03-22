@@ -181,8 +181,9 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
-  async _loadPowerData() {
-    if (!this._hass || this._showSettings) return;
+  async _loadPowerData(options = {}) {
+    if (!this._hass) return;
+    if (this._showSettings && !options.force) return;
 
     try {
       this._powerData = await this._hass.callWS({ type: 'smart_dashboards/get_power_data' });
@@ -560,7 +561,6 @@ class EnergyPanel extends HTMLElement {
       const barFill = roomCard.querySelector('.room-budget-bar-fill');
       const budgetValEl = roomCard.querySelector('.room-budget-values');
       const budgetSubEl = roomCard.querySelector('.room-budget-sub');
-      const scaleHintEl = roomCard.querySelector('.room-budget-scale-hint');
       if (budgetSection) {
         budgetSection.classList.toggle('room-budget-section--na', !budgetState.showBar);
       }
@@ -575,17 +575,7 @@ class EnergyPanel extends HTMLElement {
           : '—';
       }
       if (budgetSubEl) {
-        if (!budgetState.showBar) {
-          budgetSubEl.textContent = 'Configure kWh intervals';
-        } else if (budgetState.over) {
-          budgetSubEl.textContent = 'Over range';
-        } else if (budgetState.overBudget) {
-          budgetSubEl.textContent = 'Over budget';
-        } else if (budgetState.boost) {
-          budgetSubEl.textContent = 'Boost active';
-        } else {
-          budgetSubEl.textContent = '';
-        }
+        budgetSubEl.textContent = this._budgetBarSubtitle(budgetState);
       }
       const maxIv = budgetState.maxInterval;
       roomCard.querySelectorAll('.room-budget-marker-wrap[data-kwh]').forEach((el) => {
@@ -1507,13 +1497,15 @@ class EnergyPanel extends HTMLElement {
         position: relative;
         z-index: 3;
         display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: clamp(4px, 1.2vw, 8px);
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 2px;
         width: 100%;
         min-width: 0;
+        max-width: 55%;
         font-size: clamp(8px, 1.85vw, 11px);
-        line-height: 1.25;
+        line-height: 1.2;
       }
 
       .room-budget-values {
@@ -1530,12 +1522,17 @@ class EnergyPanel extends HTMLElement {
         font-variant-numeric: tabular-nums;
         font-style: italic;
         font-weight: 500;
+        font-size: clamp(7px, 1.5vw, 9px);
         color: var(--secondary-text-color);
         text-shadow:
           0 0 6px rgba(0, 0, 0, 0.55),
           0 1px 2px rgba(0, 0, 0, 0.8);
-        flex: 1 1 8ch;
+        flex: 0 1 auto;
         min-width: 0;
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .room-budget-scale-hint {
@@ -4321,6 +4318,57 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  /** Match Python datetime.weekday(): Monday=0 … Sunday=6. */
+  _weekdayPythonFromDate(d) {
+    const js = d.getDay();
+    return (js + 6) % 7;
+  }
+
+  _isBudgetBoostDayClient(tts) {
+    const t = tts || {};
+    if (!t.budget_boost_enabled) return false;
+    const mult = parseFloat(t.budget_boost_multiplier) || 1;
+    if (mult <= 1) return false;
+    const days = t.budget_boost_weekdays;
+    if (!Array.isArray(days) || days.length === 0) return false;
+    const wk = this._weekdayPythonFromDate(new Date());
+    return days.some((d) => parseInt(String(d), 10) === wk);
+  }
+
+  /** Mirror config_manager.effective_kwh_budget_for_moment (local date). */
+  _effectiveKwhBudgetClient(baseKwh, tts) {
+    const base = Math.max(0, Number(baseKwh) || 0);
+    if (base <= 0) return base;
+    if (!this._isBudgetBoostDayClient(tts)) return base;
+    const mult = Math.max(1, Math.min(5, parseFloat((tts || {}).budget_boost_multiplier) || 2));
+    return Math.round(base * mult * 10000) / 10000;
+  }
+
+  _resolvePowerRoomRow(roomId) {
+    const rooms = this._powerData?.rooms;
+    if (!Array.isArray(rooms) || roomId == null || roomId === '') return null;
+    let row = rooms.find((r) => r.id === roomId);
+    if (row) return row;
+    const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '_');
+    const nid = norm(roomId);
+    row = rooms.find((r) => norm(r.id) === nid);
+    return row || null;
+  }
+
+  _budgetBarSubtitle(b) {
+    if (!b.showBar) return 'Configure kWh intervals';
+    if (b.over) return 'Over range';
+    if (b.overBudget) {
+      const aud = b.audibleKwh;
+      if (aud != null && b.usedKwh + 1e-6 < aud) {
+        return `Past ${b.effKwh.toFixed(1)} kWh budget`;
+      }
+      return 'Over budget';
+    }
+    if (b.boost) return 'Boost active';
+    return '';
+  }
+
   /** Daily kWh bar: scale = max(room_kwh_intervals); fill vs scale; budget marker at effective kWh budget. */
   _roomBudgetUiState(roomData, roomConfig) {
     const pe = this._config?.power_enforcement || {};
@@ -4338,15 +4386,21 @@ class EnergyPanel extends HTMLElement {
     const maxInterval =
       intervalsSorted.length > 0 ? Math.max(...intervalsSorted) : 20;
 
-    const baseRaw =
-      roomData.kwh_budget != null
-        ? Number(roomData.kwh_budget)
+    const cfgBase = Number(roomConfig?.kwh_budget);
+    const dataBase = Number(roomData.kwh_budget);
+    const baseRaw = Number.isFinite(cfgBase)
+      ? cfgBase
+      : Number.isFinite(dataBase)
+        ? dataBase
         : Number(roomConfig?.kwh_budget ?? 5);
     const baseKwh = Number.isFinite(baseRaw) ? Math.max(0, baseRaw) : 0;
+    const tts = this._config?.tts_settings || {};
     let effKwh = baseKwh;
-    if (roomData.kwh_budget_effective != null) {
-      const e = Number(roomData.kwh_budget_effective);
-      if (Number.isFinite(e)) effKwh = Math.max(0, e);
+    const apiEff = roomData.kwh_budget_effective;
+    if (apiEff != null && Number.isFinite(Number(apiEff))) {
+      effKwh = Math.max(0, Number(apiEff));
+    } else {
+      effKwh = this._effectiveKwhBudgetClient(baseKwh, tts);
     }
     const usedKwh = Math.max(0, (roomData.total_day_wh || 0) / 1000);
     const showBar = maxInterval > 0;
@@ -4410,9 +4464,12 @@ class EnergyPanel extends HTMLElement {
     const chunks = [];
     for (const m of budget.plottedIntervalMarkers) {
       if (m.kind === 'audible') {
+        const tip = esc(
+          `Voice alerts at ${m.value} kWh and above · Effective daily budget ${budget.effKwh.toFixed(2)} kWh`,
+        );
         chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
-            <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${esc(`Audible Warning Active · ${m.value} kWh tier`)}"></span>
-            <span class="room-budget-marker-label room-budget-marker-label--audible">Audible Warning Active</span>
+            <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${tip}"></span>
+            <span class="room-budget-marker-label room-budget-marker-label--audible">Voice tier · ${m.value} kWh</span>
           </div>`);
         continue;
       }
@@ -4466,7 +4523,7 @@ class EnergyPanel extends HTMLElement {
     const roomId = room.id || (room.name || '').toLowerCase().replace(/\s+/g, '_');
     const baseBudget = Number(room.kwh_budget);
     const fallbackBudget = Number.isFinite(baseBudget) ? baseBudget : 5;
-    const roomData = this._powerData?.rooms?.find(r => r.id === roomId) || {
+    const roomData = this._resolvePowerRoomRow(roomId) || {
       total_watts: 0,
       total_day_wh: 0,
       warnings: 0,
@@ -4474,7 +4531,6 @@ class EnergyPanel extends HTMLElement {
       power_cycles: 0,
       outlets: [],
       kwh_budget: fallbackBudget,
-      kwh_budget_effective: fallbackBudget,
     };
 
     const isOverThreshold = room.threshold > 0 && roomData.total_watts > room.threshold;
@@ -4486,21 +4542,12 @@ class EnergyPanel extends HTMLElement {
     let fillClass = 'room-budget-bar-fill';
     if (budget.over) fillClass += ' over';
     else if (budget.overBudget) fillClass += ' over-budget';
-    let budgetSub = '';
-    if (!budget.showBar) {
-      budgetSub = 'Configure kWh intervals';
-    } else if (budget.over) {
-      budgetSub = 'Over range';
-    } else if (budget.overBudget) {
-      budgetSub = 'Over budget';
-    } else if (budget.boost) {
-      budgetSub = 'Boost active';
-    }
+    const budgetSub = this._budgetBarSubtitle(budget);
     const markersHtml = this._roomBudgetMarkersHtml(budget);
     const trackTitle =
       "Open today's kWh chart — scale 0–" +
       budget.maxInterval +
-      ' kWh; blue tick = first audible warning tier' +
+      ' kWh; blue tick = first voice alert tier' +
       (budget.showSeparateBudget ? '; dashed tick = daily budget' : '');
 
     const thresholdPill = room.threshold > 0
@@ -7051,6 +7098,7 @@ class EnergyPanel extends HTMLElement {
       this._config.power_enforcement = pe;
       this._config.tts_settings = ttsMerged;
       showToast(this.shadowRoot, 'Power enforcement settings saved!', 'success');
+      await this._loadPowerData({ force: true });
     } catch (e) {
       console.error('Failed to save enforcement settings:', e);
       const msg = (e && (e.message || e.error_message || e)) ? String(e.message || e.error_message || e) : 'Unknown error';
@@ -7357,9 +7405,9 @@ class EnergyPanel extends HTMLElement {
 
       this._config = config;
       showToast(this.shadowRoot, 'Settings saved!', 'success');
-      
-      // Refresh the same page instead of going back to dashboard
-      setTimeout(() => {
+
+      setTimeout(async () => {
+        await this._loadPowerData({ force: true });
         this._render();
         this._startRefresh();
       }, 500);
@@ -7579,9 +7627,9 @@ class EnergyPanel extends HTMLElement {
 
       this._config = { ...this._config, ...config };
       showToast(this.shadowRoot, 'Room saved!', 'success');
-      
-      // Refresh the page to show updated data
-      setTimeout(() => {
+
+      setTimeout(async () => {
+        await this._loadPowerData({ force: true });
         this._render();
         this._startRefresh();
       }, 500);

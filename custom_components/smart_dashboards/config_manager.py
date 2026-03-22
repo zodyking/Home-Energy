@@ -161,9 +161,47 @@ class ConfigManager:
         if not days:
             return False
         try:
-            return now.weekday() in days
+            wk = now.weekday()
+            for d in days:
+                try:
+                    if int(d) == wk:
+                        return True
+                except (TypeError, ValueError):
+                    continue
+            return False
         except (TypeError, AttributeError):
             return False
+
+    @classmethod
+    def filter_room_kwh_intervals_for_alerts(
+        cls,
+        raw_intervals: Any,
+        base_kwh: float,
+        now,
+        tts_settings: dict | None,
+    ) -> list[int]:
+        """Intervals used for room kWh TTS; matches energy-panel plotted tiers (boost vs base)."""
+        if not isinstance(raw_intervals, list) or len(raw_intervals) == 0:
+            raw_intervals = [5, 10, 15, 20]
+        vals: list[int] = []
+        for x in raw_intervals:
+            try:
+                n = int(x)
+                if n > 0:
+                    vals.append(n)
+            except (TypeError, ValueError):
+                continue
+        vals = sorted(set(vals))
+        if not vals:
+            return []
+        base = max(0.0, float(base_kwh or 0))
+        eff = cls.effective_kwh_budget_for_moment(base, now, tts_settings or {})
+        boost = base > 1e-12 and eff > base + 1e-9
+        if boost:
+            return [v for v in vals if v >= eff - 1e-9]
+        if base > 0:
+            return [v for v in vals if v >= base - 1e-9]
+        return list(vals)
 
     @classmethod
     def effective_kwh_budget_for_moment(
@@ -305,7 +343,31 @@ class ConfigManager:
             elif isinstance(val, (list, dict)) and len(val or []) == 0:
                 merged[key] = existing.get(key, default_energy.get(key))
         self._config["energy"] = self._validate_energy_config(merged)
+        await self.async_prune_kwh_alerts_sent_for_current_config()
         await self.async_save()
+
+    async def async_prune_kwh_alerts_sent_for_current_config(self) -> None:
+        """Drop kwh_alerts_sent entries that are no longer eligible tiers after config change."""
+        self._ensure_enforcement_state_for_today()
+        now = dt_util.now()
+        tts = self.energy_config.get("tts_settings") or {}
+        pe = self.energy_config.get("power_enforcement") or {}
+        raw_iv = pe.get("room_kwh_intervals", [5, 10, 15, 20])
+        changed = False
+        for room in self.energy_config.get("rooms", []):
+            room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+            base_b = float(room.get("kwh_budget", 5) or 0)
+            allowed = set(
+                self.filter_room_kwh_intervals_for_alerts(raw_iv, base_b, now, tts)
+            )
+            state = self.get_enforcement_state(room_id)
+            sent = list(state.get("kwh_alerts_sent") or [])
+            new_sent = [x for x in sent if x in allowed]
+            if new_sent != sent:
+                state["kwh_alerts_sent"] = new_sent
+                changed = True
+        if changed:
+            await self._async_save_enforcement_state()
 
     def _validate_energy_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """Validate and sanitize energy configuration."""
