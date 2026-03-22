@@ -4427,11 +4427,7 @@ class EnergyPanel extends HTMLElement {
       audiblePct != null &&
       Math.abs(budgetMarkerPct - audiblePct) < 0.9;
     const showSeparateBudget = Boolean(
-      !boost &&
-        budgetMarkerPct != null &&
-        showBar &&
-        effKwh > 0 &&
-        !budgetCoincidesAudible,
+      budgetMarkerPct != null && showBar && effKwh > 0,
     );
     const plottedIntervalMarkers = plottedIntervals.map((value) => ({
       value,
@@ -4469,7 +4465,7 @@ class EnergyPanel extends HTMLElement {
         );
         chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
             <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${tip}"></span>
-            <span class="room-budget-marker-label room-budget-marker-label--audible">Voice tier · ${m.value} kWh</span>
+            <span class="room-budget-marker-label room-budget-marker-label--audible">${m.value} kWh</span>
           </div>`);
         continue;
       }
