@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Home Energy — room card export (reference)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--
+    Purpose: Static export of the room card structure + header styles from
+    custom_components/smart_dashboards/frontend/energy-panel.js (_renderRoomCard + related CSS).
+    Not loaded by Home Assistant; for design / documentation only.
+    Source revision: matches energy-panel.js room-card / room-header as of export.
+  -->
+  <style>
+    :root {
+      --card-bg: #1e1e1e;
+      --card-border: rgba(255, 255, 255, 0.1);
+      --panel-accent: #03a9f4;
+      --panel-accent-dim: rgba(3, 169, 244, 0.15);
+      --panel-danger: #ff5252;
+      --secondary-text-color: #9e9e9e;
+      --primary-text-color: #e0e0e0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #121212;
+      color: var(--primary-text-color);
+    }
+    .demo-wrap { max-width: 720px; margin: 0 auto; }
+
+    .room-card {
+      background: var(--card-bg);
+      border-radius: 10px;
+      border: 1px solid var(--card-border);
+      overflow: hidden;
+      height: fit-content;
+      width: 100%;
+    }
+
+    .room-header {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      gap: clamp(8px, 2vw, 12px);
+      padding: clamp(10px, 2.2vw, 14px) clamp(10px, 2.5vw, 14px);
+      background: linear-gradient(135deg, rgba(3, 169, 244, 0.06) 0%, transparent 100%);
+      border-bottom: 1px solid var(--card-border);
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .room-meta-strip {
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: center;
+      gap: clamp(4px, 1.2vw, 8px);
+      flex-shrink: 0;
+    }
+
+    .room-header-aside {
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: clamp(8px, 1.8vw, 12px);
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+
+    .room-meta-strip .threshold-badge {
+      flex-shrink: 0;
+      white-space: nowrap;
+      font-size: clamp(8px, 2vw, 10px);
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--secondary-text-color);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .room-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: var(--panel-accent-dim);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .room-icon svg {
+      width: 16px;
+      height: 16px;
+      fill: var(--panel-accent);
+    }
+
+    .room-name {
+      flex: 0 1 auto;
+      min-width: 0;
+      max-width: min(38vw, 220px);
+      margin: 0;
+      font-size: clamp(12px, 3vw, 15px);
+      font-weight: 600;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--primary-text-color);
+    }
+
+    .room-meta {
+      font-size: clamp(9px, 2.35vw, 11px);
+      color: var(--secondary-text-color);
+      display: flex;
+      align-items: center;
+      gap: clamp(4px, 1.2vw, 8px);
+      flex-wrap: nowrap;
+    }
+
+    .room-meta svg {
+      width: clamp(9px, 2.2vw, 10px);
+      height: clamp(9px, 2.2vw, 10px);
+      fill: currentColor;
+      margin-right: 2px;
+      flex-shrink: 0;
+    }
+
+    .event-count {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      font-size: clamp(8px, 2.1vw, 10px);
+      color: var(--secondary-text-color);
+      padding: 2px clamp(3px, 1vw, 6px);
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+
+    .room-stats {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: center;
+      text-align: right;
+      flex-shrink: 0;
+      min-width: 0;
+      gap: 2px;
+    }
+
+    .room-total-watts {
+      font-size: clamp(11px, 2.9vw, 16px);
+      font-weight: 700;
+      color: var(--panel-accent);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      line-height: 1.15;
+      max-width: 100%;
+    }
+
+    .room-total-watts.over-threshold {
+      color: var(--panel-danger);
+      animation: pulse-danger 1s infinite;
+    }
+
+    @keyframes pulse-danger {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .room-total-day {
+      font-size: clamp(9px, 2.2vw, 11px);
+      font-weight: 500;
+      color: var(--secondary-text-color);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+      white-space: nowrap;
+      cursor: pointer;
+      margin: 0;
+      max-width: 100%;
+    }
+
+    .enforcement-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      font-size: clamp(8px, 1.9vw, 10px);
+      font-weight: 600;
+      padding: 3px clamp(6px, 1.4vw, 9px);
+      border-radius: 8px;
+      color: #fff;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+      line-height: 1.2;
+      flex-shrink: 0;
+      text-transform: none;
+    }
+
+    .enforcement-badge.enforcement-phase-0 {
+      background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+      box-shadow: 0 1px 3px rgba(255, 152, 0, 0.35);
+    }
+
+    .enforcement-badge svg {
+      width: clamp(10px, 2.5vw, 12px);
+      height: clamp(10px, 2.5vw, 12px);
+      flex-shrink: 0;
+      fill: #fff;
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.2));
+    }
+
+    .room-content {
+      padding: 10px 12px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .room-content::-webkit-scrollbar { display: none; }
+
+    .outlets-grid {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 6px;
+      justify-content: flex-start;
+      align-items: flex-start;
+      min-width: min-content;
+    }
+
+    .outlet-placeholder {
+      width: 81px;
+      min-width: 81px;
+      flex-shrink: 0;
+      padding: 12px 8px;
+      border-radius: 8px;
+      border: 1px dashed var(--card-border);
+      color: var(--secondary-text-color);
+      font-size: 10px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="demo-wrap">
+    <p style="color: var(--secondary-text-color); font-size: 13px; margin-bottom: 16px;">
+      Reference export of <code>room-card</code> header markup (outlet grid is a placeholder).
+    </p>
+
+    <!-- === begin: _renderRoomCard structure (sample data) === -->
+    <div class="room-card" data-room-id="brandons_bedroom">
+      <div class="room-header">
+        <div class="room-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12,3L2,12h3v8h14v-8h3L12,3z M12,16c-1.1,0-2-0.9-2-2c0-1.1,0.9-2,2-2s2,0.9,2,2C14,15.1,13.1,16,12,16z" fill="currentColor"/></svg>
+        </div>
+        <h3 class="room-name" title="Brandon's Bedroom">Brandon's Bedroom</h3>
+        <div class="room-meta-strip room-meta" title="Threshold and events">
+          <span class="threshold-badge has-tooltip" title="Room power limit; spoken alert when exceeded">
+            <svg viewBox="0 0 24 24" width="10" height="10"><path d="M1,21h22L12,2L1,21z M13,18h-2v-2h2V18z M13,14h-2v-4h2V14z" fill="currentColor"/></svg>
+            550W
+          </span>
+          <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="brandons_bedroom" title="Threshold warnings today (tap for log)">W:0</span>
+          <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="brandons_bedroom" title="Safety shutoffs today">S:0</span>
+          <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="brandons_bedroom" title="Enforcement outlet cycles today">C:0</span>
+        </div>
+        <div class="room-header-aside">
+          <span class="enforcement-badge enforcement-phase-0 has-tooltip" title="Power enforcement Phase 0: monitoring on; volume may rise and outlets may cycle if limits are ignored.">
+            <svg viewBox="0 0 24 24"><path d="M12,1L3,5v6c0,5.55,3.84,10.74,9,12c5.16-1.26,9-6.45,9-12V5L12,1z"/></svg>
+            <span class="enforcement-badge-label">Power enforcement + Phase 0</span>
+          </span>
+          <div class="room-stats">
+            <div class="room-total-watts">83.9 W</div>
+            <div class="room-total-day graph-clickable" data-graph-type="room_wh" data-room-id="brandons_bedroom">2.01 kWh today</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="room-content">
+        <div class="outlets-grid">
+          <div class="outlet-placeholder">Outlet cards render here (<code>_renderDeviceCard</code>)</div>
+        </div>
+      </div>
+    </div>
+    <!-- === end: room-card === -->
+  </div>
+</body>
+</html>
