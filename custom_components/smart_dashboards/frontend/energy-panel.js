@@ -4458,28 +4458,28 @@ class EnergyPanel extends HTMLElement {
     if (!budget.showBar) return '';
     const esc = (s) => String(s).replace(/"/g, '&quot;');
     const chunks = [];
+
+    // Budget marker (prominent blue style) - render first so it's behind tier markers if overlapping
+    if (budget.showSeparateBudget && budget.budgetMarkerPct != null) {
+      const budgetTip = esc(
+        `Daily budget ${budget.effKwh.toFixed(2)} kWh` +
+          (budget.boost ? ` (boosted from ${budget.baseKwh} kWh)` : ''),
+      );
+      chunks.push(`<div class="room-budget-marker-wrap" data-marker-role="budget" style="left:${budget.budgetMarkerPct}%">
+          <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${budgetTip}"></span>
+          <span class="room-budget-marker-label room-budget-marker-label--audible">${budget.effKwh.toFixed(1)} kWh</span>
+        </div>`);
+    }
+
+    // Voice tier markers (secondary style)
     for (const m of budget.plottedIntervalMarkers) {
-      if (m.kind === 'audible') {
-        const tip = esc(
-          `Voice alerts at ${m.value} kWh and above · Effective daily budget ${budget.effKwh.toFixed(2)} kWh`,
-        );
-        chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
-            <span class="room-budget-marker-tick room-budget-marker--audible has-tooltip" title="${tip}"></span>
-            <span class="room-budget-marker-label room-budget-marker-label--audible">${m.value} kWh</span>
-          </div>`);
-        continue;
-      }
+      const tip = esc(`Voice alerts at ${m.value} kWh`);
       chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
-          <span class="room-budget-marker-tick room-budget-marker--interval has-tooltip" title="${esc(`${m.value} kWh tier`)}"></span>
+          <span class="room-budget-marker-tick room-budget-marker--interval has-tooltip" title="${tip}"></span>
           <span class="room-budget-marker-label room-budget-marker-label--kwh">${m.value} kWh</span>
         </div>`);
     }
-    if (budget.showSeparateBudget && budget.budgetMarkerPct != null) {
-      chunks.push(`<div class="room-budget-marker-wrap room-budget-marker-wrap--budget-only" data-marker-role="budget" style="left:${budget.budgetMarkerPct}%">
-          <span class="room-budget-marker-tick room-budget-marker--budget-only has-tooltip" title="${esc(`Daily budget ${budget.effKwh.toFixed(1)} kWh`)}"></span>
-          <span class="room-budget-marker-label room-budget-marker-label--budget">Budget</span>
-        </div>`);
-    }
+
     return `<div class="room-budget-markers" aria-hidden="true">${chunks.join('')}</div>`;
   }
 
