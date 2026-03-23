@@ -311,9 +311,9 @@ class EnergyPanel extends HTMLElement {
       const de = dateEnd;
       const kwhCostNum = sensorValues.kwh_cost;
       const costOk = kwhCostNum != null && Number.isFinite(Number(kwhCostNum));
-      const fmtAvgCost = (avgKwh) => {
+      const fmtTotalCost = (periodKwh) => {
         if (!costOk) return '—';
-        const n = Number(avgKwh) * Number(kwhCostNum);
+        const n = Number(periodKwh) * Number(kwhCostNum);
         if (!Number.isFinite(n)) return '—';
         return `$${n.toFixed(2)}`;
       };
@@ -334,7 +334,7 @@ class EnergyPanel extends HTMLElement {
           const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
           const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
           const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
-          const avgCost = fmtAvgCost(r.daily_avg_kwh);
+          const totalCost = fmtTotalCost(r.kwh);
           return `
           <tr>
             <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
@@ -346,7 +346,7 @@ class EnergyPanel extends HTMLElement {
             <td>${hi}</td>
             <td>${lo}</td>
             <td>${avg}</td>
-            <td>${avgCost}</td>
+            <td>${totalCost}</td>
           </tr>`;
         }).join('');
     }
@@ -4625,7 +4625,7 @@ class EnergyPanel extends HTMLElement {
           <div id="stat-rooms-panel-table" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-table" style="display:${roomsPieView ? 'none' : 'block'}">
             <div class="statistics-table-wrap">
               <table class="statistics-table" aria-describedby="stat-table-desc">
-                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Load and usage % apply to the same dates shown at the top of this page. High, low, and average are daily kWh (local days in range). Average usage cost is average daily kWh × $/kWh from supplier when configured. Warnings, shutoffs, and cycles sum daily snapshots. Tap a count (when a date range is set) for the event log. Open a room graph from the pie chart.</caption>
+                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Load and usage % apply to the same dates shown at the top of this page. High, low, and average are daily kWh (local days in range). Total cost is period Load (kWh) × $/kWh from supplier when configured. Warnings, shutoffs, and cycles sum daily snapshots. Tap a count (when a date range is set) for the event log. Open a room graph from the pie chart.</caption>
                 <thead>
                   <tr>
                     <th scope="col">Room</th>
@@ -4637,7 +4637,7 @@ class EnergyPanel extends HTMLElement {
                     <th scope="col"><abbr title="Highest kWh in a single local day">High</abbr></th>
                     <th scope="col"><abbr title="Lowest kWh in a single local day">Low</abbr></th>
                     <th scope="col"><abbr title="Average kWh per day (load ÷ days in range)">Average</abbr></th>
-                    <th scope="col"><abbr title="Average daily kWh × $/kWh">Avg cost</abbr></th>
+                    <th scope="col"><abbr title="Period kWh (Load) × $/kWh">Total cost</abbr></th>
                   </tr>
                 </thead>
                 <tbody id="stat-rooms-tbody">
@@ -4656,16 +4656,16 @@ class EnergyPanel extends HTMLElement {
                     : `${r.power_cycles ?? 0}`;
                   const kc = kwhCost;
                   const costOk = kc != null && Number.isFinite(Number(kc));
-                  const fmtAvgCost = (avgKwh) => {
+                  const fmtTotalCost = (periodKwh) => {
                     if (!costOk) return '—';
-                    const n = Number(avgKwh) * Number(kc);
+                    const n = Number(periodKwh) * Number(kc);
                     if (!Number.isFinite(n)) return '—';
                     return `$${n.toFixed(2)}`;
                   };
                   const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
                   const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
                   const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
-                  const avgCost = fmtAvgCost(r.daily_avg_kwh);
+                  const totalCost = fmtTotalCost(r.kwh);
                   return `
                   <tr>
                     <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
@@ -4677,7 +4677,7 @@ class EnergyPanel extends HTMLElement {
                     <td>${hi}</td>
                     <td>${lo}</td>
                     <td>${avg}</td>
-                    <td>${avgCost}</td>
+                    <td>${totalCost}</td>
                   </tr>`;
                 }).join('')}
                 </tbody>
