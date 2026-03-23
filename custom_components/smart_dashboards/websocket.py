@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import voluptuous as vol
@@ -688,6 +688,134 @@ def _integrate_switch_constant_wh(
     return total_wh
 
 
+def _enumerate_date_range_iso(start_date: str, end_date: str) -> list[str]:
+    """Inclusive local calendar dates YYYY-MM-DD from start_date through end_date."""
+    try:
+        a = date.fromisoformat(start_date.strip())
+        b = date.fromisoformat(end_date.strip())
+    except (ValueError, TypeError):
+        return []
+    if b < a:
+        return []
+    out: list[str] = []
+    d = a
+    one = timedelta(days=1)
+    while d <= b:
+        out.append(d.isoformat())
+        d += one
+    return out
+
+
+def _iter_local_calendar_chunks(start_utc: datetime, end_utc: datetime):
+    """Yield (chunk_start_utc, chunk_end_utc, day_key) covering [start_utc, end_utc)."""
+    if end_utc <= start_utc:
+        return
+    cur = start_utc
+    while cur < end_utc:
+        local_cur = dt_util.as_local(cur)
+        day0 = local_cur.replace(hour=0, minute=0, second=0, microsecond=0)
+        next_day_local = day0 + timedelta(days=1)
+        chunk_end_utc = dt_util.as_utc(next_day_local)
+        if chunk_end_utc > end_utc:
+            chunk_end_utc = end_utc
+        day_key = day0.strftime("%Y-%m-%d")
+        yield cur, chunk_end_utc, day_key
+        cur = chunk_end_utc
+
+
+def _trap_wh_linear(
+    w1: float, w2: float, ta: datetime, tb: datetime, t0: datetime, t1: datetime
+) -> float:
+    """Trapezoid Wh for linear w from (ta,w1) to (tb,w2) on [t0,t1] subset of [ta,tb]."""
+    if t1 <= t0 or tb <= ta:
+        return 0.0
+    dur = (tb - ta).total_seconds()
+    if dur <= 0:
+        return 0.0
+
+    def w_at(t: datetime) -> float:
+        frac = (t - ta).total_seconds() / dur
+        return w1 + (w2 - w1) * frac
+
+    wa = w_at(t0)
+    wb = w_at(t1)
+    return (wa + wb) / 2.0 * ((t1 - t0).total_seconds() / 3600.0)
+
+
+def _add_constant_wh_to_date_buckets(
+    buckets: dict[str, float], watts: float, t0: datetime, t1: datetime
+) -> None:
+    if t1 <= t0 or watts == 0:
+        return
+    for cs, ce, day_key in _iter_local_calendar_chunks(t0, t1):
+        buckets[day_key] = buckets.get(day_key, 0.0) + watts * (
+            (ce - cs).total_seconds() / 3600.0
+        )
+
+
+def _integrate_power_to_wh_by_local_date(
+    states: list, start_dt: datetime, end_dt: datetime
+) -> dict[str, float]:
+    """Same physics as _integrate_power_to_wh_clipped; Wh split by local calendar day."""
+    buckets: dict[str, float] = {}
+    if not states:
+        return buckets
+    states = sorted(states, key=lambda s: s.last_updated)
+
+    def w_at(s):
+        return _parse_power_from_state_object(s)
+
+    t_first = states[0].last_updated
+    if t_first > start_dt:
+        w0 = w_at(states[0])
+        seg_end = min(t_first, end_dt)
+        if seg_end > start_dt:
+            _add_constant_wh_to_date_buckets(buckets, w0, start_dt, seg_end)
+
+    for i in range(len(states) - 1):
+        s1, s2 = states[i], states[i + 1]
+        a, b = s1.last_updated, s2.last_updated
+        if b <= a:
+            continue
+        w1, w2 = w_at(s1), w_at(s2)
+        overlap_start = max(a, start_dt)
+        overlap_end = min(b, end_dt)
+        if overlap_end <= overlap_start:
+            continue
+        for cs, ce, day_key in _iter_local_calendar_chunks(overlap_start, overlap_end):
+            wh = _trap_wh_linear(w1, w2, a, b, cs, ce)
+            buckets[day_key] = buckets.get(day_key, 0.0) + wh
+
+    t_last = states[-1].last_updated
+    if t_last < end_dt:
+        wn = w_at(states[-1])
+        overlap_start = max(t_last, start_dt)
+        overlap_end = end_dt
+        if overlap_end > overlap_start:
+            _add_constant_wh_to_date_buckets(buckets, wn, overlap_start, overlap_end)
+
+    return buckets
+
+
+def _integrate_switch_constant_wh_by_local_date(
+    states: list, start_dt: datetime, end_dt: datetime, watts: float
+) -> dict[str, float]:
+    buckets: dict[str, float] = {}
+    if watts <= 0 or not states:
+        return buckets
+    states = sorted(states, key=lambda s: s.last_updated)
+    for i, s in enumerate(states):
+        t0 = s.last_updated
+        t1 = states[i + 1].last_updated if i + 1 < len(states) else end_dt
+        if not _is_switch_on_state(s.state):
+            continue
+        seg_start = max(t0, start_dt)
+        seg_end = min(t1, end_dt)
+        if seg_end > seg_start:
+            _add_constant_wh_to_date_buckets(buckets, watts, seg_start, seg_end)
+    return buckets
+
+
 def _collect_statistics_energy_sources(
     config_manager,
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
@@ -740,6 +868,19 @@ def _sync_integrate_entity_wh(
     end_dt,
 ) -> float:
     """Load one entity's history and integrate W -> Wh."""
+    total, _by = _sync_integrate_entity_wh_total_and_by_day(
+        hass, entity_id, start_dt, end_dt
+    )
+    return total
+
+
+def _sync_integrate_entity_wh_total_and_by_day(
+    hass: HomeAssistant,
+    entity_id: str,
+    start_dt,
+    end_dt,
+) -> tuple[float, dict[str, float]]:
+    """Integrate W -> Wh for full range and per local calendar day (same recorder fetch)."""
     from homeassistant.components.recorder.history import get_significant_states_with_session
     from homeassistant.components.recorder.util import session_scope
 
@@ -757,7 +898,9 @@ def _sync_integrate_entity_wh(
             no_attributes=False,
         )
     states = states_dict.get(entity_id) or []
-    return _integrate_power_to_wh_clipped(states, start_dt, end_dt)
+    total = _integrate_power_to_wh_clipped(states, start_dt, end_dt)
+    by_day = _integrate_power_to_wh_by_local_date(states, start_dt, end_dt)
+    return total, by_day
 
 
 def _sync_integrate_switch_constant_wh(
@@ -767,6 +910,19 @@ def _sync_integrate_switch_constant_wh(
     start_dt,
     end_dt,
 ) -> float:
+    total, _by = _sync_integrate_switch_constant_wh_total_and_by_day(
+        hass, switch_entity, watts, start_dt, end_dt
+    )
+    return total
+
+
+def _sync_integrate_switch_constant_wh_total_and_by_day(
+    hass: HomeAssistant,
+    switch_entity: str,
+    watts: float,
+    start_dt,
+    end_dt,
+) -> tuple[float, dict[str, float]]:
     from homeassistant.components.recorder.history import get_significant_states_with_session
     from homeassistant.components.recorder.util import session_scope
 
@@ -784,7 +940,11 @@ def _sync_integrate_switch_constant_wh(
             no_attributes=False,
         )
     states = states_dict.get(switch_entity) or []
-    return _integrate_switch_constant_wh(states, start_dt, end_dt, watts)
+    total = _integrate_switch_constant_wh(states, start_dt, end_dt, watts)
+    by_day = _integrate_switch_constant_wh_by_local_date(
+        states, start_dt, end_dt, watts
+    )
+    return total, by_day
 
 
 def _statistics_cache_ttl_seconds(end_date_str: str) -> float:
@@ -802,9 +962,9 @@ async def _compute_kwh_from_history(
     config_manager,
     start_date: str,
     end_date: str,
-) -> tuple[float, dict[str, float]]:
+) -> tuple[float, dict[str, float], dict[str, dict[str, float]]]:
     """Compute kWh from HA recorder history over start_date..end_date (monitored loads).
-    Returns (total_wh, room_wh_map)."""
+    Returns (total_wh, room_wh_map, room_day_wh_map) with room_day_wh_map[room_id][YYYY-MM-DD] = Wh."""
     from homeassistant.util import dt as dt_util
 
     entity_to_room, switch_specs = _collect_statistics_energy_sources(config_manager)
@@ -813,56 +973,64 @@ async def _compute_kwh_from_history(
         start_dt = dt_util.parse_datetime(f"{start_date} 00:00:00")
         end_dt = dt_util.parse_datetime(f"{end_date} 23:59:59")
         if start_dt is None or end_dt is None:
-            return 0.0, {}
+            return 0.0, {}, {}
         start_dt = dt_util.as_utc(start_dt)
         end_dt = dt_util.as_utc(end_dt)
     except (ValueError, TypeError):
-        return 0.0, {}
+        return 0.0, {}, {}
 
     now_utc = dt_util.utcnow()
     if start_dt > now_utc:
-        return 0.0, {}
+        return 0.0, {}, {}
     end_dt = min(end_dt, now_utc)
     if end_dt < start_dt:
-        return 0.0, {}
+        return 0.0, {}, {}
 
     if not entity_to_room and not switch_specs:
-        return 0.0, {}
+        return 0.0, {}, {}
 
     sem = asyncio.Semaphore(_STATISTICS_QUERY_CONCURRENCY)
 
-    async def one_plug(eid: str, room_id: str) -> tuple[str, float]:
+    async def one_plug(eid: str, room_id: str) -> tuple[str, float, dict[str, float]]:
         async with sem:
-            wh = await hass.async_add_executor_job(
-                _sync_integrate_entity_wh, hass, eid, start_dt, end_dt
+            wh, by_day = await hass.async_add_executor_job(
+                _sync_integrate_entity_wh_total_and_by_day,
+                hass,
+                eid,
+                start_dt,
+                end_dt,
             )
-        return room_id, float(wh)
+        return room_id, float(wh), by_day
 
-    async def one_switch(spec: dict[str, Any]) -> tuple[str, float]:
+    async def one_switch(spec: dict[str, Any]) -> tuple[str, float, dict[str, float]]:
         async with sem:
-            wh = await hass.async_add_executor_job(
-                _sync_integrate_switch_constant_wh,
+            wh, by_day = await hass.async_add_executor_job(
+                _sync_integrate_switch_constant_wh_total_and_by_day,
                 hass,
                 spec["switch_entity"],
                 float(spec["watts"]),
                 start_dt,
                 end_dt,
             )
-        return spec["room_id"], float(wh)
+        return spec["room_id"], float(wh), by_day
 
     coros: list = [one_plug(eid, rid) for eid, rid in entity_to_room.items()]
     coros.extend(one_switch(s) for s in switch_specs)
     if not coros:
-        return 0.0, {}
+        return 0.0, {}, {}
 
     results = await asyncio.gather(*coros)
     room_wh: dict[str, float] = {}
+    room_day_wh: dict[str, dict[str, float]] = {}
     total_wh = 0.0
-    for room_id, wh in results:
+    for room_id, wh, by_day in results:
         total_wh += wh
         room_wh[room_id] = room_wh.get(room_id, 0.0) + wh
+        rmap = room_day_wh.setdefault(room_id, {})
+        for dkey, dwh in by_day.items():
+            rmap[dkey] = rmap.get(dkey, 0.0) + float(dwh)
 
-    return total_wh, room_wh
+    return total_wh, room_wh, room_day_wh
 
 
 @websocket_api.websocket_command(
@@ -973,14 +1141,33 @@ async def websocket_get_statistics(
 
     # kWh from HA recorder history (same source as sensor graphs)
     try:
-        total_wh, room_wh_map = await _compute_kwh_from_history(
+        total_wh, room_wh_map, room_day_wh_map = await _compute_kwh_from_history(
             hass, config_manager, start, end
         )
     except Exception as err:  # recorder not ready or history unavailable
         _LOGGER.warning("Statistics kWh from history failed: %s", err)
         total_wh = 0.0
         room_wh_map = {}
+        room_day_wh_map = {}
     total_kwh = total_wh / 1000.0 if total_wh else 0.0
+    day_keys = _enumerate_date_range_iso(start, end)
+    n_stat_days = len(day_keys)
+
+    def _room_daily_kwh_stats(rid: str, kwh_total: float) -> dict[str, float]:
+        """High/low kWh per local day; average = total kWh / days in range (inclusive)."""
+        if not day_keys:
+            return {
+                "daily_high_kwh": 0.0,
+                "daily_low_kwh": 0.0,
+                "daily_avg_kwh": 0.0,
+            }
+        rdays = room_day_wh_map.get(rid, {})
+        daily_kwh = [rdays.get(d, 0.0) / 1000.0 for d in day_keys]
+        return {
+            "daily_high_kwh": round(max(daily_kwh), 2),
+            "daily_low_kwh": round(min(daily_kwh), 2),
+            "daily_avg_kwh": round(kwh_total / n_stat_days, 2),
+        }
 
     # Warnings and shutoffs from daily_totals
     today = dt_util.now().strftime("%Y-%m-%d")
@@ -1048,6 +1235,7 @@ async def websocket_get_statistics(
             "warnings": rsum["warnings"],
             "shutoffs": rsum["shutoffs"],
             "power_cycles": rsum.get("power_cycles", 0),
+            **_room_daily_kwh_stats(rid, kwh),
         })
 
     # Add any rooms in daily totals that aren't in config
@@ -1064,6 +1252,7 @@ async def websocket_get_statistics(
                 "warnings": rsum["warnings"],
                 "shutoffs": rsum["shutoffs"],
                 "power_cycles": rsum.get("power_cycles", 0),
+                **_room_daily_kwh_stats(rid, kwh),
             })
 
     if cache_key[0] and cache_key[1]:

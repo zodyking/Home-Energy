@@ -76,6 +76,8 @@ class EnergyPanel extends HTMLElement {
     this._summaryFitZeroRetry = null;
     this._summaryFitRaf = null;
     this._graphModalEscapeHandler = null;
+    /** AbortController teardown for Shadow-DOM-safe billing bar chart (no Apex). */
+    this._billingBarNativeCleanup = null;
   }
 
   set hass(hass) {
@@ -121,6 +123,7 @@ class EnergyPanel extends HTMLElement {
       window.removeEventListener('keydown', this._graphModalEscapeHandler);
       this._graphModalEscapeHandler = null;
     }
+    this._teardownBillingBarChartNative();
   }
 
   _statisticsRefreshMs() {
@@ -306,14 +309,19 @@ class EnergyPanel extends HTMLElement {
     if (tbody) {
       const ds = dateStart;
       const de = dateEnd;
+      const kwhCostNum = sensorValues.kwh_cost;
+      const costOk = kwhCostNum != null && Number.isFinite(Number(kwhCostNum));
+      const fmtAvgCost = (avgKwh) => {
+        if (!costOk) return '—';
+        const n = Number(avgKwh) * Number(kwhCostNum);
+        if (!Number.isFinite(n)) return '—';
+        return `$${n.toFixed(2)}`;
+      };
       tbody.innerHTML = rooms.length === 0
-        ? '<tr><td colspan="7" class="statistics-empty">No room data for this range.</td></tr>'
+        ? '<tr><td colspan="10" class="statistics-empty">No room data for this range.</td></tr>'
         : rooms.map((r) => {
           const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
           const rid = String(r.id || '').replace(/"/g, '&quot;');
-          const billBtn = ds && de
-            ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Room daily kWh for the date range at the top">Open usage graph</button>'
-            : '—';
           const warnCell = ds && de
             ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log (billing period)">${r.warnings ?? 0}</span>`
             : `${r.warnings ?? 0}`;
@@ -323,6 +331,10 @@ class EnergyPanel extends HTMLElement {
           const cycCell = ds && de
             ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_power_cycles" data-room-id="${rid}" data-room-name="${rname}" title="Room cycle log (billing period)">${r.power_cycles ?? 0}</span>`
             : `${r.power_cycles ?? 0}`;
+          const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
+          const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
+          const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
+          const avgCost = fmtAvgCost(r.daily_avg_kwh);
           return `
           <tr>
             <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
@@ -331,7 +343,10 @@ class EnergyPanel extends HTMLElement {
             <td>${warnCell}</td>
             <td>${shutCell}</td>
             <td>${cycCell}</td>
-            <td>${billBtn}</td>
+            <td>${hi}</td>
+            <td>${lo}</td>
+            <td>${avg}</td>
+            <td>${avgCost}</td>
           </tr>`;
         }).join('');
     }
@@ -352,7 +367,8 @@ class EnergyPanel extends HTMLElement {
   _resetStatPieSelectionPanel() {
     const el = this.shadowRoot?.getElementById('stat-pie-selection');
     if (!el) return;
-    el.innerHTML = '<p class="stat-pie-selection-meta">Tap a slice to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>';
+    el.innerHTML =
+      '<p class="stat-pie-selection-meta">Tap a slice for room details and to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>';
   }
 
   _fillStatPieSelection(dataPointIndex) {
@@ -445,7 +461,6 @@ class EnergyPanel extends HTMLElement {
       ];
       const labels = pieRoomRows.map((p) => String(p.name));
       const series = pieRoomRows.map((p) => p.kwh);
-      const esc = (s) => this._eventLogEscape(String(s));
       const panel = this;
       const options = {
         chart: {
@@ -486,18 +501,7 @@ class EnergyPanel extends HTMLElement {
         },
         stroke: { width: 1, colors: ['rgba(0,0,0,0.25)'] },
         tooltip: {
-          enabled: true,
-          custom: ({ dataPointIndex }) => {
-            const r = pieRoomRows[dataPointIndex];
-            if (!r) return '';
-            const nm = esc(r.name);
-            return `<div style="padding:10px 12px;font-size:12px;line-height:1.45;color:#e8e8e8;background:#2a2a2a;border-radius:8px;border:1px solid rgba(255,255,255,0.12);max-width:260px;">
-              <div style="font-weight:600;margin-bottom:6px;">${nm}</div>
-              <div>Load ${r.kwh.toFixed(2)} kWh</div>
-              <div>Usage ${Number(r.pct).toFixed(1)}%</div>
-              <div>Warnings ${r.warnings} · Shutoffs ${r.shutoffs} · Cycles ${r.power_cycles}</div>
-            </div>`;
-          },
+          enabled: false,
         },
         theme: { mode: 'dark' },
       };
@@ -1093,7 +1097,7 @@ class EnergyPanel extends HTMLElement {
         margin: 0 -4px;
         padding: 0 4px;
       }
-      .statistics-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: clamp(11px, 2.4vw, 12px); }
+      .statistics-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: clamp(11px, 2.4vw, 12px); }
       .statistics-table th, .statistics-table td { padding: clamp(6px, 1.5vw, 10px) clamp(6px, 2vw, 10px); text-align: left; border-bottom: 1px solid var(--card-border); }
       .statistics-table th { font-weight: 600; color: var(--secondary-text-color); }
       .statistics-table th abbr { text-decoration: none; border-bottom: 1px dotted var(--secondary-text-color); cursor: help; }
@@ -3123,6 +3127,124 @@ class EnergyPanel extends HTMLElement {
         min-height: clamp(220px, 50vw, 320px);
         width: 100%;
       }
+      .billing-bar-chart-native {
+        position: relative;
+        width: 100%;
+        min-height: 280px;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+      }
+      .billing-bar-chart-body {
+        display: flex;
+        flex: 1;
+        min-height: 220px;
+        gap: 8px;
+        align-items: stretch;
+      }
+      .billing-bar-y-axis {
+        display: flex;
+        flex-direction: column-reverse;
+        justify-content: space-between;
+        width: 48px;
+        flex-shrink: 0;
+        font-size: 11px;
+        color: var(--primary-text-color, #e1e1e1);
+        text-align: right;
+        padding-right: 4px;
+        line-height: 1.1;
+      }
+      .billing-bar-plot {
+        flex: 1;
+        display: flex;
+        align-items: stretch;
+        gap: 3px;
+        min-width: 0;
+        border-bottom: 1px solid var(--card-border, rgba(255,255,255,0.12));
+        padding-bottom: 2px;
+      }
+      .billing-bar-column {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        min-height: 0;
+      }
+      .billing-bar-hit {
+        flex: 1;
+        min-height: 40px;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        align-items: center;
+        width: 100%;
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        border-radius: 4px;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .billing-bar-hit:focus-visible {
+        outline: 2px solid var(--panel-accent, #03a9f4);
+        outline-offset: 2px;
+      }
+      .billing-bar-fill {
+        width: 72%;
+        max-width: 40px;
+        border-radius: 4px 4px 0 0;
+        transition: filter 0.12s ease;
+      }
+      .billing-bar-hit:hover .billing-bar-fill,
+      .billing-bar-hit:focus-visible .billing-bar-fill {
+        filter: brightness(1.14);
+      }
+      .billing-bar-x-labels {
+        display: flex;
+        margin-top: 8px;
+        gap: 3px;
+        padding-left: 56px;
+        min-height: 2.5em;
+      }
+      .billing-bar-x-labels--dense {
+        min-height: 4.5em;
+      }
+      .billing-bar-x-label {
+        flex: 1;
+        min-width: 0;
+        font-size: 10px;
+        color: var(--secondary-text-color, #9e9e9e);
+        text-align: center;
+        line-height: 1.15;
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        word-break: break-word;
+      }
+      .billing-bar-x-labels--dense .billing-bar-x-label {
+        font-size: 9px;
+        -webkit-line-clamp: 3;
+      }
+      .billing-bar-tooltip {
+        position: absolute;
+        z-index: 5;
+        max-width: min(280px, 92vw);
+        padding: 10px 12px;
+        font-size: 12px;
+        line-height: 1.45;
+        color: #e8e8e8;
+        background: #2a2a2a;
+        border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.12);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+        pointer-events: none;
+      }
+      .billing-bar-tooltip[hidden] {
+        display: none !important;
+      }
       .graph-dates {
         font-size: clamp(9px, 2vw, 11px);
         color: var(--secondary-text-color, #999);
@@ -3889,6 +4011,147 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  _teardownBillingBarChartNative() {
+    if (typeof this._billingBarNativeCleanup === 'function') {
+      try {
+        this._billingBarNativeCleanup();
+      } catch (_e) {
+        /* stale */
+      }
+      this._billingBarNativeCleanup = null;
+    }
+  }
+
+  /**
+   * Shadow-DOM-safe daily kWh bars (Statistics billing modal). Apex bar hover breaks under retargeting (#3237).
+   */
+  _renderBillingBarChartNative(container, opts) {
+    const { categories, values, seriesName, yFormatter, accent, textColor } = opts;
+    this._teardownBillingBarChartNative();
+    container.innerHTML = '';
+    const n = values.length;
+    if (n === 0 || categories.length !== n) {
+      container.innerHTML =
+        '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">No data yet</p>';
+      return;
+    }
+    const nums = values.map((v) => Math.max(0, Number(v) || 0));
+    const maxV = Math.max(...nums, 1e-9);
+    const tickSteps = 5;
+    const tickVals = [];
+    for (let t = 0; t <= tickSteps; t++) {
+      tickVals.push((maxV * t) / tickSteps);
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'billing-bar-chart-native';
+    wrap.setAttribute('role', 'group');
+    wrap.setAttribute('aria-label', `${seriesName}, ${n} days`);
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'billing-bar-tooltip';
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.hidden = true;
+
+    const body = document.createElement('div');
+    body.className = 'billing-bar-chart-body';
+
+    const yAxis = document.createElement('div');
+    yAxis.className = 'billing-bar-y-axis';
+    yAxis.setAttribute('aria-hidden', 'true');
+    for (let i = tickVals.length - 1; i >= 0; i--) {
+      const el = document.createElement('span');
+      el.textContent = yFormatter(tickVals[i]);
+      yAxis.appendChild(el);
+    }
+
+    const plot = document.createElement('div');
+    plot.className = 'billing-bar-plot';
+
+    const positionTooltip = (anchorEl) => {
+      const wrapRect = wrap.getBoundingClientRect();
+      const ar = anchorEl.getBoundingClientRect();
+      tooltip.hidden = false;
+      requestAnimationFrame(() => {
+        const tw = tooltip.offsetWidth || 160;
+        const th = tooltip.offsetHeight || 48;
+        let left = ar.left - wrapRect.left + ar.width / 2 - tw / 2;
+        left = Math.max(6, Math.min(left, wrapRect.width - tw - 6));
+        let top = ar.top - wrapRect.top - th - 8;
+        if (top < 6) top = ar.bottom - wrapRect.top + 8;
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top = `${top}px`;
+      });
+    };
+
+    const setTipContent = (i) => {
+      const cat = categories[i];
+      const v = nums[i];
+      tooltip.replaceChildren();
+      const t1 = document.createElement('div');
+      t1.style.fontWeight = '600';
+      t1.style.marginBottom = '4px';
+      t1.textContent = cat;
+      const t2 = document.createElement('div');
+      t2.style.color = textColor || '#e1e1e1';
+      t2.textContent = `${seriesName}: ${yFormatter(v)}`;
+      tooltip.appendChild(t1);
+      tooltip.appendChild(t2);
+    };
+
+    const ac = new AbortController();
+    const sig = ac.signal;
+
+    nums.forEach((v, i) => {
+      const col = document.createElement('div');
+      col.className = 'billing-bar-column';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'billing-bar-hit';
+      btn.setAttribute('aria-label', `${categories[i]}: ${yFormatter(v)}`);
+      const fill = document.createElement('span');
+      fill.className = 'billing-bar-fill';
+      const pct = maxV > 0 ? (v / maxV) * 100 : 0;
+      fill.style.height = v > 0 ? `${Math.max(pct, 1.2)}%` : '0px';
+      fill.style.background = accent;
+      btn.appendChild(fill);
+      col.appendChild(btn);
+      plot.appendChild(col);
+
+      const show = () => {
+        setTipContent(i);
+        positionTooltip(btn);
+      };
+      const hide = () => {
+        tooltip.hidden = true;
+      };
+      btn.addEventListener('pointerenter', show, { signal: sig });
+      btn.addEventListener('pointerleave', hide, { signal: sig });
+      btn.addEventListener('focus', show, { signal: sig });
+      btn.addEventListener('blur', hide, { signal: sig });
+    });
+
+    this._billingBarNativeCleanup = () => ac.abort();
+
+    const xRow = document.createElement('div');
+    xRow.className =
+      n > 12 ? 'billing-bar-x-labels billing-bar-x-labels--dense' : 'billing-bar-x-labels';
+    categories.forEach((cat) => {
+      const x = document.createElement('span');
+      x.className = 'billing-bar-x-label';
+      x.textContent = cat;
+      x.title = cat;
+      xRow.appendChild(x);
+    });
+
+    body.appendChild(yAxis);
+    body.appendChild(plot);
+    wrap.appendChild(body);
+    wrap.appendChild(xRow);
+    wrap.appendChild(tooltip);
+    container.appendChild(wrap);
+  }
+
   async _initApexChart() {
     const container = this.shadowRoot.getElementById('graph-apex-chart');
     if (!container || !this._graphData || !this._graphOpen) return;
@@ -4029,26 +4292,43 @@ class EnergyPanel extends HTMLElement {
       this._apexChartInstance.destroy();
       this._apexChartInstance = null;
     }
+    this._teardownBillingBarChartNative();
+
+    const useBillingBars =
+      isStatBillingModal &&
+      Array.isArray(billingValues) &&
+      billingValues.length > 0 &&
+      Array.isArray(billingCategories) &&
+      billingCategories.length === billingValues.length;
+
+    const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
+    const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
+
+    if (isStatBillingModal) {
+      container.innerHTML = '';
+      if (!useBillingBars) {
+        container.innerHTML =
+          '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">No data yet</p>';
+        return;
+      }
+      this._renderBillingBarChartNative(container, {
+        categories: billingCategories,
+        values: billingValues,
+        seriesName,
+        yFormatter,
+        accent,
+        textColor,
+      });
+      return;
+    }
+
     try {
       const ApexCharts = (await import('https://cdn.jsdelivr.net/npm/apexcharts@3.45.1/dist/apexcharts.esm.min.js')).default;
-      const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
-      const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
       const gridColor = getComputedStyle(this).getPropertyValue('--card-border').trim() || 'rgba(255,255,255,0.08)';
-
-      const useBillingBars =
-        isStatBillingModal &&
-        Array.isArray(billingValues) &&
-        billingValues.length > 0 &&
-        Array.isArray(billingCategories) &&
-        billingCategories.length === billingValues.length;
-      const seriesPayload = useBillingBars
-        ? [{ name: seriesName, data: billingValues }]
-        : [{ name: seriesName, data: seriesData }];
-      const manyBillingDays = useBillingBars && billingCategories.length > 12;
 
       const options = {
         chart: {
-          type: isStatBillingModal ? 'bar' : 'area',
+          type: 'area',
           height: 300,
           fontFamily: 'inherit',
           background: 'transparent',
@@ -4056,31 +4336,18 @@ class EnergyPanel extends HTMLElement {
           zoom: { enabled: false },
           parentHeightOffset: 0,
           redrawOnParentResize: true,
-          animations: { enabled: useBillingBars ? false : true },
+          animations: { enabled: true },
         },
-        series: seriesPayload,
-        xaxis: useBillingBars
-          ? {
-              type: 'category',
-              categories: billingCategories,
-              labels: {
-                style: { colors: textColor, fontSize: '11px' },
-                rotate: manyBillingDays ? -45 : 0,
-                rotateAlways: manyBillingDays,
-                hideOverlappingLabels: true,
-              },
-              axisBorder: { show: true, color: gridColor },
-              axisTicks: { show: true, color: gridColor },
-            }
-          : {
-              type: 'datetime',
-              labels: {
-                style: { colors: textColor, fontSize: '11px' },
-                datetimeUTC: false,
-              },
-              axisBorder: { show: true, color: gridColor },
-              axisTicks: { show: true, color: gridColor },
-            },
+        series: [{ name: seriesName, data: seriesData }],
+        xaxis: {
+          type: 'datetime',
+          labels: {
+            style: { colors: textColor, fontSize: '11px' },
+            datetimeUTC: false,
+          },
+          axisBorder: { show: true, color: gridColor },
+          axisTicks: { show: true, color: gridColor },
+        },
         yaxis: {
           labels: {
             show: true,
@@ -4096,75 +4363,53 @@ class EnergyPanel extends HTMLElement {
                 tickAmount: 5,
                 decimalsInFloat: intradayKwhYMax <= 0.02 ? 3 : 2,
               }
-            : isStatBillingModal
-              ? { min: 0 }
-              : {}),
+            : {}),
         },
         colors: [accent],
-        fill: isStatBillingModal
-          ? { opacity: 1 }
-          : {
-              type: 'gradient',
-              gradient: { shadeIntensity: 0.25, opacityFrom: 0.45, opacityTo: 0.04 },
-            },
-        stroke: isStatBillingModal
-          ? { width: 0 }
-          : { curve: strokeCurve, width: 2 },
+        fill: {
+          type: 'gradient',
+          gradient: { shadeIntensity: 0.25, opacityFrom: 0.45, opacityTo: 0.04 },
+        },
+        stroke: { curve: strokeCurve, width: 2 },
         grid: {
           borderColor: gridColor,
           strokeDashArray: 4,
-          padding: {
-            right: 8,
-            bottom: useBillingBars ? (manyBillingDays ? 36 : 10) : 4,
-            left: 4,
-          },
+          padding: { right: 8, bottom: 4, left: 4 },
           xaxis: { lines: { show: false } },
           yaxis: { lines: { show: true } },
         },
         dataLabels: { enabled: false },
         tooltip: {
           theme: 'dark',
-          ...(useBillingBars
-            ? { intersect: true, shared: false, followCursor: false }
-            : {}),
-          x: useBillingBars
-            ? { formatter: (val) => (val != null ? String(val) : '') }
-            : {
-                formatter: (val) => {
-                  const d = new Date(val);
-                  return isIntraday
-                    ? d.toLocaleString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })
-                    : d.toLocaleDateString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      });
-                },
-              },
+          x: {
+            formatter: (val) => {
+              const d = new Date(val);
+              return isIntraday
+                ? d.toLocaleString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : d.toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  });
+            },
+          },
           y: { formatter: (val) => yFormatter(val) },
         },
-        plotOptions: isStatBillingModal
-          ? { bar: { borderRadius: 4, columnWidth: '72%' } }
-          : { area: { fillTo: 'origin' } },
-        markers: isStatBillingModal
-          ? { size: 0, hover: { size: 0 } }
-          : {
-              size: seriesData.length <= 8 ? 3 : 0,
-              hover: { size: 5 },
-            },
+        plotOptions: { area: { fillTo: 'origin' } },
+        markers: {
+          size: seriesData.length <= 8 ? 3 : 0,
+          hover: { size: 5 },
+        },
       };
-      const hasChartPoints = useBillingBars
-        ? billingValues.length > 0
-        : seriesData.length > 0;
-      if (!hasChartPoints) {
+      if (!seriesData.length) {
         options.noData = { text: 'No data yet', style: { color: textColor } };
       }
-      if (isIntraday && !useBillingBars) {
+      if (isIntraday) {
         options.xaxis.min = this._startOfLocalDayMs();
         options.xaxis.max = Date.now();
       }
@@ -4215,6 +4460,7 @@ class EnergyPanel extends HTMLElement {
         this._apexChartInstance.destroy();
         this._apexChartInstance = null;
       }
+      this._teardownBillingBarChartNative();
       this._graphOpen = null;
       this._graphData = null;
       this._render();
@@ -4379,7 +4625,7 @@ class EnergyPanel extends HTMLElement {
           <div id="stat-rooms-panel-table" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-table" style="display:${roomsPieView ? 'none' : 'block'}">
             <div class="statistics-table-wrap">
               <table class="statistics-table" aria-describedby="stat-table-desc">
-                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Load and usage % apply to the same dates shown at the top of this page. Warnings, shutoffs, and cycles sum daily snapshots across that window. Tap a count (when a date range is set) for the detailed event log for this billing period.</caption>
+                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Load and usage % apply to the same dates shown at the top of this page. High, low, and average are daily kWh (local days in range). Average usage cost is average daily kWh × $/kWh from supplier when configured. Warnings, shutoffs, and cycles sum daily snapshots. Tap a count (when a date range is set) for the event log. Open a room graph from the pie chart.</caption>
                 <thead>
                   <tr>
                     <th scope="col">Room</th>
@@ -4388,17 +4634,17 @@ class EnergyPanel extends HTMLElement {
                     <th scope="col"><abbr title="Voice threshold warnings">Warnings</abbr></th>
                     <th scope="col"><abbr title="Safety plug shutoffs">Shutoffs</abbr></th>
                     <th scope="col"><abbr title="Enforcement outlet cycles">Cycles</abbr></th>
-                    <th scope="col"><abbr title="Daily usage graph for the date range at the top">Graph</abbr></th>
+                    <th scope="col"><abbr title="Highest kWh in a single local day">High</abbr></th>
+                    <th scope="col"><abbr title="Lowest kWh in a single local day">Low</abbr></th>
+                    <th scope="col"><abbr title="Average kWh per day (load ÷ days in range)">Average</abbr></th>
+                    <th scope="col"><abbr title="Average daily kWh × $/kWh">Avg cost</abbr></th>
                   </tr>
                 </thead>
                 <tbody id="stat-rooms-tbody">
-                  ${rooms.length === 0 ? '<tr><td colspan="7" class="statistics-empty">No room data for this range.</td></tr>' : ''}
+                  ${rooms.length === 0 ? '<tr><td colspan="10" class="statistics-empty">No room data for this range.</td></tr>' : ''}
                   ${rooms.map((r) => {
                   const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
                   const rid = String(r.id || '').replace(/"/g, '&quot;');
-                  const billBtn = dateStart && dateEnd
-                    ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Room daily kWh for the date range at the top">Open usage graph</button>'
-                    : '—';
                   const warnCell = dateStart && dateEnd
                     ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log (billing period)">${r.warnings ?? 0}</span>`
                     : `${r.warnings ?? 0}`;
@@ -4408,6 +4654,18 @@ class EnergyPanel extends HTMLElement {
                   const cycCell = dateStart && dateEnd
                     ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_power_cycles" data-room-id="${rid}" data-room-name="${rname}" title="Room cycle log (billing period)">${r.power_cycles ?? 0}</span>`
                     : `${r.power_cycles ?? 0}`;
+                  const kc = kwhCost;
+                  const costOk = kc != null && Number.isFinite(Number(kc));
+                  const fmtAvgCost = (avgKwh) => {
+                    if (!costOk) return '—';
+                    const n = Number(avgKwh) * Number(kc);
+                    if (!Number.isFinite(n)) return '—';
+                    return `$${n.toFixed(2)}`;
+                  };
+                  const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
+                  const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
+                  const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
+                  const avgCost = fmtAvgCost(r.daily_avg_kwh);
                   return `
                   <tr>
                     <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
@@ -4416,7 +4674,10 @@ class EnergyPanel extends HTMLElement {
                     <td>${warnCell}</td>
                     <td>${shutCell}</td>
                     <td>${cycCell}</td>
-                    <td>${billBtn}</td>
+                    <td>${hi}</td>
+                    <td>${lo}</td>
+                    <td>${avg}</td>
+                    <td>${avgCost}</td>
                   </tr>`;
                 }).join('')}
                 </tbody>
@@ -4426,9 +4687,9 @@ class EnergyPanel extends HTMLElement {
           <div id="stat-rooms-panel-pie" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-chart" style="display:${roomsPieView ? 'block' : 'none'}">
             <div id="stat-rooms-pie-chart" class="stat-rooms-pie-mount" aria-hidden="${roomsPieView ? 'false' : 'true'}"></div>
             <div id="stat-pie-selection" class="stat-pie-selection" role="region" aria-live="polite">
-              <p class="stat-pie-selection-meta">Tap a slice to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>
+              <p class="stat-pie-selection-meta">Tap a slice for room details and to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>
             </div>
-            <p id="stat-pie-desc" class="stat-pie-caption">Pie shares use the same tracked kWh total and dates as the banner above (non-zero rooms only). Use the table for every room, usage graphs, and zero-load rows.</p>
+            <p id="stat-pie-desc" class="stat-pie-caption">Pie shares use the same tracked kWh total and dates as the banner above (non-zero rooms only). Use the table for every room, daily high/low/average, and zero-load rows; tap a slice here to open that room usage graph.</p>
           </div>
         </div>
         </div>
