@@ -4471,8 +4471,13 @@ class EnergyPanel extends HTMLElement {
         </div>`);
     }
 
-    // Voice tier markers (secondary style)
+    // Voice tier markers (secondary style) - skip if coincides with budget marker
     for (const m of budget.plottedIntervalMarkers) {
+      const coincidesWithBudget =
+        budget.showSeparateBudget &&
+        budget.budgetMarkerPct != null &&
+        Math.abs(m.pct - budget.budgetMarkerPct) < 0.9;
+      if (coincidesWithBudget) continue;
       const tip = esc(`Voice alerts at ${m.value} kWh`);
       chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
           <span class="room-budget-marker-tick room-budget-marker--interval has-tooltip" title="${tip}"></span>
