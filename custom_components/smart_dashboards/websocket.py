@@ -1139,6 +1139,8 @@ async def websocket_get_statistics(
         connection.send_result(msg["id"], result)
         return
 
+    today = dt_util.now().strftime("%Y-%m-%d")
+
     # kWh from HA recorder history (same source as sensor graphs)
     try:
         total_wh, room_wh_map, room_day_wh_map = await _compute_kwh_from_history(
@@ -1150,19 +1152,28 @@ async def websocket_get_statistics(
         room_wh_map = {}
         room_day_wh_map = {}
     total_kwh = total_wh / 1000.0 if total_wh else 0.0
-    day_keys = _enumerate_date_range_iso(start, end)
-    n_stat_days = len(day_keys)
+    # Elapsed window only: match integration (clipped to now); exclude future billing dates
+    if start <= today:
+        effective_end = min(end, today)
+        stat_day_keys = (
+            _enumerate_date_range_iso(start, effective_end)
+            if effective_end >= start
+            else []
+        )
+    else:
+        stat_day_keys = []
+    n_stat_days = len(stat_day_keys)
 
     def _room_daily_kwh_stats(rid: str, kwh_total: float) -> dict[str, float]:
-        """High/low kWh per local day; average = total kWh / days in range (inclusive)."""
-        if not day_keys:
+        """High/low kWh per local day in elapsed window; avg = load / days elapsed (inclusive)."""
+        if not stat_day_keys:
             return {
                 "daily_high_kwh": 0.0,
                 "daily_low_kwh": 0.0,
                 "daily_avg_kwh": 0.0,
             }
         rdays = room_day_wh_map.get(rid, {})
-        daily_kwh = [rdays.get(d, 0.0) / 1000.0 for d in day_keys]
+        daily_kwh = [rdays.get(d, 0.0) / 1000.0 for d in stat_day_keys]
         return {
             "daily_high_kwh": round(max(daily_kwh), 2),
             "daily_low_kwh": round(min(daily_kwh), 2),
@@ -1170,7 +1181,6 @@ async def websocket_get_statistics(
         }
 
     # Warnings and shutoffs from daily_totals
-    today = dt_util.now().strftime("%Y-%m-%d")
     daily_totals = config_manager.daily_totals
     all_dates = set(daily_totals.keys())
     if start <= today <= end:
