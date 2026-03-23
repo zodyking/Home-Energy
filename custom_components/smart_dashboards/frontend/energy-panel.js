@@ -314,14 +314,23 @@ class EnergyPanel extends HTMLElement {
           const billBtn = ds && de
             ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Room daily kWh for the date range at the top">Open usage graph</button>'
             : '—';
+          const warnCell = ds && de
+            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log (billing period)">${r.warnings ?? 0}</span>`
+            : `${r.warnings ?? 0}`;
+          const shutCell = ds && de
+            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_shutoffs" data-room-id="${rid}" data-room-name="${rname}" title="Room shutoff log (billing period)">${r.shutoffs ?? 0}</span>`
+            : `${r.shutoffs ?? 0}`;
+          const cycCell = ds && de
+            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_power_cycles" data-room-id="${rid}" data-room-name="${rname}" title="Room cycle log (billing period)">${r.power_cycles ?? 0}</span>`
+            : `${r.power_cycles ?? 0}`;
           return `
           <tr>
             <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
             <td>${(r.kwh ?? 0).toFixed(2)}</td>
             <td>${(r.pct ?? 0).toFixed(1)}%</td>
-            <td>${r.warnings ?? 0}</td>
-            <td>${r.shutoffs ?? 0}</td>
-            <td>${r.power_cycles ?? 0}</td>
+            <td>${warnCell}</td>
+            <td>${shutCell}</td>
+            <td>${cycCell}</td>
             <td>${billBtn}</td>
           </tr>`;
         }).join('');
@@ -3667,7 +3676,9 @@ class EnergyPanel extends HTMLElement {
 
   _isEventLogType(type) {
     return type === 'total_warnings' || type === 'total_shutoffs' || type === 'total_power_cycles'
-      || type === 'room_warnings' || type === 'room_shutoffs' || type === 'room_power_cycles';
+      || type === 'room_warnings' || type === 'room_shutoffs' || type === 'room_power_cycles'
+      || type === 'stat_total_warnings' || type === 'stat_total_shutoffs' || type === 'stat_total_power_cycles'
+      || type === 'stat_room_warnings' || type === 'stat_room_shutoffs' || type === 'stat_room_power_cycles';
   }
 
   _eventLogEscape(s) {
@@ -3730,10 +3741,19 @@ class EnergyPanel extends HTMLElement {
       room_power_cycles: `${roomName} Power Cycles (24h)`,
       stat_total_wh: 'Home daily usage',
       stat_room_wh: `${roomName || 'Room'} daily usage`,
+      stat_total_warnings: 'Threshold Warnings',
+      stat_total_shutoffs: 'Safety Shutoffs',
+      stat_total_power_cycles: 'Power Cycles',
+      stat_room_warnings: `${roomName || 'Room'} Warnings`,
+      stat_room_shutoffs: `${roomName || 'Room'} Shutoffs`,
+      stat_room_power_cycles: `${roomName || 'Room'} Power Cycles`,
     };
     let title = labels[type] || 'History';
     const go = this._graphOpen;
-    if ((type === 'stat_total_wh' || type === 'stat_room_wh') && go?.date_start && go?.date_end) {
+    const statPeriodEvent =
+      type === 'stat_total_warnings' || type === 'stat_total_shutoffs' || type === 'stat_total_power_cycles'
+      || type === 'stat_room_warnings' || type === 'stat_room_shutoffs' || type === 'stat_room_power_cycles';
+    if ((type === 'stat_total_wh' || type === 'stat_room_wh' || statPeriodEvent) && go?.date_start && go?.date_end) {
       title = `${title} · ${this._formatDateRange(go.date_start)} – ${this._formatDateRange(go.date_end)}`;
     }
     const isEventLog = this._isEventLogType(type);
@@ -3744,10 +3764,17 @@ class EnergyPanel extends HTMLElement {
       if (type.includes('shutoffs')) filterType = 'shutoff';
       else if (type.includes('power_cycles')) filterType = 'power_cycle';
       const filtered = events.filter(e => e.type === filterType);
+      const periodLog = !!(go?.date_start && go?.date_end);
+      const emptyMsg = periodLog
+        ? 'No events in this period'
+        : 'No events in the last 24 hours';
+      const truncNote = this._graphData.truncated
+        ? '<p class="event-log-truncated" style="color: var(--secondary-text-color); text-align: center; padding: 8px 16px 0; font-size: 12px;">Showing the most recent 5000 events; list was truncated.</p>'
+        : '';
       bodyContent = `
         <div class="event-log-container">
           ${filtered.length === 0
-            ? '<p style="color: var(--secondary-text-color); text-align: center; padding: 24px;">No events in the last 24 hours</p>'
+            ? `<p style="color: var(--secondary-text-color); text-align: center; padding: 24px;">${emptyMsg}</p>`
             : `
             <ul class="event-log-list">
               ${filtered.map((e) => {
@@ -3779,6 +3806,7 @@ class EnergyPanel extends HTMLElement {
                 </li>`;
               }).join('')}
             </ul>
+            ${truncNote}
           `}
         </div>
       `;
@@ -3822,8 +3850,14 @@ class EnergyPanel extends HTMLElement {
       const isEventLog = this._isEventLogType(type);
       let result;
       if (isEventLog) {
-        const payload = { type: 'smart_dashboards/get_event_log', since_hours: 24 };
+        const payload = { type: 'smart_dashboards/get_event_log' };
         if (roomId) payload.room_id = roomId;
+        if (billingRange?.date_start && billingRange?.date_end) {
+          payload.date_start = billingRange.date_start;
+          payload.date_end = billingRange.date_end;
+        } else {
+          payload.since_hours = 24;
+        }
         result = await this._hass.callWS(payload);
       } else if (isStatBilling && billingRange?.date_start && billingRange?.date_end) {
         result = await this._hass.callWS({
@@ -4239,15 +4273,15 @@ class EnergyPanel extends HTMLElement {
                   <span class="val"><span id="stat-total-kwh">${totalKwh.toFixed(2)}</span> <span style="font-size:0.55em;font-weight:600;opacity:0.85">kWh</span></span>
                 </div>
                 <div class="statistics-totals-grid">
-                  <div class="statistics-total-item">
+                  <div class="statistics-total-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_warnings" title="Open threshold warning log for dates above"' : ''}>
                     <span class="statistics-total-label">Voice warnings</span>
                     <span class="statistics-total-value" id="stat-total-warnings">${totalWarnings}</span>
                   </div>
-                  <div class="statistics-total-item">
+                  <div class="statistics-total-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_shutoffs" title="Open safety shutoff log for dates above"' : ''}>
                     <span class="statistics-total-label">Plug shutoffs</span>
                     <span class="statistics-total-value" id="stat-total-shutoffs">${totalShutoffs}</span>
                   </div>
-                  <div class="statistics-total-item">
+                  <div class="statistics-total-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_power_cycles" title="Open enforcement cycle log for dates above"' : ''}>
                     <span class="statistics-total-label">Enforcement cycles</span>
                     <span class="statistics-total-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
                   </div>
@@ -4270,7 +4304,7 @@ class EnergyPanel extends HTMLElement {
           <div id="stat-rooms-panel-table" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-table" style="display:${roomsPieView ? 'none' : 'block'}">
             <div class="statistics-table-wrap">
               <table class="statistics-table" aria-describedby="stat-table-desc">
-                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Load and usage % apply to the same dates shown at the top of this page. Warnings, shutoffs, and cycles sum daily snapshots across that window.</caption>
+                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Load and usage % apply to the same dates shown at the top of this page. Warnings, shutoffs, and cycles sum daily snapshots across that window. Tap a count (when a date range is set) for the detailed event log for this billing period.</caption>
                 <thead>
                   <tr>
                     <th scope="col">Room</th>
@@ -4290,14 +4324,23 @@ class EnergyPanel extends HTMLElement {
                   const billBtn = dateStart && dateEnd
                     ? '<button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="' + rid + '" data-room-name="' + rname + '" title="Room daily kWh for the date range at the top">Open usage graph</button>'
                     : '—';
+                  const warnCell = dateStart && dateEnd
+                    ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log (billing period)">${r.warnings ?? 0}</span>`
+                    : `${r.warnings ?? 0}`;
+                  const shutCell = dateStart && dateEnd
+                    ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_shutoffs" data-room-id="${rid}" data-room-name="${rname}" title="Room shutoff log (billing period)">${r.shutoffs ?? 0}</span>`
+                    : `${r.shutoffs ?? 0}`;
+                  const cycCell = dateStart && dateEnd
+                    ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_power_cycles" data-room-id="${rid}" data-room-name="${rname}" title="Room cycle log (billing period)">${r.power_cycles ?? 0}</span>`
+                    : `${r.power_cycles ?? 0}`;
                   return `
                   <tr>
                     <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
                     <td>${(r.kwh ?? 0).toFixed(2)}</td>
                     <td>${(r.pct ?? 0).toFixed(1)}%</td>
-                    <td>${r.warnings ?? 0}</td>
-                    <td>${r.shutoffs ?? 0}</td>
-                    <td>${r.power_cycles ?? 0}</td>
+                    <td>${warnCell}</td>
+                    <td>${shutCell}</td>
+                    <td>${cycCell}</td>
                     <td>${billBtn}</td>
                   </tr>`;
                 }).join('')}
@@ -6348,8 +6391,16 @@ class EnergyPanel extends HTMLElement {
         e.stopPropagation();
         const type = el.dataset.graphType;
         const roomId = el.dataset.roomId || null;
+        const nameFromData = el.dataset.roomName || null;
         const room = roomId ? this._config?.rooms?.find(r => r.id === roomId) : null;
-        this._openGraph(type, roomId, room?.name || null);
+        let billingRange = null;
+        if (type && type.startsWith('stat_') && this._statsData?.date_start && this._statsData?.date_end) {
+          billingRange = {
+            date_start: this._statsData.date_start,
+            date_end: this._statsData.date_end,
+          };
+        }
+        this._openGraph(type, roomId, nameFromData || room?.name || null, billingRange);
       });
     });
 

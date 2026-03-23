@@ -548,6 +548,8 @@ async def websocket_get_intraday_events(
         vol.Required("type"): "smart_dashboards/get_event_log",
         vol.Optional("room_id"): str,
         vol.Optional("since_hours"): int,
+        vol.Optional("date_start"): str,
+        vol.Optional("date_end"): str,
     }
 )
 @websocket_api.async_response
@@ -556,15 +558,28 @@ async def websocket_get_event_log(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Get event log (warnings/shutoffs with TTS success/fail) for dashboard log modal."""
+    """Get event log (warnings/shutoffs/cycles) for dashboard (24h) or billing range."""
     config_manager = hass.data[DOMAIN].get("config_manager")
     if not config_manager:
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
         return
     room_id = msg.get("room_id")
-    since_hours = msg.get("since_hours", 24)
-    events = config_manager.get_event_log(room_id=room_id, since_hours=since_hours)
-    connection.send_result(msg["id"], {"events": events})
+    date_start = (msg.get("date_start") or "").strip() or None
+    date_end = (msg.get("date_end") or "").strip() or None
+    if date_start and date_end:
+        events, truncated = config_manager.get_event_log(
+            room_id=room_id,
+            date_start=date_start,
+            date_end=date_end,
+        )
+    else:
+        since_hours = msg.get("since_hours", 24)
+        events, truncated = config_manager.get_event_log(
+            room_id=room_id, since_hours=since_hours
+        )
+    connection.send_result(
+        msg["id"], {"events": events, "truncated": truncated}
+    )
 
 
 def _parse_power_from_state(state_value: str, unit: str | None) -> float:

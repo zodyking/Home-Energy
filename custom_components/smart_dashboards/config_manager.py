@@ -89,6 +89,16 @@ def _write_json_file(path: str, data: Any) -> None:
         json.dump(data, f, indent=2)
 
 
+def _event_log_dedupe_key(e: dict[str, Any]) -> tuple[Any, ...]:
+    """Stable key to dedupe same logical event across rolling log and archive."""
+    return (
+        str(e.get("ts") or ""),
+        str(e.get("room_id") or ""),
+        str(e.get("type") or ""),
+        str(e.get("tts_message") or ""),
+    )
+
+
 class ConfigManager:
     """Manage Smart Dashboards configuration stored in JSON file."""
 
@@ -128,6 +138,8 @@ class ConfigManager:
         # Event log: 24h warnings/shutoffs with TTS success/fail (for dashboard log modal)
         self._event_log: list[dict[str, Any]] = []
         self._event_log_max_entries = 500
+        # Per-calendar-day archive for billing/statistics (full detail, longer retention)
+        self._event_archive_days: dict[str, list[dict[str, Any]]] = {}
 
     @property
     def config(self) -> dict[str, Any]:
@@ -253,6 +265,7 @@ class ConfigManager:
         await self._async_load_event_counts()
         # Load event log
         await self._async_load_event_log()
+        await self._async_load_event_archive()
         # Load daily totals history
         await self._async_load_daily_totals()
         # Load billing history
@@ -949,6 +962,10 @@ class ConfigManager:
 
     # Event log (24h warnings/shutoffs with TTS success/fail)
     EVENT_LOG_FILE = "smart_dashboards_event_log.json"
+    EVENT_ARCHIVE_FILE = "smart_dashboards_event_archive.json"
+    EVENT_ARCHIVE_RETENTION_DAYS = 120
+    EVENT_ARCHIVE_MAX_PER_DAY = 2000
+    EVENT_LOG_API_MAX_ENTRIES = 5000
 
     async def _async_load_event_log(self) -> None:
         """Load event log from file."""
@@ -967,6 +984,73 @@ class ConfigManager:
             await self.hass.async_add_executor_job(_write_json_file, path, payload)
         except IOError as err:
             _LOGGER.error("Error saving event log: %s", err)
+
+    def _merge_event_log_into_archive(self) -> None:
+        """Backfill rolling _event_log into per-day archive (deduped)."""
+        for e in self._event_log:
+            ts = e.get("ts") or ""
+            if len(ts) < 10:
+                continue
+            day = ts[:10]
+            bucket = self._event_archive_days.setdefault(day, [])
+            k = _event_log_dedupe_key(e)
+            if any(_event_log_dedupe_key(x) == k for x in bucket):
+                continue
+            bucket.append(dict(e))
+        for d, bucket in list(self._event_archive_days.items()):
+            bucket.sort(key=lambda x: str(x.get("ts") or ""))
+            if len(bucket) > self.EVENT_ARCHIVE_MAX_PER_DAY:
+                self._event_archive_days[d] = bucket[-self.EVENT_ARCHIVE_MAX_PER_DAY :]
+
+    async def _async_load_event_archive(self) -> None:
+        """Load per-day event archive; merge rolling log for same-day recovery."""
+        path = self.hass.config.path(self.EVENT_ARCHIVE_FILE)
+        try:
+            data = await self.hass.async_add_executor_job(_load_json_file, path)
+            raw = (data or {}).get("days") or {}
+            self._event_archive_days = {
+                str(k): list(v) if isinstance(v, list) else []
+                for k, v in raw.items()
+                if isinstance(k, str) and len(str(k)) == 10
+            }
+        except (json.JSONDecodeError, IOError, TypeError):
+            self._event_archive_days = {}
+        self._merge_event_log_into_archive()
+
+    def _prune_event_archive_days(self) -> None:
+        """Drop archive days older than retention window."""
+        now = dt_util.now().date()
+        cutoff = now - timedelta(days=self.EVENT_ARCHIVE_RETENTION_DAYS)
+        cutoff_str = cutoff.strftime("%Y-%m-%d")
+        for d in list(self._event_archive_days.keys()):
+            if d < cutoff_str:
+                del self._event_archive_days[d]
+
+    async def _async_save_event_archive(self) -> None:
+        """Persist event archive after pruning old days."""
+        self._prune_event_archive_days()
+        path = self.hass.config.path(self.EVENT_ARCHIVE_FILE)
+        try:
+            await self.hass.async_add_executor_job(
+                _write_json_file, path, {"days": self._event_archive_days}
+            )
+        except IOError as err:
+            _LOGGER.error("Error saving event archive: %s", err)
+
+    @staticmethod
+    def _iter_archive_dates_inclusive(start: str, end: str) -> list[str]:
+        """List YYYY-MM-DD from start through end inclusive."""
+        try:
+            d0 = datetime.strptime(start[:10], "%Y-%m-%d").date()
+            d1 = datetime.strptime(end[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return []
+        out: list[str] = []
+        cur = d0
+        while cur <= d1:
+            out.append(cur.strftime("%Y-%m-%d"))
+            cur += timedelta(days=1)
+        return out
 
     async def async_add_event_log_entry(
         self,
@@ -995,22 +1079,92 @@ class ConfigManager:
             self._event_log = self._event_log[-self._event_log_max_entries :]
         await self._async_save_event_log()
 
+        day_key = (entry.get("ts") or "")[:10]
+        if len(day_key) == 10:
+            bucket = self._event_archive_days.setdefault(day_key, [])
+            k = _event_log_dedupe_key(entry)
+            if not any(_event_log_dedupe_key(x) == k for x in bucket):
+                bucket.append(entry)
+            bucket.sort(key=lambda x: str(x.get("ts") or ""))
+            if len(bucket) > self.EVENT_ARCHIVE_MAX_PER_DAY:
+                self._event_archive_days[day_key] = bucket[
+                    -self.EVENT_ARCHIVE_MAX_PER_DAY :
+                ]
+        await self._async_save_event_archive()
+
     def get_event_log(
         self,
         room_id: str | None = None,
-        since_hours: int = 24,
-    ) -> list[dict[str, Any]]:
-        """Get event log entries, optionally filtered by room and time."""
-        cutoff = dt_util.now() - timedelta(hours=since_hours)
+        since_hours: int | None = 24,
+        date_start: str | None = None,
+        date_end: str | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Return (events newest first, truncated).
+
+        If date_start and date_end (YYYY-MM-DD) are set, return all archived events
+        in that inclusive range (plus deduped merge). Otherwise use a sliding window
+        of since_hours (clamped), merging archive days that overlap the window with
+        the rolling _event_log.
+        """
+        max_n = self.EVENT_LOG_API_MAX_ENTRIES
+        truncated = False
+
+        if date_start and date_end:
+            ds = str(date_start).strip()[:10]
+            de = str(date_end).strip()[:10]
+            if len(ds) != 10 or len(de) != 10 or ds > de:
+                return [], False
+            days = self._iter_archive_dates_inclusive(ds, de)
+            seen: set[tuple[Any, ...]] = set()
+            collected: list[dict[str, Any]] = []
+            for day in days:
+                for e in self._event_archive_days.get(day, []):
+                    if room_id and e.get("room_id") != room_id:
+                        continue
+                    k = _event_log_dedupe_key(e)
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    collected.append(e)
+            collected.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
+            if len(collected) > max_n:
+                return collected[:max_n], True
+            return collected, False
+
+        sh = 24 if since_hours is None else int(since_hours)
+        sh = max(1, min(24 * 90, sh))
+        cutoff = dt_util.now() - timedelta(hours=sh)
         cutoff_ts = cutoff.strftime("%Y-%m-%dT%H:%M:%S")
-        result = []
+        cutoff_day = cutoff.strftime("%Y-%m-%d")
+        today = dt_util.now().strftime("%Y-%m-%d")
+        days = self._iter_archive_dates_inclusive(cutoff_day, today)
+        seen: set[tuple[Any, ...]] = set()
+        collected: list[dict[str, Any]] = []
+        for day in days:
+            for e in self._event_archive_days.get(day, []):
+                if e.get("ts", "") < cutoff_ts:
+                    continue
+                if room_id and e.get("room_id") != room_id:
+                    continue
+                k = _event_log_dedupe_key(e)
+                if k in seen:
+                    continue
+                seen.add(k)
+                collected.append(e)
         for e in reversed(self._event_log):
             if e.get("ts", "") < cutoff_ts:
                 break
             if room_id and e.get("room_id") != room_id:
                 continue
-            result.append(e)
-        return result
+            k = _event_log_dedupe_key(e)
+            if k in seen:
+                continue
+            seen.add(k)
+            collected.append(e)
+        collected.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
+        if len(collected) > max_n:
+            return collected[:max_n], True
+        return collected, False
 
     # Daily totals history (end-of-day snapshots for 30-day graphs)
     async def _async_load_daily_totals(self) -> None:
