@@ -2439,25 +2439,27 @@ class EnergyPanel extends HTMLElement {
         position: relative;
         overflow: hidden;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
+        gap: 3px;
       }
 
       .device-card.stove-card .stove-timer-remaining {
         font-size: 10px;
         font-weight: 600;
         color: var(--panel-warning, #ff9800);
-        margin-top: 2px;
+        margin-top: 0;
         text-align: center;
         line-height: 1.2;
       }
       .device-card.stove-card .stove-door-watts {
-        position: absolute;
         font-size: 10px;
         font-weight: 800;
         color: var(--panel-accent, #03a9f4);
         font-variant-numeric: tabular-nums;
         text-shadow: 0 0 4px rgba(0,0,0,0.8);
+        flex-shrink: 0;
       }
 
       .device-card.stove-card .stove-door-watts.over-threshold {
