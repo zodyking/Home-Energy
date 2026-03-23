@@ -124,8 +124,17 @@ class EnergyMonitor:
             return False
         return now.weekday() in days
 
-    def _effective_kwh_budget(self, base: float, now: datetime, tts_settings: dict) -> float:
-        return self.config_manager.effective_kwh_budget_for_moment(base, now, tts_settings)
+    def _effective_kwh_budget(
+        self,
+        base: float,
+        now: datetime,
+        tts_settings: dict,
+        *,
+        use_room_boost: bool = True,
+    ) -> float:
+        return self.config_manager.effective_kwh_budget_for_moment(
+            base, now, tts_settings, use_room_boost=use_room_boost
+        )
 
     @staticmethod
     def _budget_multiplier_tts_str(mult: float) -> str:
@@ -348,12 +357,15 @@ class EnergyMonitor:
             room_name = room["name"]
             room_threshold = room.get("threshold", 0)
             kwh_budget = float(room.get("kwh_budget", 5) or 5)
+            room_uses_kwh_boost = room.get("kwh_budget_use_boost", True) is not False
             media_player = room.get("media_player")
             room_volume = room.get("volume", tts_settings.get("volume", 0.7))
 
             # Room budget: no warnings/shutoffs until room uses this much today (boost days scale budget)
             room_day_kwh = self.config_manager.get_room_day_kwh(room_id)
-            effective_kwh_budget = self._effective_kwh_budget(kwh_budget, now, tts_settings)
+            effective_kwh_budget = self._effective_kwh_budget(
+                kwh_budget, now, tts_settings, use_room_boost=room_uses_kwh_boost
+            )
             budget_exceeded = effective_kwh_budget <= 0 or room_day_kwh >= effective_kwh_budget
 
             # TTS when room first exceeds budget (once per day per room)
@@ -1220,9 +1232,16 @@ class EnergyMonitor:
                 await self.config_manager.async_set_enforcement_phase(room_id, 1)
                 now_p1 = dt_util.now()
                 boost_tmpl = (tts_settings.get("phase1_warn_msg_boost_day") or "").strip()
-                if self._is_budget_boost_day(now_p1, tts_settings) and boost_tmpl:
+                room_uses_kwh_boost = room.get("kwh_budget_use_boost", True) is not False
+                if (
+                    self._is_budget_boost_day(now_p1, tts_settings)
+                    and boost_tmpl
+                    and room_uses_kwh_boost
+                ):
                     base_b = float(room.get("kwh_budget", 5) or 5)
-                    eff_b = self._effective_kwh_budget(base_b, now_p1, tts_settings)
+                    eff_b = self._effective_kwh_budget(
+                        base_b, now_p1, tts_settings, use_room_boost=True
+                    )
                     mult = float(tts_settings.get("budget_boost_multiplier") or 2)
                     mult_s = self._budget_multiplier_tts_str(max(1.0, min(5.0, mult)))
                     weekdays = tts_settings.get("budget_boost_weekdays") or []
@@ -1628,6 +1647,7 @@ class EnergyMonitor:
             media_player = room.get("media_player")
             volume = float(room.get("volume", 0.7))
             base_kwh_budget = float(room.get("kwh_budget", 5) or 5)
+            room_uses_kwh_boost = room.get("kwh_budget_use_boost", True) is not False
 
             if room_id not in rooms_enabled:
                 continue
@@ -1659,6 +1679,7 @@ class EnergyMonitor:
                 base_kwh_budget,
                 now_pe,
                 tts_settings,
+                use_room_budget_boost=room_uses_kwh_boost,
             )
             interval_hit = None
             if filtered_intervals:

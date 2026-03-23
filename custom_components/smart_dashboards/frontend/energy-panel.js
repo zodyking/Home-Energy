@@ -3898,6 +3898,9 @@ class EnergyPanel extends HTMLElement {
 
     const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
     const isStatBillingModal = type === 'stat_total_wh' || type === 'stat_room_wh';
+    /** Daily billing bars: category axis + numeric series (datetime bars mis-map hover/tooltip in Apex). */
+    let billingCategories = null;
+    let billingValues = null;
     /** Set for intraday kWh charts: tighter y-axis + label precision */
     let intradayKwhYMax = null;
 
@@ -3973,13 +3976,22 @@ class EnergyPanel extends HTMLElement {
         seriesName = `${roomName || 'Room'} kWh per day`;
       }
       const values = raw.map((v) => v / 1000);
-      seriesData = [];
+      const pairs = [];
       const m = Math.min(dates.length, values.length);
       for (let i = 0; i < m; i++) {
         const x = this._parseChartTimeMs(dates[i]);
-        if (!Number.isNaN(x)) seriesData.push([x, values[i]]);
+        if (!Number.isNaN(x)) pairs.push({ x, v: values[i] });
       }
-      seriesData.sort((a, b) => a[0] - b[0]);
+      pairs.sort((a, b) => a.x - b.x);
+      billingValues = pairs.map((p) => p.v);
+      billingCategories = pairs.map((p) =>
+        new Date(p.x).toLocaleDateString(undefined, {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        }),
+      );
+      seriesData = pairs.map((p) => [p.x, p.v]);
       strokeCurve = 'straight';
       yFormatter = (v) => `${Number(v).toFixed(2)} kWh`;
     } else if (type.startsWith('room_')) {
@@ -4023,6 +4035,17 @@ class EnergyPanel extends HTMLElement {
       const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
       const gridColor = getComputedStyle(this).getPropertyValue('--card-border').trim() || 'rgba(255,255,255,0.08)';
 
+      const useBillingBars =
+        isStatBillingModal &&
+        Array.isArray(billingValues) &&
+        billingValues.length > 0 &&
+        Array.isArray(billingCategories) &&
+        billingCategories.length === billingValues.length;
+      const seriesPayload = useBillingBars
+        ? [{ name: seriesName, data: billingValues }]
+        : [{ name: seriesName, data: seriesData }];
+      const manyBillingDays = useBillingBars && billingCategories.length > 12;
+
       const options = {
         chart: {
           type: isStatBillingModal ? 'bar' : 'area',
@@ -4031,18 +4054,33 @@ class EnergyPanel extends HTMLElement {
           background: 'transparent',
           toolbar: { show: false },
           zoom: { enabled: false },
-          animations: { enabled: true },
+          parentHeightOffset: 0,
+          redrawOnParentResize: true,
+          animations: { enabled: useBillingBars ? false : true },
         },
-        series: [{ name: seriesName, data: seriesData }],
-        xaxis: {
-          type: 'datetime',
-          labels: {
-            style: { colors: textColor, fontSize: '11px' },
-            datetimeUTC: false,
-          },
-          axisBorder: { show: true, color: gridColor },
-          axisTicks: { show: true, color: gridColor },
-        },
+        series: seriesPayload,
+        xaxis: useBillingBars
+          ? {
+              type: 'category',
+              categories: billingCategories,
+              labels: {
+                style: { colors: textColor, fontSize: '11px' },
+                rotate: manyBillingDays ? -45 : 0,
+                rotateAlways: manyBillingDays,
+                hideOverlappingLabels: true,
+              },
+              axisBorder: { show: true, color: gridColor },
+              axisTicks: { show: true, color: gridColor },
+            }
+          : {
+              type: 'datetime',
+              labels: {
+                style: { colors: textColor, fontSize: '11px' },
+                datetimeUTC: false,
+              },
+              axisBorder: { show: true, color: gridColor },
+              axisTicks: { show: true, color: gridColor },
+            },
         yaxis: {
           labels: {
             show: true,
@@ -4075,25 +4113,43 @@ class EnergyPanel extends HTMLElement {
         grid: {
           borderColor: gridColor,
           strokeDashArray: 4,
-          padding: { right: 8 },
+          padding: {
+            right: 8,
+            bottom: useBillingBars ? (manyBillingDays ? 36 : 10) : 4,
+            left: 4,
+          },
           xaxis: { lines: { show: false } },
           yaxis: { lines: { show: true } },
         },
         dataLabels: { enabled: false },
         tooltip: {
           theme: 'dark',
-          x: {
-            formatter: (val) => {
-              const d = new Date(val);
-              return isIntraday
-                ? d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-            },
-          },
+          ...(useBillingBars
+            ? { intersect: true, shared: false, followCursor: false }
+            : {}),
+          x: useBillingBars
+            ? { formatter: (val) => (val != null ? String(val) : '') }
+            : {
+                formatter: (val) => {
+                  const d = new Date(val);
+                  return isIntraday
+                    ? d.toLocaleString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : d.toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      });
+                },
+              },
           y: { formatter: (val) => yFormatter(val) },
         },
         plotOptions: isStatBillingModal
-          ? { bar: { borderRadius: 4, columnWidth: '70%' } }
+          ? { bar: { borderRadius: 4, columnWidth: '72%' } }
           : { area: { fillTo: 'origin' } },
         markers: isStatBillingModal
           ? { size: 0, hover: { size: 0 } }
@@ -4102,15 +4158,32 @@ class EnergyPanel extends HTMLElement {
               hover: { size: 5 },
             },
       };
-      if (!seriesData.length) {
+      const hasChartPoints = useBillingBars
+        ? billingValues.length > 0
+        : seriesData.length > 0;
+      if (!hasChartPoints) {
         options.noData = { text: 'No data yet', style: { color: textColor } };
       }
-      if (isIntraday) {
+      if (isIntraday && !useBillingBars) {
         options.xaxis.min = this._startOfLocalDayMs();
         options.xaxis.max = Date.now();
       }
       this._apexChartInstance = new ApexCharts(container, options);
       await this._apexChartInstance.render();
+      requestAnimationFrame(() => {
+        try {
+          this._apexChartInstance?.resize();
+        } catch (_e) {
+          /* stale instance */
+        }
+        requestAnimationFrame(() => {
+          try {
+            this._apexChartInstance?.resize();
+          } catch (_e2) {
+            /* stale instance */
+          }
+        });
+      });
     } catch (e) {
       console.error('ApexCharts failed to load:', e);
       container.innerHTML = '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">Chart failed to load. Check network or try again.</p>';
@@ -4381,9 +4454,10 @@ class EnergyPanel extends HTMLElement {
   }
 
   /** Mirror config_manager.effective_kwh_budget_for_moment (local date). */
-  _effectiveKwhBudgetClient(baseKwh, tts) {
+  _effectiveKwhBudgetClient(baseKwh, tts, useRoomBoost = true) {
     const base = Math.max(0, Number(baseKwh) || 0);
     if (base <= 0) return base;
+    if (useRoomBoost === false) return base;
     if (!this._isBudgetBoostDayClient(tts)) return base;
     const mult = Math.max(1, Math.min(5, parseFloat((tts || {}).budget_boost_multiplier) || 2));
     return Math.round(base * mult * 10000) / 10000;
@@ -4440,12 +4514,13 @@ class EnergyPanel extends HTMLElement {
         : Number(roomConfig?.kwh_budget ?? 5);
     const baseKwh = Number.isFinite(baseRaw) ? Math.max(0, baseRaw) : 0;
     const tts = this._config?.tts_settings || {};
+    const roomUsesBoost = roomConfig?.kwh_budget_use_boost !== false;
     let effKwh = baseKwh;
     const apiEff = roomData.kwh_budget_effective;
     if (apiEff != null && Number.isFinite(Number(apiEff))) {
       effKwh = Math.max(0, Number(apiEff));
     } else {
-      effKwh = this._effectiveKwhBudgetClient(baseKwh, tts);
+      effKwh = this._effectiveKwhBudgetClient(baseKwh, tts, roomUsesBoost);
     }
     const usedKwh = Math.max(0, (roomData.total_day_wh || 0) / 1000);
     const showBar = maxInterval > 0;
@@ -5849,6 +5924,10 @@ class EnergyPanel extends HTMLElement {
               <label class="form-label">Daily kWh Budget (freebie)</label>
               <input type="number" class="form-input room-kwh-budget" value="${room.kwh_budget ?? 5}" placeholder="5" min="0" step="0.5">
               <div class="tts-msg-desc" style="margin-top: 4px;">No warnings or shutoffs until room uses this much today. 0 = always enforce.</div>
+              <label class="form-checkbox-row" style="margin-top: 10px; display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                <input type="checkbox" class="room-kwh-budget-use-boost" ${room.kwh_budget_use_boost !== false ? 'checked' : ''} style="margin-top: 2px;">
+                <span class="tts-msg-desc" style="margin: 0;">Apply global budget boost on boost days (Enforcement → schedule)</span>
+              </label>
             </div>
           </div>
 
@@ -6794,6 +6873,7 @@ class EnergyPanel extends HTMLElement {
       media_player: '',
       threshold: 0,
       kwh_budget: 5,
+      kwh_budget_use_boost: true,
       volume: 0.7,
       outlets: [],
     };
@@ -7171,6 +7251,7 @@ class EnergyPanel extends HTMLElement {
       const mediaPlayerSelect = card.querySelector('.room-media-player');
       const thresholdInput = card.querySelector('.room-threshold');
       const kwhBudgetInput = card.querySelector('.room-kwh-budget');
+      const kwhBoostCheck = card.querySelector('.room-kwh-budget-use-boost');
       const volumeSlider = card.querySelector('.room-volume');
       const outletItems = card.querySelectorAll('.outlet-settings-item');
 
@@ -7326,6 +7407,7 @@ class EnergyPanel extends HTMLElement {
           media_player: mediaPlayer,
           threshold: parseInt(thresholdInput?.value) || 0,
           kwh_budget: parseFloat(kwhBudgetInput?.value) ?? 5,
+          kwh_budget_use_boost: kwhBoostCheck ? kwhBoostCheck.checked : true,
           volume: parseFloat(volumeSlider?.value) || 0.7,
           responsive_light_warnings: responsiveToggle?.checked === true && !responsiveToggle.disabled,
           responsive_light_color: rgb,
@@ -7481,6 +7563,8 @@ class EnergyPanel extends HTMLElement {
     const nameInput = card.querySelector('.room-name-input');
     const mediaPlayerSelect = card.querySelector('.room-media-player');
     const thresholdInput = card.querySelector('.room-threshold');
+    const kwhBudgetInputSingle = card.querySelector('.room-kwh-budget');
+    const kwhBoostCheckSingle = card.querySelector('.room-kwh-budget-use-boost');
     const volumeSlider = card.querySelector('.room-volume');
     const outletItems = card.querySelectorAll('.outlet-settings-item');
 
@@ -7634,11 +7718,19 @@ class EnergyPanel extends HTMLElement {
       ? mediaPlayerValue 
       : (originalRoom?.media_player || null);
 
+    const kbRaw = kwhBudgetInputSingle?.value;
+    const kbParsed = kbRaw !== undefined && kbRaw !== '' ? parseFloat(kbRaw) : NaN;
+    const kwhBudgetVal = Number.isFinite(kbParsed)
+      ? kbParsed
+      : (originalRoom?.kwh_budget ?? 5);
+
     const updatedRoom = {
       id: roomName.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
       name: roomName,
       media_player: mediaPlayer,
       threshold: parseInt(thresholdInput?.value) || 0,
+      kwh_budget: kwhBudgetVal,
+      kwh_budget_use_boost: kwhBoostCheckSingle ? kwhBoostCheckSingle.checked : (originalRoom?.kwh_budget_use_boost !== false),
       volume: parseFloat(volumeSlider?.value) || 0.7,
       responsive_light_warnings: responsiveToggle?.checked === true && !responsiveToggle.disabled,
       responsive_light_color: rgb,

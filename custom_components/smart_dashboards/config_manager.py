@@ -191,6 +191,8 @@ class ConfigManager:
         base_kwh: float,
         now,
         tts_settings: dict | None,
+        *,
+        use_room_budget_boost: bool = True,
     ) -> list[int]:
         """Intervals used for room kWh TTS; matches energy-panel plotted tiers (boost vs base)."""
         if not isinstance(raw_intervals, list) or len(raw_intervals) == 0:
@@ -207,7 +209,9 @@ class ConfigManager:
         if not vals:
             return []
         base = max(0.0, float(base_kwh or 0))
-        eff = cls.effective_kwh_budget_for_moment(base, now, tts_settings or {})
+        eff = cls.effective_kwh_budget_for_moment(
+            base, now, tts_settings or {}, use_room_boost=use_room_budget_boost
+        )
         boost = base > 1e-12 and eff > base + 1e-9
         if boost:
             return [v for v in vals if v >= eff - 1e-9]
@@ -217,11 +221,21 @@ class ConfigManager:
 
     @classmethod
     def effective_kwh_budget_for_moment(
-        cls, base_kwh: float, now, tts_settings: dict | None
+        cls,
+        base_kwh: float,
+        now,
+        tts_settings: dict | None,
+        *,
+        use_room_boost: bool = True,
     ) -> float:
-        """Daily kWh budget after boost multiplier (matches energy_monitor logic)."""
+        """Daily kWh budget after boost multiplier (matches energy_monitor logic).
+
+        If use_room_boost is False, this room always uses base kWh (ignores global boost).
+        """
         base = float(base_kwh or 0)
         if base <= 0:
+            return base
+        if not use_room_boost:
             return base
         tts = tts_settings or {}
         if not cls._is_budget_boost_day(now, tts):
@@ -234,13 +248,17 @@ class ConfigManager:
         """Return (base_kwh_budget, effective_kwh_budget) for local now."""
         now = dt_util.now()
         base = 0.0
+        use_boost = True
         for r in self.energy_config.get("rooms", []):
             rid = r.get("id", r["name"].lower().replace(" ", "_"))
             if rid == room_id:
                 base = float(r.get("kwh_budget", 5) or 0)
+                use_boost = r.get("kwh_budget_use_boost", True) is not False
                 break
         tts = self.energy_config.get("tts_settings") or {}
-        eff = self.effective_kwh_budget_for_moment(base, now, tts)
+        eff = self.effective_kwh_budget_for_moment(
+            base, now, tts, use_room_boost=use_boost
+        )
         return (base, eff)
 
     async def async_load(self) -> None:
@@ -370,8 +388,11 @@ class ConfigManager:
         for room in self.energy_config.get("rooms", []):
             room_id = room.get("id", room["name"].lower().replace(" ", "_"))
             base_b = float(room.get("kwh_budget", 5) or 0)
+            use_boost = room.get("kwh_budget_use_boost", True) is not False
             allowed = set(
-                self.filter_room_kwh_intervals_for_alerts(raw_iv, base_b, now, tts)
+                self.filter_room_kwh_intervals_for_alerts(
+                    raw_iv, base_b, now, tts, use_room_budget_boost=use_boost
+                )
             )
             state = self.get_enforcement_state(room_id)
             sent = list(state.get("kwh_alerts_sent") or [])
@@ -398,6 +419,9 @@ class ConfigManager:
                     "media_player": room.get("media_player"),
                     "threshold": int(room.get("threshold", 0)),
                     "kwh_budget": max(0, float(room.get("kwh_budget", 5))),
+                    "kwh_budget_use_boost": (
+                        room.get("kwh_budget_use_boost", True) is not False
+                    ),
                     "volume": float(room.get("volume", 0.7)),
                     "responsive_light_warnings": bool(room.get("responsive_light_warnings", False)),
                     "responsive_light_color": _validate_rgb(room.get("responsive_light_color")),
