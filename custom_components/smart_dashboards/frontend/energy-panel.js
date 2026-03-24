@@ -4838,6 +4838,28 @@ class EnergyPanel extends HTMLElement {
     return 3;
   }
 
+  /** Three increasing cutpoints for tier colors: global [t0,t1,t2] or merged with eff when room has a budget. */
+  _kwhTierCutpointsMerged(baseKwh, effKwh, intervalsSorted) {
+    const [t0, t1, t2] = intervalsSorted;
+    if (!(baseKwh > 0)) return [t0, t1, t2];
+    const merged = [...new Set([effKwh, t1, t2])].sort((a, b) => a - b);
+    const eps = 1e-9;
+    const has = (arr, x) => arr.some((v) => Math.abs(v - x) < eps);
+    while (merged.length < 3) {
+      let added = false;
+      for (const g of [t0, t1, t2]) {
+        if (!has(merged, g)) {
+          merged.push(g);
+          merged.sort((a, b) => a - b);
+          added = true;
+          break;
+        }
+      }
+      if (!added) break;
+    }
+    return merged.slice(0, 3).sort((a, b) => a - b);
+  }
+
   _budgetBarSubtitle(b) {
     if (!b.showBar) return 'Configure kWh intervals';
     if (b.over) return 'Over range';
@@ -4890,11 +4912,17 @@ class EnergyPanel extends HTMLElement {
       showBar && effKwh > 0
         ? Math.min(100, (effKwh / maxInterval) * 100)
         : null;
-    const plottedIntervals = boost
-      ? intervalsSorted.filter((v) => v >= effKwh - 1e-9)
-      : baseKwh > 0
-        ? intervalsSorted.filter((v) => v >= baseKwh - 1e-9)
+    const upperIntervals = intervalsSorted.slice(1);
+    let plottedIntervals;
+    if (baseKwh > 0) {
+      plottedIntervals = boost
+        ? upperIntervals.filter((v) => v >= effKwh - 1e-9)
+        : upperIntervals.filter((v) => v >= baseKwh - 1e-9);
+    } else {
+      plottedIntervals = boost
+        ? intervalsSorted.filter((v) => v >= effKwh - 1e-9)
         : [...intervalsSorted];
+    }
     const audibleKwh = plottedIntervals.length ? plottedIntervals[0] : null;
     const audiblePct =
       audibleKwh != null && showBar
@@ -4910,9 +4938,17 @@ class EnergyPanel extends HTMLElement {
     const plottedIntervalMarkers = plottedIntervals.map((value) => ({
       value,
       pct: showBar ? Math.min(100, (value / maxInterval) * 100) : 0,
-      kind: audibleKwh !== null && value === audibleKwh ? 'audible' : 'interval',
+      kind:
+        audibleKwh != null && Math.abs(value - audibleKwh) < 1e-6
+          ? 'audible'
+          : 'interval',
     }));
-    const kwhTier = showBar ? this._kwhTierFromUsed(usedKwh, intervalsSorted) : 0;
+    const tierCutpoints = this._kwhTierCutpointsMerged(
+      baseKwh,
+      effKwh,
+      intervalsSorted,
+    );
+    const kwhTier = showBar ? this._kwhTierFromUsed(usedKwh, tierCutpoints) : 0;
     return {
       usedKwh,
       effKwh,

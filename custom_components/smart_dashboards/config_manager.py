@@ -75,6 +75,11 @@ def _normalize_room_kwh_intervals(raw: Any) -> list[int | float]:
     return out
 
 
+def _room_kwh_alert_threshold_key(x: Any) -> float:
+    """Stable float key for kwh_alerts_sent (matches filter output rounding)."""
+    return round(float(x), 4)
+
+
 def _normalize_budget_boost_weekdays(raw: Any) -> list[int]:
     """Unique weekdays Monday=0..Sunday=6."""
     if not isinstance(raw, list):
@@ -231,31 +236,37 @@ class ConfigManager:
         tts_settings: dict | None,
         *,
         use_room_budget_boost: bool = True,
-    ) -> list[int]:
-        """Intervals used for room kWh TTS; matches energy-panel plotted tiers (boost vs base)."""
-        if not isinstance(raw_intervals, list) or len(raw_intervals) == 0:
-            raw_intervals = [5, 10, 15, 20]
-        vals: list[int] = []
-        for x in raw_intervals:
-            try:
-                n = int(x)
-                if n > 0:
-                    vals.append(n)
-            except (TypeError, ValueError):
-                continue
-        vals = sorted(set(vals))
-        if not vals:
-            return []
+    ) -> list[float]:
+        """Intervals used for room kWh TTS; matches energy-panel (budget replaces t0 when base > 0)."""
+        t_norm = _normalize_room_kwh_intervals(
+            raw_intervals if isinstance(raw_intervals, list) and len(raw_intervals) else []
+        )
+        t0, t1, t2, t3 = (float(t_norm[i]) for i in range(4))
         base = max(0.0, float(base_kwh or 0))
-        eff = cls.effective_kwh_budget_for_moment(
-            base, now, tts_settings or {}, use_room_boost=use_room_budget_boost
+        eff = float(
+            cls.effective_kwh_budget_for_moment(
+                base, now, tts_settings or {}, use_room_boost=use_room_budget_boost
+            )
         )
         boost = base > 1e-12 and eff > base + 1e-9
-        if boost:
-            return [v for v in vals if v >= eff - 1e-9]
         if base > 0:
-            return [v for v in vals if v >= base - 1e-9]
-        return list(vals)
+            milestones = sorted(
+                {
+                    _room_kwh_alert_threshold_key(eff),
+                    _room_kwh_alert_threshold_key(t1),
+                    _room_kwh_alert_threshold_key(t2),
+                    _room_kwh_alert_threshold_key(t3),
+                }
+            )
+            if boost:
+                out = [v for v in milestones if v >= eff - 1e-9]
+            else:
+                out = [v for v in milestones if v >= base - 1e-9]
+            return out
+        milestones = [_room_kwh_alert_threshold_key(x) for x in (t0, t1, t2, t3)]
+        if boost:
+            return [v for v in milestones if v >= eff - 1e-9]
+        return milestones
 
     @classmethod
     def effective_kwh_budget_for_moment(
@@ -422,19 +433,23 @@ class ConfigManager:
         tts = self.energy_config.get("tts_settings") or {}
         pe = self.energy_config.get("power_enforcement") or {}
         raw_iv = pe.get("room_kwh_intervals", [5, 10, 15, 20])
+        norm_iv = _normalize_room_kwh_intervals(raw_iv)
         changed = False
         for room in self.energy_config.get("rooms", []):
             room_id = room.get("id", room["name"].lower().replace(" ", "_"))
             base_b = float(room.get("kwh_budget", 5) or 0)
             use_boost = room.get("kwh_budget_use_boost", True) is not False
-            allowed = set(
-                self.filter_room_kwh_intervals_for_alerts(
-                    raw_iv, base_b, now, tts, use_room_budget_boost=use_boost
+            allowed = {
+                _room_kwh_alert_threshold_key(x)
+                for x in self.filter_room_kwh_intervals_for_alerts(
+                    norm_iv, base_b, now, tts, use_room_budget_boost=use_boost
                 )
-            )
+            }
             state = self.get_enforcement_state(room_id)
             sent = list(state.get("kwh_alerts_sent") or [])
-            new_sent = [x for x in sent if x in allowed]
+            new_sent = [
+                x for x in sent if _room_kwh_alert_threshold_key(x) in allowed
+            ]
             if new_sent != sent:
                 state["kwh_alerts_sent"] = new_sent
                 changed = True
@@ -1710,15 +1725,21 @@ class ConfigManager:
         room_kwh = self.get_room_day_kwh(room_id)
         return round((room_kwh / total_kwh) * 100, 1)
 
-    async def async_should_send_room_kwh_alert(self, room_id: str, intervals: list) -> int | None:
-        """Check if a kWh interval alert should be sent. Returns interval or None."""
+    async def async_should_send_room_kwh_alert(
+        self, room_id: str, intervals: list
+    ) -> float | None:
+        """Check if a kWh interval alert should be sent. Returns threshold or None."""
         state = self.get_enforcement_state(room_id)
         room_kwh = self.get_room_day_kwh(room_id)
-        for interval in sorted(intervals):
-            if room_kwh >= interval and interval not in state["kwh_alerts_sent"]:
-                state["kwh_alerts_sent"].append(interval)
+        sent = state["kwh_alerts_sent"]
+        sent_keys = {_room_kwh_alert_threshold_key(s) for s in sent}
+        for interval in sorted(float(x) for x in intervals):
+            ik = _room_kwh_alert_threshold_key(interval)
+            if room_kwh >= interval - 1e-9 and ik not in sent_keys:
+                sent.append(ik)
+                sent_keys.add(ik)
                 await self._async_save_enforcement_state()
-                return interval
+                return ik
         return None
 
     async def async_should_send_home_kwh_alert(self, limit: int) -> bool:

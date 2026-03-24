@@ -1700,7 +1700,9 @@ class EnergyMonitor:
                         await self._async_send_tts_with_lights(
                             room, media_player, message, volume, tts_settings
                         )
-                        _LOGGER.warning("Room kWh alert: %s exceeded %d kWh", room_name, interval_hit)
+                        _LOGGER.warning(
+                            "Room kWh alert: %s exceeded %s kWh", room_name, interval_hit
+                        )
                     except Exception as e:
                         _LOGGER.error("Failed to send room kWh alert: %s", e)
 
