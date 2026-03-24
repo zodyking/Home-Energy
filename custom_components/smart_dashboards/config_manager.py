@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 from copy import deepcopy
@@ -35,6 +36,43 @@ def _safe_float(val: Any, default: float) -> float:
         return float(val) if isinstance(val, (int, float)) else float(str(val).strip())
     except (ValueError, TypeError):
         return default
+
+
+_ROOM_KWH_INTERVALS_DEFAULT: list[int] = [5, 10, 15, 20]
+
+
+def _normalize_room_kwh_intervals(raw: Any) -> list[int | float]:
+    """Exactly four strictly increasing positive thresholds; else default (matches energy-panel.js)."""
+    nums: list[float] = []
+    if isinstance(raw, list):
+        items: list[Any] = list(raw)
+    elif isinstance(raw, str):
+        items = [p.strip() for p in raw.split(",") if p.strip()]
+    else:
+        return list(_ROOM_KWH_INTERVALS_DEFAULT)
+
+    for x in items:
+        try:
+            n = float(x)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(n) and n > 0:
+            nums.append(n)
+
+    if len(nums) != 4:
+        return list(_ROOM_KWH_INTERVALS_DEFAULT)
+
+    sorted_nums = sorted(nums)
+    if len(set(sorted_nums)) != 4:
+        return list(_ROOM_KWH_INTERVALS_DEFAULT)
+    for i in range(1, 4):
+        if sorted_nums[i] <= sorted_nums[i - 1]:
+            return list(_ROOM_KWH_INTERVALS_DEFAULT)
+
+    out: list[int | float] = []
+    for n in sorted_nums:
+        out.append(int(n) if n == int(n) else n)
+    return out
 
 
 def _normalize_budget_boost_weekdays(raw: Any) -> list[int]:
@@ -673,7 +711,9 @@ class ConfigManager:
             "phase2_reset_minutes": max(1, int(pe.get("phase2_reset_minutes", default_pe["phase2_reset_minutes"]))),
             "phase2_cycle_delay_seconds": max(1, min(30, int(pe.get("phase2_cycle_delay_seconds", default_pe["phase2_cycle_delay_seconds"])))),
             "phase2_max_volume": max(0, min(100, int(pe.get("phase2_max_volume", default_pe.get("phase2_max_volume", 100))))),
-            "room_kwh_intervals": pe.get("room_kwh_intervals", default_pe["room_kwh_intervals"]),
+            "room_kwh_intervals": _normalize_room_kwh_intervals(
+                pe.get("room_kwh_intervals", default_pe["room_kwh_intervals"])
+            ),
             "home_kwh_limit": max(1, int(pe.get("home_kwh_limit", default_pe["home_kwh_limit"]))),
             "rooms_enabled": pe.get("rooms_enabled", default_pe["rooms_enabled"]),
         }
