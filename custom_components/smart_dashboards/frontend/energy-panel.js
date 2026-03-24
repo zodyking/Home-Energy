@@ -579,6 +579,8 @@ class EnergyPanel extends HTMLElement {
       }
       if (barFill) {
         barFill.style.width = `${budgetState.showBar ? budgetState.fillPct : 0}%`;
+        barFill.classList.remove('kwh-tier-0', 'kwh-tier-1', 'kwh-tier-2', 'kwh-tier-3');
+        barFill.classList.add(`kwh-tier-${budgetState.kwhTier}`);
         barFill.classList.toggle('over', budgetState.over);
         barFill.classList.toggle('over-budget', budgetState.overBudget && !budgetState.over);
       }
@@ -1334,18 +1336,25 @@ class EnergyPanel extends HTMLElement {
         bottom: 0;
         z-index: 0;
         border-radius: inherit;
-        background: linear-gradient(100deg, #0288d1 0%, var(--panel-accent) 35%, #26c6da 100%);
         transition: width 0.35s ease, background 0.25s ease;
         min-width: 0;
         pointer-events: none;
       }
 
-      .room-budget-bar-fill.over-budget {
-        background: linear-gradient(100deg, #f57c00 0%, #ff9800 55%, #ffb74d 100%);
+      .room-budget-bar-fill.kwh-tier-0 {
+        background: linear-gradient(100deg, #0288d1 0%, var(--panel-accent) 35%, #26c6da 100%);
       }
 
-      .room-budget-bar-fill.over {
-        background: linear-gradient(100deg, #e53935 0%, var(--panel-danger) 100%);
+      .room-budget-bar-fill.kwh-tier-1 {
+        background: linear-gradient(100deg, #e65100 0%, #ff9800 45%, #ffb74d 100%);
+      }
+
+      .room-budget-bar-fill.kwh-tier-2 {
+        background: linear-gradient(100deg, #b71c1c 0%, #e53935 40%, #ef5350 100%);
+      }
+
+      .room-budget-bar-fill.kwh-tier-3 {
+        background: linear-gradient(100deg, #4a148c 0%, #7b1fa2 42%, #9c27b0 100%);
       }
 
       .room-budget-markers {
@@ -1497,15 +1506,45 @@ class EnergyPanel extends HTMLElement {
         background: linear-gradient(
           105deg,
           transparent 0%,
-          rgba(255, 255, 255, 0.22) 42%,
+          rgba(255, 255, 255, 0.28) 42%,
           transparent 68%
         );
         background-size: 220% 100%;
-        animation: room-budget-surge 2.2s linear infinite;
+        animation: room-budget-surge 2s linear infinite;
+      }
+
+      .room-budget-bar-fill.kwh-tier-1::after {
+        background: linear-gradient(
+          105deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.34) 40%,
+          transparent 66%
+        );
+        animation-duration: 1.65s;
+      }
+
+      .room-budget-bar-fill.kwh-tier-2::after {
+        background: linear-gradient(
+          105deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.4) 38%,
+          transparent 64%
+        );
+        animation-duration: 1.25s;
+      }
+
+      .room-budget-bar-fill.kwh-tier-3::after {
+        background: linear-gradient(
+          105deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.45) 36%,
+          transparent 62%
+        );
+        animation-duration: 0.95s;
       }
 
       .room-budget-bar-fill.over::after {
-        animation-duration: 1.35s;
+        animation-duration: 0.6s;
       }
 
       @keyframes room-budget-surge {
@@ -4768,6 +4807,37 @@ class EnergyPanel extends HTMLElement {
     return row || null;
   }
 
+  /** Exactly four strictly increasing positive thresholds; else default [5,10,15,20]. */
+  _parseRoomKwhIntervals(raw) {
+    const DEFAULT = [5, 10, 15, 20];
+    const toNums = (arr) =>
+      arr.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+    let nums;
+    if (Array.isArray(raw)) {
+      nums = toNums(raw);
+    } else if (typeof raw === 'string') {
+      nums = toNums(raw.split(',').map((s) => s.trim()).filter(Boolean));
+    } else {
+      return { intervals: [...DEFAULT], valid: false };
+    }
+    if (nums.length !== 4) return { intervals: [...DEFAULT], valid: false };
+    const sorted = [...nums].sort((a, b) => a - b);
+    const uniq = [...new Set(sorted)];
+    if (uniq.length !== 4) return { intervals: [...DEFAULT], valid: false };
+    for (let i = 1; i < 4; i++) {
+      if (uniq[i] <= uniq[i - 1]) return { intervals: [...DEFAULT], valid: false };
+    }
+    return { intervals: uniq, valid: true };
+  }
+
+  _kwhTierFromUsed(usedKwh, t) {
+    const [t0, t1, t2] = t;
+    if (usedKwh < t0) return 0;
+    if (usedKwh < t1) return 1;
+    if (usedKwh < t2) return 2;
+    return 3;
+  }
+
   _budgetBarSubtitle(b) {
     if (!b.showBar) return 'Configure kWh intervals';
     if (b.over) return 'Over range';
@@ -4782,22 +4852,16 @@ class EnergyPanel extends HTMLElement {
     return '';
   }
 
-  /** Daily kWh bar: scale = max(room_kwh_intervals); fill vs scale; budget marker at effective kWh budget. */
+  /** Daily kWh bar: scale = 4th threshold; fill vs scale; budget marker at effective kWh budget. */
   _roomBudgetUiState(roomData, roomConfig) {
     const pe = this._config?.power_enforcement || {};
-    let rawIntervals = pe.room_kwh_intervals;
-    if (!Array.isArray(rawIntervals) || rawIntervals.length === 0) {
-      rawIntervals = [5, 10, 15, 20];
-    }
-    const intervalsSorted = [
-      ...new Set(
-        rawIntervals
-          .map((x) => Number(x))
-          .filter((n) => Number.isFinite(n) && n > 0),
-      ),
-    ].sort((a, b) => a - b);
-    const maxInterval =
-      intervalsSorted.length > 0 ? Math.max(...intervalsSorted) : 20;
+    const rawIntervals = pe.room_kwh_intervals;
+    const { intervals: intervalsSorted } = this._parseRoomKwhIntervals(
+      Array.isArray(rawIntervals) && rawIntervals.length
+        ? rawIntervals
+        : [5, 10, 15, 20],
+    );
+    const maxInterval = intervalsSorted[3];
 
     const cfgBase = Number(roomConfig?.kwh_budget);
     const dataBase = Number(roomData.kwh_budget);
@@ -4848,6 +4912,7 @@ class EnergyPanel extends HTMLElement {
       pct: showBar ? Math.min(100, (value / maxInterval) * 100) : 0,
       kind: audibleKwh !== null && value === audibleKwh ? 'audible' : 'interval',
     }));
+    const kwhTier = showBar ? this._kwhTierFromUsed(usedKwh, intervalsSorted) : 0;
     return {
       usedKwh,
       effKwh,
@@ -4865,6 +4930,7 @@ class EnergyPanel extends HTMLElement {
       over: overScale,
       overBudget,
       boost,
+      kwhTier,
     };
   }
 
@@ -4954,7 +5020,7 @@ class EnergyPanel extends HTMLElement {
     const powerCycles = roomData.power_cycles || 0;
     const enfPhase = typeof roomData.enforcement_phase === 'number' ? roomData.enforcement_phase : 0;
     const budget = this._roomBudgetUiState(roomData, room);
-    let fillClass = 'room-budget-bar-fill';
+    let fillClass = `room-budget-bar-fill kwh-tier-${budget.kwhTier}`;
     if (budget.over) fillClass += ' over';
     else if (budget.overBudget) fillClass += ' over-budget';
     const budgetSub = this._budgetBarSubtitle(budget);
@@ -6068,8 +6134,9 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Daily kWh Warnings</div>
                 <div class="grid-2">
                   <div class="form-group">
-                    <label class="form-label">Room kWh Intervals (comma-separated)</label>
-                    <input type="text" class="form-input" id="pe-room-kwh-intervals" value="${(pe.room_kwh_intervals || [5, 10, 15, 20]).join(', ')}" placeholder="5, 10, 15, 20">
+                    <label class="form-label">Room kWh tier thresholds</label>
+                    <input type="text" class="form-input" id="pe-room-kwh-intervals" value="${this._parseRoomKwhIntervals(pe.room_kwh_intervals || []).intervals.join(', ')}" placeholder="5, 10, 15, 20">
+                    <div style="font-size:10px;color:var(--secondary-text-color);margin-top:4px;">Exactly four comma-separated increasing kWh values (e.g. 5, 10, 15, 20).</div>
                   </div>
                   <div class="form-group">
                     <label class="form-label">Home kWh Limit</label>
@@ -7487,6 +7554,17 @@ class EnergyPanel extends HTMLElement {
   }
 
   async _saveEnforcementSettings() {
+    const rkwhStr =
+      (this.shadowRoot.querySelector('#pe-room-kwh-intervals')?.value || '5, 10, 15, 20').trim();
+    const rkwhParsed = this._parseRoomKwhIntervals(rkwhStr);
+    if (!rkwhParsed.valid) {
+      showToast(
+        this.shadowRoot,
+        'Room kWh intervals must be exactly four comma-separated increasing positive numbers (e.g. 5, 10, 15, 20).',
+        'error',
+      );
+      return;
+    }
     const pe = {
       enabled: this.shadowRoot.querySelector('#pe-enabled')?.checked || false,
       phase1_enabled: this.shadowRoot.querySelector('#pe-phase1-enabled')?.checked !== false,
@@ -7500,10 +7578,7 @@ class EnergyPanel extends HTMLElement {
       phase2_cycle_delay_seconds: parseInt(this.shadowRoot.querySelector('#pe-phase2-delay')?.value) || 5,
       phase2_reset_minutes: parseInt(this.shadowRoot.querySelector('#pe-phase2-reset')?.value) || 30,
       phase2_max_volume: Math.max(0, Math.min(100, parseInt(this.shadowRoot.querySelector('#pe-phase2-max-volume')?.value) || 100)),
-      room_kwh_intervals: (this.shadowRoot.querySelector('#pe-room-kwh-intervals')?.value || '5, 10, 15, 20')
-        .split(',')
-        .map(s => parseInt(s.trim()))
-        .filter(n => !isNaN(n) && n > 0),
+      room_kwh_intervals: rkwhParsed.intervals,
       home_kwh_limit: parseInt(this.shadowRoot.querySelector('#pe-home-kwh-limit')?.value) || 22,
       rooms_enabled: [],
     };
@@ -7768,6 +7843,18 @@ class EnergyPanel extends HTMLElement {
     };
     const roomsEnabled = [];
     tabEnf?.querySelectorAll('.pe-room-checkbox:checked').forEach(cb => roomsEnabled.push(cb.dataset.roomId || ''));
+    const rkwhRaw = _pei('pe-room-kwh-intervals');
+    const rkwhStr =
+      rkwhRaw != null && rkwhRaw !== false ? String(rkwhRaw).trim() : '5, 10, 15, 20';
+    const rkwhParsed = this._parseRoomKwhIntervals(rkwhStr);
+    if (!rkwhParsed.valid) {
+      showToast(
+        this.shadowRoot,
+        'Room kWh intervals must be exactly four comma-separated increasing positive numbers (e.g. 5, 10, 15, 20).',
+        'error',
+      );
+      return;
+    }
     const power_enforcement = {
       enabled: _pei('pe-enabled') === true,
       phase1_enabled: _pei('pe-phase1-enabled') !== false,
@@ -7781,10 +7868,7 @@ class EnergyPanel extends HTMLElement {
       phase2_cycle_delay_seconds: parseInt(_pei('pe-phase2-delay')) || 5,
       phase2_reset_minutes: parseInt(_pei('pe-phase2-reset')) || 30,
       phase2_max_volume: Math.max(0, Math.min(100, parseInt(_pei('pe-phase2-max-volume')) || 100)),
-      room_kwh_intervals: (_pei('pe-room-kwh-intervals') || '5, 10, 15, 20')
-        .split(',')
-        .map(s => parseInt(String(s).trim()))
-        .filter(n => !isNaN(n) && n > 0),
+      room_kwh_intervals: rkwhParsed.intervals,
       home_kwh_limit: parseInt(_pei('pe-home-kwh-limit')) || 22,
       rooms_enabled: roomsEnabled,
     };
