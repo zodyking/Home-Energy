@@ -2,28 +2,15 @@
  * Shared utilities for Smart Dashboards panels
  */
 
-// Common CSS — fixed dark gray; does not follow HA theme variables
+// Common CSS styles for both panels - Home Assistant blue theme
 export const sharedStyles = `
   :host {
     display: block;
     height: 100%;
-    --sd-bg: #1e1e22;
-    --sd-surface: #2c2c31;
-    --sd-text: #e8e8ec;
-    --sd-text-muted: #9a9aa3;
-    --sd-border: rgba(255, 255, 255, 0.08);
-    --sd-toggle-knob: #5c5c62;
-    /* Dark appliance plastic / metal (skeuomorphic devices) */
-    --sd-chrome-hi: #404048;
-    --sd-chrome-mid: #34343c;
-    --sd-chrome-low: #2a2a32;
-    --sd-chrome-deep: #222228;
-    --sd-chrome-metal: #3d4248;
-    --sd-chrome-shine: #52525c;
-    background: var(--sd-bg) !important;
-    color: var(--sd-text) !important;
-    font-family: 'Roboto', 'Segoe UI', sans-serif;
-    color-scheme: dark !important;
+    background: var(--primary-background-color, #111318);
+    color: var(--primary-text-color, #e1e1e1);
+    font-family: var(--paper-font-body1_-_font-family, 'Roboto', 'Segoe UI', sans-serif);
+    color-scheme: dark;
     --panel-accent: #03a9f4;
     --panel-accent-rgb: 3, 169, 244;
     --panel-accent-dim: rgba(3, 169, 244, 0.15);
@@ -31,8 +18,8 @@ export const sharedStyles = `
     --panel-danger: #f44336;
     --panel-warning: #ff9800;
     --panel-success: #4caf50;
-    --card-bg: var(--sd-surface);
-    --card-border: var(--sd-border);
+    --card-bg: var(--card-background-color, rgba(32, 33, 39, 0.95));
+    --card-border: rgba(255, 255, 255, 0.08);
     --input-bg: #2a2a2a;
     --input-border: rgba(255, 255, 255, 0.12);
   }
@@ -44,7 +31,6 @@ export const sharedStyles = `
   .panel-container {
     min-height: 100vh;
     padding: 0;
-    background: var(--sd-bg);
   }
 
   .panel-header {
@@ -67,7 +53,7 @@ export const sharedStyles = `
     border-radius: 8px;
     border: none;
     background: transparent;
-    color: var(--sd-text);
+    color: var(--primary-text-color);
     cursor: pointer;
     align-items: center;
     justify-content: center;
@@ -140,7 +126,7 @@ export const sharedStyles = `
 
   .btn-secondary {
     background: var(--input-bg);
-    color: var(--sd-text);
+    color: var(--primary-text-color);
     border: 1px solid var(--input-border);
   }
 
@@ -192,7 +178,7 @@ export const sharedStyles = `
     font-size: 16px;
     font-weight: 500;
     margin: 0;
-    color: var(--sd-text);
+    color: var(--primary-text-color);
   }
 
   /* Form Elements */
@@ -223,7 +209,7 @@ export const sharedStyles = `
 
   .light-entity-row .light-label {
     font-size: 11px;
-    color: var(--sd-text-muted);
+    color: var(--secondary-text-color);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     white-space: nowrap;
@@ -277,7 +263,7 @@ export const sharedStyles = `
     width: 16px;
     left: 2px;
     bottom: 2px;
-    background: var(--sd-toggle-knob);
+    background: var(--secondary-text-color, #9e9e9e);
     border-radius: 50%;
     transition: 0.25s;
   }
@@ -296,7 +282,7 @@ export const sharedStyles = `
     display: block;
     margin-bottom: 6px;
     font-size: 12px;
-    color: var(--sd-text-muted);
+    color: var(--secondary-text-color, #9e9e9e);
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -308,7 +294,7 @@ export const sharedStyles = `
     gap: 10px;
     cursor: pointer;
     font-size: 13px;
-    color: var(--sd-text);
+    color: var(--primary-text-color);
   }
 
   .toggle-row.toggle-disabled {
@@ -334,7 +320,7 @@ export const sharedStyles = `
     border-radius: 8px;
     border: 1px solid var(--input-border, rgba(255,255,255,0.12));
     background: var(--input-bg, #2a2a2a);
-    color: var(--sd-text);
+    color: var(--primary-text-color, #e0e0e0);
     font-size: 14px;
     font-family: inherit;
     transition: border-color 0.2s, background 0.2s;
@@ -433,7 +419,7 @@ export const sharedStyles = `
   .volume-icon {
     width: 20px;
     height: 20px;
-    fill: var(--sd-text-muted);
+    fill: var(--secondary-text-color);
     flex-shrink: 0;
   }
 
@@ -471,7 +457,7 @@ export const sharedStyles = `
     min-width: 40px;
     text-align: right;
     font-size: 13px;
-    color: var(--sd-text-muted);
+    color: var(--secondary-text-color);
     font-variant-numeric: tabular-nums;
   }
 
@@ -519,7 +505,7 @@ export const sharedStyles = `
     align-items: center;
     justify-content: center;
     padding: 60px;
-    color: var(--sd-text-muted);
+    color: var(--secondary-text-color);
   }
 
   .loading-spinner {
@@ -540,7 +526,7 @@ export const sharedStyles = `
   .empty-state {
     text-align: center;
     padding: 60px 20px;
-    color: var(--sd-text-muted);
+    color: var(--secondary-text-color);
   }
 
   .empty-state-icon {
@@ -554,7 +540,7 @@ export const sharedStyles = `
     font-size: 18px;
     font-weight: 500;
     margin: 0 0 8px;
-    color: var(--sd-text);
+    color: var(--primary-text-color);
   }
 
   .empty-state-desc {
@@ -605,7 +591,7 @@ export const sharedStyles = `
     border-radius: 8px;
     border: none;
     background: var(--input-bg);
-    color: var(--sd-text-muted);
+    color: var(--secondary-text-color);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -815,7 +801,7 @@ export const passcodeModalStyles = `
 
   .passcode-desc {
     font-size: 13px;
-    color: var(--sd-text-muted);
+    color: var(--secondary-text-color);
     margin: 0 0 20px;
   }
 
@@ -832,7 +818,7 @@ export const passcodeModalStyles = `
     border-radius: 10px;
     border: 2px solid var(--input-border);
     background: var(--input-bg);
-    color: var(--sd-text);
+    color: var(--primary-text-color);
     font-size: 24px;
     font-weight: 600;
     text-align: center;
