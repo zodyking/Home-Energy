@@ -7,8 +7,15 @@ export const sharedStyles = `
   :host {
     display: block;
     height: 100%;
-    background: var(--primary-background-color, #111318);
-    color: var(--primary-text-color, #e1e1e1);
+
+    /* Override HA theme variables - always use dark theme */
+    --primary-background-color: #111318;
+    --primary-text-color: #e1e1e1;
+    --secondary-text-color: #9e9e9e;
+    --card-background-color: rgba(32, 33, 39, 0.95);
+
+    background: var(--primary-background-color);
+    color: var(--primary-text-color);
     font-family: var(--paper-font-body1_-_font-family, 'Roboto', 'Segoe UI', sans-serif);
     color-scheme: dark;
     --panel-accent: #03a9f4;
@@ -18,7 +25,7 @@ export const sharedStyles = `
     --panel-danger: #f44336;
     --panel-warning: #ff9800;
     --panel-success: #4caf50;
-    --card-bg: var(--card-background-color, rgba(32, 33, 39, 0.95));
+    --card-bg: var(--card-background-color);
     --card-border: rgba(255, 255, 255, 0.08);
     --input-bg: #2a2a2a;
     --input-border: rgba(255, 255, 255, 0.12);
