@@ -3179,6 +3179,15 @@ class EnergyPanel extends HTMLElement {
         min-width: 0;
         border-bottom: 1px solid var(--card-border, rgba(255,255,255,0.12));
         padding-bottom: 2px;
+        position: relative;
+      }
+      .billing-bar-grid-line {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: var(--card-border, rgba(255,255,255,0.12));
+        pointer-events: none;
       }
       .billing-bar-column {
         flex: 1;
@@ -4084,6 +4093,13 @@ class EnergyPanel extends HTMLElement {
 
     const plot = document.createElement('div');
     plot.className = 'billing-bar-plot';
+
+    for (let t = 1; t <= tickSteps; t++) {
+      const line = document.createElement('div');
+      line.className = 'billing-bar-grid-line';
+      line.style.bottom = `${(t / tickSteps) * 100}%`;
+      plot.appendChild(line);
+    }
 
     const positionTooltip = (anchorEl) => {
       const wrapRect = wrap.getBoundingClientRect();
