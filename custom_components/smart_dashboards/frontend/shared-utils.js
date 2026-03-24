@@ -2,17 +2,20 @@
  * Shared utilities for Smart Dashboards panels
  */
 
-// Common CSS styles for both panels - Home Assistant blue theme
+// Common CSS styles for both panels - Home Assistant dark grey palette (theme-independent)
 export const sharedStyles = `
   :host {
     display: block;
     height: 100%;
 
-    /* Override HA theme variables - always use dark theme */
-    --primary-background-color: #111318;
+    /* Override HA theme variables - fixed HA dark palette, not user theme */
+    --primary-background-color: #111111;
+    --card-background-color: #1c1c1c;
+    --secondary-background-color: #282828;
+    --clear-background-color: #111111;
     --primary-text-color: #e1e1e1;
-    --secondary-text-color: #9e9e9e;
-    --card-background-color: rgba(32, 33, 39, 0.95);
+    --secondary-text-color: #9b9b9b;
+    --disabled-text-color: #6f6f6f;
 
     background: var(--primary-background-color);
     color: var(--primary-text-color);
@@ -27,7 +30,7 @@ export const sharedStyles = `
     --panel-success: #4caf50;
     --card-bg: var(--card-background-color);
     --card-border: rgba(255, 255, 255, 0.08);
-    --input-bg: #2a2a2a;
+    --input-bg: #282828;
     --input-border: rgba(255, 255, 255, 0.12);
   }
 
@@ -45,7 +48,7 @@ export const sharedStyles = `
     align-items: center;
     justify-content: space-between;
     padding: 10px 16px;
-    background: linear-gradient(135deg, rgba(3, 169, 244, 0.1) 0%, rgba(3, 169, 244, 0.02) 100%);
+    background: var(--secondary-background-color);
     border-bottom: 1px solid var(--card-border);
     position: sticky;
     top: 0;
@@ -257,7 +260,7 @@ export const sharedStyles = `
   .toggle-slider {
     position: absolute;
     inset: 0;
-    background: var(--input-bg, #2a2a2a);
+    background: var(--input-bg, #282828);
     border: 1px solid var(--input-border, rgba(255,255,255,0.12));
     border-radius: 22px;
     transition: 0.25s;
@@ -270,7 +273,7 @@ export const sharedStyles = `
     width: 16px;
     left: 2px;
     bottom: 2px;
-    background: var(--secondary-text-color, #9e9e9e);
+    background: var(--secondary-text-color, #9b9b9b);
     border-radius: 50%;
     transition: 0.25s;
   }
@@ -289,7 +292,7 @@ export const sharedStyles = `
     display: block;
     margin-bottom: 6px;
     font-size: 12px;
-    color: var(--secondary-text-color, #9e9e9e);
+    color: var(--secondary-text-color, #9b9b9b);
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -326,7 +329,7 @@ export const sharedStyles = `
     padding: 12px 14px;
     border-radius: 8px;
     border: 1px solid var(--input-border, rgba(255,255,255,0.12));
-    background: var(--input-bg, #2a2a2a);
+    background: var(--input-bg, #282828);
     color: var(--primary-text-color, #e0e0e0);
     font-size: 14px;
     font-family: inherit;
@@ -336,7 +339,7 @@ export const sharedStyles = `
   .form-input:focus, .form-select:focus {
     outline: none;
     border-color: var(--panel-accent);
-    background: #2a2a2a;
+    background: #282828;
   }
 
   .form-select {
@@ -344,8 +347,8 @@ export const sharedStyles = `
     appearance: none;
     -webkit-appearance: none;
     -moz-appearance: none;
-    background-color: #2a2a2a;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239e9e9e' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-color: #282828;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239b9b9b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
     padding-right: 36px;
@@ -354,8 +357,8 @@ export const sharedStyles = `
   }
 
   .form-select option {
-    background: #2a2a2a !important;
-    background-color: #2a2a2a !important;
+    background: #282828 !important;
+    background-color: #282828 !important;
     color: #e0e0e0 !important;
   }
 
@@ -369,13 +372,13 @@ export const sharedStyles = `
     padding: 12px 36px 12px 14px;
     border-radius: 8px;
     border: 1px solid var(--input-border, rgba(255,255,255,0.12));
-    background: #2a2a2a;
+    background: #282828;
     color: #e0e0e0;
     font-size: 14px;
     font-family: inherit;
     cursor: pointer;
     text-align: left;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239e9e9e' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239b9b9b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
   }
@@ -394,7 +397,7 @@ export const sharedStyles = `
     margin-top: 4px;
     max-height: 240px;
     overflow-y: auto;
-    background: #2a2a2a;
+    background: #282828;
     border: 1px solid var(--input-border);
     border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.4);
