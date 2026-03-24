@@ -13,10 +13,17 @@ export const sharedStyles = `
     --sd-text-muted: #9a9aa3;
     --sd-border: rgba(255, 255, 255, 0.08);
     --sd-toggle-knob: #5c5c62;
-    background: var(--sd-bg);
-    color: var(--sd-text);
+    /* Dark appliance plastic / metal (skeuomorphic devices) */
+    --sd-chrome-hi: #404048;
+    --sd-chrome-mid: #34343c;
+    --sd-chrome-low: #2a2a32;
+    --sd-chrome-deep: #222228;
+    --sd-chrome-metal: #3d4248;
+    --sd-chrome-shine: #52525c;
+    background: var(--sd-bg) !important;
+    color: var(--sd-text) !important;
     font-family: 'Roboto', 'Segoe UI', sans-serif;
-    color-scheme: dark;
+    color-scheme: dark !important;
     --panel-accent: #03a9f4;
     --panel-accent-rgb: 3, 169, 244;
     --panel-accent-dim: rgba(3, 169, 244, 0.15);
@@ -37,6 +44,7 @@ export const sharedStyles = `
   .panel-container {
     min-height: 100vh;
     padding: 0;
+    background: var(--sd-bg);
   }
 
   .panel-header {
