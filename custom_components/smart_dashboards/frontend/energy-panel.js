@@ -92,8 +92,6 @@ class EnergyPanel extends HTMLElement {
   }
 
   connectedCallback() {
-    this.style.setProperty('background-color', '#1e1e22', 'important');
-    this.style.setProperty('color', '#e8e8ec', 'important');
     this._render();
     this._loadConfig();
   }
@@ -447,8 +445,8 @@ class EnergyPanel extends HTMLElement {
     try {
       const ApexCharts = (await import('https://cdn.jsdelivr.net/npm/apexcharts@3.45.1/dist/apexcharts.esm.min.js')).default;
       const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
-      const textColor = getComputedStyle(this).getPropertyValue('--sd-text').trim() || '#e8e8ec';
-      const muted = getComputedStyle(this).getPropertyValue('--sd-text-muted').trim() || '#9a9aa3';
+      const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
+      const muted = getComputedStyle(this).getPropertyValue('--secondary-text-color').trim() || '#9e9e9e';
       const sliceColors = [
         accent,
         '#26a69a',
@@ -828,7 +826,6 @@ class EnergyPanel extends HTMLElement {
       
       .summary-stats {
         display: grid;
-        /* Always one row of five: minmax(0,1fr) lets columns shrink below content min on narrow phones */
         grid-template-columns: repeat(5, minmax(0, 1fr));
         gap: clamp(4px, 1.2vw, 10px);
         margin-bottom: 12px;
@@ -875,7 +872,7 @@ class EnergyPanel extends HTMLElement {
 
       .stat-label {
         font-size: clamp(6px, 1.65vw + 0.12rem, 9px);
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         margin-top: clamp(2px, 0.5vw, 3px);
         text-transform: uppercase;
         letter-spacing: 0.04em;
@@ -899,7 +896,7 @@ class EnergyPanel extends HTMLElement {
         padding: 10px 16px;
         border: none;
         background: transparent;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         cursor: pointer;
         border-radius: 6px;
         font-size: 13px;
@@ -952,13 +949,13 @@ class EnergyPanel extends HTMLElement {
         margin: 0 0 8px;
         font-size: 14px;
         font-weight: 600;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
       }
       .statistics-loading-sub {
         margin: 0;
         font-size: 12px;
         line-height: 1.4;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
       }
       .statistics-loading-err {
         margin: 10px 0 0;
@@ -1002,7 +999,7 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-banner {
         font-size: clamp(12px, 2.5vw, 14px);
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         padding: 8px 12px;
         background: var(--input-bg);
         border-radius: 8px;
@@ -1016,12 +1013,12 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-banner-label {
         font-weight: 600;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
         letter-spacing: 0.02em;
       }
       .statistics-range {
         font-weight: 600;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
       }
       .statistics-narrowed { font-size: 11px; opacity: 0.9; }
       .statistics-cards {
@@ -1062,12 +1059,12 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-supplier-updated {
         font-size: 10px;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         margin: 10px 0 0;
         line-height: 1.35;
         opacity: 0.92;
       }
-      .statistics-card-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--sd-text); }
+      .statistics-card-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--primary-text-color); }
       .statistics-card-sub { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--panel-accent); margin: 0 0 8px; }
       .statistics-kpi-big {
         display: flex;
@@ -1078,8 +1075,8 @@ class EnergyPanel extends HTMLElement {
         padding-bottom: 10px;
         border-bottom: 1px solid var(--card-border);
       }
-      .statistics-kpi-big .val { font-size: clamp(17px, 4vw + 0.5rem, 28px); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--sd-text); line-height: 1.1; }
-      .statistics-kpi-big .lbl { font-size: 11px; color: var(--sd-text-muted); }
+      .statistics-kpi-big .val { font-size: clamp(17px, 4vw + 0.5rem, 28px); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--primary-text-color); line-height: 1.1; }
+      .statistics-kpi-big .lbl { font-size: 11px; color: var(--secondary-text-color); }
       .statistics-sensor-grid,
       .statistics-totals-grid {
         display: flex;
@@ -1093,7 +1090,7 @@ class EnergyPanel extends HTMLElement {
         align-items: baseline;
       }
       .statistics-sensor-label,
-      .statistics-total-label { font-size: 11px; color: var(--sd-text-muted); }
+      .statistics-total-label { font-size: 11px; color: var(--secondary-text-color); }
       .statistics-sensor-sublabel { font-weight: 500; opacity: 0.75; font-size: 10px; }
       .statistics-sensor-value,
       .statistics-total-value { font-size: 13px; font-weight: 500; }
@@ -1105,9 +1102,9 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: clamp(11px, 2.4vw, 12px); }
       .statistics-table th, .statistics-table td { padding: clamp(6px, 1.5vw, 10px) clamp(6px, 2vw, 10px); text-align: left; border-bottom: 1px solid var(--card-border); }
-      .statistics-table th { font-weight: 600; color: var(--sd-text-muted); }
-      .statistics-table th abbr { text-decoration: none; border-bottom: 1px dotted var(--sd-text-muted); cursor: help; }
-      .statistics-empty { color: var(--sd-text-muted); text-align: center; padding: 16px !important; }
+      .statistics-table th { font-weight: 600; color: var(--secondary-text-color); }
+      .statistics-table th abbr { text-decoration: none; border-bottom: 1px dotted var(--secondary-text-color); cursor: help; }
+      .statistics-empty { color: var(--secondary-text-color); text-align: center; padding: 16px !important; }
 
       .stat-rooms-segment-wrap {
         display: flex;
@@ -1124,7 +1121,7 @@ class EnergyPanel extends HTMLElement {
         border: none;
         border-radius: 6px;
         background: transparent;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         font-size: 12px;
         font-weight: 600;
         cursor: pointer;
@@ -1132,7 +1129,7 @@ class EnergyPanel extends HTMLElement {
       }
       .stat-rooms-segment:hover {
         background: rgba(255, 255, 255, 0.06);
-        color: var(--sd-text);
+        color: var(--primary-text-color);
       }
       .stat-rooms-segment.active {
         background: var(--panel-accent);
@@ -1146,7 +1143,7 @@ class EnergyPanel extends HTMLElement {
       .statistics-pie-empty,
       .stat-pie-caption {
         font-size: 11px;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         text-align: center;
         margin: 0;
         padding: 12px 8px 0;
@@ -1162,7 +1159,7 @@ class EnergyPanel extends HTMLElement {
         background: var(--input-bg);
         border: 1px solid var(--card-border);
         font-size: 12px;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
         line-height: 1.45;
       }
       .stat-pie-selection-title {
@@ -1172,7 +1169,7 @@ class EnergyPanel extends HTMLElement {
       }
       .stat-pie-selection-meta {
         margin: 0;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         font-size: 11px;
       }
       .stat-pie-selection-actions {
@@ -1263,7 +1260,7 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
         gap: 3px;
         font-size: clamp(7px, 1.7vw, 9px);
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         background: rgba(255,255,255,0.06);
         border: 1px solid var(--card-border);
         border-radius: 5px;
@@ -1384,7 +1381,7 @@ class EnergyPanel extends HTMLElement {
 
       .room-budget-marker--audible {
         width: 3px;
-        background: linear-gradient(180deg, var(--sd-chrome-shine) 0%, var(--panel-accent) 100%);
+        background: linear-gradient(180deg, #fff 0%, var(--panel-accent) 100%);
         box-shadow: 0 0 12px rgba(3, 169, 244, 0.7), 0 0 2px rgba(0, 0, 0, 0.5);
         z-index: 1;
       }
@@ -1427,7 +1424,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-budget-marker-label--kwh {
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         font-weight: 600;
         font-size: clamp(4px, 0.85vw, 6px);
         font-variant-numeric: tabular-nums;
@@ -1468,7 +1465,7 @@ class EnergyPanel extends HTMLElement {
       .room-budget-marker-sublabel {
         font-size: clamp(3px, 0.8vw, 6px);
         font-weight: 600;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -1530,7 +1527,7 @@ class EnergyPanel extends HTMLElement {
       .room-budget-values {
         font-variant-numeric: tabular-nums;
         font-weight: 800;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
         letter-spacing: -0.02em;
         text-shadow:
           0 0 8px rgba(0, 0, 0, 0.65),
@@ -1542,7 +1539,7 @@ class EnergyPanel extends HTMLElement {
         font-style: italic;
         font-weight: 500;
         font-size: clamp(7px, 1.5vw, 9px);
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         text-shadow:
           0 0 6px rgba(0, 0, 0, 0.55),
           0 1px 2px rgba(0, 0, 0, 0.8);
@@ -1559,7 +1556,7 @@ class EnergyPanel extends HTMLElement {
         font-variant-numeric: tabular-nums;
         font-weight: 600;
         font-size: clamp(7px, 1.65vw, 10px);
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         opacity: 0.88;
         text-shadow:
           0 0 6px rgba(0, 0, 0, 0.5),
@@ -1610,7 +1607,7 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
         gap: 2px;
         font-size: clamp(7px, 1.7vw, 9px);
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         padding: 2px clamp(3px, 0.9vw, 6px);
         background: rgba(255, 255, 255, 0.06);
         border-radius: 4px;
@@ -1633,7 +1630,7 @@ class EnergyPanel extends HTMLElement {
         padding: 10px 16px;
         border: none;
         background: transparent;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         cursor: pointer;
         border-radius: 6px;
         font-size: 13px;
@@ -1712,7 +1709,7 @@ class EnergyPanel extends HTMLElement {
       .stove-status-title {
         font-size: 14px;
         font-weight: 500;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         margin: 0 0 4px 0;
         text-transform: uppercase;
         letter-spacing: 0.5px;
@@ -1748,7 +1745,7 @@ class EnergyPanel extends HTMLElement {
 
       .stove-detail-label {
         font-size: 11px;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         text-transform: uppercase;
         letter-spacing: 0.5px;
       }
@@ -1756,7 +1753,7 @@ class EnergyPanel extends HTMLElement {
       .stove-detail-value {
         font-size: 18px;
         font-weight: 600;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
         font-variant-numeric: tabular-nums;
       }
 
@@ -1803,7 +1800,7 @@ class EnergyPanel extends HTMLElement {
       .stove-timer-title {
         font-size: 16px;
         font-weight: 600;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
         margin: 0;
       }
 
@@ -1825,7 +1822,7 @@ class EnergyPanel extends HTMLElement {
 
       .stove-timer-label {
         font-size: 12px;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
       }
 
       .stove-timer-warning {
@@ -1835,7 +1832,7 @@ class EnergyPanel extends HTMLElement {
         border-radius: 8px;
         border-left: 4px solid var(--panel-warning);
         font-size: 13px;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
         text-align: center;
       }
 
@@ -1858,7 +1855,7 @@ class EnergyPanel extends HTMLElement {
 
       .stove-info-text {
         font-size: 14px;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         margin: 0;
       }
 
@@ -1903,11 +1900,11 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face .faceplate {
-        background: linear-gradient(var(--sd-chrome-hi), var(--sd-chrome-low));
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: linear-gradient(#f7f7f7, #e9e9e9);
+        border: 1px solid rgba(0, 0, 0, 0.18);
         border-radius: 9px;
         padding: 6px 6px 5px;
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
         position: relative;
         min-height: 200px;
       }
@@ -1915,7 +1912,7 @@ class EnergyPanel extends HTMLElement {
       .outlet-card.outlet-face .outlet-name-top {
         font-size: 14px;
         font-weight: 600;
-        color: var(--sd-text);
+        color: rgba(0,0,0,0.62);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -1928,17 +1925,17 @@ class EnergyPanel extends HTMLElement {
         position: absolute;
         inset: 4px;
         border-radius: 7px;
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,0.07);
         pointer-events: none;
       }
 
       .outlet-card.outlet-face .receptacle {
-        background: linear-gradient(var(--sd-chrome-mid), var(--sd-chrome-low));
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: linear-gradient(#efefef, #dedede);
+        border: 1px solid rgba(0, 0, 0, 0.22);
         border-radius: 8px;
         padding: 6px 6px 4px;
         position: relative;
-        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
       }
 
       .outlet-card.outlet-face .receptacle + .center-screw {
@@ -1947,7 +1944,7 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-card.outlet-face .receptacle.active {
         box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 8px rgba(3, 169, 244, 0.4),
-          inset 0 2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+          inset 0 2px 4px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
       }
 
       .outlet-card.outlet-face .holes {
@@ -1997,9 +1994,9 @@ class EnergyPanel extends HTMLElement {
         width: 10px;
         height: 10px;
         border-radius: 50%;
-        background: linear-gradient(var(--sd-chrome-shine), var(--sd-chrome-mid));
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 1px 2px rgba(0,0,0,0.4);
+        background: linear-gradient(#d8d8d8, #bdbdbd);
+        border: 1px solid rgba(0, 0, 0, 0.25);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 2px rgba(0,0,0,0.2);
         position: relative;
         display: block;
       }
@@ -2027,14 +2024,14 @@ class EnergyPanel extends HTMLElement {
       .outlet-card.outlet-face .plug-label {
         font-size: 8px;
         letter-spacing: 0.2px;
-        color: var(--sd-text-muted);
+        color: rgba(0,0,0,0.55);
         text-transform: uppercase;
       }
 
       .outlet-card.outlet-face .plug-watts {
         font-size: 10px;
         font-weight: 700;
-        color: var(--sd-text);
+        color: rgba(0,0,0,0.78);
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
       }
@@ -2043,13 +2040,13 @@ class EnergyPanel extends HTMLElement {
         margin-top: 5px;
         text-align: center;
         padding-top: 4px;
-        border-top: 1px solid rgba(255,255,255,0.08);
+        border-top: 1px solid rgba(0,0,0,0.10);
       }
 
       .outlet-card.outlet-face .outlet-name {
         font-size: 7px;
         font-weight: 600;
-        color: var(--sd-text-muted);
+        color: rgba(0,0,0,0.62);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -2078,9 +2075,9 @@ class EnergyPanel extends HTMLElement {
         font-size: 8px;
         padding: 2px 4px;
         border-radius: 5px;
-        color: var(--sd-text-muted);
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(255,255,255,0.1);
+        color: rgba(0,0,0,0.60);
+        background: rgba(0,0,0,0.06);
+        border: 1px solid rgba(0,0,0,0.10);
         white-space: nowrap;
       }
 
@@ -2128,11 +2125,11 @@ class EnergyPanel extends HTMLElement {
         height: 56px;
         flex: 0 0 auto;
         margin: auto 0;
-        background: linear-gradient(var(--sd-chrome-mid), var(--sd-chrome-low));
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: linear-gradient(#efefef, #dedede);
+        border: 1px solid rgba(0, 0, 0, 0.22);
         border-radius: 8px;
         padding: 6px 8px;
-        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.65);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -2140,20 +2137,20 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-card.outlet-face.light-outlet .light-switch-plate.active {
         box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 8px rgba(3, 169, 244, 0.3),
-          inset 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+          inset 0 2px 4px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.65);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-lever {
         width: 36px;
         height: 20px;
-        background: linear-gradient(var(--sd-chrome-hi), var(--sd-chrome-mid));
-        border: 1px solid rgba(255,255,255,0.1);
+        background: linear-gradient(#f8f8f8, #e8e8e8);
+        border: 1px solid rgba(0,0,0,0.2);
         border-radius: 10px;
         display: flex;
         align-items: center;
         justify-content: center;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.15);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.9);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-lever.off {
@@ -2162,15 +2159,15 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-card.outlet-face.light-outlet .light-toggle-lever.on {
         transform: translateY(-5px);
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.5), 0 2px 4px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.15);
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.5), 0 2px 4px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.9);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-label {
         font-size: 6px;
         font-weight: 700;
-        color: var(--sd-text-muted);
+        color: rgba(0,0,0,0.75);
         letter-spacing: 0.4px;
-        text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+        text-shadow: 0 1px 0 rgba(255,255,255,0.8);
       }
 
       .outlet-card.outlet-face.light-outlet .outlet-total.light-watts-display {
@@ -2183,7 +2180,7 @@ class EnergyPanel extends HTMLElement {
       .outlet-card.outlet-face.light-outlet .outlet-meta.light-outlet-meta {
         margin-top: 5px;
         padding-top: 4px;
-        border-top: 1px solid rgba(255,255,255,0.08);
+        border-top: 1px solid rgba(0,0,0,0.10);
       }
 
       .add-device-dropdown {
@@ -2210,7 +2207,7 @@ class EnergyPanel extends HTMLElement {
         padding: 10px 14px;
         border: none;
         background: transparent;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
         font-size: 13px;
         text-align: left;
         cursor: pointer;
@@ -2228,7 +2225,7 @@ class EnergyPanel extends HTMLElement {
       .device-card .outlet-name-top {
         font-size: 14px;
         font-weight: 600;
-        color: var(--sd-text);
+        color: rgba(0,0,0,0.62);
       }
 
       .device-card.stove-card .outlet-name-top,
@@ -2237,7 +2234,7 @@ class EnergyPanel extends HTMLElement {
       .device-card.fridge-card .outlet-name-top,
       .device-card.ceiling-vent-card .outlet-name-top {
         font-size: 12px;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
       }
 
       .device-card.stove-card .outlet-meta,
@@ -2251,7 +2248,7 @@ class EnergyPanel extends HTMLElement {
       .device-card.microwave-card .threshold-badge,
       .device-card.fridge-card .threshold-badge,
       .device-card.ceiling-vent-card .threshold-badge {
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         background: rgba(255,255,255,0.08);
         border-color: rgba(255,255,255,0.12);
       }
@@ -2265,7 +2262,7 @@ class EnergyPanel extends HTMLElement {
         margin-top: 5px;
         text-align: center;
         padding-top: 4px;
-        border-top: 1px solid rgba(255,255,255,0.08);
+        border-top: 1px solid rgba(0,0,0,0.10);
       }
 
       .device-card .outlet-total {
@@ -2283,9 +2280,9 @@ class EnergyPanel extends HTMLElement {
         font-size: 8px;
         padding: 2px 4px;
         border-radius: 5px;
-        color: var(--sd-text-muted);
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(255,255,255,0.1);
+        color: rgba(0,0,0,0.60);
+        background: rgba(0,0,0,0.06);
+        border: 1px solid rgba(0,0,0,0.10);
       }
 
       .enforcement-badge {
@@ -2356,10 +2353,10 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: stretch;
-        background: linear-gradient(180deg, var(--sd-chrome-hi), var(--sd-chrome-mid));
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: linear-gradient(180deg, #d0d4d8, #b8bcc0);
+        border: 1px solid rgba(0, 0, 0, 0.12);
         border-radius: 4px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 1px 2px rgba(0,0,0,0.35);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 2px rgba(0,0,0,0.08);
         overflow: hidden;
       }
 
@@ -2393,9 +2390,9 @@ class EnergyPanel extends HTMLElement {
         width: 10px;
         height: 10px;
         border-radius: 50%;
-        background: radial-gradient(circle at 35% 35%, #5c6068, #383c44);
+        background: radial-gradient(circle at 35% 35%, #c8ccd0, #808488);
         border: none;
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1), inset 0 1px 2px rgba(255,255,255,0.08), 0 1px 1px rgba(0,0,0,0.45);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15), inset 0 1px 2px rgba(255,255,255,0.2), 0 1px 1px rgba(0,0,0,0.2);
         flex-shrink: 0;
         display: flex;
         align-items: center;
@@ -2420,7 +2417,7 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: center;
-        background: linear-gradient(180deg, var(--sd-chrome-mid), var(--sd-chrome-low));
+        background: linear-gradient(180deg, #d8dce0, #c4c8cc);
         padding: 5px 10px 6px;
       }
 
@@ -2432,9 +2429,9 @@ class EnergyPanel extends HTMLElement {
         width: 50%;
         height: 4px;
         margin: 0 0 5px;
-        background: linear-gradient(180deg, #4a4e54, #32363c);
+        background: linear-gradient(180deg, #b0b4b8, #888c90);
         border-radius: 1px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 1px 0 rgba(0,0,0,0.35);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 1px 0 rgba(0,0,0,0.15);
         flex-shrink: 0;
       }
 
@@ -2490,8 +2487,8 @@ class EnergyPanel extends HTMLElement {
 
       .device-card.stove-card .stove-lower-panel {
         height: 14px;
-        background: linear-gradient(180deg, var(--sd-chrome-mid), var(--sd-chrome-low));
-        border-top: 1px solid rgba(255,255,255,0.1);
+        background: linear-gradient(180deg, #d4d8dc, #bcc0c4);
+        border-top: 1px solid rgba(255,255,255,0.3);
       }
 
       .device-card.stove-card .stove-kickplate {
@@ -2526,9 +2523,9 @@ class EnergyPanel extends HTMLElement {
         border-radius: 8px;
         padding: 6px;
         gap: 8px;
-        background: linear-gradient(180deg, rgba(52,52,60,0.98), rgba(36,36,42,0.98));
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.1);
+        background: linear-gradient(180deg, rgba(235,235,235,0.95), rgba(190,190,190,0.95));
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
       }
 
       .device-card.microwave-card .mw-body.mw-on .mw-window {
@@ -2636,9 +2633,9 @@ class EnergyPanel extends HTMLElement {
       .device-card.microwave-card .mw-handle {
         width: 6px;
         border-radius: 4px;
-        background: linear-gradient(180deg, rgba(70,70,78,0.95), rgba(45,45,52,0.95));
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+        background: linear-gradient(180deg, rgba(160,160,160,0.95), rgba(120,120,120,0.95));
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
       }
 
       .device-card.minisplit-card {
@@ -2662,7 +2659,7 @@ class EnergyPanel extends HTMLElement {
       .device-card.minisplit-card .outlet-name-top,
       .device-card.minisplit-card .outlet-meta,
       .device-card.minisplit-card .threshold-badge {
-        color: var(--sd-text);
+        color: var(--primary-text-color);
       }
 
       .device-card.minisplit-card .outlet-meta {
@@ -2687,13 +2684,13 @@ class EnergyPanel extends HTMLElement {
         /* Mini-split shape: tapered, narrower at bottom - mimics real unit, not a perfect rectangle */
         clip-path: polygon(0 0, 100% 0, 96% 100%, 4% 100%);
         border-radius: 14px 14px 8px 8px;
-        /* Dark plastic body */
-        background: linear-gradient(145deg, var(--sd-chrome-hi) 0%, var(--sd-chrome-mid) 35%, var(--sd-chrome-low) 70%, var(--sd-chrome-deep) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        /* Main body gradient - light from upper left, shading toward lower right */
+        background: linear-gradient(145deg, #ffffff 0%, #fafafa 20%, #f2f2f2 50%, #eaeaea 80%, #e2e2e2 100%);
+        border: 1px solid rgba(0, 0, 0, 0.06);
         box-shadow:
-          6px 8px 18px rgba(0,0,0,0.45),
-          2px 4px 8px rgba(0,0,0,0.25),
-          inset 0 1px 0 rgba(255,255,255,0.12);
+          6px 8px 18px rgba(0,0,0,0.14),
+          2px 4px 8px rgba(0,0,0,0.08),
+          inset 0 1px 0 rgba(255,255,255,0.92);
       }
 
       /* Top bevel - subtle darker edge suggesting 3D curve */
@@ -2705,7 +2702,7 @@ class EnergyPanel extends HTMLElement {
         right: 0;
         height: 14px;
         border-radius: 14px 14px 0 0;
-        background: linear-gradient(180deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0) 100%);
+        background: linear-gradient(180deg, rgba(220,222,225,0.5) 0%, rgba(255,255,255,0) 100%);
         pointer-events: none;
       }
 
@@ -2755,16 +2752,16 @@ class EnergyPanel extends HTMLElement {
         box-shadow: 0 0 6px rgba(3,169,244,0.2), inset 0 1px 0 rgba(255,255,255,0.06);
       }
 
-      /* Recessed upper strip - display band */
+      /* Recessed upper strip - light grey band for display area */
       .device-card.minisplit-card .ms-upper-panel {
         position: absolute;
         top: 0;
         left: 8%;
         right: 8%;
         height: 24px;
-        background: linear-gradient(180deg, rgba(48,48,54,0.95) 0%, rgba(32,32,38,0.98) 100%);
+        background: linear-gradient(180deg, rgba(245,245,248,0.9) 0%, rgba(232,232,236,0.95) 100%);
         border-radius: 6px 6px 0 0;
-        box-shadow: inset 0 1px 2px rgba(0,0,0,0.35);
+        box-shadow: inset 0 1px 2px rgba(0,0,0,0.06);
       }
 
       .device-card.minisplit-card .ms-vent {
@@ -2774,13 +2771,13 @@ class EnergyPanel extends HTMLElement {
         bottom: 4px;
         height: 24px;
         border-radius: 0 0 8px 8px;
-        /* Recessed vent */
-        background: linear-gradient(180deg, var(--sd-chrome-mid) 0%, var(--sd-chrome-low) 50%, var(--sd-chrome-deep) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.45);
+        /* Recessed vent - lighter top bevel, darker interior */
+        background: linear-gradient(180deg, #c8c8cc 0%, #b0b0b4 20%, #9a9a9e 100%);
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.15);
       }
 
-      /* Bevel strip above vent */
+      /* Grey bevel strip above vent - transition from white body */
       .device-card.minisplit-card .ms-vent::before {
         content: "";
         position: absolute;
@@ -2788,7 +2785,7 @@ class EnergyPanel extends HTMLElement {
         right: -2px;
         top: -5px;
         height: 5px;
-        background: linear-gradient(180deg, rgba(60,62,68,0.95), rgba(42,44,50,0.95));
+        background: linear-gradient(180deg, rgba(200,202,206,0.95), rgba(180,182,186,0.95));
         border-radius: 2px 2px 0 0;
       }
 
@@ -2843,10 +2840,10 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: stretch;
-        background: linear-gradient(135deg, var(--sd-chrome-hi) 0%, var(--sd-chrome-mid) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: linear-gradient(135deg, #b8bcc0 0%, #a0a4a8 100%);
+        border: 1px solid rgba(0, 0, 0, 0.2);
         border-radius: 4px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 2px 4px rgba(0,0,0,0.35);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.12);
         overflow: hidden;
         position: relative;
       }
@@ -2873,13 +2870,13 @@ class EnergyPanel extends HTMLElement {
         flex: 1;
         height: 100%;
         min-height: 24px;
-        background: linear-gradient(135deg, var(--sd-chrome-mid) 0%, var(--sd-chrome-low) 60%, var(--sd-chrome-deep) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: linear-gradient(135deg, #e4e8ec 0%, #d0d4d8 40%, #c4c8cc 100%);
+        border: 1px solid rgba(0, 0, 0, 0.15);
         border-radius: 2px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 1px 0 rgba(0,0,0,0.25);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 0 rgba(0,0,0,0.08);
       }
       .device-card.fridge-card .fridge-freezer-door .fridge-door-panel {
-        background: linear-gradient(135deg, var(--sd-chrome-mid) 0%, var(--sd-chrome-low) 100%);
+        background: linear-gradient(135deg, #e0e4e8 0%, #ccd0d4 100%);
       }
       .device-card.fridge-card .fridge-handle-vert {
         width: 4px;
@@ -2942,10 +2939,10 @@ class EnergyPanel extends HTMLElement {
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        background: linear-gradient(180deg, var(--sd-chrome-hi) 0%, var(--sd-chrome-low) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: linear-gradient(180deg, #f5f5f5 0%, #e8e8e8 100%);
+        border: 1px solid rgba(0, 0, 0, 0.1);
         border-radius: 6px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 1px 2px rgba(0,0,0,0.35);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 2px rgba(0,0,0,0.08);
         overflow: hidden;
         position: relative;
       }
@@ -3041,7 +3038,7 @@ class EnergyPanel extends HTMLElement {
         margin: 0;
         font-size: clamp(14px, 3.5vw, 18px);
         font-weight: 600;
-        color: var(--sd-text);
+        color: var(--primary-text-color, #fff);
       }
       .graph-modal-close {
         width: clamp(36px, 8vw, 44px);
@@ -3050,7 +3047,7 @@ class EnergyPanel extends HTMLElement {
         min-height: 36px;
         border: none;
         background: rgba(255,255,255,0.1);
-        color: var(--sd-text);
+        color: var(--primary-text-color, #fff);
         font-size: clamp(20px, 5vw, 28px);
         line-height: 1;
         border-radius: clamp(4px, 1vw, 8px);
@@ -3093,7 +3090,7 @@ class EnergyPanel extends HTMLElement {
         flex-wrap: wrap;
       }
       .event-log-ts {
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         font-size: 13px;
         min-width: 8.5em;
         font-variant-numeric: tabular-nums;
@@ -3116,7 +3113,7 @@ class EnergyPanel extends HTMLElement {
       .event-log-message {
         margin: 0 0 6px;
         font-size: 12px;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         white-space: pre-wrap;
         word-break: break-word;
         line-height: 1.45;
@@ -3124,7 +3121,7 @@ class EnergyPanel extends HTMLElement {
       .event-log-readings {
         margin: 0;
         font-size: 11px;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         opacity: 0.95;
         line-height: 1.4;
       }
@@ -3155,7 +3152,7 @@ class EnergyPanel extends HTMLElement {
         width: 48px;
         flex-shrink: 0;
         font-size: 11px;
-        color: var(--sd-text);
+        color: var(--primary-text-color, #e1e1e1);
         text-align: right;
         padding-right: 4px;
         line-height: 1.1;
@@ -3221,7 +3218,7 @@ class EnergyPanel extends HTMLElement {
         flex: 1;
         min-width: 0;
         font-size: 10px;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color, #9e9e9e);
         text-align: center;
         line-height: 1.15;
         overflow: hidden;
@@ -3253,7 +3250,7 @@ class EnergyPanel extends HTMLElement {
       }
       .graph-dates {
         font-size: clamp(9px, 2vw, 11px);
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color, #999);
         margin-top: clamp(6px, 1.5vw, 10px);
       }
 
@@ -3293,7 +3290,7 @@ class EnergyPanel extends HTMLElement {
 
       .room-drag-handle {
         cursor: grab;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         padding: 4px 6px;
         opacity: 0.6;
         display: flex;
@@ -3394,7 +3391,7 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-drag-handle {
         cursor: grab;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         padding: 2px;
         opacity: 0.5;
         transition: opacity 0.2s;
@@ -3418,16 +3415,16 @@ class EnergyPanel extends HTMLElement {
         flex: 1;
         font-size: 11px;
         font-weight: 500;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
       }
 
       .outlet-settings-bar .outlet-name-display.empty {
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         font-style: italic;
       }
 
       .outlet-expand-icon {
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         transition: transform 0.2s;
       }
 
@@ -3537,7 +3534,7 @@ class EnergyPanel extends HTMLElement {
         border-radius: 6px;
         border: 1px solid var(--input-border);
         background: var(--input-bg);
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -3548,7 +3545,7 @@ class EnergyPanel extends HTMLElement {
 
       .test-switch-btn:hover {
         background: rgba(255, 255, 255, 0.08);
-        color: var(--sd-text);
+        color: var(--primary-text-color);
       }
 
       .test-switch-btn.on {
@@ -3600,19 +3597,19 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-assigned-room {
         font-size: 9px;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
       }
 
       .outlet-assigned-name {
         font-size: 11px;
         font-weight: 500;
-        color: var(--sd-text);
+        color: var(--primary-text-color);
       }
 
       .outlet-remove-icon {
         width: 14px;
         height: 14px;
-        fill: var(--sd-text-muted);
+        fill: var(--secondary-text-color);
         cursor: pointer;
         transition: fill 0.2s;
       }
@@ -3633,7 +3630,7 @@ class EnergyPanel extends HTMLElement {
         border-radius: 8px;
         border: none;
         background: transparent;
-        color: var(--sd-text-muted);
+        color: var(--secondary-text-color);
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -3643,7 +3640,7 @@ class EnergyPanel extends HTMLElement {
 
       .icon-btn:hover {
         background: rgba(255,255,255,0.08);
-        color: var(--sd-text);
+        color: var(--primary-text-color);
       }
 
       .icon-btn svg {
@@ -3899,12 +3896,12 @@ class EnergyPanel extends HTMLElement {
         ? 'No events in this period'
         : 'No events in the last 24 hours';
       const truncNote = this._graphData.truncated
-        ? '<p class="event-log-truncated" style="color: var(--sd-text-muted); text-align: center; padding: 8px 16px 0; font-size: 12px;">Showing the most recent 5000 events; list was truncated.</p>'
+        ? '<p class="event-log-truncated" style="color: var(--secondary-text-color); text-align: center; padding: 8px 16px 0; font-size: 12px;">Showing the most recent 5000 events; list was truncated.</p>'
         : '';
       bodyContent = `
         <div class="event-log-container">
           ${filtered.length === 0
-            ? `<p style="color: var(--sd-text-muted); text-align: center; padding: 24px;">${emptyMsg}</p>`
+            ? `<p style="color: var(--secondary-text-color); text-align: center; padding: 24px;">${emptyMsg}</p>`
             : `
             <ul class="event-log-list">
               ${filtered.map((e) => {
@@ -4038,7 +4035,7 @@ class EnergyPanel extends HTMLElement {
     const n = values.length;
     if (n === 0 || categories.length !== n) {
       container.innerHTML =
-        '<p style="color:var(--sd-text-muted);padding:20px;text-align:center;">No data yet</p>';
+        '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">No data yet</p>';
       return;
     }
     const nums = values.map((v) => Math.max(0, Number(v) || 0));
@@ -4308,13 +4305,13 @@ class EnergyPanel extends HTMLElement {
       billingCategories.length === billingValues.length;
 
     const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
-    const textColor = getComputedStyle(this).getPropertyValue('--sd-text').trim() || '#e8e8ec';
+    const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
 
     if (isStatBillingModal) {
       container.innerHTML = '';
       if (!useBillingBars) {
         container.innerHTML =
-          '<p style="color:var(--sd-text-muted);padding:20px;text-align:center;">No data yet</p>';
+          '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">No data yet</p>';
         return;
       }
       this._renderBillingBarChartNative(container, {
@@ -4437,7 +4434,7 @@ class EnergyPanel extends HTMLElement {
       });
     } catch (e) {
       console.error('ApexCharts failed to load:', e);
-      container.innerHTML = '<p style="color:var(--sd-text-muted);padding:20px;text-align:center;">Chart failed to load. Check network or try again.</p>';
+      container.innerHTML = '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">Chart failed to load. Check network or try again.</p>';
     }
   }
 
@@ -4631,7 +4628,7 @@ class EnergyPanel extends HTMLElement {
           <div id="stat-rooms-panel-table" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-table" style="display:${roomsPieView ? 'none' : 'block'}">
             <div class="statistics-table-wrap">
               <table class="statistics-table" aria-describedby="stat-table-desc">
-                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--sd-text-muted);">Load and usage % apply to the same dates shown at the top of this page. High, low, and average are daily kWh (local days in range). Total cost is period Load (kWh) × $/kWh from supplier when configured. Warnings, shutoffs, and cycles sum daily snapshots. Tap a count (when a date range is set) for the event log. Open a room graph from the pie chart.</caption>
+                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Load and usage % apply to the same dates shown at the top of this page. High, low, and average are daily kWh (local days in range). Total cost is period Load (kWh) × $/kWh from supplier when configured. Warnings, shutoffs, and cycles sum daily snapshots. Tap a count (when a date range is set) for the event log. Open a room graph from the pie chart.</caption>
                 <thead>
                   <tr>
                     <th scope="col">Room</th>
@@ -5479,7 +5476,7 @@ class EnergyPanel extends HTMLElement {
           padding: 10px 16px;
           border: none;
           background: transparent;
-          color: var(--sd-text-muted);
+          color: var(--secondary-text-color);
           cursor: pointer;
           border-radius: 6px;
           font-size: 12px;
@@ -5521,13 +5518,13 @@ class EnergyPanel extends HTMLElement {
         
         .tts-msg-desc {
           font-size: 10px;
-          color: var(--sd-text-muted);
+          color: var(--secondary-text-color);
           margin-bottom: 8px;
         }
         
         .tts-var-help {
           font-size: 9px;
-          color: var(--sd-text-muted);
+          color: var(--secondary-text-color);
           margin-top: 6px;
           padding: 6px 8px;
           background: rgba(0, 0, 0, 0.2);
@@ -5544,7 +5541,7 @@ class EnergyPanel extends HTMLElement {
           border-radius: 6px;
           border: 1px solid var(--card-border);
           background: var(--card-bg);
-          color: var(--sd-text);
+          color: var(--primary-text-color);
           box-sizing: border-box;
         }
         .pe-budget-boost-section {
@@ -5604,7 +5601,7 @@ class EnergyPanel extends HTMLElement {
               </div>
               <div id="rooms-list">
                 ${rooms.length === 0 ? `
-                  <p style="color: var(--sd-text-muted); text-align: center; padding: 20px;">
+                  <p style="color: var(--secondary-text-color); text-align: center; padding: 20px;">
                     No rooms configured. Add a room to start monitoring.
                   </p>
                 ` : rooms.map((room, i) => this._renderRoomSettings(room, i, mediaPlayers, powerSensors)).join('')}
@@ -5617,7 +5614,7 @@ class EnergyPanel extends HTMLElement {
               <div class="card-header">
                 <h2 class="card-title">TTS Alert Settings</h2>
               </div>
-              <p style="color: var(--sd-text-muted); font-size: 11px; margin-bottom: 16px;">
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
                 Customize how alert messages are spoken. All messages are prefixed and can be customized below.
               </p>
               
@@ -5865,7 +5862,7 @@ class EnergyPanel extends HTMLElement {
               <div class="card-header">
                 <h2 class="card-title">Statistics Settings</h2>
               </div>
-              <p style="color: var(--sd-text-muted); font-size: 11px; margin-bottom: 16px;">
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
                 Configure Opower/utility sensors for billing dates, usage, and cost. Statistics are computed from daily totals.
               </p>
               
@@ -5903,7 +5900,7 @@ class EnergyPanel extends HTMLElement {
                         return sec;
                       })()}"
                       style="max-width: 140px;">
-                    <p style="color: var(--sd-text-muted); font-size: 10px; margin: 8px 0 0;">
+                    <p style="color: var(--secondary-text-color); font-size: 10px; margin: 8px 0 0;">
                       How often the Statistics tab reloads usage data while you stay on it (15–600). Default 60.
                     </p>
                   </div>
@@ -5917,7 +5914,7 @@ class EnergyPanel extends HTMLElement {
               <div class="card-header">
                 <h2 class="card-title">Power Enforcement</h2>
               </div>
-              <p style="color: var(--sd-text-muted); font-size: 11px; margin-bottom: 16px;">
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
                 When enabled, repeated threshold warnings trigger escalating enforcement actions (volume escalation, power cycling).
               </p>
               <div class="tts-msg-group" style="margin-bottom: 16px;">
@@ -5925,7 +5922,7 @@ class EnergyPanel extends HTMLElement {
                   <input type="checkbox" id="pe-enabled" ${pe.enabled ? 'checked' : ''} style="width: 18px; height: 18px;">
                   <span>Enable Power Enforcement</span>
                 </label>
-                <span style="color: var(--sd-text-muted); font-size: 10px;">
+                <span style="color: var(--secondary-text-color); font-size: 10px;">
                   When enabled, repeated threshold warnings trigger escalating enforcement actions.
                 </span>
               </div>
@@ -6033,7 +6030,7 @@ class EnergyPanel extends HTMLElement {
                   <div class="form-group">
                     <label class="form-label">Minute offset (0–59)</label>
                     <input type="number" class="form-input" id="pe-budget-boost-mo" min="0" max="59" value="${bbMo}">
-                    <div style="font-size:10px;color:var(--sd-text-muted);margin-top:4px;">e.g. 30 = announcements on the :30</div>
+                    <div style="font-size:10px;color:var(--secondary-text-color);margin-top:4px;">e.g. 30 = announcements on the :30</div>
                   </div>
                 </div>
               </div>
@@ -6057,13 +6054,13 @@ class EnergyPanel extends HTMLElement {
                     const roomId = room.id || (room.name || '').toLowerCase().replace(/\s+/g, '_');
                     const isEnabled = roomsEnabled.includes(roomId);
                     return `
-                      <label style="display: flex; align-items: center; gap: 6px; background: var(--card-bg); padding: 8px 12px; border-radius: 8px; cursor: pointer;">
+                      <label style="display: flex; align-items: center; gap: 6px; background: var(--card-background-color); padding: 8px 12px; border-radius: 8px; cursor: pointer;">
                         <input type="checkbox" class="pe-room-checkbox" data-room-id="${roomId}" ${isEnabled ? 'checked' : ''} style="width: 16px; height: 16px;">
                         <span>${(room.name || '').replace(/</g, '&lt;')}</span>
                       </label>
                     `;
                   }).join('')}
-                  ${rooms.length === 0 ? '<span style="color: var(--sd-text-muted);">No rooms configured.</span>' : ''}
+                  ${rooms.length === 0 ? '<span style="color: var(--secondary-text-color);">No rooms configured.</span>' : ''}
                 </div>
               </div>
               <button class="btn btn-primary" id="save-enforcement-btn" style="margin-top: 16px;">
@@ -6128,7 +6125,7 @@ class EnergyPanel extends HTMLElement {
           </label>
           <span class="toggle-label">Responsive light warnings</span>
         </div>
-        ${!eligible ? '<div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 6px;">Requires at least one outlet with threshold and one light device with a smart WRGB light.</div>' : ''}
+        ${!eligible ? '<div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 6px;">Requires at least one outlet with threshold and one light device with a smart WRGB light.</div>' : ''}
         ${eligible && enabled ? `
           <div class="responsive-light-pickers" style="margin-top: 12px; display: flex; gap: 16px; flex-wrap: wrap;">
             <div class="form-group">
@@ -6209,7 +6206,7 @@ class EnergyPanel extends HTMLElement {
           <div class="divider"></div>
 
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-            <h4 style="margin: 0; font-size: 11px; color: var(--sd-text-muted);">Devices</h4>
+            <h4 style="margin: 0; font-size: 11px; color: var(--secondary-text-color);">Devices</h4>
             <div class="add-device-dropdown" data-room-index="${index}">
               <button class="btn btn-secondary add-device-trigger">
                 <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
@@ -6326,7 +6323,7 @@ class EnergyPanel extends HTMLElement {
               <div class="form-group">
                 <label class="form-label">Switch Entity</label>
                 ${this._renderEntityAutocomplete(device.switch_entity || '', 'switch', roomIndex, 'light-switch-entity', 'switch.hallway_switch')}
-                <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Switch entities only (switch.*). Type to search. Primary switch for on/off state.</div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Switch entities only (switch.*). Type to search. Primary switch for on/off state.</div>
               </div>
               <div class="form-group">
                 <label class="form-label">Mapped Lights & Running Power (W)</label>
@@ -6334,7 +6331,7 @@ class EnergyPanel extends HTMLElement {
                   ${lightRowsHtml}
                 </div>
                 <button type="button" class="btn btn-secondary light-entity-add-btn" style="margin-top: 8px;">+ Add light</button>
-                <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Used for room totals and daily energy.</div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Used for room totals and daily energy.</div>
               </div>
               <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
                 <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
@@ -6487,12 +6484,12 @@ class EnergyPanel extends HTMLElement {
               <div class="form-group">
                 <label class="form-label">Switch Entity</label>
                 ${this._renderEntityAutocomplete(device.switch_entity || '', 'switch', roomIndex, 'ceiling-vent-switch', 'switch.bathroom_vent')}
-                <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Vent fan on/off state</div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Vent fan on/off state</div>
               </div>
               <div class="form-group">
                 <label class="form-label">Power When On (W)</label>
                 <input type="number" class="form-input ceiling-vent-watts" value="${device.watts_when_on || ''}" placeholder="e.g. 25" min="0" max="500">
-                <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Predefined draw when switch is on</div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Predefined draw when switch is on</div>
               </div>
               <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
                 <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
@@ -6514,24 +6511,24 @@ class EnergyPanel extends HTMLElement {
     const stoveSafetyFields = deviceType === 'stove' ? `
           <div class="divider" style="margin: 16px 0;"></div>
           <div class="plug-settings-title" style="margin-bottom: 12px;">Stove Safety</div>
-          <p style="color: var(--sd-text-muted); font-size: 11px; margin-bottom: 12px;">Configure unattended cooking monitoring. Uses TTS messages from TTS Settings.</p>
+          <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">Configure unattended cooking monitoring. Uses TTS messages from TTS Settings.</p>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="toggle-row">
               <input type="checkbox" class="form-checkbox stove-safety-enabled" ${device.stove_safety_enabled !== false ? 'checked' : ''}>
               <span class="toggle-label">Enable stove safety shutoff</span>
             </label>
-            <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">When ON: timer runs, TTS plays, and stove auto-shuts off after final warning. When OFF: TTS only, no shutoff.</div>
+            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">When ON: timer runs, TTS plays, and stove auto-shuts off after final warning. When OFF: TTS only, no shutoff.</div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Stove Plug Switch</label>
             ${this._renderEntityAutocomplete(device.plug1_switch || '', 'switch', roomIndex, 'outlet-plug1-switch', 'switch.kitchen_outlet')}
-            <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Switch to turn off when unattended</div>
+            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Switch to turn off when unattended</div>
           </div>
           <div class="grid-2" style="margin-bottom: 12px;">
             <div class="form-group">
               <label class="form-label">Power Threshold (W)</label>
               <input type="number" class="form-input stove-power-threshold" value="${device.stove_power_threshold ?? 100}" min="0" step="10" placeholder="100">
-              <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Stove "on" when power exceeds this</div>
+              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Stove "on" when power exceeds this</div>
             </div>
             <div class="form-group">
               <label class="form-label">Cooking Time (min)</label>
@@ -6542,12 +6539,12 @@ class EnergyPanel extends HTMLElement {
             <div class="form-group">
               <label class="form-label">On Debounce (sec)</label>
               <input type="number" class="form-input stove-on-debounce" value="${device.stove_on_debounce_seconds ?? 0}" min="0" max="60" placeholder="0">
-              <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Seconds above threshold before "on" (0=immediate)</div>
+              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Seconds above threshold before "on" (0=immediate)</div>
             </div>
             <div class="form-group">
               <label class="form-label">Off Debounce (sec)</label>
               <input type="number" class="form-input stove-off-debounce" value="${device.stove_off_debounce_seconds ?? 10}" min="0" max="60" placeholder="10">
-              <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Seconds below threshold before "off" (reduces on/off flicker)</div>
+              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Seconds below threshold before "off" (reduces on/off flicker)</div>
             </div>
           </div>
           <div class="grid-2" style="margin-bottom: 12px;">
@@ -6558,13 +6555,13 @@ class EnergyPanel extends HTMLElement {
             <div class="form-group">
               <label class="form-label">Timer Start Window (sec)</label>
               <input type="number" class="form-input stove-timer-window" value="${device.timer_start_window_seconds ?? 10}" min="1" max="120" placeholder="10">
-              <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Wait before starting timer after leaving kitchen (brief absences ignored)</div>
+              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Wait before starting timer after leaving kitchen (brief absences ignored)</div>
             </div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Timer progress TTS interval (sec)</label>
             <input type="number" class="form-input stove-timer-tts-interval" value="${device.stove_timer_tts_interval_seconds ?? 0}" min="0" max="3600" placeholder="0">
-            <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">0 = auto (cooking duration ÷ 4, min 60s). Spoken during the long unattended phase.</div>
+            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">0 = auto (cooking duration ÷ 4, min 60s). Spoken during the long unattended phase.</div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Presence Sensor</label>
@@ -6575,7 +6572,7 @@ class EnergyPanel extends HTMLElement {
     const microwaveSafetyFields = deviceType === 'microwave' && hasStoveInRoom ? `
           <div class="divider" style="margin: 16px 0;"></div>
           <div class="plug-settings-title" style="margin-bottom: 12px; color: var(--panel-warning);">Microwave Safety (shared breaker)</div>
-          <p style="color: var(--sd-text-muted); font-size: 11px; margin-bottom: 12px;">For older homes where microwave and stove share the same breaker. When microwave is on, stove power is cut until microwave turns off. <strong style="color: var(--panel-warning);">Can damage stove LED panel—use at your discretion.</strong> Requires stove safety to be enabled.</p>
+          <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">For older homes where microwave and stove share the same breaker. When microwave is on, stove power is cut until microwave turns off. <strong style="color: var(--panel-warning);">Can damage stove LED panel—use at your discretion.</strong> Requires stove safety to be enabled.</p>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="toggle-row ${!hasStoveSafetyEnabled ? 'toggle-disabled' : ''}">
               <input type="checkbox" class="form-checkbox microwave-safety-enabled" ${device.microwave_safety_enabled !== false ? 'checked' : ''} ${!hasStoveSafetyEnabled ? 'disabled' : ''}>
@@ -6586,11 +6583,11 @@ class EnergyPanel extends HTMLElement {
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Microwave On Threshold (W)</label>
             <input type="number" class="form-input microwave-power-threshold" value="${device.microwave_power_threshold ?? 50}" min="0" step="10" placeholder="50">
-            <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Microwave power sensor is above. Microwave "on" when power exceeds this.</div>
+            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Microwave power sensor is above. Microwave "on" when power exceeds this.</div>
           </div>
         ` : deviceType === 'microwave' && !hasStoveInRoom ? `
           <div class="divider" style="margin: 16px 0;"></div>
-          <p style="color: var(--sd-text-muted); font-size: 11px; padding: 10px; background: rgba(255,152,0,0.1); border-radius: 8px; border: 1px solid rgba(255,152,0,0.3);">
+          <p style="color: var(--secondary-text-color); font-size: 11px; padding: 10px; background: rgba(255,152,0,0.1); border-radius: 8px; border: 1px solid rgba(255,152,0,0.3);">
             Add a Stove device to this room to enable Microwave Safety (shared breaker) — links microwave and stove to cut stove power when microwave is on.
           </p>
         ` : '';
