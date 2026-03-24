@@ -445,8 +445,8 @@ class EnergyPanel extends HTMLElement {
     try {
       const ApexCharts = (await import('https://cdn.jsdelivr.net/npm/apexcharts@3.45.1/dist/apexcharts.esm.min.js')).default;
       const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
-      const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
-      const muted = getComputedStyle(this).getPropertyValue('--secondary-text-color').trim() || '#9e9e9e';
+      const textColor = getComputedStyle(this).getPropertyValue('--sd-text').trim() || '#e8e8ec';
+      const muted = getComputedStyle(this).getPropertyValue('--sd-text-muted').trim() || '#9a9aa3';
       const sliceColors = [
         accent,
         '#26a69a',
@@ -872,7 +872,7 @@ class EnergyPanel extends HTMLElement {
 
       .stat-label {
         font-size: clamp(7px, 1.85vw, 9px);
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         margin-top: 3px;
         text-transform: uppercase;
         letter-spacing: 0.04em;
@@ -893,7 +893,7 @@ class EnergyPanel extends HTMLElement {
         padding: 10px 16px;
         border: none;
         background: transparent;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         cursor: pointer;
         border-radius: 6px;
         font-size: 13px;
@@ -946,13 +946,13 @@ class EnergyPanel extends HTMLElement {
         margin: 0 0 8px;
         font-size: 14px;
         font-weight: 600;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
       }
       .statistics-loading-sub {
         margin: 0;
         font-size: 12px;
         line-height: 1.4;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
       }
       .statistics-loading-err {
         margin: 10px 0 0;
@@ -996,7 +996,7 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-banner {
         font-size: clamp(12px, 2.5vw, 14px);
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         padding: 8px 12px;
         background: var(--input-bg);
         border-radius: 8px;
@@ -1010,12 +1010,12 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-banner-label {
         font-weight: 600;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
         letter-spacing: 0.02em;
       }
       .statistics-range {
         font-weight: 600;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
       }
       .statistics-narrowed { font-size: 11px; opacity: 0.9; }
       .statistics-cards {
@@ -1056,12 +1056,12 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-supplier-updated {
         font-size: 10px;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         margin: 10px 0 0;
         line-height: 1.35;
         opacity: 0.92;
       }
-      .statistics-card-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--primary-text-color); }
+      .statistics-card-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--sd-text); }
       .statistics-card-sub { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--panel-accent); margin: 0 0 8px; }
       .statistics-kpi-big {
         display: flex;
@@ -1072,8 +1072,8 @@ class EnergyPanel extends HTMLElement {
         padding-bottom: 10px;
         border-bottom: 1px solid var(--card-border);
       }
-      .statistics-kpi-big .val { font-size: clamp(17px, 4vw + 0.5rem, 28px); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--primary-text-color); line-height: 1.1; }
-      .statistics-kpi-big .lbl { font-size: 11px; color: var(--secondary-text-color); }
+      .statistics-kpi-big .val { font-size: clamp(17px, 4vw + 0.5rem, 28px); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--sd-text); line-height: 1.1; }
+      .statistics-kpi-big .lbl { font-size: 11px; color: var(--sd-text-muted); }
       .statistics-sensor-grid,
       .statistics-totals-grid {
         display: flex;
@@ -1087,7 +1087,7 @@ class EnergyPanel extends HTMLElement {
         align-items: baseline;
       }
       .statistics-sensor-label,
-      .statistics-total-label { font-size: 11px; color: var(--secondary-text-color); }
+      .statistics-total-label { font-size: 11px; color: var(--sd-text-muted); }
       .statistics-sensor-sublabel { font-weight: 500; opacity: 0.75; font-size: 10px; }
       .statistics-sensor-value,
       .statistics-total-value { font-size: 13px; font-weight: 500; }
@@ -1099,9 +1099,9 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: clamp(11px, 2.4vw, 12px); }
       .statistics-table th, .statistics-table td { padding: clamp(6px, 1.5vw, 10px) clamp(6px, 2vw, 10px); text-align: left; border-bottom: 1px solid var(--card-border); }
-      .statistics-table th { font-weight: 600; color: var(--secondary-text-color); }
-      .statistics-table th abbr { text-decoration: none; border-bottom: 1px dotted var(--secondary-text-color); cursor: help; }
-      .statistics-empty { color: var(--secondary-text-color); text-align: center; padding: 16px !important; }
+      .statistics-table th { font-weight: 600; color: var(--sd-text-muted); }
+      .statistics-table th abbr { text-decoration: none; border-bottom: 1px dotted var(--sd-text-muted); cursor: help; }
+      .statistics-empty { color: var(--sd-text-muted); text-align: center; padding: 16px !important; }
 
       .stat-rooms-segment-wrap {
         display: flex;
@@ -1118,7 +1118,7 @@ class EnergyPanel extends HTMLElement {
         border: none;
         border-radius: 6px;
         background: transparent;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         font-size: 12px;
         font-weight: 600;
         cursor: pointer;
@@ -1126,7 +1126,7 @@ class EnergyPanel extends HTMLElement {
       }
       .stat-rooms-segment:hover {
         background: rgba(255, 255, 255, 0.06);
-        color: var(--primary-text-color);
+        color: var(--sd-text);
       }
       .stat-rooms-segment.active {
         background: var(--panel-accent);
@@ -1140,7 +1140,7 @@ class EnergyPanel extends HTMLElement {
       .statistics-pie-empty,
       .stat-pie-caption {
         font-size: 11px;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         text-align: center;
         margin: 0;
         padding: 12px 8px 0;
@@ -1156,7 +1156,7 @@ class EnergyPanel extends HTMLElement {
         background: var(--input-bg);
         border: 1px solid var(--card-border);
         font-size: 12px;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
         line-height: 1.45;
       }
       .stat-pie-selection-title {
@@ -1166,7 +1166,7 @@ class EnergyPanel extends HTMLElement {
       }
       .stat-pie-selection-meta {
         margin: 0;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         font-size: 11px;
       }
       .stat-pie-selection-actions {
@@ -1257,7 +1257,7 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
         gap: 3px;
         font-size: clamp(7px, 1.7vw, 9px);
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         background: rgba(255,255,255,0.06);
         border: 1px solid var(--card-border);
         border-radius: 5px;
@@ -1421,7 +1421,7 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-budget-marker-label--kwh {
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         font-weight: 600;
         font-size: clamp(4px, 0.85vw, 6px);
         font-variant-numeric: tabular-nums;
@@ -1462,7 +1462,7 @@ class EnergyPanel extends HTMLElement {
       .room-budget-marker-sublabel {
         font-size: clamp(3px, 0.8vw, 6px);
         font-weight: 600;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -1524,7 +1524,7 @@ class EnergyPanel extends HTMLElement {
       .room-budget-values {
         font-variant-numeric: tabular-nums;
         font-weight: 800;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
         letter-spacing: -0.02em;
         text-shadow:
           0 0 8px rgba(0, 0, 0, 0.65),
@@ -1536,7 +1536,7 @@ class EnergyPanel extends HTMLElement {
         font-style: italic;
         font-weight: 500;
         font-size: clamp(7px, 1.5vw, 9px);
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         text-shadow:
           0 0 6px rgba(0, 0, 0, 0.55),
           0 1px 2px rgba(0, 0, 0, 0.8);
@@ -1553,7 +1553,7 @@ class EnergyPanel extends HTMLElement {
         font-variant-numeric: tabular-nums;
         font-weight: 600;
         font-size: clamp(7px, 1.65vw, 10px);
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         opacity: 0.88;
         text-shadow:
           0 0 6px rgba(0, 0, 0, 0.5),
@@ -1604,7 +1604,7 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
         gap: 2px;
         font-size: clamp(7px, 1.7vw, 9px);
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         padding: 2px clamp(3px, 0.9vw, 6px);
         background: rgba(255, 255, 255, 0.06);
         border-radius: 4px;
@@ -1627,7 +1627,7 @@ class EnergyPanel extends HTMLElement {
         padding: 10px 16px;
         border: none;
         background: transparent;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         cursor: pointer;
         border-radius: 6px;
         font-size: 13px;
@@ -1706,7 +1706,7 @@ class EnergyPanel extends HTMLElement {
       .stove-status-title {
         font-size: 14px;
         font-weight: 500;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         margin: 0 0 4px 0;
         text-transform: uppercase;
         letter-spacing: 0.5px;
@@ -1742,7 +1742,7 @@ class EnergyPanel extends HTMLElement {
 
       .stove-detail-label {
         font-size: 11px;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         text-transform: uppercase;
         letter-spacing: 0.5px;
       }
@@ -1750,7 +1750,7 @@ class EnergyPanel extends HTMLElement {
       .stove-detail-value {
         font-size: 18px;
         font-weight: 600;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
         font-variant-numeric: tabular-nums;
       }
 
@@ -1797,7 +1797,7 @@ class EnergyPanel extends HTMLElement {
       .stove-timer-title {
         font-size: 16px;
         font-weight: 600;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
         margin: 0;
       }
 
@@ -1819,7 +1819,7 @@ class EnergyPanel extends HTMLElement {
 
       .stove-timer-label {
         font-size: 12px;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
       }
 
       .stove-timer-warning {
@@ -1829,7 +1829,7 @@ class EnergyPanel extends HTMLElement {
         border-radius: 8px;
         border-left: 4px solid var(--panel-warning);
         font-size: 13px;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
         text-align: center;
       }
 
@@ -1852,7 +1852,7 @@ class EnergyPanel extends HTMLElement {
 
       .stove-info-text {
         font-size: 14px;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         margin: 0;
       }
 
@@ -2204,7 +2204,7 @@ class EnergyPanel extends HTMLElement {
         padding: 10px 14px;
         border: none;
         background: transparent;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
         font-size: 13px;
         text-align: left;
         cursor: pointer;
@@ -2231,7 +2231,7 @@ class EnergyPanel extends HTMLElement {
       .device-card.fridge-card .outlet-name-top,
       .device-card.ceiling-vent-card .outlet-name-top {
         font-size: 12px;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
       }
 
       .device-card.stove-card .outlet-meta,
@@ -2245,7 +2245,7 @@ class EnergyPanel extends HTMLElement {
       .device-card.microwave-card .threshold-badge,
       .device-card.fridge-card .threshold-badge,
       .device-card.ceiling-vent-card .threshold-badge {
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         background: rgba(255,255,255,0.08);
         border-color: rgba(255,255,255,0.12);
       }
@@ -2656,7 +2656,7 @@ class EnergyPanel extends HTMLElement {
       .device-card.minisplit-card .outlet-name-top,
       .device-card.minisplit-card .outlet-meta,
       .device-card.minisplit-card .threshold-badge {
-        color: var(--primary-text-color);
+        color: var(--sd-text);
       }
 
       .device-card.minisplit-card .outlet-meta {
@@ -3035,7 +3035,7 @@ class EnergyPanel extends HTMLElement {
         margin: 0;
         font-size: clamp(14px, 3.5vw, 18px);
         font-weight: 600;
-        color: var(--primary-text-color, #fff);
+        color: var(--sd-text);
       }
       .graph-modal-close {
         width: clamp(36px, 8vw, 44px);
@@ -3044,7 +3044,7 @@ class EnergyPanel extends HTMLElement {
         min-height: 36px;
         border: none;
         background: rgba(255,255,255,0.1);
-        color: var(--primary-text-color, #fff);
+        color: var(--sd-text);
         font-size: clamp(20px, 5vw, 28px);
         line-height: 1;
         border-radius: clamp(4px, 1vw, 8px);
@@ -3087,7 +3087,7 @@ class EnergyPanel extends HTMLElement {
         flex-wrap: wrap;
       }
       .event-log-ts {
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         font-size: 13px;
         min-width: 8.5em;
         font-variant-numeric: tabular-nums;
@@ -3110,7 +3110,7 @@ class EnergyPanel extends HTMLElement {
       .event-log-message {
         margin: 0 0 6px;
         font-size: 12px;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         white-space: pre-wrap;
         word-break: break-word;
         line-height: 1.45;
@@ -3118,7 +3118,7 @@ class EnergyPanel extends HTMLElement {
       .event-log-readings {
         margin: 0;
         font-size: 11px;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         opacity: 0.95;
         line-height: 1.4;
       }
@@ -3149,7 +3149,7 @@ class EnergyPanel extends HTMLElement {
         width: 48px;
         flex-shrink: 0;
         font-size: 11px;
-        color: var(--primary-text-color, #e1e1e1);
+        color: var(--sd-text);
         text-align: right;
         padding-right: 4px;
         line-height: 1.1;
@@ -3215,7 +3215,7 @@ class EnergyPanel extends HTMLElement {
         flex: 1;
         min-width: 0;
         font-size: 10px;
-        color: var(--secondary-text-color, #9e9e9e);
+        color: var(--sd-text-muted);
         text-align: center;
         line-height: 1.15;
         overflow: hidden;
@@ -3247,7 +3247,7 @@ class EnergyPanel extends HTMLElement {
       }
       .graph-dates {
         font-size: clamp(9px, 2vw, 11px);
-        color: var(--secondary-text-color, #999);
+        color: var(--sd-text-muted);
         margin-top: clamp(6px, 1.5vw, 10px);
       }
 
@@ -3287,7 +3287,7 @@ class EnergyPanel extends HTMLElement {
 
       .room-drag-handle {
         cursor: grab;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         padding: 4px 6px;
         opacity: 0.6;
         display: flex;
@@ -3388,7 +3388,7 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-drag-handle {
         cursor: grab;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         padding: 2px;
         opacity: 0.5;
         transition: opacity 0.2s;
@@ -3412,16 +3412,16 @@ class EnergyPanel extends HTMLElement {
         flex: 1;
         font-size: 11px;
         font-weight: 500;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
       }
 
       .outlet-settings-bar .outlet-name-display.empty {
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         font-style: italic;
       }
 
       .outlet-expand-icon {
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         transition: transform 0.2s;
       }
 
@@ -3531,7 +3531,7 @@ class EnergyPanel extends HTMLElement {
         border-radius: 6px;
         border: 1px solid var(--input-border);
         background: var(--input-bg);
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -3542,7 +3542,7 @@ class EnergyPanel extends HTMLElement {
 
       .test-switch-btn:hover {
         background: rgba(255, 255, 255, 0.08);
-        color: var(--primary-text-color);
+        color: var(--sd-text);
       }
 
       .test-switch-btn.on {
@@ -3594,19 +3594,19 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-assigned-room {
         font-size: 9px;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
       }
 
       .outlet-assigned-name {
         font-size: 11px;
         font-weight: 500;
-        color: var(--primary-text-color);
+        color: var(--sd-text);
       }
 
       .outlet-remove-icon {
         width: 14px;
         height: 14px;
-        fill: var(--secondary-text-color);
+        fill: var(--sd-text-muted);
         cursor: pointer;
         transition: fill 0.2s;
       }
@@ -3627,7 +3627,7 @@ class EnergyPanel extends HTMLElement {
         border-radius: 8px;
         border: none;
         background: transparent;
-        color: var(--secondary-text-color);
+        color: var(--sd-text-muted);
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -3637,7 +3637,7 @@ class EnergyPanel extends HTMLElement {
 
       .icon-btn:hover {
         background: rgba(255,255,255,0.08);
-        color: var(--primary-text-color);
+        color: var(--sd-text);
       }
 
       .icon-btn svg {
@@ -3893,12 +3893,12 @@ class EnergyPanel extends HTMLElement {
         ? 'No events in this period'
         : 'No events in the last 24 hours';
       const truncNote = this._graphData.truncated
-        ? '<p class="event-log-truncated" style="color: var(--secondary-text-color); text-align: center; padding: 8px 16px 0; font-size: 12px;">Showing the most recent 5000 events; list was truncated.</p>'
+        ? '<p class="event-log-truncated" style="color: var(--sd-text-muted); text-align: center; padding: 8px 16px 0; font-size: 12px;">Showing the most recent 5000 events; list was truncated.</p>'
         : '';
       bodyContent = `
         <div class="event-log-container">
           ${filtered.length === 0
-            ? `<p style="color: var(--secondary-text-color); text-align: center; padding: 24px;">${emptyMsg}</p>`
+            ? `<p style="color: var(--sd-text-muted); text-align: center; padding: 24px;">${emptyMsg}</p>`
             : `
             <ul class="event-log-list">
               ${filtered.map((e) => {
@@ -4032,7 +4032,7 @@ class EnergyPanel extends HTMLElement {
     const n = values.length;
     if (n === 0 || categories.length !== n) {
       container.innerHTML =
-        '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">No data yet</p>';
+        '<p style="color:var(--sd-text-muted);padding:20px;text-align:center;">No data yet</p>';
       return;
     }
     const nums = values.map((v) => Math.max(0, Number(v) || 0));
@@ -4302,13 +4302,13 @@ class EnergyPanel extends HTMLElement {
       billingCategories.length === billingValues.length;
 
     const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
-    const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
+    const textColor = getComputedStyle(this).getPropertyValue('--sd-text').trim() || '#e8e8ec';
 
     if (isStatBillingModal) {
       container.innerHTML = '';
       if (!useBillingBars) {
         container.innerHTML =
-          '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">No data yet</p>';
+          '<p style="color:var(--sd-text-muted);padding:20px;text-align:center;">No data yet</p>';
         return;
       }
       this._renderBillingBarChartNative(container, {
@@ -4431,7 +4431,7 @@ class EnergyPanel extends HTMLElement {
       });
     } catch (e) {
       console.error('ApexCharts failed to load:', e);
-      container.innerHTML = '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">Chart failed to load. Check network or try again.</p>';
+      container.innerHTML = '<p style="color:var(--sd-text-muted);padding:20px;text-align:center;">Chart failed to load. Check network or try again.</p>';
     }
   }
 
@@ -4625,7 +4625,7 @@ class EnergyPanel extends HTMLElement {
           <div id="stat-rooms-panel-table" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-table" style="display:${roomsPieView ? 'none' : 'block'}">
             <div class="statistics-table-wrap">
               <table class="statistics-table" aria-describedby="stat-table-desc">
-                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Load and usage % apply to the same dates shown at the top of this page. High, low, and average are daily kWh (local days in range). Total cost is period Load (kWh) × $/kWh from supplier when configured. Warnings, shutoffs, and cycles sum daily snapshots. Tap a count (when a date range is set) for the event log. Open a room graph from the pie chart.</caption>
+                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--sd-text-muted);">Load and usage % apply to the same dates shown at the top of this page. High, low, and average are daily kWh (local days in range). Total cost is period Load (kWh) × $/kWh from supplier when configured. Warnings, shutoffs, and cycles sum daily snapshots. Tap a count (when a date range is set) for the event log. Open a room graph from the pie chart.</caption>
                 <thead>
                   <tr>
                     <th scope="col">Room</th>
@@ -5473,7 +5473,7 @@ class EnergyPanel extends HTMLElement {
           padding: 10px 16px;
           border: none;
           background: transparent;
-          color: var(--secondary-text-color);
+          color: var(--sd-text-muted);
           cursor: pointer;
           border-radius: 6px;
           font-size: 12px;
@@ -5515,13 +5515,13 @@ class EnergyPanel extends HTMLElement {
         
         .tts-msg-desc {
           font-size: 10px;
-          color: var(--secondary-text-color);
+          color: var(--sd-text-muted);
           margin-bottom: 8px;
         }
         
         .tts-var-help {
           font-size: 9px;
-          color: var(--secondary-text-color);
+          color: var(--sd-text-muted);
           margin-top: 6px;
           padding: 6px 8px;
           background: rgba(0, 0, 0, 0.2);
@@ -5538,7 +5538,7 @@ class EnergyPanel extends HTMLElement {
           border-radius: 6px;
           border: 1px solid var(--card-border);
           background: var(--card-bg);
-          color: var(--primary-text-color);
+          color: var(--sd-text);
           box-sizing: border-box;
         }
         .pe-budget-boost-section {
@@ -5598,7 +5598,7 @@ class EnergyPanel extends HTMLElement {
               </div>
               <div id="rooms-list">
                 ${rooms.length === 0 ? `
-                  <p style="color: var(--secondary-text-color); text-align: center; padding: 20px;">
+                  <p style="color: var(--sd-text-muted); text-align: center; padding: 20px;">
                     No rooms configured. Add a room to start monitoring.
                   </p>
                 ` : rooms.map((room, i) => this._renderRoomSettings(room, i, mediaPlayers, powerSensors)).join('')}
@@ -5611,7 +5611,7 @@ class EnergyPanel extends HTMLElement {
               <div class="card-header">
                 <h2 class="card-title">TTS Alert Settings</h2>
               </div>
-              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
+              <p style="color: var(--sd-text-muted); font-size: 11px; margin-bottom: 16px;">
                 Customize how alert messages are spoken. All messages are prefixed and can be customized below.
               </p>
               
@@ -5859,7 +5859,7 @@ class EnergyPanel extends HTMLElement {
               <div class="card-header">
                 <h2 class="card-title">Statistics Settings</h2>
               </div>
-              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
+              <p style="color: var(--sd-text-muted); font-size: 11px; margin-bottom: 16px;">
                 Configure Opower/utility sensors for billing dates, usage, and cost. Statistics are computed from daily totals.
               </p>
               
@@ -5897,7 +5897,7 @@ class EnergyPanel extends HTMLElement {
                         return sec;
                       })()}"
                       style="max-width: 140px;">
-                    <p style="color: var(--secondary-text-color); font-size: 10px; margin: 8px 0 0;">
+                    <p style="color: var(--sd-text-muted); font-size: 10px; margin: 8px 0 0;">
                       How often the Statistics tab reloads usage data while you stay on it (15–600). Default 60.
                     </p>
                   </div>
@@ -5911,7 +5911,7 @@ class EnergyPanel extends HTMLElement {
               <div class="card-header">
                 <h2 class="card-title">Power Enforcement</h2>
               </div>
-              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
+              <p style="color: var(--sd-text-muted); font-size: 11px; margin-bottom: 16px;">
                 When enabled, repeated threshold warnings trigger escalating enforcement actions (volume escalation, power cycling).
               </p>
               <div class="tts-msg-group" style="margin-bottom: 16px;">
@@ -5919,7 +5919,7 @@ class EnergyPanel extends HTMLElement {
                   <input type="checkbox" id="pe-enabled" ${pe.enabled ? 'checked' : ''} style="width: 18px; height: 18px;">
                   <span>Enable Power Enforcement</span>
                 </label>
-                <span style="color: var(--secondary-text-color); font-size: 10px;">
+                <span style="color: var(--sd-text-muted); font-size: 10px;">
                   When enabled, repeated threshold warnings trigger escalating enforcement actions.
                 </span>
               </div>
@@ -6027,7 +6027,7 @@ class EnergyPanel extends HTMLElement {
                   <div class="form-group">
                     <label class="form-label">Minute offset (0–59)</label>
                     <input type="number" class="form-input" id="pe-budget-boost-mo" min="0" max="59" value="${bbMo}">
-                    <div style="font-size:10px;color:var(--secondary-text-color);margin-top:4px;">e.g. 30 = announcements on the :30</div>
+                    <div style="font-size:10px;color:var(--sd-text-muted);margin-top:4px;">e.g. 30 = announcements on the :30</div>
                   </div>
                 </div>
               </div>
@@ -6051,13 +6051,13 @@ class EnergyPanel extends HTMLElement {
                     const roomId = room.id || (room.name || '').toLowerCase().replace(/\s+/g, '_');
                     const isEnabled = roomsEnabled.includes(roomId);
                     return `
-                      <label style="display: flex; align-items: center; gap: 6px; background: var(--card-background-color); padding: 8px 12px; border-radius: 8px; cursor: pointer;">
+                      <label style="display: flex; align-items: center; gap: 6px; background: var(--card-bg); padding: 8px 12px; border-radius: 8px; cursor: pointer;">
                         <input type="checkbox" class="pe-room-checkbox" data-room-id="${roomId}" ${isEnabled ? 'checked' : ''} style="width: 16px; height: 16px;">
                         <span>${(room.name || '').replace(/</g, '&lt;')}</span>
                       </label>
                     `;
                   }).join('')}
-                  ${rooms.length === 0 ? '<span style="color: var(--secondary-text-color);">No rooms configured.</span>' : ''}
+                  ${rooms.length === 0 ? '<span style="color: var(--sd-text-muted);">No rooms configured.</span>' : ''}
                 </div>
               </div>
               <button class="btn btn-primary" id="save-enforcement-btn" style="margin-top: 16px;">
@@ -6122,7 +6122,7 @@ class EnergyPanel extends HTMLElement {
           </label>
           <span class="toggle-label">Responsive light warnings</span>
         </div>
-        ${!eligible ? '<div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 6px;">Requires at least one outlet with threshold and one light device with a smart WRGB light.</div>' : ''}
+        ${!eligible ? '<div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 6px;">Requires at least one outlet with threshold and one light device with a smart WRGB light.</div>' : ''}
         ${eligible && enabled ? `
           <div class="responsive-light-pickers" style="margin-top: 12px; display: flex; gap: 16px; flex-wrap: wrap;">
             <div class="form-group">
@@ -6203,7 +6203,7 @@ class EnergyPanel extends HTMLElement {
           <div class="divider"></div>
 
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-            <h4 style="margin: 0; font-size: 11px; color: var(--secondary-text-color);">Devices</h4>
+            <h4 style="margin: 0; font-size: 11px; color: var(--sd-text-muted);">Devices</h4>
             <div class="add-device-dropdown" data-room-index="${index}">
               <button class="btn btn-secondary add-device-trigger">
                 <svg class="btn-icon" viewBox="0 0 24 24">${icons.add}</svg>
@@ -6320,7 +6320,7 @@ class EnergyPanel extends HTMLElement {
               <div class="form-group">
                 <label class="form-label">Switch Entity</label>
                 ${this._renderEntityAutocomplete(device.switch_entity || '', 'switch', roomIndex, 'light-switch-entity', 'switch.hallway_switch')}
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Switch entities only (switch.*). Type to search. Primary switch for on/off state.</div>
+                <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Switch entities only (switch.*). Type to search. Primary switch for on/off state.</div>
               </div>
               <div class="form-group">
                 <label class="form-label">Mapped Lights & Running Power (W)</label>
@@ -6328,7 +6328,7 @@ class EnergyPanel extends HTMLElement {
                   ${lightRowsHtml}
                 </div>
                 <button type="button" class="btn btn-secondary light-entity-add-btn" style="margin-top: 8px;">+ Add light</button>
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Used for room totals and daily energy.</div>
+                <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Used for room totals and daily energy.</div>
               </div>
               <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
                 <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
@@ -6481,12 +6481,12 @@ class EnergyPanel extends HTMLElement {
               <div class="form-group">
                 <label class="form-label">Switch Entity</label>
                 ${this._renderEntityAutocomplete(device.switch_entity || '', 'switch', roomIndex, 'ceiling-vent-switch', 'switch.bathroom_vent')}
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Vent fan on/off state</div>
+                <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Vent fan on/off state</div>
               </div>
               <div class="form-group">
                 <label class="form-label">Power When On (W)</label>
                 <input type="number" class="form-input ceiling-vent-watts" value="${device.watts_when_on || ''}" placeholder="e.g. 25" min="0" max="500">
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Predefined draw when switch is on</div>
+                <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Predefined draw when switch is on</div>
               </div>
               <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
                 <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
@@ -6508,24 +6508,24 @@ class EnergyPanel extends HTMLElement {
     const stoveSafetyFields = deviceType === 'stove' ? `
           <div class="divider" style="margin: 16px 0;"></div>
           <div class="plug-settings-title" style="margin-bottom: 12px;">Stove Safety</div>
-          <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">Configure unattended cooking monitoring. Uses TTS messages from TTS Settings.</p>
+          <p style="color: var(--sd-text-muted); font-size: 11px; margin-bottom: 12px;">Configure unattended cooking monitoring. Uses TTS messages from TTS Settings.</p>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="toggle-row">
               <input type="checkbox" class="form-checkbox stove-safety-enabled" ${device.stove_safety_enabled !== false ? 'checked' : ''}>
               <span class="toggle-label">Enable stove safety shutoff</span>
             </label>
-            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">When ON: timer runs, TTS plays, and stove auto-shuts off after final warning. When OFF: TTS only, no shutoff.</div>
+            <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">When ON: timer runs, TTS plays, and stove auto-shuts off after final warning. When OFF: TTS only, no shutoff.</div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Stove Plug Switch</label>
             ${this._renderEntityAutocomplete(device.plug1_switch || '', 'switch', roomIndex, 'outlet-plug1-switch', 'switch.kitchen_outlet')}
-            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Switch to turn off when unattended</div>
+            <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Switch to turn off when unattended</div>
           </div>
           <div class="grid-2" style="margin-bottom: 12px;">
             <div class="form-group">
               <label class="form-label">Power Threshold (W)</label>
               <input type="number" class="form-input stove-power-threshold" value="${device.stove_power_threshold ?? 100}" min="0" step="10" placeholder="100">
-              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Stove "on" when power exceeds this</div>
+              <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Stove "on" when power exceeds this</div>
             </div>
             <div class="form-group">
               <label class="form-label">Cooking Time (min)</label>
@@ -6536,12 +6536,12 @@ class EnergyPanel extends HTMLElement {
             <div class="form-group">
               <label class="form-label">On Debounce (sec)</label>
               <input type="number" class="form-input stove-on-debounce" value="${device.stove_on_debounce_seconds ?? 0}" min="0" max="60" placeholder="0">
-              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Seconds above threshold before "on" (0=immediate)</div>
+              <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Seconds above threshold before "on" (0=immediate)</div>
             </div>
             <div class="form-group">
               <label class="form-label">Off Debounce (sec)</label>
               <input type="number" class="form-input stove-off-debounce" value="${device.stove_off_debounce_seconds ?? 10}" min="0" max="60" placeholder="10">
-              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Seconds below threshold before "off" (reduces on/off flicker)</div>
+              <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Seconds below threshold before "off" (reduces on/off flicker)</div>
             </div>
           </div>
           <div class="grid-2" style="margin-bottom: 12px;">
@@ -6552,13 +6552,13 @@ class EnergyPanel extends HTMLElement {
             <div class="form-group">
               <label class="form-label">Timer Start Window (sec)</label>
               <input type="number" class="form-input stove-timer-window" value="${device.timer_start_window_seconds ?? 10}" min="1" max="120" placeholder="10">
-              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Wait before starting timer after leaving kitchen (brief absences ignored)</div>
+              <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Wait before starting timer after leaving kitchen (brief absences ignored)</div>
             </div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Timer progress TTS interval (sec)</label>
             <input type="number" class="form-input stove-timer-tts-interval" value="${device.stove_timer_tts_interval_seconds ?? 0}" min="0" max="3600" placeholder="0">
-            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">0 = auto (cooking duration ÷ 4, min 60s). Spoken during the long unattended phase.</div>
+            <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">0 = auto (cooking duration ÷ 4, min 60s). Spoken during the long unattended phase.</div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Presence Sensor</label>
@@ -6569,7 +6569,7 @@ class EnergyPanel extends HTMLElement {
     const microwaveSafetyFields = deviceType === 'microwave' && hasStoveInRoom ? `
           <div class="divider" style="margin: 16px 0;"></div>
           <div class="plug-settings-title" style="margin-bottom: 12px; color: var(--panel-warning);">Microwave Safety (shared breaker)</div>
-          <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">For older homes where microwave and stove share the same breaker. When microwave is on, stove power is cut until microwave turns off. <strong style="color: var(--panel-warning);">Can damage stove LED panel—use at your discretion.</strong> Requires stove safety to be enabled.</p>
+          <p style="color: var(--sd-text-muted); font-size: 11px; margin-bottom: 12px;">For older homes where microwave and stove share the same breaker. When microwave is on, stove power is cut until microwave turns off. <strong style="color: var(--panel-warning);">Can damage stove LED panel—use at your discretion.</strong> Requires stove safety to be enabled.</p>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="toggle-row ${!hasStoveSafetyEnabled ? 'toggle-disabled' : ''}">
               <input type="checkbox" class="form-checkbox microwave-safety-enabled" ${device.microwave_safety_enabled !== false ? 'checked' : ''} ${!hasStoveSafetyEnabled ? 'disabled' : ''}>
@@ -6580,11 +6580,11 @@ class EnergyPanel extends HTMLElement {
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Microwave On Threshold (W)</label>
             <input type="number" class="form-input microwave-power-threshold" value="${device.microwave_power_threshold ?? 50}" min="0" step="10" placeholder="50">
-            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Microwave power sensor is above. Microwave "on" when power exceeds this.</div>
+            <div style="font-size: 10px; color: var(--sd-text-muted); margin-top: 4px;">Microwave power sensor is above. Microwave "on" when power exceeds this.</div>
           </div>
         ` : deviceType === 'microwave' && !hasStoveInRoom ? `
           <div class="divider" style="margin: 16px 0;"></div>
-          <p style="color: var(--secondary-text-color); font-size: 11px; padding: 10px; background: rgba(255,152,0,0.1); border-radius: 8px; border: 1px solid rgba(255,152,0,0.3);">
+          <p style="color: var(--sd-text-muted); font-size: 11px; padding: 10px; background: rgba(255,152,0,0.1); border-radius: 8px; border: 1px solid rgba(255,152,0,0.3);">
             Add a Stove device to this room to enable Microwave Safety (shared breaker) — links microwave and stove to cut stove power when microwave is on.
           </p>
         ` : '';
