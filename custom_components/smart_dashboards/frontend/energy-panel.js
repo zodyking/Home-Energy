@@ -92,6 +92,8 @@ class EnergyPanel extends HTMLElement {
   }
 
   connectedCallback() {
+    this.style.setProperty('background-color', '#1e1e22', 'important');
+    this.style.setProperty('color', '#e8e8ec', 'important');
     this._render();
     this._loadConfig();
   }
@@ -773,8 +775,8 @@ class EnergyPanel extends HTMLElement {
       }, 100);
       return;
     }
-    const minPx = 6;
-    const maxPx = 18;
+    const minPx = 5.5;
+    const maxPx = 17;
     const step = 0.5;
     const pad = 1;
     const applyPx = (px) => {
@@ -826,13 +828,14 @@ class EnergyPanel extends HTMLElement {
       
       .summary-stats {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(min(100%, 76px), 1fr));
-        gap: clamp(6px, 2vw, 10px);
+        /* Always one row of five: minmax(0,1fr) lets columns shrink below content min on narrow phones */
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: clamp(4px, 1.2vw, 10px);
         margin-bottom: 12px;
         overflow-x: hidden;
         width: 100%;
         container-type: inline-size;
-        --summary-stat-value-px: clamp(11px, 2.6vw + 0.35rem, 17px);
+        --summary-stat-value-px: clamp(9px, 2.1vw + 0.28rem, 17px);
       }
 
       .stat-card {
@@ -840,7 +843,7 @@ class EnergyPanel extends HTMLElement {
         background: var(--card-bg);
         border-radius: 8px;
         border: 1px solid var(--card-border);
-        padding: clamp(8px, 2vw, 12px) clamp(6px, 1.8vw, 12px);
+        padding: clamp(5px, 1.4vw, 12px) clamp(2px, 0.9vw, 10px);
         text-align: center;
       }
       .stat-card.graph-clickable, .graph-clickable {
@@ -871,12 +874,15 @@ class EnergyPanel extends HTMLElement {
       }
 
       .stat-label {
-        font-size: clamp(7px, 1.85vw, 9px);
+        font-size: clamp(6px, 1.65vw + 0.12rem, 9px);
         color: var(--sd-text-muted);
-        margin-top: 3px;
+        margin-top: clamp(2px, 0.5vw, 3px);
         text-transform: uppercase;
         letter-spacing: 0.04em;
         line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .view-tabs {
@@ -1378,7 +1384,7 @@ class EnergyPanel extends HTMLElement {
 
       .room-budget-marker--audible {
         width: 3px;
-        background: linear-gradient(180deg, #fff 0%, var(--panel-accent) 100%);
+        background: linear-gradient(180deg, var(--sd-chrome-shine) 0%, var(--panel-accent) 100%);
         box-shadow: 0 0 12px rgba(3, 169, 244, 0.7), 0 0 2px rgba(0, 0, 0, 0.5);
         z-index: 1;
       }
@@ -1897,11 +1903,11 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-card.outlet-face .faceplate {
-        background: linear-gradient(#f7f7f7, #e9e9e9);
-        border: 1px solid rgba(0, 0, 0, 0.18);
+        background: linear-gradient(var(--sd-chrome-hi), var(--sd-chrome-low));
+        border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 9px;
         padding: 6px 6px 5px;
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
         position: relative;
         min-height: 200px;
       }
@@ -1909,7 +1915,7 @@ class EnergyPanel extends HTMLElement {
       .outlet-card.outlet-face .outlet-name-top {
         font-size: 14px;
         font-weight: 600;
-        color: rgba(0,0,0,0.62);
+        color: var(--sd-text);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -1922,17 +1928,17 @@ class EnergyPanel extends HTMLElement {
         position: absolute;
         inset: 4px;
         border-radius: 7px;
-        box-shadow: inset 0 0 0 1px rgba(0,0,0,0.07);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
         pointer-events: none;
       }
 
       .outlet-card.outlet-face .receptacle {
-        background: linear-gradient(#efefef, #dedede);
-        border: 1px solid rgba(0, 0, 0, 0.22);
+        background: linear-gradient(var(--sd-chrome-mid), var(--sd-chrome-low));
+        border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 8px;
         padding: 6px 6px 4px;
         position: relative;
-        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
       }
 
       .outlet-card.outlet-face .receptacle + .center-screw {
@@ -1941,7 +1947,7 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-card.outlet-face .receptacle.active {
         box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 8px rgba(3, 169, 244, 0.4),
-          inset 0 2px 4px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+          inset 0 2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
       }
 
       .outlet-card.outlet-face .holes {
@@ -1991,9 +1997,9 @@ class EnergyPanel extends HTMLElement {
         width: 10px;
         height: 10px;
         border-radius: 50%;
-        background: linear-gradient(#d8d8d8, #bdbdbd);
-        border: 1px solid rgba(0, 0, 0, 0.25);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 2px rgba(0,0,0,0.2);
+        background: linear-gradient(var(--sd-chrome-shine), var(--sd-chrome-mid));
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 1px 2px rgba(0,0,0,0.4);
         position: relative;
         display: block;
       }
@@ -2021,14 +2027,14 @@ class EnergyPanel extends HTMLElement {
       .outlet-card.outlet-face .plug-label {
         font-size: 8px;
         letter-spacing: 0.2px;
-        color: rgba(0,0,0,0.55);
+        color: var(--sd-text-muted);
         text-transform: uppercase;
       }
 
       .outlet-card.outlet-face .plug-watts {
         font-size: 10px;
         font-weight: 700;
-        color: rgba(0,0,0,0.78);
+        color: var(--sd-text);
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
       }
@@ -2037,13 +2043,13 @@ class EnergyPanel extends HTMLElement {
         margin-top: 5px;
         text-align: center;
         padding-top: 4px;
-        border-top: 1px solid rgba(0,0,0,0.10);
+        border-top: 1px solid rgba(255,255,255,0.08);
       }
 
       .outlet-card.outlet-face .outlet-name {
         font-size: 7px;
         font-weight: 600;
-        color: rgba(0,0,0,0.62);
+        color: var(--sd-text-muted);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -2072,9 +2078,9 @@ class EnergyPanel extends HTMLElement {
         font-size: 8px;
         padding: 2px 4px;
         border-radius: 5px;
-        color: rgba(0,0,0,0.60);
-        background: rgba(0,0,0,0.06);
-        border: 1px solid rgba(0,0,0,0.10);
+        color: var(--sd-text-muted);
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.1);
         white-space: nowrap;
       }
 
@@ -2122,11 +2128,11 @@ class EnergyPanel extends HTMLElement {
         height: 56px;
         flex: 0 0 auto;
         margin: auto 0;
-        background: linear-gradient(#efefef, #dedede);
-        border: 1px solid rgba(0, 0, 0, 0.22);
+        background: linear-gradient(var(--sd-chrome-mid), var(--sd-chrome-low));
+        border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 8px;
         padding: 6px 8px;
-        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -2134,20 +2140,20 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-card.outlet-face.light-outlet .light-switch-plate.active {
         box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.7), 0 0 8px rgba(3, 169, 244, 0.3),
-          inset 0 2px 4px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+          inset 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-lever {
         width: 36px;
         height: 20px;
-        background: linear-gradient(#f8f8f8, #e8e8e8);
-        border: 1px solid rgba(0,0,0,0.2);
+        background: linear-gradient(var(--sd-chrome-hi), var(--sd-chrome-mid));
+        border: 1px solid rgba(255,255,255,0.1);
         border-radius: 10px;
         display: flex;
         align-items: center;
         justify-content: center;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.9);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.15);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-lever.off {
@@ -2156,15 +2162,15 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-card.outlet-face.light-outlet .light-toggle-lever.on {
         transform: translateY(-5px);
-        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.5), 0 2px 4px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.9);
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.5), 0 2px 4px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.15);
       }
 
       .outlet-card.outlet-face.light-outlet .light-toggle-label {
         font-size: 6px;
         font-weight: 700;
-        color: rgba(0,0,0,0.75);
+        color: var(--sd-text-muted);
         letter-spacing: 0.4px;
-        text-shadow: 0 1px 0 rgba(255,255,255,0.8);
+        text-shadow: 0 1px 0 rgba(0,0,0,0.5);
       }
 
       .outlet-card.outlet-face.light-outlet .outlet-total.light-watts-display {
@@ -2177,7 +2183,7 @@ class EnergyPanel extends HTMLElement {
       .outlet-card.outlet-face.light-outlet .outlet-meta.light-outlet-meta {
         margin-top: 5px;
         padding-top: 4px;
-        border-top: 1px solid rgba(0,0,0,0.10);
+        border-top: 1px solid rgba(255,255,255,0.08);
       }
 
       .add-device-dropdown {
@@ -2222,7 +2228,7 @@ class EnergyPanel extends HTMLElement {
       .device-card .outlet-name-top {
         font-size: 14px;
         font-weight: 600;
-        color: rgba(0,0,0,0.62);
+        color: var(--sd-text);
       }
 
       .device-card.stove-card .outlet-name-top,
@@ -2259,7 +2265,7 @@ class EnergyPanel extends HTMLElement {
         margin-top: 5px;
         text-align: center;
         padding-top: 4px;
-        border-top: 1px solid rgba(0,0,0,0.10);
+        border-top: 1px solid rgba(255,255,255,0.08);
       }
 
       .device-card .outlet-total {
@@ -2277,9 +2283,9 @@ class EnergyPanel extends HTMLElement {
         font-size: 8px;
         padding: 2px 4px;
         border-radius: 5px;
-        color: rgba(0,0,0,0.60);
-        background: rgba(0,0,0,0.06);
-        border: 1px solid rgba(0,0,0,0.10);
+        color: var(--sd-text-muted);
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.1);
       }
 
       .enforcement-badge {
@@ -2350,10 +2356,10 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: stretch;
-        background: linear-gradient(180deg, #d0d4d8, #b8bcc0);
-        border: 1px solid rgba(0, 0, 0, 0.12);
+        background: linear-gradient(180deg, var(--sd-chrome-hi), var(--sd-chrome-mid));
+        border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 4px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 2px rgba(0,0,0,0.08);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 1px 2px rgba(0,0,0,0.35);
         overflow: hidden;
       }
 
@@ -2387,9 +2393,9 @@ class EnergyPanel extends HTMLElement {
         width: 10px;
         height: 10px;
         border-radius: 50%;
-        background: radial-gradient(circle at 35% 35%, #c8ccd0, #808488);
+        background: radial-gradient(circle at 35% 35%, #5c6068, #383c44);
         border: none;
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15), inset 0 1px 2px rgba(255,255,255,0.2), 0 1px 1px rgba(0,0,0,0.2);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1), inset 0 1px 2px rgba(255,255,255,0.08), 0 1px 1px rgba(0,0,0,0.45);
         flex-shrink: 0;
         display: flex;
         align-items: center;
@@ -2414,7 +2420,7 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: center;
-        background: linear-gradient(180deg, #d8dce0, #c4c8cc);
+        background: linear-gradient(180deg, var(--sd-chrome-mid), var(--sd-chrome-low));
         padding: 5px 10px 6px;
       }
 
@@ -2426,9 +2432,9 @@ class EnergyPanel extends HTMLElement {
         width: 50%;
         height: 4px;
         margin: 0 0 5px;
-        background: linear-gradient(180deg, #b0b4b8, #888c90);
+        background: linear-gradient(180deg, #4a4e54, #32363c);
         border-radius: 1px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 1px 0 rgba(0,0,0,0.15);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 1px 0 rgba(0,0,0,0.35);
         flex-shrink: 0;
       }
 
@@ -2484,8 +2490,8 @@ class EnergyPanel extends HTMLElement {
 
       .device-card.stove-card .stove-lower-panel {
         height: 14px;
-        background: linear-gradient(180deg, #d4d8dc, #bcc0c4);
-        border-top: 1px solid rgba(255,255,255,0.3);
+        background: linear-gradient(180deg, var(--sd-chrome-mid), var(--sd-chrome-low));
+        border-top: 1px solid rgba(255,255,255,0.1);
       }
 
       .device-card.stove-card .stove-kickplate {
@@ -2520,9 +2526,9 @@ class EnergyPanel extends HTMLElement {
         border-radius: 8px;
         padding: 6px;
         gap: 8px;
-        background: linear-gradient(180deg, rgba(235,235,235,0.95), rgba(190,190,190,0.95));
-        border: 1px solid rgba(0, 0, 0, 0.12);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
+        background: linear-gradient(180deg, rgba(52,52,60,0.98), rgba(36,36,42,0.98));
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.1);
       }
 
       .device-card.microwave-card .mw-body.mw-on .mw-window {
@@ -2630,9 +2636,9 @@ class EnergyPanel extends HTMLElement {
       .device-card.microwave-card .mw-handle {
         width: 6px;
         border-radius: 4px;
-        background: linear-gradient(180deg, rgba(160,160,160,0.95), rgba(120,120,120,0.95));
-        border: 1px solid rgba(0, 0, 0, 0.2);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
+        background: linear-gradient(180deg, rgba(70,70,78,0.95), rgba(45,45,52,0.95));
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
       }
 
       .device-card.minisplit-card {
@@ -2681,13 +2687,13 @@ class EnergyPanel extends HTMLElement {
         /* Mini-split shape: tapered, narrower at bottom - mimics real unit, not a perfect rectangle */
         clip-path: polygon(0 0, 100% 0, 96% 100%, 4% 100%);
         border-radius: 14px 14px 8px 8px;
-        /* Main body gradient - light from upper left, shading toward lower right */
-        background: linear-gradient(145deg, #ffffff 0%, #fafafa 20%, #f2f2f2 50%, #eaeaea 80%, #e2e2e2 100%);
-        border: 1px solid rgba(0, 0, 0, 0.06);
+        /* Dark plastic body */
+        background: linear-gradient(145deg, var(--sd-chrome-hi) 0%, var(--sd-chrome-mid) 35%, var(--sd-chrome-low) 70%, var(--sd-chrome-deep) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.08);
         box-shadow:
-          6px 8px 18px rgba(0,0,0,0.14),
-          2px 4px 8px rgba(0,0,0,0.08),
-          inset 0 1px 0 rgba(255,255,255,0.92);
+          6px 8px 18px rgba(0,0,0,0.45),
+          2px 4px 8px rgba(0,0,0,0.25),
+          inset 0 1px 0 rgba(255,255,255,0.12);
       }
 
       /* Top bevel - subtle darker edge suggesting 3D curve */
@@ -2699,7 +2705,7 @@ class EnergyPanel extends HTMLElement {
         right: 0;
         height: 14px;
         border-radius: 14px 14px 0 0;
-        background: linear-gradient(180deg, rgba(220,222,225,0.5) 0%, rgba(255,255,255,0) 100%);
+        background: linear-gradient(180deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0) 100%);
         pointer-events: none;
       }
 
@@ -2749,16 +2755,16 @@ class EnergyPanel extends HTMLElement {
         box-shadow: 0 0 6px rgba(3,169,244,0.2), inset 0 1px 0 rgba(255,255,255,0.06);
       }
 
-      /* Recessed upper strip - light grey band for display area */
+      /* Recessed upper strip - display band */
       .device-card.minisplit-card .ms-upper-panel {
         position: absolute;
         top: 0;
         left: 8%;
         right: 8%;
         height: 24px;
-        background: linear-gradient(180deg, rgba(245,245,248,0.9) 0%, rgba(232,232,236,0.95) 100%);
+        background: linear-gradient(180deg, rgba(48,48,54,0.95) 0%, rgba(32,32,38,0.98) 100%);
         border-radius: 6px 6px 0 0;
-        box-shadow: inset 0 1px 2px rgba(0,0,0,0.06);
+        box-shadow: inset 0 1px 2px rgba(0,0,0,0.35);
       }
 
       .device-card.minisplit-card .ms-vent {
@@ -2768,13 +2774,13 @@ class EnergyPanel extends HTMLElement {
         bottom: 4px;
         height: 24px;
         border-radius: 0 0 8px 8px;
-        /* Recessed vent - lighter top bevel, darker interior */
-        background: linear-gradient(180deg, #c8c8cc 0%, #b0b0b4 20%, #9a9a9e 100%);
-        border: 1px solid rgba(0, 0, 0, 0.12);
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.15);
+        /* Recessed vent */
+        background: linear-gradient(180deg, var(--sd-chrome-mid) 0%, var(--sd-chrome-low) 50%, var(--sd-chrome-deep) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.45);
       }
 
-      /* Grey bevel strip above vent - transition from white body */
+      /* Bevel strip above vent */
       .device-card.minisplit-card .ms-vent::before {
         content: "";
         position: absolute;
@@ -2782,7 +2788,7 @@ class EnergyPanel extends HTMLElement {
         right: -2px;
         top: -5px;
         height: 5px;
-        background: linear-gradient(180deg, rgba(200,202,206,0.95), rgba(180,182,186,0.95));
+        background: linear-gradient(180deg, rgba(60,62,68,0.95), rgba(42,44,50,0.95));
         border-radius: 2px 2px 0 0;
       }
 
@@ -2837,10 +2843,10 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: stretch;
-        background: linear-gradient(135deg, #b8bcc0 0%, #a0a4a8 100%);
-        border: 1px solid rgba(0, 0, 0, 0.2);
+        background: linear-gradient(135deg, var(--sd-chrome-hi) 0%, var(--sd-chrome-mid) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 4px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.12);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 2px 4px rgba(0,0,0,0.35);
         overflow: hidden;
         position: relative;
       }
@@ -2867,13 +2873,13 @@ class EnergyPanel extends HTMLElement {
         flex: 1;
         height: 100%;
         min-height: 24px;
-        background: linear-gradient(135deg, #e4e8ec 0%, #d0d4d8 40%, #c4c8cc 100%);
-        border: 1px solid rgba(0, 0, 0, 0.15);
+        background: linear-gradient(135deg, var(--sd-chrome-mid) 0%, var(--sd-chrome-low) 60%, var(--sd-chrome-deep) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.06);
         border-radius: 2px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 0 rgba(0,0,0,0.08);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 1px 0 rgba(0,0,0,0.25);
       }
       .device-card.fridge-card .fridge-freezer-door .fridge-door-panel {
-        background: linear-gradient(135deg, #e0e4e8 0%, #ccd0d4 100%);
+        background: linear-gradient(135deg, var(--sd-chrome-mid) 0%, var(--sd-chrome-low) 100%);
       }
       .device-card.fridge-card .fridge-handle-vert {
         width: 4px;
@@ -2936,10 +2942,10 @@ class EnergyPanel extends HTMLElement {
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        background: linear-gradient(180deg, #f5f5f5 0%, #e8e8e8 100%);
-        border: 1px solid rgba(0, 0, 0, 0.1);
+        background: linear-gradient(180deg, var(--sd-chrome-hi) 0%, var(--sd-chrome-low) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 6px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 2px rgba(0,0,0,0.08);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 1px 2px rgba(0,0,0,0.35);
         overflow: hidden;
         position: relative;
       }
