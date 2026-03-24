@@ -446,7 +446,7 @@ class EnergyPanel extends HTMLElement {
       const ApexCharts = (await import('https://cdn.jsdelivr.net/npm/apexcharts@3.45.1/dist/apexcharts.esm.min.js')).default;
       const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
       const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
-      const muted = getComputedStyle(this).getPropertyValue('--secondary-text-color').trim() || '#9e9e9e';
+      const muted = getComputedStyle(this).getPropertyValue('--secondary-text-color').trim() || '#9b9b9b';
       const sliceColors = [
         accent,
         '#26a69a',
@@ -814,6 +814,20 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  _attachRoomContentWheelScroll() {
+    const roomContents = this.shadowRoot.querySelectorAll('.room-content');
+    roomContents.forEach(el => {
+      if (el._wheelScrollAttached) return;
+      el._wheelScrollAttached = true;
+      el.addEventListener('wheel', (e) => {
+        if (el.scrollWidth > el.clientWidth) {
+          e.preventDefault();
+          el.scrollLeft += e.deltaY;
+        }
+      }, { passive: false });
+    });
+  }
+
   _getRoomConfig(roomId) {
     const rooms = this._config?.rooms || [];
     return rooms.find(r => r.id === roomId);
@@ -886,7 +900,7 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         gap: 4px;
         margin-bottom: 16px;
-        background: rgba(0, 0, 0, 0.2);
+        background: var(--secondary-background-color);
         padding: 4px;
         border-radius: 8px;
       }
@@ -896,7 +910,7 @@ class EnergyPanel extends HTMLElement {
         padding: 10px 16px;
         border: none;
         background: transparent;
-        color: var(--secondary-text-color);
+        color: var(--disabled-text-color);
         cursor: pointer;
         border-radius: 6px;
         font-size: 13px;
@@ -1194,7 +1208,7 @@ class EnergyPanel extends HTMLElement {
       /* ===== Room header: single row + thick in-bar budget (compact) ===== */
       .room-header {
         padding: clamp(6px, 1.6vw, 10px) clamp(8px, 2vw, 12px);
-        background: linear-gradient(135deg, rgba(3, 169, 244, 0.05) 0%, transparent 55%);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
         border-radius: 10px 10px 0 0;
         overflow: visible;
@@ -1211,7 +1225,7 @@ class EnergyPanel extends HTMLElement {
         width: clamp(28px, 7vw, 40px);
         height: clamp(28px, 7vw, 40px);
         border-radius: clamp(6px, 1.5vw, 10px);
-        background: var(--panel-accent-dim);
+        background: rgba(255, 255, 255, 0.06);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1300,7 +1314,7 @@ class EnergyPanel extends HTMLElement {
         padding: 0 clamp(10px, 2.2vw, 14px);
         margin-bottom: 0;
         border-radius: clamp(9px, 2.2vw, 14px);
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(0, 0, 0, 0.12) 100%);
+        background: var(--secondary-background-color);
         border: 1px solid var(--card-border);
         overflow: hidden;
         box-sizing: border-box;
@@ -1620,7 +1634,7 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         gap: 4px;
         margin-bottom: 16px;
-        background: rgba(0, 0, 0, 0.2);
+        background: var(--secondary-background-color);
         padding: 4px;
         border-radius: 8px;
       }
@@ -1630,7 +1644,7 @@ class EnergyPanel extends HTMLElement {
         padding: 10px 16px;
         border: none;
         background: transparent;
-        color: var(--secondary-text-color);
+        color: var(--disabled-text-color);
         cursor: pointer;
         border-radius: 6px;
         font-size: 13px;
@@ -2085,19 +2099,19 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: center;
+        justify-content: space-between;
       }
 
       .outlet-card.outlet-face.single-outlet .single-receptacle {
         flex: 0 0 auto;
-        margin: auto 0;
       }
 
       .outlet-card.outlet-face.single-outlet .plate-screw:first-of-type {
-        margin: 4px auto 16px;
+        margin: 4px auto 8px;
       }
 
       .outlet-card.outlet-face.single-outlet .plate-screw:last-of-type {
-        margin: 16px auto 4px;
+        margin: 8px auto 4px;
       }
 
       .outlet-card.outlet-face.light-outlet {
@@ -3218,7 +3232,7 @@ class EnergyPanel extends HTMLElement {
         flex: 1;
         min-width: 0;
         font-size: 10px;
-        color: var(--secondary-text-color, #9e9e9e);
+        color: var(--secondary-text-color, #9b9b9b);
         text-align: center;
         line-height: 1.15;
         overflow: hidden;
@@ -3318,7 +3332,7 @@ class EnergyPanel extends HTMLElement {
         justify-content: space-between;
         gap: 8px;
         padding: 16px 20px;
-        background: linear-gradient(135deg, rgba(3, 169, 244, 0.05) 0%, transparent 100%);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
       }
 
@@ -5466,7 +5480,7 @@ class EnergyPanel extends HTMLElement {
           display: flex;
           gap: 4px;
           margin-bottom: 16px;
-          background: rgba(0, 0, 0, 0.2);
+          background: var(--secondary-background-color);
           padding: 4px;
           border-radius: 8px;
         }
@@ -5476,7 +5490,7 @@ class EnergyPanel extends HTMLElement {
           padding: 10px 16px;
           border: none;
           background: transparent;
-          color: var(--secondary-text-color);
+          color: var(--disabled-text-color);
           cursor: pointer;
           border-radius: 6px;
           font-size: 12px;
@@ -6833,6 +6847,7 @@ class EnergyPanel extends HTMLElement {
 
     this._attachSummaryStatsResize();
     this._scheduleSummaryStatFit();
+    this._attachRoomContentWheelScroll();
   }
 
   _attachMenuButton() {
