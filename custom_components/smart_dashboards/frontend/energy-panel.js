@@ -167,9 +167,11 @@ class EnergyPanel extends HTMLElement {
         this._hass.callWS({ type: 'smart_dashboards/get_switches' }),
       ]);
       this._config = config.energy || {};
-      this._entities = entities;
+      this._entities = entities || {};
+      this._entities.persons = Array.isArray(this._entities.persons) ? this._entities.persons : [];
+      this._entities.zones = Array.isArray(this._entities.zones) ? this._entities.zones : [];
       this._entities.switches = switchesResult.switches || [];
-      this._entities.binary_sensors = entities.binary_sensors || [];
+      this._entities.binary_sensors = this._entities.binary_sensors || [];
       this._areas = areasResult.areas || [];
       await this._loadPowerData();
       // Statistics loaded lazily when user switches to Statistics tab (avoids slow recorder query on init)
@@ -6279,6 +6281,132 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _renderPresenceAutoOffRow(inputClass, checked, helpText) {
+    const esc = (helpText || '').replace(/</g, '&lt;');
+    return `
+      <div class="form-group" style="margin-top: 12px;">
+        <label class="toggle-row">
+          <input type="checkbox" class="form-checkbox ${inputClass}" ${checked ? 'checked' : ''}>
+          <span class="toggle-label">Turn off when person outside zones</span>
+        </label>
+        <div class="tts-msg-desc" style="margin-top: 4px;">${esc}</div>
+      </div>
+    `;
+  }
+
+  _renderRoomPresenceSection(room, index) {
+    const persons = Array.isArray(this._entities?.persons) ? this._entities.persons : [];
+    const zlist = Array.isArray(room.presence_zone_entities) && room.presence_zone_entities.length
+      ? room.presence_zone_entities
+      : [''];
+    const curPerson = (room.presence_person_entity || '').trim();
+    const zoneRows = zlist.map((z) => `
+      <div class="room-zone-row" style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:200px;">
+          ${this._renderEntityAutocomplete((z || '').trim(), 'zone', index, 'room-zone-entity', 'zone.home')}
+        </div>
+        <button type="button" class="icon-btn danger room-zone-remove-btn" title="Remove zone">
+          <svg viewBox="0 0 24 24">${icons.delete}</svg>
+        </button>
+      </div>
+    `).join('');
+    const personOptions = persons
+      .filter((p) => (p.entity_id || '').startsWith('person.'))
+      .map((p) => {
+        const id = (p.entity_id || '').replace(/"/g, '&quot;');
+        const name = (p.friendly_name || p.entity_id || '').replace(/</g, '&lt;');
+        const sel = curPerson === (p.entity_id || '') ? ' selected' : '';
+        return `<option value="${id}"${sel}>${name}</option>`;
+      })
+      .join('');
+    return `
+      <div class="divider" style="margin: 16px 0;"></div>
+      <h4 style="margin: 0 0 8px; font-size: 11px; color: var(--secondary-text-color);">Presence &amp; zones</h4>
+      <p class="tts-msg-desc" style="margin-bottom: 12px;">
+        Optional: pick who this room tracks and which zones count as present. When they leave all selected zones, devices below with this option enabled can be turned off (once per transition; no auto on when returning).
+        Persons appear only if they have a linked device tracker in Home Assistant.
+      </p>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Person</label>
+        <select class="form-select room-presence-person">
+          <option value="">None</option>
+          ${personOptions}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Zones (in any = present)</label>
+        <div class="room-zone-rows">${zoneRows}</div>
+        <button type="button" class="btn btn-secondary room-zone-add-btn" style="margin-top:8px;">+ Add zone</button>
+      </div>
+    `;
+  }
+
+  _collectPresencePersonFromCard(card) {
+    const v = (card.querySelector('.room-presence-person')?.value || '').trim();
+    return v.startsWith('person.') ? v : null;
+  }
+
+  _collectPresenceZonesFromCard(card) {
+    const ids = [];
+    card.querySelectorAll('.room-zone-row').forEach((row) => {
+      const inp = row.querySelector('.entity-datalist-input.room-zone-entity');
+      const z = (inp?.value || '').trim();
+      if (z.startsWith('zone.')) ids.push(z);
+    });
+    return [...new Set(ids)];
+  }
+
+  _applyPresenceAutoOffFromItemToDevice(item, device) {
+    const t = device.type;
+    if (t === 'outlet') {
+      device.presence_auto_off_plug1 = item.querySelector('.presence-auto-off-plug1')?.checked === true;
+      device.presence_auto_off_plug2 = item.querySelector('.presence-auto-off-plug2')?.checked === true;
+    } else if (
+      ['single_outlet', 'minisplit', 'stove', 'light', 'ceiling_vent_fan', 'fridge', 'microwave'].includes(t)
+    ) {
+      device.presence_auto_off = item.querySelector('.presence-auto-off-appliance')?.checked === true;
+    }
+  }
+
+  _handleRoomZoneClick(e) {
+    const addBtn = e.target.closest('.room-zone-add-btn');
+    if (addBtn) {
+      e.preventDefault();
+      const card = addBtn.closest('.room-settings-card');
+      const list = card?.querySelector('.room-zone-rows');
+      const roomIndex = card?.dataset?.roomIndex;
+      if (!list || roomIndex === undefined) return;
+      const row = document.createElement('div');
+      row.className = 'room-zone-row';
+      row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;';
+      row.innerHTML = `
+        <div style="flex:1; min-width:200px;">
+          ${this._renderEntityAutocomplete('', 'zone', roomIndex, 'room-zone-entity', 'zone.home')}
+        </div>
+        <button type="button" class="icon-btn danger room-zone-remove-btn" title="Remove zone">
+          <svg viewBox="0 0 24 24">${icons.delete}</svg>
+        </button>
+      `;
+      list.appendChild(row);
+      this._initEntityAutocompletes(row);
+      return;
+    }
+    const remBtn = e.target.closest('.room-zone-remove-btn');
+    if (remBtn) {
+      e.preventDefault();
+      const row = remBtn.closest('.room-zone-row');
+      const list = row?.parentElement;
+      if (!row || !list?.classList.contains('room-zone-rows')) return;
+      const rows = list.querySelectorAll('.room-zone-row');
+      if (rows.length <= 1) {
+        const inp = row.querySelector('.entity-datalist-input.room-zone-entity');
+        if (inp) inp.value = '';
+        return;
+      }
+      row.remove();
+    }
+  }
+
   _renderRoomSettings(room, index, mediaPlayers, powerSensors) {
     return `
       <div class="room-settings-card" data-room-index="${index}" draggable="false">
@@ -6335,6 +6463,8 @@ class EnergyPanel extends HTMLElement {
               <span class="volume-value room-volume-display">${Math.round((room.volume || 0.7) * 100)}%</span>
             </div>
           </div>
+
+          ${this._renderRoomPresenceSection(room, index)}
 
           <div class="divider"></div>
 
@@ -6394,6 +6524,7 @@ class EnergyPanel extends HTMLElement {
     const allLights = this._entities?.lights || [];
     const lights = allLights.filter(l => (l.entity_id || '').startsWith('light.'));
     const displayName = device.name || 'Unnamed Light';
+    const lightPowerSource = device.power_source === 'sensor' ? 'sensor' : 'configured';
     const collapsedClass = isCollapsed ? 'collapsed' : '';
     // light_entities: list of { entity_id, watts, wrgb } (legacy: list of strings -> [{ entity_id, watts: 0, wrgb: false }])
     let lightEntityRows = [];
@@ -6459,6 +6590,21 @@ class EnergyPanel extends HTMLElement {
                 <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Switch entities only (switch.*). Type to search. Primary switch for on/off state.</div>
               </div>
               <div class="form-group">
+                <label class="form-label">How to measure power</label>
+                <select class="form-input light-power-source">
+                  <option value="configured" ${lightPowerSource === 'configured' ? 'selected' : ''}>Configured wattage (per light below)</option>
+                  <option value="sensor" ${lightPowerSource === 'sensor' ? 'selected' : ''}>Power sensor (when switch is on)</option>
+                </select>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Sensor mode uses one entity for live watts (like outlets). Mapped lights below stay available for WRGB responsive warnings.</div>
+              </div>
+              <div class="light-power-sensor-block" style="display: ${lightPowerSource === 'sensor' ? 'block' : 'none'};">
+                <div class="form-group">
+                  <label class="form-label">Power sensor or smart switch</label>
+                  ${this._renderEntityAutocomplete(device.power_sensor_entity || '', 'power_watts', roomIndex, 'light-power-sensor-entity', 'sensor.bathroom_lights_power')}
+                  <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">sensor.* or switch.* with power (e.g. smart plug reporting watts).</div>
+                </div>
+              </div>
+              <div class="form-group">
                 <label class="form-label">Mapped Lights & Running Power (W)</label>
                 <div class="light-entity-rows">
                   ${lightRowsHtml}
@@ -6469,6 +6615,11 @@ class EnergyPanel extends HTMLElement {
               <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
                 <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
               </button>
+              ${this._renderPresenceAutoOffRow(
+                'presence-auto-off-appliance',
+                !!device.presence_auto_off,
+                'Uses room Presence & zones. Targets the switch entity above.',
+              )}
             </div>
           </div>
         </div>
@@ -6534,6 +6685,11 @@ class EnergyPanel extends HTMLElement {
                 <input type="number" class="form-input minisplit-enforcement-min-watts" value="${device.minisplit_enforcement_min_watts ?? 0}" min="0" max="2000" style="width: 90px;">
                 <div class="tts-var-help" style="margin-top: 4px;">If set, reported plug power must be at least this high to qualify for mini-split-first enforcement (ignores low fan-only draw when math alone would qualify).</div>
               </div>
+              ${this._renderPresenceAutoOffRow(
+                'presence-auto-off-appliance',
+                !!device.presence_auto_off,
+                'Uses room Presence & zones. Turns off the plug switch when away. Opt-in: use with care for HVAC.',
+              )}
             </div>
           </div>
         </div>
@@ -6576,6 +6732,11 @@ class EnergyPanel extends HTMLElement {
                 <label class="form-label">Power Sensor</label>
                 ${this._renderEntityAutocomplete(device.plug1_entity || '', 'sensor', roomIndex, 'outlet-plug1', 'sensor.fridge_power')}
               </div>
+              ${this._renderPresenceAutoOffRow(
+                'presence-auto-off-appliance',
+                !!device.presence_auto_off,
+                'Fridges usually have no switch; this is saved but has no effect until a switch is configured for this device.',
+              )}
             </div>
           </div>
         </div>
@@ -6585,6 +6746,7 @@ class EnergyPanel extends HTMLElement {
 
   _renderCeilingVentSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed = true) {
     const displayName = device.name || 'Unnamed Ceiling Vent';
+    const ventPowerSource = device.power_source === 'sensor' ? 'sensor' : 'configured';
     const collapsedClass = isCollapsed ? 'collapsed' : '';
     return `
       <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="ceiling_vent_fan" draggable="true">
@@ -6620,13 +6782,34 @@ class EnergyPanel extends HTMLElement {
                 <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Vent fan on/off state</div>
               </div>
               <div class="form-group">
-                <label class="form-label">Power When On (W)</label>
-                <input type="number" class="form-input ceiling-vent-watts" value="${device.watts_when_on || ''}" placeholder="e.g. 25" min="0" max="500">
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Predefined draw when switch is on</div>
+                <label class="form-label">How to measure power</label>
+                <select class="form-input ceiling-vent-power-source">
+                  <option value="configured" ${ventPowerSource === 'configured' ? 'selected' : ''}>Fixed watts when on</option>
+                  <option value="sensor" ${ventPowerSource === 'sensor' ? 'selected' : ''}>Power sensor (when switch is on)</option>
+                </select>
+              </div>
+              <div class="ceiling-vent-power-sensor-block" style="display: ${ventPowerSource === 'sensor' ? 'block' : 'none'};">
+                <div class="form-group">
+                  <label class="form-label">Power sensor or smart switch</label>
+                  ${this._renderEntityAutocomplete(device.power_sensor_entity || '', 'power_watts', roomIndex, 'ceiling-vent-power-sensor-entity', 'sensor.bathroom_vent_power')}
+                  <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">sensor.* or switch.* with power reading.</div>
+                </div>
+              </div>
+              <div class="ceiling-vent-watts-block" style="display: ${ventPowerSource === 'configured' ? 'block' : 'none'};">
+                <div class="form-group">
+                  <label class="form-label">Power When On (W)</label>
+                  <input type="number" class="form-input ceiling-vent-watts" value="${device.watts_when_on || ''}" placeholder="e.g. 25" min="0" max="500">
+                  <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Predefined draw when switch is on</div>
+                </div>
               </div>
               <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
                 <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
               </button>
+              ${this._renderPresenceAutoOffRow(
+                'presence-auto-off-appliance',
+                !!device.presence_auto_off,
+                'Uses room Presence & zones. Targets the vent switch above.',
+              )}
             </div>
           </div>
         </div>
@@ -6725,6 +6908,19 @@ class EnergyPanel extends HTMLElement {
           </p>
         ` : '';
 
+    const presenceApplianceHelp =
+      deviceType === 'stove'
+        ? 'Uses room Presence & zones. Turns off the stove plug switch when away. Opt-in: use with care.'
+        : 'Uses room Presence & zones when a switch exists. Microwaves usually have no switch; saved for compatibility.';
+    const presenceApplianceBlock =
+      deviceType === 'stove' || deviceType === 'microwave'
+        ? this._renderPresenceAutoOffRow(
+            'presence-auto-off-appliance',
+            !!device.presence_auto_off,
+            presenceApplianceHelp,
+          )
+        : '';
+
     return `
       <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="${deviceType}" draggable="true">
         <div class="outlet-settings-bar">
@@ -6759,6 +6955,7 @@ class EnergyPanel extends HTMLElement {
               </div>
               ${stoveSafetyFields}
               ${microwaveSafetyFields}
+              ${presenceApplianceBlock}
             </div>
           </div>
         </div>
@@ -6770,6 +6967,8 @@ class EnergyPanel extends HTMLElement {
     const isSingleOutlet = (outlet.type || 'outlet') === 'single_outlet';
     const displayName = outlet.name || 'Unnamed Outlet';
     const collapsedClass = isCollapsed ? 'collapsed' : '';
+    const presencePlug1Class = isSingleOutlet ? 'presence-auto-off-appliance' : 'presence-auto-off-plug1';
+    const presencePlug1Checked = isSingleOutlet ? !!outlet.presence_auto_off : !!outlet.presence_auto_off_plug1;
 
     return `
       <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${outletIndex}" data-room-index="${roomIndex}" draggable="true">
@@ -6818,6 +7017,13 @@ class EnergyPanel extends HTMLElement {
                   <svg viewBox="0 0 24 24">${icons.power}</svg>
                 </button>
               </div>
+              ${this._renderPresenceAutoOffRow(
+                presencePlug1Class,
+                presencePlug1Checked,
+                isSingleOutlet
+                  ? 'Uses room Presence & zones. Targets this plug switch.'
+                  : 'Uses room Presence & zones. Targets plug 1 switch.',
+              )}
             </div>
             ${isSingleOutlet ? '' : `
             <div class="plug-settings-card" data-plug="2">
@@ -6839,6 +7045,11 @@ class EnergyPanel extends HTMLElement {
                   <svg viewBox="0 0 24 24">${icons.power}</svg>
                 </button>
               </div>
+              ${this._renderPresenceAutoOffRow(
+                'presence-auto-off-plug2',
+                !!outlet.presence_auto_off_plug2,
+                'Uses room Presence & zones. Targets plug 2 switch.',
+              )}
             </div>
             `}
           </div>
@@ -6850,6 +7061,11 @@ class EnergyPanel extends HTMLElement {
   _attachEventListeners() {
     // Menu button to toggle HA sidebar
     this._attachMenuButton();
+
+    if (!this._roomZoneClickDelegation) {
+      this._roomZoneClickDelegation = true;
+      this.shadowRoot.addEventListener('click', (e) => this._handleRoomZoneClick(e));
+    }
 
     this.shadowRoot.querySelectorAll('.view-tab').forEach(tab => {
       tab.addEventListener('click', () => {
@@ -7197,9 +7413,27 @@ class EnergyPanel extends HTMLElement {
       const list = (this._entities?.binary_sensors || []).filter(b => (b.entity_id || '').startsWith('binary_sensor.'));
       return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
     }
+    if (entityType === 'zone') {
+      const list = (this._entities?.zones || []).filter(z => (z.entity_id || '').startsWith('zone.'));
+      return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+    }
+    if (entityType === 'person') {
+      const list = (this._entities?.persons || []).filter(p => (p.entity_id || '').startsWith('person.'));
+      return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+    }
     if (entityType === 'media_player') {
       const list = this._entities?.media_players || [];
       return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+    }
+    if (entityType === 'power_watts') {
+      const sensors = (this._getFilteredSensors(roomIndex) || []).map(e => ({
+        entity_id: e.entity_id,
+        friendly_name: e.friendly_name || e.entity_id,
+      }));
+      const switches = (this._getFilteredSwitches(roomIndex) || [])
+        .filter(s => (s.entity_id || '').startsWith('switch.'))
+        .map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+      return [...sensors, ...switches];
     }
     return [];
   }
@@ -7273,6 +7507,8 @@ class EnergyPanel extends HTMLElement {
       kwh_budget: 5,
       kwh_budget_use_boost: true,
       volume: 0.7,
+      presence_person_entity: null,
+      presence_zone_entities: [],
       outlets: [],
     };
     
@@ -7281,6 +7517,7 @@ class EnergyPanel extends HTMLElement {
 
     // Attach event listeners for the new room
     const newCard = list.querySelector(`.room-settings-card[data-room-index="${index}"]`);
+    this._initEntityAutocompletes(newCard);
     this._attachRoomDragListeners(newCard);
 
     const toggleBtn = newCard.querySelector('.toggle-room-btn');
@@ -7363,10 +7600,14 @@ class EnergyPanel extends HTMLElement {
     if (isLight) {
       newOutlet.switch_entity = '';
       newOutlet.light_entities = [];
+      newOutlet.power_source = 'configured';
+      newOutlet.power_sensor_entity = '';
     }
     if (isCeilingVent) {
       newOutlet.switch_entity = '';
       newOutlet.watts_when_on = 25;
+      newOutlet.power_source = 'configured';
+      newOutlet.power_sensor_entity = '';
     }
     if (deviceType === 'minisplit') {
       newOutlet.minisplit_enforcement_off_seconds = 60;
@@ -7491,6 +7732,30 @@ class EnergyPanel extends HTMLElement {
       lightEntityRows.querySelectorAll('.light-entity-remove-btn').forEach(btn => {
         btn.addEventListener('click', () => btn.closest('.light-entity-row')?.remove());
       });
+    }
+
+    const lightPowerSourceSel = outletItem.querySelector('.light-power-source');
+    if (lightPowerSourceSel) {
+      const syncLightPowerUi = () => {
+        const sensor = lightPowerSourceSel.value === 'sensor';
+        const block = outletItem.querySelector('.light-power-sensor-block');
+        if (block) block.style.display = sensor ? 'block' : 'none';
+      };
+      lightPowerSourceSel.addEventListener('change', syncLightPowerUi);
+      syncLightPowerUi();
+    }
+
+    const ventPowerSourceSel = outletItem.querySelector('.ceiling-vent-power-source');
+    if (ventPowerSourceSel) {
+      const syncVentPowerUi = () => {
+        const sensor = ventPowerSourceSel.value === 'sensor';
+        const sb = outletItem.querySelector('.ceiling-vent-power-sensor-block');
+        const wb = outletItem.querySelector('.ceiling-vent-watts-block');
+        if (sb) sb.style.display = sensor ? 'block' : 'none';
+        if (wb) wb.style.display = sensor ? 'none' : 'block';
+      };
+      ventPowerSourceSel.addEventListener('change', syncVentPowerUi);
+      syncVentPowerUi();
     }
 
     // Collapse/expand (accordion)
@@ -7739,6 +8004,17 @@ class EnergyPanel extends HTMLElement {
               }
             });
             device.light_entities = lightEntities;
+            const lps = item.querySelector('.light-power-source')?.value;
+            device.power_source = lps === 'sensor' ? 'sensor' : 'configured';
+            const lpseIn =
+              item.querySelector('.entity-datalist-input.light-power-sensor-entity')
+              || item.querySelector('input.light-power-sensor-entity');
+            const lpse = (lpseIn?.value || '').trim();
+            device.power_sensor_entity =
+              device.power_source === 'sensor'
+              && (lpse.startsWith('sensor.') || lpse.startsWith('switch.'))
+                ? lpse
+                : null;
           } else if (deviceTypeFromItem === 'minisplit') {
             device.type = 'minisplit';
             device.plug2_entity = null;
@@ -7771,7 +8047,21 @@ class EnergyPanel extends HTMLElement {
             device.plug2_shutoff = 0;
             const switchVal = (item.querySelector('input.ceiling-vent-switch') || item.querySelector('.entity-datalist-input.ceiling-vent-switch'))?.value;
             device.switch_entity = (switchVal && switchVal.startsWith('switch.')) ? switchVal : null;
-            device.watts_when_on = parseInt(item.querySelector('.ceiling-vent-watts')?.value, 10) || 0;
+            const cvps = item.querySelector('.ceiling-vent-power-source')?.value;
+            device.power_source = cvps === 'sensor' ? 'sensor' : 'configured';
+            const cvpseIn =
+              item.querySelector('.entity-datalist-input.ceiling-vent-power-sensor-entity')
+              || item.querySelector('input.ceiling-vent-power-sensor-entity');
+            const cvpse = (cvpseIn?.value || '').trim();
+            device.power_sensor_entity =
+              device.power_source === 'sensor'
+              && (cvpse.startsWith('sensor.') || cvpse.startsWith('switch.'))
+                ? cvpse
+                : null;
+            device.watts_when_on =
+              device.power_source === 'sensor'
+                ? 0
+                : parseInt(item.querySelector('.ceiling-vent-watts')?.value, 10) || 0;
           } else {
             device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
             device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
@@ -7780,6 +8070,7 @@ class EnergyPanel extends HTMLElement {
             device.plug1_shutoff = plug1Shutoff;
             device.plug2_shutoff = isSingleOutlet ? 0 : plug2Shutoff;
           }
+          this._applyPresenceAutoOffFromItemToDevice(item, device);
           outlets.push(device);
         }
       });
@@ -7819,6 +8110,8 @@ class EnergyPanel extends HTMLElement {
           responsive_light_color: rgb,
           responsive_light_temp: tempK,
           responsive_light_interval: interval,
+          presence_person_entity: this._collectPresencePersonFromCard(card),
+          presence_zone_entities: this._collectPresenceZonesFromCard(card),
           outlets: outlets,
         });
       }
@@ -8058,16 +8351,27 @@ class EnergyPanel extends HTMLElement {
             if (entityId && entityId.startsWith('light.')) {
               lightEntities.push({ entity_id: entityId, watts: Math.max(0, watts), wrgb });
             }
-          });
-          device.light_entities = lightEntities;
-        } else if (deviceTypeFromItem === 'minisplit') {
-          device.type = 'minisplit';
-          device.plug2_entity = null;
-          device.plug1_switch = plug1Switch || null;
-          device.plug2_switch = null;
-          device.plug1_shutoff = plug1Shutoff;
-          device.plug2_shutoff = 0;
-          const offEl2 = item.querySelector('.minisplit-enforcement-off-seconds');
+            });
+            device.light_entities = lightEntities;
+            const lps2 = item.querySelector('.light-power-source')?.value;
+            device.power_source = lps2 === 'sensor' ? 'sensor' : 'configured';
+            const lpseIn2 =
+              item.querySelector('.entity-datalist-input.light-power-sensor-entity')
+              || item.querySelector('input.light-power-sensor-entity');
+            const lpse2 = (lpseIn2?.value || '').trim();
+            device.power_sensor_entity =
+              device.power_source === 'sensor'
+              && (lpse2.startsWith('sensor.') || lpse2.startsWith('switch.'))
+                ? lpse2
+                : null;
+          } else if (deviceTypeFromItem === 'minisplit') {
+            device.type = 'minisplit';
+            device.plug2_entity = null;
+            device.plug1_switch = plug1Switch || null;
+            device.plug2_switch = null;
+            device.plug1_shutoff = plug1Shutoff;
+            device.plug2_shutoff = 0;
+            const offEl2 = item.querySelector('.minisplit-enforcement-off-seconds');
           const minWEl2 = item.querySelector('.minisplit-enforcement-min-watts');
           device.minisplit_enforcement_off_seconds = offEl2
             ? Math.max(30, Math.min(600, parseInt(offEl2.value, 10) || 60))
@@ -8092,7 +8396,21 @@ class EnergyPanel extends HTMLElement {
           device.plug2_shutoff = 0;
           const switchVal = item.querySelector('.ceiling-vent-switch')?.value || item.querySelector('.entity-datalist-input.ceiling-vent-switch')?.value;
           device.switch_entity = (switchVal && switchVal.startsWith('switch.')) ? switchVal : null;
-          device.watts_when_on = parseInt(item.querySelector('.ceiling-vent-watts')?.value, 10) || 0;
+          const cvps2 = item.querySelector('.ceiling-vent-power-source')?.value;
+          device.power_source = cvps2 === 'sensor' ? 'sensor' : 'configured';
+          const cvpseIn2 =
+            item.querySelector('.entity-datalist-input.ceiling-vent-power-sensor-entity')
+            || item.querySelector('input.ceiling-vent-power-sensor-entity');
+          const cvpse2 = (cvpseIn2?.value || '').trim();
+          device.power_sensor_entity =
+            device.power_source === 'sensor'
+            && (cvpse2.startsWith('sensor.') || cvpse2.startsWith('switch.'))
+              ? cvpse2
+              : null;
+          device.watts_when_on =
+            device.power_source === 'sensor'
+              ? 0
+              : parseInt(item.querySelector('.ceiling-vent-watts')?.value, 10) || 0;
         } else {
           device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
           device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
@@ -8101,6 +8419,7 @@ class EnergyPanel extends HTMLElement {
           device.plug1_shutoff = plug1Shutoff;
           device.plug2_shutoff = isSingleOutlet ? 0 : plug2Shutoff;
         }
+        this._applyPresenceAutoOffFromItemToDevice(item, device);
         outlets.push(device);
       }
     });
@@ -8151,6 +8470,8 @@ class EnergyPanel extends HTMLElement {
       responsive_light_color: rgb,
       responsive_light_temp: tempK,
       responsive_light_interval: interval,
+      presence_person_entity: this._collectPresencePersonFromCard(card),
+      presence_zone_entities: this._collectPresenceZonesFromCard(card),
       outlets: outlets,
     };
 
