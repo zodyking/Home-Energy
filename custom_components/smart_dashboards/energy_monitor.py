@@ -8,7 +8,8 @@ import os
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -49,6 +50,34 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def person_in_any_configured_zone(
+    hass: HomeAssistant, person_entity_id: str, zone_entity_ids: list[str]
+) -> bool:
+    """True if person state matches any configured zone (friendly name, slug, or home)."""
+    if not person_entity_id or not zone_entity_ids:
+        return True
+    ps = hass.states.get(person_entity_id)
+    if not ps or ps.state in ("unknown", "unavailable", ""):
+        return False
+    raw = (ps.state or "").strip().lower()
+    if raw == "not_home":
+        return False
+    for zid in zone_entity_ids:
+        zs = hass.states.get(zid)
+        if not zs or not str(zid).startswith("zone."):
+            continue
+        fn = str(zs.attributes.get("friendly_name") or "").strip().lower()
+        slug = zid.split(".", 1)[-1].replace("_", " ").lower()
+        zid_l = zid.lower()
+        if fn and raw == fn:
+            return True
+        if raw == slug or raw == zid_l or raw == zid.split(".", 1)[-1].lower():
+            return True
+        if zid == "zone.home" and raw == "home":
+            return True
+    return False
+
+
 class EnergyMonitor:
     """Monitor energy consumption and send TTS alerts for thresholds."""
 
@@ -86,6 +115,8 @@ class EnergyMonitor:
         self._stove_progress_last_boundary: dict[str, int] = {}
         # Phase-2 mini-split hold: room_id -> {switches: set[str], outlet_name, volume}
         self._minisplit_hold: dict[str, dict] = {}
+        # Presence / zone auto-off: last known "in any selected zone" per room_id
+        self._room_presence_was_in_zone: dict[str, bool | None] = {}
 
     @staticmethod
     def _budget_boost_period_label(weekdays: list) -> str:
@@ -290,16 +321,116 @@ class EnergyMonitor:
             room_id = room.get("id", room["name"].lower().replace(" ", "_"))
             for outlet in room.get("outlets", []):
                 if outlet.get("type") == "light":
-                    # Lights use tracking key; we track via plug1_entity of light's power
-                    # For lights we don't have a sensor - we use the tracking key
-                    # State changes come from light entities - but we sum watts from config
-                    # Lights: no power entity to listen to; poll adds based on switch state
+                    if outlet.get("power_source") == "sensor":
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            entity_ids.append(pe)
+                    continue
+                if outlet.get("type") == "ceiling_vent_fan":
+                    if outlet.get("power_source") == "sensor":
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            entity_ids.append(pe)
                     continue
                 if outlet.get("plug1_entity"):
                     entity_ids.append(outlet["plug1_entity"])
                 if outlet.get("plug2_entity"):
                     entity_ids.append(outlet["plug2_entity"])
         return list(dict.fromkeys(entity_ids))  # Dedupe preserving order
+
+    def _switch_entity_is_on(self, entity_id: str | None) -> bool:
+        if not entity_id or not str(entity_id).startswith("switch."):
+            return False
+        st = self.hass.states.get(entity_id)
+        return bool(st and (st.state or "").lower() == "on")
+
+    def _presence_auto_off_switch_targets(self, room: dict) -> list[str]:
+        """switch.* entity IDs that are on and marked for auto-off when leaving zones."""
+        targets: list[str] = []
+        for outlet in room.get("outlets", []):
+            otype = outlet.get("type", "outlet")
+            if otype == "outlet":
+                if outlet.get("presence_auto_off_plug1"):
+                    sw = outlet.get("plug1_switch")
+                    if self._switch_entity_is_on(sw):
+                        targets.append(str(sw))
+                if outlet.get("presence_auto_off_plug2"):
+                    sw = outlet.get("plug2_switch")
+                    if self._switch_entity_is_on(sw):
+                        targets.append(str(sw))
+            elif otype == "light" and outlet.get("presence_auto_off"):
+                sw = outlet.get("switch_entity")
+                if self._switch_entity_is_on(sw):
+                    targets.append(str(sw))
+            elif otype == "ceiling_vent_fan" and outlet.get("presence_auto_off"):
+                sw = outlet.get("switch_entity")
+                if self._switch_entity_is_on(sw):
+                    targets.append(str(sw))
+            elif otype in ("single_outlet", "minisplit", "stove") and outlet.get(
+                "presence_auto_off"
+            ):
+                sw = outlet.get("plug1_switch")
+                if self._switch_entity_is_on(sw):
+                    targets.append(str(sw))
+            elif otype in ("microwave", "fridge") and outlet.get("presence_auto_off"):
+                sw = outlet.get("plug1_switch")
+                if self._switch_entity_is_on(sw):
+                    targets.append(str(sw))
+        return list(dict.fromkeys(targets))
+
+    async def _apply_presence_auto_off_for_room(self, room: dict) -> None:
+        """When person transitions from in-zone to out-of-zone, turn off selected switches."""
+        room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+        person_ent = room.get("presence_person_entity")
+        zones = room.get("presence_zone_entities") or []
+        if not person_ent or not zones:
+            self._room_presence_was_in_zone.pop(room_id, None)
+            return
+        in_zone = person_in_any_configured_zone(self.hass, person_ent, list(zones))
+        prev = self._room_presence_was_in_zone.get(room_id)
+        self._room_presence_was_in_zone[room_id] = in_zone
+        if prev is True and not in_zone:
+            for sw in self._presence_auto_off_switch_targets(room):
+                try:
+                    await self.hass.services.async_call(
+                        "switch", "turn_off", {"entity_id": sw}, blocking=True
+                    )
+                    _LOGGER.info(
+                        "Presence auto-off: turned off %s (room %s left zones)",
+                        sw,
+                        room_id,
+                    )
+                except Exception as e:
+                    _LOGGER.warning("Presence auto-off failed for %s: %s", sw, e)
+
+    async def _presence_on_person_state(self, entity_id: str | None) -> None:
+        if not entity_id:
+            return
+        for room in self.config_manager.energy_config.get("rooms", []):
+            if room.get("presence_person_entity") == entity_id:
+                await self._apply_presence_auto_off_for_room(room)
+
+    def _setup_presence_listeners(self) -> None:
+        person_entities: set[str] = set()
+        for room in self.config_manager.energy_config.get("rooms", []):
+            pe = room.get("presence_person_entity")
+            zs = room.get("presence_zone_entities") or []
+            if pe and zs:
+                person_entities.add(pe)
+        if not person_entities:
+            return
+
+        @callback
+        def _on_person(event: Event) -> None:
+            eid = event.data.get("entity_id")
+            self.hass.async_create_task(self._presence_on_person_state(eid))
+
+        unsub = async_track_state_change_event(
+            self.hass,
+            list(person_entities),
+            _on_person,
+        )
+        self._power_listener_unsub.append(unsub)
 
     async def async_start(self) -> None:
         """Start the energy monitoring loop and state-change listeners."""
@@ -314,6 +445,7 @@ class EnergyMonitor:
         # State-change was removed: it missed switch current_power_w updates and caused undercounting.
         entity_ids = self._get_power_entity_ids()
         _LOGGER.info("Energy monitor started (poll-based accumulation for %d plug entities)", len(entity_ids))
+        self._setup_presence_listeners()
 
     async def async_stop(self) -> None:
         """Stop the energy monitoring loop and listeners."""
@@ -353,6 +485,7 @@ class EnergyMonitor:
         await self._maybe_fire_budget_boost_scheduled(now, today, tts_settings)
 
         for room in rooms:
+            await self._apply_presence_auto_off_for_room(room)
             room_id = room.get("id", room["name"].lower().replace(" ", "_"))
             room_name = room["name"]
             room_threshold = room.get("threshold", 0)
@@ -361,12 +494,15 @@ class EnergyMonitor:
             media_player = room.get("media_player")
             room_volume = room.get("volume", tts_settings.get("volume", 0.7))
 
-            # Room budget: no warnings/shutoffs until room uses this much today (boost days scale budget)
+            # Room budget: no warnings/shutoffs until room uses this much today (boost days scale budget).
+            # Match dashboard: overBudget only when effKwh > 0 and usedKwh > effKwh (strict >).
             room_day_kwh = self.config_manager.get_room_day_kwh(room_id)
             effective_kwh_budget = self._effective_kwh_budget(
                 kwh_budget, now, tts_settings, use_room_boost=room_uses_kwh_boost
             )
-            budget_exceeded = effective_kwh_budget <= 0 or room_day_kwh >= effective_kwh_budget
+            budget_exceeded = (
+                effective_kwh_budget > 0 and room_day_kwh > effective_kwh_budget
+            )
 
             # TTS when room first exceeds budget (once per day per room)
             if (
@@ -398,41 +534,74 @@ class EnergyMonitor:
                 outlet_threshold = outlet.get("threshold", 0)
                 outlet_total_watts = 0.0
 
-                # Light outlets: when switch on, sum watts from mapped lights and track energy
+                # Light outlets: configured watts from map, or power_sensor_entity when switch on
                 if outlet.get("type") == "light":
                     switch_entity = outlet.get("switch_entity")
+                    power_ent = (
+                        outlet.get("power_sensor_entity")
+                        if outlet.get("power_source") == "sensor"
+                        else None
+                    )
                     if switch_entity:
                         state = self.hass.states.get(switch_entity)
                         is_on = state is not None and (state.state or "off").lower() in ("on",)
                         if is_on:
-                            light_ents = outlet.get("light_entities") or []
-                            for le in light_ents:
-                                if isinstance(le, dict) and le.get("entity_id", "").startswith("light."):
-                                    outlet_total_watts += float(le.get("watts", 0) or 0)
-                            if outlet_total_watts > 0:
-                                tracking_key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                            if power_ent:
+                                outlet_total_watts = self._get_power_value(power_ent)
                                 await self.config_manager.async_add_energy_reading(
-                                    tracking_key, outlet_total_watts
+                                    power_ent, outlet_total_watts, elapsed_seconds=1.0
                                 )
-                                # Record for intraday 24-hour charts
-                                self.config_manager.record_intraday_power(tracking_key, outlet_total_watts)
+                                self.config_manager.record_intraday_power(
+                                    power_ent, outlet_total_watts
+                                )
+                            else:
+                                light_ents = outlet.get("light_entities") or []
+                                for le in light_ents:
+                                    if isinstance(le, dict) and le.get("entity_id", "").startswith(
+                                        "light."
+                                    ):
+                                        outlet_total_watts += float(le.get("watts", 0) or 0)
+                                if outlet_total_watts > 0:
+                                    tracking_key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                                    await self.config_manager.async_add_energy_reading(
+                                        tracking_key, outlet_total_watts
+                                    )
+                                    self.config_manager.record_intraday_power(
+                                        tracking_key, outlet_total_watts
+                                    )
                     room_total_watts += outlet_total_watts
                     continue
 
-                # Ceiling vent: switch + predefined watts when on
+                # Ceiling vent: static watts_when_on or power_sensor_entity when switch on
                 if outlet.get("type") == "ceiling_vent_fan":
                     switch_entity = outlet.get("switch_entity")
+                    power_ent = (
+                        outlet.get("power_sensor_entity")
+                        if outlet.get("power_source") == "sensor"
+                        else None
+                    )
                     watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
-                    if switch_entity and watts_when_on > 0:
+                    if switch_entity:
                         state = self.hass.states.get(switch_entity)
                         is_on = state is not None and (state.state or "off").lower() in ("on",)
                         if is_on:
-                            outlet_total_watts = watts_when_on
-                            tracking_key = f"ceiling_vent_{room_id}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
-                            await self.config_manager.async_add_energy_reading(
-                                tracking_key, outlet_total_watts
-                            )
-                            self.config_manager.record_intraday_power(tracking_key, outlet_total_watts)
+                            if power_ent:
+                                outlet_total_watts = self._get_power_value(power_ent)
+                                await self.config_manager.async_add_energy_reading(
+                                    power_ent, outlet_total_watts, elapsed_seconds=1.0
+                                )
+                                self.config_manager.record_intraday_power(
+                                    power_ent, outlet_total_watts
+                                )
+                            elif watts_when_on > 0:
+                                outlet_total_watts = watts_when_on
+                                tracking_key = f"ceiling_vent_{room_id}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
+                                await self.config_manager.async_add_energy_reading(
+                                    tracking_key, outlet_total_watts
+                                )
+                                self.config_manager.record_intraday_power(
+                                    tracking_key, outlet_total_watts
+                                )
                     room_total_watts += outlet_total_watts
                     # Check outlet warning threshold (only when budget exceeded)
                     if budget_exceeded and outlet_threshold > 0 and outlet_total_watts > outlet_threshold:
@@ -598,23 +767,41 @@ class EnergyMonitor:
             outlet_total_watts = 0.0
             if outlet.get("type") == "light":
                 switch_entity = outlet.get("switch_entity")
+                power_ent = (
+                    outlet.get("power_sensor_entity")
+                    if outlet.get("power_source") == "sensor"
+                    else None
+                )
                 if switch_entity:
                     state = self.hass.states.get(switch_entity)
                     is_on = state is not None and (state.state or "off").lower() in ("on",)
                     if is_on:
-                        for le in outlet.get("light_entities") or []:
-                            if isinstance(le, dict) and le.get("entity_id", "").startswith("light."):
-                                outlet_total_watts += float(le.get("watts", 0) or 0)
+                        if power_ent:
+                            outlet_total_watts = self._get_power_value(power_ent)
+                        else:
+                            for le in outlet.get("light_entities") or []:
+                                if isinstance(le, dict) and le.get("entity_id", "").startswith(
+                                    "light."
+                                ):
+                                    outlet_total_watts += float(le.get("watts", 0) or 0)
                 room_total_watts += outlet_total_watts
                 continue
             if outlet.get("type") == "ceiling_vent_fan":
                 switch_entity = outlet.get("switch_entity")
+                power_ent = (
+                    outlet.get("power_sensor_entity")
+                    if outlet.get("power_source") == "sensor"
+                    else None
+                )
                 watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
-                if switch_entity and watts_when_on > 0:
+                if switch_entity:
                     state = self.hass.states.get(switch_entity)
                     is_on = state is not None and (state.state or "off").lower() in ("on",)
                     if is_on:
-                        outlet_total_watts = watts_when_on
+                        if power_ent:
+                            outlet_total_watts = self._get_power_value(power_ent)
+                        elif watts_when_on > 0:
+                            outlet_total_watts = watts_when_on
                 room_total_watts += outlet_total_watts
                 continue
             if outlet.get("plug1_entity"):
@@ -661,7 +848,7 @@ class EnergyMonitor:
         prefix: str,
         room_name: str,
         ms_outlet: dict,
-        warning_count: int,
+        warning_count_spoken: str,
         room_threshold: float | int,
     ) -> str:
         tmpl = (tts_settings.get("minisplit_phase2_warn_msg") or "").strip()
@@ -673,7 +860,7 @@ class EnergyMonitor:
                 prefix=prefix,
                 room_name=room_name,
                 outlet_name=ms_outlet.get("name") or "Mini-split",
-                warning_count=warning_count,
+                warning_count=warning_count_spoken,
                 restore_delay=spoken_cardinal(off_sec),
                 room_threshold=spoken_cardinal(int(room_threshold or 0)),
             )
@@ -1146,10 +1333,7 @@ class EnergyMonitor:
         if not media_player:
             return
 
-        # Record threshold warning first (needed for phase transition check)
-        await self.config_manager.async_record_threshold_warning(room_id, current_watts)
-
-        # Check if we're transitioning to phase 1 or 2 (we always need TTS for phase escalation)
+        # Phase transition (cooldown bypass): window count after this breach is +1; detect before record.
         now = dt_util.now()
         pe = self.config_manager.energy_config.get("power_enforcement", {})
         enforcement_enabled = self.config_manager.is_room_enforcement_enabled(room_id)
@@ -1166,8 +1350,8 @@ class EnergyMonitor:
             warnings_p1 = self.config_manager.get_warnings_in_window(room_id, phase1_window)
             warnings_p2 = self.config_manager.get_warnings_in_window(room_id, phase2_window)
             phase_transition = (
-                (phase2_enabled and warnings_p2 >= phase2_count and phase < 2) or
-                (phase1_enabled and warnings_p1 >= phase1_count and phase < 1)
+                (phase2_enabled and warnings_p2 + 1 >= phase2_count and phase < 2)
+                or (phase1_enabled and warnings_p1 + 1 >= phase1_count and phase < 1)
             )
 
         # Cooldown: skip for phase transitions (we always need TTS when phases enable)
@@ -1176,6 +1360,14 @@ class EnergyMonitor:
             return  # Still in cooldown
 
         self._last_room_alerts[room_id] = now
+
+        await self.config_manager.async_record_threshold_warning(room_id, current_watts)
+
+        # Spoken {warning_count} matches dashboard W after this successful threshold TTS.
+        daily_warnings = self.config_manager.get_event_counts().get("room_warnings", {}).get(
+            room_id, 0
+        )
+        tts_warning_cardinal = spoken_cardinal(daily_warnings + 1)
 
         # Get power enforcement settings
         pe = self.config_manager.energy_config.get("power_enforcement", {})
@@ -1213,7 +1405,7 @@ class EnergyMonitor:
                         prefix,
                         room_name,
                         ms_o,
-                        warnings_in_phase2_window,
+                        tts_warning_cardinal,
                         room_threshold,
                     )
                 if not message:
@@ -1222,7 +1414,7 @@ class EnergyMonitor:
                         message = msg_template.format(
                             prefix=prefix,
                             room_name=room_name,
-                            warning_count=warnings_in_phase2_window,
+                            warning_count=tts_warning_cardinal,
                         )
                     except (KeyError, ValueError):
                         message = ""
@@ -1250,7 +1442,7 @@ class EnergyMonitor:
                         message = boost_tmpl.format(
                             prefix=prefix,
                             room_name=room_name,
-                            warning_count=spoken_cardinal(warnings_in_phase1_window),
+                            warning_count=tts_warning_cardinal,
                             threshold=spoken_cardinal(
                                 int(room_threshold) if room_threshold is not None else 0
                             ),
@@ -1269,7 +1461,7 @@ class EnergyMonitor:
                         message = msg_template.format(
                             prefix=prefix,
                             room_name=room_name,
-                            warning_count=spoken_cardinal(warnings_in_phase1_window),
+                            warning_count=tts_warning_cardinal,
                             threshold=spoken_cardinal(
                                 int(room_threshold) if room_threshold is not None else 0
                             ),
@@ -1295,7 +1487,7 @@ class EnergyMonitor:
                         prefix,
                         room_name,
                         ms_o,
-                        warnings_in_phase2_window,
+                        tts_warning_cardinal,
                         room_threshold,
                     )
                 if not message:
@@ -1304,7 +1496,7 @@ class EnergyMonitor:
                         message = msg_template.format(
                             prefix=prefix,
                             room_name=room_name,
-                            warning_count=warnings_in_phase2_window,
+                            warning_count=tts_warning_cardinal,
                         )
                     except (KeyError, ValueError):
                         message = ""

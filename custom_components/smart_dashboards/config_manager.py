@@ -132,6 +132,43 @@ def _write_json_file(path: str, data: Any) -> None:
         json.dump(data, f, indent=2)
 
 
+def _power_source_for_light_vent(outlet: dict[str, Any]) -> tuple[str, str | None]:
+    """configured = static watts; sensor = power_sensor_entity (sensor.* or switch.*)."""
+    ps = str(outlet.get("power_source") or "configured").strip().lower()
+    if ps not in ("configured", "sensor"):
+        ps = "configured"
+    pse = str(outlet.get("power_sensor_entity") or "").strip()
+    if not pse.startswith(("sensor.", "switch.")):
+        pse = ""
+    if ps == "sensor" and not pse:
+        ps = "configured"
+    return ps, (pse if ps == "sensor" else None)
+
+
+def _normalize_presence_person_entity(val: Any) -> str | None:
+    s = str(val or "").strip()
+    return s if s.startswith("person.") else None
+
+
+def _normalize_presence_zone_entities(raw: Any) -> list[str]:
+    if isinstance(raw, str) and raw.strip():
+        raw = [raw.strip()]
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for z in raw:
+        zs = str(z or "").strip()
+        if zs.startswith("zone."):
+            out.append(zs)
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for z in out:
+        if z not in seen:
+            seen.add(z)
+            uniq.append(z)
+    return uniq[:20]
+
+
 def _event_log_dedupe_key(e: dict[str, Any]) -> tuple[Any, ...]:
     """Stable key to dedupe same logical event across rolling log and archive."""
     return (
@@ -480,6 +517,12 @@ class ConfigManager:
                     "responsive_light_color": _validate_rgb(room.get("responsive_light_color")),
                     "responsive_light_temp": max(2000, min(6500, _safe_int(room.get("responsive_light_temp"), 6500))),
                     "responsive_light_interval": max(0.1, min(10.0, _safe_float(room.get("responsive_light_interval"), 1.5))),
+                    "presence_person_entity": _normalize_presence_person_entity(
+                        room.get("presence_person_entity")
+                    ),
+                    "presence_zone_entities": _normalize_presence_zone_entities(
+                        room.get("presence_zone_entities")
+                    ),
                     "outlets": [],
                 }
                 for outlet in room.get("outlets", []):
@@ -560,6 +603,9 @@ class ConfigManager:
                                 ]
                             else:
                                 item["light_entities"] = []
+                            ps, pse = _power_source_for_light_vent(outlet)
+                            item["power_source"] = ps
+                            item["power_sensor_entity"] = pse
                         elif outlet_type == "minisplit":
                             item["plug2_entity"] = None
                             item["plug1_switch"] = outlet.get("plug1_switch")
@@ -589,12 +635,24 @@ class ConfigManager:
                             item["plug2_shutoff"] = 0
                             item["switch_entity"] = outlet.get("switch_entity")
                             item["watts_when_on"] = max(0, int(outlet.get("watts_when_on", 0)))
+                            ps, pse = _power_source_for_light_vent(outlet)
+                            item["power_source"] = ps
+                            item["power_sensor_entity"] = pse
                         else:
                             item["plug2_entity"] = None
                             item["plug1_switch"] = None
                             item["plug2_switch"] = None
                             item["plug1_shutoff"] = 0
                             item["plug2_shutoff"] = 0
+                        if outlet_type == "outlet":
+                            item["presence_auto_off_plug1"] = bool(
+                                outlet.get("presence_auto_off_plug1")
+                            )
+                            item["presence_auto_off_plug2"] = bool(
+                                outlet.get("presence_auto_off_plug2")
+                            )
+                        else:
+                            item["presence_auto_off"] = bool(outlet.get("presence_auto_off"))
                         validated_room["outlets"].append(item)
                 validated["rooms"].append(validated_room)
 
@@ -1701,11 +1759,21 @@ class ConfigManager:
                 continue
             for outlet in room.get("outlets", []):
                 if outlet.get("type") == "light":
-                    key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
-                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                    if outlet.get("power_source") == "sensor":
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
+                    else:
+                        key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                        room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 elif outlet.get("type") == "ceiling_vent_fan":
-                    key = f"ceiling_vent_{rid}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
-                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                    if outlet.get("power_source") == "sensor":
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
+                    else:
+                        key = f"ceiling_vent_{rid}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
+                        room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
                         if e:
