@@ -365,37 +365,39 @@ async def websocket_get_power_data(
             }
 
             if outlet_type == "light":
-                # Light: switch on + configured map or power_sensor_entity
+                # Cumulative Wh is independent of switch state (same as plugs); watts only when on.
                 switch_entity = outlet.get("switch_entity")
                 if switch_entity:
                     state = hass.states.get(switch_entity)
                     is_on = bool(state and (state.state or "off").lower() in ("on",))
                     outlet_data["switch_state"] = is_on
-                    if is_on:
-                        power_ent = (
-                            outlet.get("power_sensor_entity")
-                            if outlet.get("power_source") == "sensor"
-                            else None
+                    power_ent = (
+                        outlet.get("power_sensor_entity")
+                        if outlet.get("power_source") == "sensor"
+                        else None
+                    )
+                    if power_ent:
+                        total_day_wh = config_manager.get_day_energy(power_ent)
+                        total_watts = (
+                            _get_power_value(hass, power_ent) if is_on else 0.0
                         )
-                        if power_ent:
-                            total_watts = _get_power_value(hass, power_ent)
-                            total_day_wh = config_manager.get_day_energy(power_ent)
-                        else:
-                            light_ents = outlet.get("light_entities") or []
-                            total_watts = 0.0
-                            tracking_key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
-                            for le in light_ents:
-                                if isinstance(le, dict) and le.get("entity_id", "").startswith(
-                                    "light."
-                                ):
-                                    total_watts += float(le.get("watts", 0) or 0)
-                            total_day_wh = config_manager.get_day_energy(tracking_key)
-                        outlet_data["plug1"] = {
-                            "watts": total_watts,
-                            "day_wh": round(total_day_wh, 2),
-                        }
-                        room_data["total_watts"] += total_watts
-                        room_data["total_day_wh"] += total_day_wh
+                    else:
+                        light_ents = outlet.get("light_entities") or []
+                        tracking_key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                        configured_w = 0.0
+                        for le in light_ents:
+                            if isinstance(le, dict) and le.get("entity_id", "").startswith(
+                                "light."
+                            ):
+                                configured_w += float(le.get("watts", 0) or 0)
+                        total_watts = configured_w if is_on else 0.0
+                        total_day_wh = config_manager.get_day_energy(tracking_key)
+                    outlet_data["plug1"] = {
+                        "watts": total_watts,
+                        "day_wh": round(total_day_wh, 2),
+                    }
+                    room_data["total_watts"] += total_watts
+                    room_data["total_day_wh"] += total_day_wh
                 else:
                     outlet_data["switch_state"] = False
             elif outlet_type in ("vent", "wall_heater"):
