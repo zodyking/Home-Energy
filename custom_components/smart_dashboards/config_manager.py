@@ -169,6 +169,40 @@ def _normalize_presence_zone_entities(raw: Any) -> list[str]:
     return uniq[:20]
 
 
+_ROOM_ICON_PATTERN = re.compile(r"^mdi:[a-z0-9-]+$")
+
+
+def _normalize_room_icon(val: Any) -> str | None:
+    """MDI id for room card icon; invalid or empty → None (UI shows mdi:home)."""
+    s = str(val or "").strip()
+    if not s or len(s) > 80:
+        return None
+    if not _ROOM_ICON_PATTERN.match(s):
+        return None
+    return s
+
+
+def _normalize_outlet_type(val: Any) -> str:
+    """Legacy ceiling_vent_fan → vent."""
+    t = str(val or "outlet").strip()
+    if t == "ceiling_vent_fan":
+        return "vent"
+    return t if t else "outlet"
+
+
+def _normalize_binary_sensor_entity(val: Any) -> str | None:
+    s = str(val or "").strip()
+    return s if s.startswith("binary_sensor.") else None
+
+
+def vent_like_energy_tracking_key(room_id: str, outlet: dict) -> str:
+    """Synthetic key for vent / wall heater static-watts energy when switch is on."""
+    name = (outlet.get("name") or "device").lower().replace(" ", "_")
+    if outlet.get("type") == "wall_heater":
+        return f"wall_heater_{room_id}_{name}"
+    return f"ceiling_vent_{room_id}_{name}"
+
+
 def _event_log_dedupe_key(e: dict[str, Any]) -> tuple[Any, ...]:
     """Stable key to dedupe same logical event across rolling log and archive."""
     return (
@@ -462,6 +496,9 @@ class ConfigManager:
         self._config["energy"] = self._validate_energy_config(merged)
         await self.async_prune_kwh_alerts_sent_for_current_config()
         await self.async_save()
+        monitor = self.hass.data.get(DOMAIN, {}).get("energy_monitor")
+        if monitor is not None and hasattr(monitor, "refresh_presence_listeners"):
+            monitor.refresh_presence_listeners()
 
     async def async_prune_kwh_alerts_sent_for_current_config(self) -> None:
         """Drop kwh_alerts_sent entries that are no longer eligible tiers after config change."""
@@ -523,14 +560,15 @@ class ConfigManager:
                     "presence_zone_entities": _normalize_presence_zone_entities(
                         room.get("presence_zone_entities")
                     ),
+                    "room_icon": _normalize_room_icon(room.get("room_icon")),
                     "outlets": [],
                 }
                 for outlet in room.get("outlets", []):
                     if isinstance(outlet, dict) and outlet.get("name"):
-                        outlet_type = outlet.get("type", "outlet")
+                        outlet_type = _normalize_outlet_type(outlet.get("type", "outlet"))
                         if outlet_type not in (
                             "outlet", "single_outlet", "stove", "microwave",
-                            "minisplit", "light", "fridge", "ceiling_vent_fan",
+                            "minisplit", "light", "fridge", "vent", "wall_heater",
                         ):
                             outlet_type = "outlet"
                         item = {
@@ -626,7 +664,7 @@ class ConfigManager:
                             item["plug2_switch"] = None
                             item["plug1_shutoff"] = int(outlet.get("plug1_shutoff", 0))
                             item["plug2_shutoff"] = 0
-                        elif outlet_type == "ceiling_vent_fan":
+                        elif outlet_type in ("vent", "wall_heater"):
                             item["plug1_entity"] = None
                             item["plug2_entity"] = None
                             item["plug1_switch"] = None
@@ -638,6 +676,48 @@ class ConfigManager:
                             ps, pse = _power_source_for_light_vent(outlet)
                             item["power_source"] = ps
                             item["power_sensor_entity"] = pse
+                            if outlet_type == "vent":
+                                item["vent_automation_enabled"] = bool(
+                                    outlet.get("vent_automation_enabled")
+                                )
+                                item["vent_presence_entity"] = _normalize_binary_sensor_entity(
+                                    outlet.get("vent_presence_entity")
+                                )
+                                item["vent_on_debounce_seconds"] = max(
+                                    0, min(600, int(outlet.get("vent_on_debounce_seconds", 30)))
+                                )
+                                item["vent_off_after_no_presence_seconds"] = max(
+                                    10,
+                                    min(
+                                        86400,
+                                        int(outlet.get("vent_off_after_no_presence_seconds", 300)),
+                                    ),
+                                )
+                            else:
+                                item["heater_automation_enabled"] = bool(
+                                    outlet.get("heater_automation_enabled")
+                                )
+                                te = str(outlet.get("heater_temperature_entity") or "").strip()
+                                item["heater_temperature_entity"] = (
+                                    te if te.startswith("sensor.") else None
+                                )
+                                item["heater_on_below_temperature"] = max(
+                                    -60.0,
+                                    min(160.0, float(outlet.get("heater_on_below_temperature", 65))),
+                                )
+                                item["heater_stay_on_minutes"] = max(
+                                    1, min(240, int(outlet.get("heater_stay_on_minutes", 5)))
+                                )
+                                item["heater_presence_optional_enabled"] = bool(
+                                    outlet.get("heater_presence_optional_enabled")
+                                )
+                                item["heater_presence_entity"] = _normalize_binary_sensor_entity(
+                                    outlet.get("heater_presence_entity")
+                                )
+                                item["heater_presence_cooldown_seconds"] = max(
+                                    0,
+                                    min(7200, int(outlet.get("heater_presence_cooldown_seconds", 60))),
+                                )
                         else:
                             item["plug2_entity"] = None
                             item["plug1_switch"] = None
@@ -908,8 +988,8 @@ class ConfigManager:
             if outlet.get("type") == "light":
                 key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
                 entity_ids.append(key)
-            elif outlet.get("type") == "ceiling_vent_fan":
-                key = f"ceiling_vent_{room_id}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
+            elif outlet.get("type") in ("vent", "wall_heater"):
+                key = vent_like_energy_tracking_key(room_id, outlet)
                 entity_ids.append(key)
             else:
                 for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
@@ -1343,8 +1423,8 @@ class ConfigManager:
                 if outlet.get("type") == "light":
                     key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
                     room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
-                elif outlet.get("type") == "ceiling_vent_fan":
-                    key = f"ceiling_vent_{room_id}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
+                elif outlet.get("type") in ("vent", "wall_heater"):
+                    key = vent_like_energy_tracking_key(room_id, outlet)
                     room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
@@ -1394,8 +1474,8 @@ class ConfigManager:
                 if outlet.get("type") == "light":
                     key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
                     room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
-                elif outlet.get("type") == "ceiling_vent_fan":
-                    key = f"ceiling_vent_{rid}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
+                elif outlet.get("type") in ("vent", "wall_heater"):
+                    key = vent_like_energy_tracking_key(rid, outlet)
                     room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
@@ -1766,13 +1846,13 @@ class ConfigManager:
                     else:
                         key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
-                elif outlet.get("type") == "ceiling_vent_fan":
+                elif outlet.get("type") in ("vent", "wall_heater"):
                     if outlet.get("power_source") == "sensor":
                         pe = outlet.get("power_sensor_entity")
                         if pe:
                             room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
                     else:
-                        key = f"ceiling_vent_{rid}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
+                        key = vent_like_energy_tracking_key(rid, outlet)
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
