@@ -43,6 +43,44 @@ const ENFORCEMENT_PHASE_TITLES = [
 /** Short header label next to shield icon (index = phase 0–2). */
 const ENFORCEMENT_BADGE_LABELS = ['Enforced', 'Phase 1', 'Phase 2'];
 
+/** Fallback when ha-icon-picker is unavailable (~120 common MDI ids). */
+const ROOM_ICON_CURATED = [
+  'mdi:home', 'mdi:home-variant', 'mdi:home-outline', 'mdi:door', 'mdi:door-open',
+  'mdi:bed', 'mdi:bed-empty', 'mdi:sofa', 'mdi:chair-rolling', 'mdi:desk',
+  'mdi:pot-steam', 'mdi:stove', 'mdi:microwave', 'mdi:fridge', 'mdi:silverware-fork-knife',
+  'mdi:coffee', 'mdi:cup', 'mdi:bottle-wine', 'mdi:glass-wine',
+  'mdi:toilet', 'mdi:shower', 'mdi:bathtub', 'mdi:washing-machine', 'mdi:tumble-dryer',
+  'mdi:iron', 'mdi:hanger', 'mdi:wardrobe',
+  'mdi:desk-lamp', 'mdi:floor-lamp', 'mdi:ceiling-light', 'mdi:lightbulb', 'mdi:led-strip',
+  'mdi:television', 'mdi:monitor', 'mdi:laptop', 'mdi:keyboard', 'mdi:gamepad-variant',
+  'mdi:bookshelf', 'mdi:book-open-variant', 'mdi:palette',
+  'mdi:garage', 'mdi:garage-open', 'mdi:car', 'mdi:bike', 'mdi:motorbike',
+  'mdi:tree', 'mdi:flower', 'mdi:sprout', 'mdi:watering-can',
+  'mdi:hammer-wrench', 'mdi:tools', 'mdi:screwdriver', 'mdi:brush',
+  'mdi:router-wireless', 'mdi:server', 'mdi:ip-network',
+  'mdi:thermometer', 'mdi:snowflake', 'mdi:fire', 'mdi:weather-sunny',
+  'mdi:fan', 'mdi:air-conditioner', 'mdi:radiator', 'mdi:heat-wave',
+  'mdi:power-plug', 'mdi:flash', 'mdi:lightning-bolt', 'mdi:battery', 'mdi:solar-power',
+  'mdi:window-open', 'mdi:window-closed', 'mdi:blinds', 'mdi:roller-shade',
+  'mdi:stairs', 'mdi:elevator', 'mdi:floor-plan',
+  'mdi:dog', 'mdi:cat', 'mdi:fish', 'mdi:bird',
+  'mdi:baby-face', 'mdi:human-male', 'mdi:human-female', 'mdi:account-group',
+  'mdi:office-building', 'mdi:factory', 'mdi:warehouse', 'mdi:store',
+  'mdi:gymnastics', 'mdi:dumbbell', 'mdi:swim', 'mdi:basketball',
+  'mdi:music', 'mdi:microphone', 'mdi:headphones', 'mdi:speaker',
+  'mdi:filmstrip', 'mdi:camera', 'mdi:image', 'mdi:piano',
+  'mdi:heart', 'mdi:star', 'mdi:shield-home', 'mdi:lock', 'mdi:key-variant',
+  'mdi:bell', 'mdi:alarm-light', 'mdi:smoke-detector', 'mdi:fire-alert',
+  'mdi:water', 'mdi:water-pump', 'mdi:pipe', 'mdi:leak',
+  'mdi:recycle', 'mdi:leaf', 'mdi:earth',
+];
+
+const _ROOM_ICON_MDI_RE = /^mdi:[a-z0-9-]+$/;
+
+function isVentLikeType(t) {
+  return t === 'vent' || t === 'wall_heater' || t === 'ceiling_vent_fan';
+}
+
 class EnergyPanel extends HTMLElement {
   constructor() {
     super();
@@ -78,12 +116,20 @@ class EnergyPanel extends HTMLElement {
     this._graphModalEscapeHandler = null;
     /** AbortController teardown for Shadow-DOM-safe billing bar chart (no Apex). */
     this._billingBarNativeCleanup = null;
+    /** Room icon modal: `.room-settings-card` receiving the selection. */
+    this._roomIconModalTargetCard = null;
+    this._roomIconModalEscapeHandler = null;
+    this._presenceLiveLastRun = 0;
+    this._presenceLiveThrottleTimer = null;
   }
 
   set hass(hass) {
     this._hass = hass;
     if (!this._config) {
       this._loadConfig();
+    }
+    if (this._showSettings && hass?.states) {
+      this._scheduleUpdateRoomPresenceLiveLabels();
     }
   }
 
@@ -123,6 +169,14 @@ class EnergyPanel extends HTMLElement {
       window.removeEventListener('keydown', this._graphModalEscapeHandler);
       this._graphModalEscapeHandler = null;
     }
+    if (this._roomIconModalEscapeHandler) {
+      window.removeEventListener('keydown', this._roomIconModalEscapeHandler);
+      this._roomIconModalEscapeHandler = null;
+    }
+    if (this._presenceLiveThrottleTimer) {
+      clearTimeout(this._presenceLiveThrottleTimer);
+      this._presenceLiveThrottleTimer = null;
+    }
     this._teardownBillingBarChartNative();
   }
 
@@ -131,6 +185,19 @@ class EnergyPanel extends HTMLElement {
     const n = typeof raw === 'number' ? raw : parseInt(String(raw ?? ''), 10);
     const sec = Number.isFinite(n) ? n : 60;
     return Math.max(15, Math.min(600, sec)) * 1000;
+  }
+
+  /** True when all five supplier-related entity fields are set (Statistics overview column). */
+  _statisticsSupplierConfigured() {
+    const st = this._config?.statistics_settings || {};
+    const keys = [
+      'billing_start_sensor',
+      'billing_end_sensor',
+      'current_usage_sensor',
+      'projected_usage_sensor',
+      'kwh_cost_sensor',
+    ];
+    return keys.every((k) => String(st[k] ?? '').trim() !== '');
   }
 
   _startRefresh() {
@@ -203,8 +270,12 @@ class EnergyPanel extends HTMLElement {
 
   async _loadStatistics() {
     if (!this._hass || this._showSettings) return;
-    this._statsLoading = true;
     this._statsFetchError = null;
+    if (!this._statsData) {
+      this._hydrateStatisticsFromStorage();
+    }
+    const hasExisting = !!this._statsData;
+    this._statsLoading = !hasExisting;
     if (this._dashboardView === 'statistics') {
       this._render();
     }
@@ -212,6 +283,7 @@ class EnergyPanel extends HTMLElement {
       const data = await this._hass.callWS({ type: 'smart_dashboards/get_statistics' });
       this._statsData = data;
       this._statsFetchedAt = Date.now();
+      this._persistStatisticsToStorage(data);
     } catch (e) {
       console.error('Failed to load statistics:', e);
       this._statsFetchError = e.message || 'Failed to load statistics';
@@ -220,6 +292,30 @@ class EnergyPanel extends HTMLElement {
       if (this._dashboardView === 'statistics') {
         this._render();
       }
+    }
+  }
+
+  _hydrateStatisticsFromStorage() {
+    try {
+      const raw = localStorage.getItem('smart_dashboards_stats_v1');
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed || parsed.schema !== 1 || !parsed.payload) return;
+      this._statsData = parsed.payload;
+      this._statsFetchedAt = typeof parsed.fetchedAt === 'number' ? parsed.fetchedAt : Date.now();
+    } catch (_e) {
+      /* ignore corrupt storage */
+    }
+  }
+
+  _persistStatisticsToStorage(payload) {
+    try {
+      localStorage.setItem(
+        'smart_dashboards_stats_v1',
+        JSON.stringify({ schema: 1, fetchedAt: Date.now(), payload }),
+      );
+    } catch (_e) {
+      /* quota / private mode */
     }
   }
 
@@ -284,7 +380,7 @@ class EnergyPanel extends HTMLElement {
     const curEl = this.shadowRoot.querySelector('#stat-current-usage');
     const projEl = this.shadowRoot.querySelector('#stat-projected-usage');
     const costEl = this.shadowRoot.querySelector('#stat-kwh-cost');
-    if (curEl) curEl.textContent = `${fmt(sensorValues.current_usage)} kWh`;
+    if (curEl) curEl.textContent = fmt(sensorValues.current_usage);
     if (projEl) projEl.textContent = `${fmt(sensorValues.projected_usage)} kWh`;
     if (costEl) costEl.textContent = `$${fmt(sensorValues.kwh_cost)}`;
     const supUpd = this.shadowRoot.querySelector('#stat-supplier-updated');
@@ -667,9 +763,9 @@ class EnergyPanel extends HTMLElement {
         const isSingleOutlet = deviceType === 'single_outlet';
         const isMinisplit = deviceType === 'minisplit';
         const isFridge = deviceType === 'fridge';
-        const isCeilingVent = deviceType === 'ceiling_vent_fan';
+        const isVentLike = isVentLikeType(deviceType);
         const isAppliance = deviceType === 'stove' || deviceType === 'microwave';
-        const outletTotal = isAppliance || isSingleOutlet || isMinisplit || isFridge || isCeilingVent
+        const outletTotal = isAppliance || isSingleOutlet || isMinisplit || isFridge || isVentLike
           ? outlet.plug1.watts
           : outlet.plug1.watts + outlet.plug2.watts;
 
@@ -1067,6 +1163,13 @@ class EnergyPanel extends HTMLElement {
           gap: 0;
           align-items: start;
         }
+        .statistics-overview-grid--tracked-only {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .statistics-overview-grid--tracked-only .statistics-overview-col--tracked {
+          border-left: none;
+          padding-left: 0;
+        }
         .statistics-overview-col--supplier {
           padding-right: clamp(14px, 3vw, 22px);
         }
@@ -1240,6 +1343,12 @@ class EnergyPanel extends HTMLElement {
         width: clamp(15px, 3.8vw, 20px);
         height: clamp(15px, 3.8vw, 20px);
         fill: var(--panel-accent);
+      }
+
+      .room-icon ha-icon {
+        width: clamp(15px, 3.8vw, 20px);
+        height: clamp(15px, 3.8vw, 20px);
+        color: var(--panel-accent);
       }
 
       .room-header-title-col {
@@ -3202,7 +3311,7 @@ class EnergyPanel extends HTMLElement {
       }
       .billing-bar-y-axis {
         display: flex;
-        flex-direction: column-reverse;
+        flex-direction: column;
         justify-content: space-between;
         width: 48px;
         flex-shrink: 0;
@@ -3378,12 +3487,148 @@ class EnergyPanel extends HTMLElement {
 
       .room-settings-header {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
         padding: 16px 20px;
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
+      }
+
+      .room-icon-picker-trigger {
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
+        padding: 0;
+        border: 1px solid var(--card-border);
+        border-radius: 8px;
+        background: var(--input-bg, rgba(255, 255, 255, 0.06));
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--panel-accent, #03a9f4);
+      }
+
+      .room-icon-picker-trigger:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .room-icon-picker-trigger:focus-visible {
+        outline: 2px solid var(--panel-accent, #03a9f4);
+        outline-offset: 2px;
+      }
+
+      .room-icon-picker-trigger ha-icon {
+        width: 22px;
+        height: 22px;
+      }
+
+      .room-settings-presence-live {
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        line-height: 1.4;
+        margin-bottom: 12px;
+        padding: 8px 10px;
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 6px;
+        border: 1px solid var(--card-border);
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+
+      .room-icon-modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.5);
+        box-sizing: border-box;
+      }
+
+      .room-icon-modal {
+        width: min(100%, 420px);
+        max-height: min(85vh, 560px);
+        display: flex;
+        flex-direction: column;
+        background: var(--card-background-color, #1e1e1e);
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+        overflow: hidden;
+      }
+
+      .room-icon-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--card-border);
+      }
+
+      .room-icon-modal-title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .room-icon-modal-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .room-icon-modal-body {
+        padding: 12px 14px;
+        overflow-y: auto;
+        flex: 1;
+        min-height: 0;
+      }
+
+      .room-icon-modal-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+        gap: 8px;
+      }
+
+      .room-icon-modal-grid-btn {
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border: 1px solid var(--card-border);
+        border-radius: 8px;
+        background: var(--input-bg, rgba(255, 255, 255, 0.06));
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--primary-text-color);
+      }
+
+      .room-icon-modal-grid-btn:hover {
+        background: rgba(3, 169, 244, 0.15);
+      }
+
+      .room-icon-modal-grid-btn:focus-visible {
+        outline: 2px solid var(--panel-accent, #03a9f4);
+        outline-offset: 2px;
+      }
+
+      .room-icon-modal-grid-btn ha-icon {
+        width: 22px;
+        height: 22px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .room-icon-picker-trigger,
+        .room-icon-modal-grid-btn {
+          transition: none;
+        }
       }
 
       .room-settings-header input {
@@ -3622,6 +3867,91 @@ class EnergyPanel extends HTMLElement {
         width: 16px;
         height: 16px;
         fill: currentColor;
+      }
+
+      /* Light device: mapped light.* rows (mobile-first stacked cards) */
+      .light-entity-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .light-entity-card {
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(0, 0, 0, 0.22);
+        box-sizing: border-box;
+      }
+
+      .light-entity-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .light-entity-card-title {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--panel-accent);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+
+      .light-entity-card .form-group {
+        margin-bottom: 10px;
+      }
+
+      .light-entity-card .form-group:last-child {
+        margin-bottom: 0;
+      }
+
+      .light-entity-card .form-input,
+      .light-entity-card .entity-datalist-input {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+
+      .light-entity-power-wrgb {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+      }
+
+      @media (min-width: 640px) {
+        .light-entity-power-wrgb {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          align-items: start;
+        }
+      }
+
+      .light-test-switch-btn {
+        width: 100%;
+        margin-top: 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        box-sizing: border-box;
+        min-height: 40px;
+      }
+
+      .light-test-switch-btn svg {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        fill: currentColor;
+      }
+
+      .light-test-switch-btn.on {
+        background: var(--panel-accent-dim);
+        border-color: var(--panel-accent);
+        color: var(--panel-accent);
       }
 
 
@@ -4610,6 +4940,7 @@ class EnergyPanel extends HTMLElement {
     const rooms = s.rooms || [];
     const roomsPieView = this._statsRoomsView === 'pie';
     const sensorMeta = s.sensor_meta || {};
+    const showSupplier = this._statisticsSupplierConfigured();
     const supplierUpdLine = sensorMeta.supplier_last_updated
       ? `Bill cycle usage last changed · ${this._formatSupplierLastUpdated(sensorMeta.supplier_last_updated)}`
       : 'Configure supplier sensors in Settings to show live utility reads.';
@@ -4640,26 +4971,27 @@ class EnergyPanel extends HTMLElement {
         </div>
         <div class="statistics-cards">
           <div class="statistics-overview-card card">
-            <div class="statistics-overview-grid">
+            <div class="statistics-overview-grid${showSupplier ? '' : ' statistics-overview-grid--tracked-only'}">
+              ${showSupplier ? `
               <div class="statistics-overview-col--supplier">
-                <p class="statistics-card-sub">Supplier (optional)</p>
+                <p class="statistics-card-sub">Supplier</p>
                 <h3 class="statistics-card-title">Utility read</h3>
-                <div class="statistics-sensor-grid">
-                  <div class="statistics-sensor-item">
-                    <span class="statistics-sensor-label">So far <span class="statistics-sensor-sublabel">(bill cycle)</span></span>
-                    <span class="statistics-sensor-value" id="stat-current-usage">${fmt(currentUsage)} kWh</span>
+                <div class="statistics-kpi-big">
+                  <span class="lbl">So far <span style="font-weight:500;opacity:0.85">(bill cycle)</span></span>
+                  <span class="val"><span id="stat-current-usage">${fmt(currentUsage)}</span> <span style="font-size:0.55em;font-weight:600;opacity:0.85">kWh</span></span>
+                </div>
+                <div class="statistics-totals-grid">
+                  <div class="statistics-total-item">
+                    <span class="statistics-total-label">Estimate end <span style="font-weight:500;opacity:0.8;font-size:10px">(cycle)</span></span>
+                    <span class="statistics-total-value" id="stat-projected-usage">${fmt(projectedUsage)} kWh</span>
                   </div>
-                  <div class="statistics-sensor-item">
-                    <span class="statistics-sensor-label">Estimate end <span class="statistics-sensor-sublabel">(cycle)</span></span>
-                    <span class="statistics-sensor-value" id="stat-projected-usage">${fmt(projectedUsage)} kWh</span>
-                  </div>
-                  <div class="statistics-sensor-item">
-                    <span class="statistics-sensor-label">$/kWh</span>
-                    <span class="statistics-sensor-value" id="stat-kwh-cost">$${fmt(kwhCost)}</span>
+                  <div class="statistics-total-item">
+                    <span class="statistics-total-label">$/kWh</span>
+                    <span class="statistics-total-value" id="stat-kwh-cost">$${fmt(kwhCost)}</span>
                   </div>
                 </div>
                 <p class="statistics-supplier-updated" id="stat-supplier-updated">${supplierUpdLine.replace(/</g, '&lt;')}</p>
-              </div>
+              </div>` : ''}
               <div class="statistics-overview-col--tracked">
                 <p class="statistics-card-sub">What we measure</p>
                 <h3 class="statistics-card-title">Tracked usage</h3>
@@ -4699,19 +5031,19 @@ class EnergyPanel extends HTMLElement {
           <div id="stat-rooms-panel-table" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-table" style="display:${roomsPieView ? 'none' : 'block'}">
             <div class="statistics-table-wrap">
               <table class="statistics-table" aria-describedby="stat-table-desc">
-                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Load and usage % apply to the same dates shown at the top of this page. High, low, and average are daily kWh (local days in range). Total cost is period Load (kWh) × $/kWh from supplier when configured. Warnings, shutoffs, and cycles sum daily snapshots. Tap a count (when a date range is set) for the event log. Open a room graph from the pie chart.</caption>
+                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Usage and Percent apply to the same dates shown at the top of this page. High, low, and average are daily kWh (local days in range). Total cost is period Usage (kWh) × $/kWh from supplier when configured. Warnings, shutoffs, and cycles sum daily snapshots. Tap a count (when a date range is set) for the event log. Open a room graph from the pie chart.</caption>
                 <thead>
                   <tr>
                     <th scope="col">Room</th>
-                    <th scope="col"><abbr title="kWh this period">Load</abbr></th>
-                    <th scope="col"><abbr title="Percent of tracked kWh this period">Usage</abbr></th>
+                    <th scope="col"><abbr title="kWh this period">Usage</abbr></th>
+                    <th scope="col"><abbr title="Percent of tracked kWh this period">Percent</abbr></th>
                     <th scope="col"><abbr title="Voice threshold warnings">Warnings</abbr></th>
                     <th scope="col"><abbr title="Safety plug shutoffs">Shutoffs</abbr></th>
                     <th scope="col"><abbr title="Enforcement outlet cycles">Cycles</abbr></th>
                     <th scope="col"><abbr title="Highest kWh in a single local day">High</abbr></th>
                     <th scope="col"><abbr title="Lowest kWh in a single local day">Low</abbr></th>
-                    <th scope="col"><abbr title="Average kWh per day (load ÷ days in range)">Average</abbr></th>
-                    <th scope="col"><abbr title="Period kWh (Load) × $/kWh">Total cost</abbr></th>
+                    <th scope="col"><abbr title="Average kWh per day (usage ÷ days in range)">Average</abbr></th>
+                    <th scope="col"><abbr title="Period Usage (kWh) × $/kWh">Total cost</abbr></th>
                   </tr>
                 </thead>
                 <tbody id="stat-rooms-tbody">
@@ -5080,13 +5412,14 @@ class EnergyPanel extends HTMLElement {
     const badgesHtml = badgesInner
       ? `<div class="room-header-badges">${badgesInner}</div>`
       : '';
+    const roomCardIcon = this._effectiveRoomIcon(room).replace(/"/g, '&quot;');
 
     return `
       <div class="room-card" data-room-id="${roomId}">
         <div class="room-header">
           <div class="room-header-row">
             <div class="room-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24">${icons.room}</svg>
+              <ha-icon icon="${roomCardIcon}"></ha-icon>
             </div>
             <div class="room-header-title-col">
               <h3 class="room-name">${(room.name || '').replace(/</g, '&lt;')}</h3>
@@ -5130,7 +5463,7 @@ class EnergyPanel extends HTMLElement {
     if (type === 'microwave') return this._renderMicrowaveCard(device, index, deviceData);
     if (type === 'minisplit') return this._renderMinisplitCard(device, index, deviceData);
     if (type === 'fridge') return this._renderFridgeCard(device, index, deviceData);
-    if (type === 'ceiling_vent_fan') return this._renderCeilingVentCard(device, index, deviceData);
+    if (isVentLikeType(type)) return this._renderVentLikeCard(device, index, deviceData);
     if (type === 'light') return this._renderLightCard(device, index, deviceData);
     return this._renderOutletCard(device, index, deviceData);
   }
@@ -5333,16 +5666,17 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
-  _renderCeilingVentCard(device, index, deviceData) {
+  _renderVentLikeCard(device, index, deviceData) {
     const data = deviceData || { plug1: { watts: 0 } };
     const watts = data.plug1?.watts || 0;
     const isOverThreshold = device.threshold > 0 && watts > device.threshold;
     const isActive = watts > 0.1;
+    const kind = (device.type || 'vent') === 'wall_heater' ? 'Wall heater' : 'Vent';
 
     return `
       <div class="device-card ceiling-vent-card" data-outlet-index="${index}">
         <div class="ceiling-vent-faceplate">
-          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}<span style="opacity:0.65;font-size:0.85em;margin-left:6px;">${kind}</span></div>
           <div class="ceiling-vent-body ${isActive ? 'vent-on' : ''}">
             <div class="ceiling-vent-grill">
               <span class="cv-slat"></span>
@@ -6025,7 +6359,7 @@ class EnergyPanel extends HTMLElement {
                     ${this._renderEntityAutocomplete(statsSettings.kwh_cost_sensor || '', 'cost_helper', 'stats', 'stats-kwh-cost', 'input_text.kwh_cost')}
                   </div>
                   <div class="form-group" style="grid-column: 1 / -1;">
-                    <label class="form-label" for="stats-refresh-seconds">Statistics view refresh (seconds)</label>
+                    <label class="form-label" for="stats-refresh-seconds">Statistics refresh rate (seconds)</label>
                     <input type="number" id="stats-refresh-seconds" class="form-input" min="15" max="600" step="1"
                       value="${(() => {
                         const r = statsSettings.statistics_refresh_seconds;
@@ -6035,7 +6369,7 @@ class EnergyPanel extends HTMLElement {
                       })()}"
                       style="max-width: 140px;">
                     <p style="color: var(--secondary-text-color); font-size: 10px; margin: 8px 0 0;">
-                      How often the Statistics tab reloads usage data while you stay on it (15–600). Default 60.
+                      This interval drives background statistics computation in Home Assistant (recorder-heavy work) and refreshes the Statistics view while it is open. Range 15–600; default 60.
                     </p>
                   </div>
                 </div>
@@ -6204,10 +6538,25 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
         </div>
+        <div class="room-icon-modal-overlay" id="room-icon-modal-overlay" style="display: none;" aria-hidden="true">
+          <div class="room-icon-modal" role="dialog" aria-labelledby="room-icon-modal-title" aria-modal="true">
+            <div class="room-icon-modal-header">
+              <h2 class="room-icon-modal-title" id="room-icon-modal-title">Room icon</h2>
+              <div class="room-icon-modal-actions">
+                <button type="button" class="btn btn-secondary" id="room-icon-modal-reset">Reset to default</button>
+                <button type="button" class="graph-modal-close" id="room-icon-modal-close" aria-label="Close">×</button>
+              </div>
+            </div>
+            <div class="room-icon-modal-body" id="room-icon-modal-body"></div>
+          </div>
+        </div>
       </div>
     `;
 
     this._attachSettingsEventListeners();
+    this._attachRoomIconPickerListeners();
+    this.shadowRoot.querySelectorAll('.room-settings-card').forEach((c) => this._syncRoomPresenceLiveStrip(c));
+    this._updateRoomPresenceLiveLabels();
     initCustomSelects(this.shadowRoot);
   }
 
@@ -6323,7 +6672,7 @@ class EnergyPanel extends HTMLElement {
       <div class="divider" style="margin: 16px 0;"></div>
       <h4 style="margin: 0 0 8px; font-size: 11px; color: var(--secondary-text-color);">Presence &amp; zones</h4>
       <p class="tts-msg-desc" style="margin-bottom: 12px;">
-        Optional: pick who this room tracks and which zones count as present. When they leave all selected zones, devices below with this option enabled can be turned off (once per transition; no auto on when returning).
+        Optional: pick who this room tracks and which zones count as present. Leaving all selected zones turns off the configured switch.* entities (plugs, vent, light switch, etc.) for devices below that have this enabled. Entering any selected zone again turns those same switches back on only if this automation had turned them off (tracked per switch). Updates run on a short interval and when the person or selected zones change state.
         Persons appear only if they have a linked device tracker in Home Assistant.
       </p>
       <div class="form-group" style="margin-bottom: 12px;">
@@ -6339,6 +6688,209 @@ class EnergyPanel extends HTMLElement {
         <button type="button" class="btn btn-secondary room-zone-add-btn" style="margin-top:8px;">+ Add zone</button>
       </div>
     `;
+  }
+
+  _effectiveRoomIcon(room) {
+    const raw = room && room.room_icon != null ? String(room.room_icon).trim().toLowerCase() : '';
+    if (raw && _ROOM_ICON_MDI_RE.test(raw) && raw.length <= 80) return raw;
+    return 'mdi:home';
+  }
+
+  _roomIconStoredValue(room) {
+    const raw = room && room.room_icon != null ? String(room.room_icon).trim().toLowerCase() : '';
+    if (raw && _ROOM_ICON_MDI_RE.test(raw) && raw.length <= 80) return raw;
+    return '';
+  }
+
+  _collectRoomIconFromCard(card) {
+    const raw = (card.querySelector('.room-icon-mdi')?.value || '').trim().toLowerCase();
+    if (!raw) return null;
+    if (!_ROOM_ICON_MDI_RE.test(raw) || raw.length > 80) return null;
+    return raw;
+  }
+
+  _scheduleUpdateRoomPresenceLiveLabels() {
+    if (!this._showSettings || !this.shadowRoot) return;
+    if (this._presenceLiveThrottleTimer) return;
+    const now = Date.now();
+    const elapsed = now - this._presenceLiveLastRun;
+    const delay = elapsed >= 1000 ? 0 : 1000 - elapsed;
+    this._presenceLiveThrottleTimer = setTimeout(() => {
+      this._presenceLiveThrottleTimer = null;
+      this._presenceLiveLastRun = Date.now();
+      this._updateRoomPresenceLiveLabels();
+    }, delay);
+  }
+
+  _updateRoomPresenceLiveLabels() {
+    if (!this._hass?.states || !this.shadowRoot) return;
+    this.shadowRoot.querySelectorAll('.room-settings-presence-live').forEach((strip) => {
+      const pid = (strip.dataset.presencePerson || '').trim();
+      const textEl = strip.querySelector('.room-settings-presence-live-text');
+      if (!textEl) return;
+      if (!pid.startsWith('person.')) {
+        textEl.textContent = '';
+        return;
+      }
+      const st = this._hass.states[pid];
+      if (!st) {
+        textEl.textContent = `${pid} — unavailable`;
+        return;
+      }
+      const name = st.attributes?.friendly_name || pid;
+      const zoneState = st.state != null ? String(st.state) : 'unknown';
+      textEl.textContent = `${name} — ${zoneState}`;
+    });
+  }
+
+  _syncRoomPresenceLiveStrip(card) {
+    if (!card) return;
+    const body = card.querySelector('.room-settings-body');
+    if (!body) return;
+    const pid = (card.querySelector('.room-presence-person')?.value || '').trim();
+    let strip = body.querySelector('.room-settings-presence-live');
+    if (!pid.startsWith('person.')) {
+      if (strip) strip.remove();
+      return;
+    }
+    if (!strip) {
+      strip = document.createElement('div');
+      strip.className = 'room-settings-presence-live';
+      strip.innerHTML = '<span class="room-settings-presence-live-text">Loading…</span>';
+      const anchor = body.querySelector('.responsive-light-section');
+      if (anchor) anchor.insertAdjacentElement('afterend', strip);
+      else body.insertBefore(strip, body.firstChild);
+    }
+    strip.dataset.presencePerson = pid;
+    this._updateRoomPresenceLiveLabels();
+  }
+
+  _closeRoomIconModal() {
+    const overlay = this.shadowRoot?.getElementById('room-icon-modal-overlay');
+    if (overlay) {
+      overlay.style.display = 'none';
+      overlay.setAttribute('aria-hidden', 'true');
+    }
+    const body = this.shadowRoot?.getElementById('room-icon-modal-body');
+    if (body) body.innerHTML = '';
+    this._roomIconModalTargetCard = null;
+    if (this._roomIconModalEscapeHandler) {
+      window.removeEventListener('keydown', this._roomIconModalEscapeHandler);
+      this._roomIconModalEscapeHandler = null;
+    }
+  }
+
+  _applyRoomIconSelection(mdiId) {
+    const card = this._roomIconModalTargetCard;
+    if (!card) return;
+    let normalized = (mdiId || '').trim().toLowerCase();
+    if (normalized && (!_ROOM_ICON_MDI_RE.test(normalized) || normalized.length > 80)) return;
+    const hidden = card.querySelector('.room-icon-mdi');
+    const triggerIcon = card.querySelector('.room-icon-picker-trigger ha-icon');
+    if (!normalized || normalized === 'mdi:home') {
+      if (hidden) hidden.value = '';
+      if (triggerIcon) triggerIcon.setAttribute('icon', 'mdi:home');
+    } else {
+      if (hidden) hidden.value = normalized;
+      if (triggerIcon) triggerIcon.setAttribute('icon', normalized);
+    }
+    this._closeRoomIconModal();
+  }
+
+  _mountRoomIconModalBody(initialIcon) {
+    const body = this.shadowRoot.getElementById('room-icon-modal-body');
+    if (!body) return;
+    body.innerHTML = '';
+    const Picker = customElements.get('ha-icon-picker');
+    if (Picker) {
+      const picker = document.createElement('ha-icon-picker');
+      picker.setAttribute('label', 'Icon');
+      const startVal = initialIcon || 'mdi:home';
+      picker.setAttribute('value', startVal);
+      let lastVal = startVal;
+      const onPick = (e) => {
+        const v = String((e.detail && e.detail.value) != null ? e.detail.value : picker.value || '').trim();
+        if (!v || v === lastVal) return;
+        lastVal = v;
+        this._applyRoomIconSelection(v);
+      };
+      picker.addEventListener('value-changed', onPick);
+      picker.addEventListener('icon-selected', onPick);
+      body.appendChild(picker);
+      return;
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'room-icon-modal-fallback';
+    wrap.innerHTML = `
+      <p class="tts-msg-desc" style="margin:0 0 8px;">Pick an icon below or use the filter. Default is the home icon.</p>
+      <input type="search" class="form-input room-icon-modal-search" placeholder="Filter icons…" style="width:100%;margin-bottom:12px;box-sizing:border-box;">
+      <div class="room-icon-modal-grid"></div>
+    `;
+    body.appendChild(wrap);
+    const search = wrap.querySelector('.room-icon-modal-search');
+    const grid = wrap.querySelector('.room-icon-modal-grid');
+    const renderGrid = (filter) => {
+      const q = (filter || '').trim().toLowerCase();
+      grid.innerHTML = '';
+      ROOM_ICON_CURATED.filter((id) => !q || id.includes(q)).forEach((id) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'room-icon-modal-grid-btn';
+        b.title = id;
+        b.setAttribute('aria-label', id);
+        const hi = document.createElement('ha-icon');
+        hi.setAttribute('icon', id);
+        b.appendChild(hi);
+        b.addEventListener('click', () => this._applyRoomIconSelection(id));
+        grid.appendChild(b);
+      });
+    };
+    renderGrid('');
+    search.addEventListener('input', () => renderGrid(search.value));
+  }
+
+  _openRoomIconModal(card) {
+    if (!card || !this.shadowRoot) return;
+    this._closeRoomIconModal();
+    this._roomIconModalTargetCard = card;
+    const hidden = card.querySelector('.room-icon-mdi');
+    const stored = (hidden?.value || '').trim().toLowerCase();
+    const initial =
+      stored && _ROOM_ICON_MDI_RE.test(stored) && stored.length <= 80 ? stored : 'mdi:home';
+    const overlay = this.shadowRoot.getElementById('room-icon-modal-overlay');
+    if (!overlay) return;
+    this._mountRoomIconModalBody(initial);
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    this._roomIconModalEscapeHandler = (e) => {
+      if (e.key === 'Escape') this._closeRoomIconModal();
+    };
+    window.addEventListener('keydown', this._roomIconModalEscapeHandler);
+  }
+
+  _attachRoomIconPickerListeners(card = null) {
+    const scope = card || this.shadowRoot;
+    if (!scope) return;
+    scope.querySelectorAll('.room-icon-picker-trigger').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const c = btn.closest('.room-settings-card');
+        if (c) this._openRoomIconModal(c);
+      });
+    });
+    if (!card) {
+      const overlay = this.shadowRoot.getElementById('room-icon-modal-overlay');
+      if (overlay) {
+        overlay.addEventListener('click', (e) => {
+          if (e.target === overlay) this._closeRoomIconModal();
+        });
+      }
+      this.shadowRoot.getElementById('room-icon-modal-close')
+        ?.addEventListener('click', () => this._closeRoomIconModal());
+      this.shadowRoot.getElementById('room-icon-modal-reset')
+        ?.addEventListener('click', () => this._applyRoomIconSelection('mdi:home'));
+    }
   }
 
   _collectPresencePersonFromCard(card) {
@@ -6362,10 +6914,30 @@ class EnergyPanel extends HTMLElement {
       device.presence_auto_off_plug1 = item.querySelector('.presence-auto-off-plug1')?.checked === true;
       device.presence_auto_off_plug2 = item.querySelector('.presence-auto-off-plug2')?.checked === true;
     } else if (
-      ['single_outlet', 'minisplit', 'stove', 'light', 'ceiling_vent_fan', 'fridge', 'microwave'].includes(t)
+      ['single_outlet', 'minisplit', 'stove', 'light', 'vent', 'wall_heater', 'ceiling_vent_fan', 'fridge', 'microwave'].includes(t)
     ) {
       device.presence_auto_off = item.querySelector('.presence-auto-off-appliance')?.checked === true;
     }
+  }
+
+  _applyVentLikePowerFromItem(item, device) {
+    const switchVal = (item.querySelector('input.ceiling-vent-switch') || item.querySelector('.entity-datalist-input.ceiling-vent-switch'))?.value;
+    device.switch_entity = (switchVal && switchVal.startsWith('switch.')) ? switchVal : null;
+    const cvps = item.querySelector('.ceiling-vent-power-source')?.value;
+    device.power_source = cvps === 'sensor' ? 'sensor' : 'configured';
+    const cvpseIn =
+      item.querySelector('.entity-datalist-input.ceiling-vent-power-sensor-entity')
+      || item.querySelector('input.ceiling-vent-power-sensor-entity');
+    const cvpse = (cvpseIn?.value || '').trim();
+    device.power_sensor_entity =
+      device.power_source === 'sensor'
+      && (cvpse.startsWith('sensor.') || cvpse.startsWith('switch.'))
+        ? cvpse
+        : null;
+    device.watts_when_on =
+      device.power_source === 'sensor'
+        ? 0
+        : parseInt(item.querySelector('.ceiling-vent-watts')?.value, 10) || 0;
   }
 
   _handleRoomZoneClick(e) {
@@ -6408,12 +6980,26 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderRoomSettings(room, index, mediaPlayers, powerSensors) {
+    const iconStored = this._roomIconStoredValue(room);
+    const iconEffective = this._effectiveRoomIcon(room);
+    const personEnt = (room.presence_person_entity || '').trim();
+    const personEsc = personEnt.replace(/"/g, '&quot;');
+    const presLive =
+      personEnt.startsWith('person.')
+        ? `<div class="room-settings-presence-live" data-presence-person="${personEsc}">
+        <span class="room-settings-presence-live-text">Loading…</span>
+      </div>`
+        : '';
     return `
       <div class="room-settings-card" data-room-index="${index}" draggable="false">
         <div class="room-settings-header">
           <div class="room-drag-handle" title="Drag to reorder rooms">
             <svg viewBox="0 0 24 24">${icons.menu}</svg>
           </div>
+          <input type="hidden" class="room-icon-mdi" value="${iconStored.replace(/"/g, '&quot;')}">
+          <button type="button" class="room-icon-picker-trigger" data-room-index="${index}" aria-label="Choose room icon" title="Room icon">
+            <ha-icon icon="${iconEffective.replace(/"/g, '&quot;')}"></ha-icon>
+          </button>
           <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name" style="max-width: 180px;">
           <div style="display: flex; gap: 8px;">
             <button class="btn btn-secondary toggle-room-btn" data-index="${index}">Edit</button>
@@ -6429,6 +7015,7 @@ class EnergyPanel extends HTMLElement {
 
         <div class="room-settings-body" id="room-body-${index}" style="display: none;">
           ${this._renderResponsiveLightWarnings(room, index)}
+          ${presLive}
           <div class="grid-2" style="margin-bottom: 12px;">
             <div class="form-group">
               <label class="form-label">Media Player</label>
@@ -6482,7 +7069,8 @@ class EnergyPanel extends HTMLElement {
                 <button class="add-device-option" data-type="microwave">Microwave</button>
                 <button class="add-device-option" data-type="minisplit">Mini-Split (Heater/AC)</button>
                 <button class="add-device-option" data-type="fridge">Fridge</button>
-                <button class="add-device-option" data-type="ceiling_vent_fan">Ceiling Vent Fan</button>
+                <button class="add-device-option" data-type="vent">Vent</button>
+                <button class="add-device-option" data-type="wall_heater">Wall heater</button>
                 <button class="add-device-option" data-type="light">Light</button>
               </div>
             </div>
@@ -6507,8 +7095,9 @@ class EnergyPanel extends HTMLElement {
     if (type === 'fridge') {
       return this._renderFridgeSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
     }
-    if (type === 'ceiling_vent_fan') {
-      return this._renderCeilingVentSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
+    if (isVentLikeType(type)) {
+      const kind = type === 'wall_heater' ? 'wall_heater' : 'vent';
+      return this._renderVentLikeSettings(device, deviceIndex, powerSensors, roomIndex, kind, isCollapsed);
     }
     if (type === 'light') {
       return this._renderLightSettings(device, deviceIndex, roomIndex, isCollapsed);
@@ -6516,13 +7105,48 @@ class EnergyPanel extends HTMLElement {
     return this._renderOutletSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
   }
 
+  /** One mapped light.* row card for light device settings (save uses .light-entity-row, .light-entity-select, etc.). */
+  _htmlLightMappedRow(zeroBasedIdx, row, roomIndex) {
+    const n = zeroBasedIdx + 1;
+    const ac = this._renderEntityAutocomplete(
+      row.entity_id || '',
+      'light',
+      roomIndex,
+      'light-entity-select',
+      'light.bathroom_light',
+    );
+    const w = Math.max(0, parseInt(row.watts, 10) || 0);
+    const wrgb = row.wrgb ? 'checked' : '';
+    return `
+      <div class="light-entity-row light-entity-card" data-row-index="${zeroBasedIdx}">
+        <div class="light-entity-card-header">
+          <span class="light-entity-card-title">Light ${n}</span>
+          <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove light"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Light entity</label>
+          ${ac}
+          <div class="tts-msg-desc" style="margin-top: 4px;">A light.* bulb or group. Used for room totals and WRGB warnings.</div>
+        </div>
+        <div class="light-entity-power-wrgb">
+          <div class="form-group">
+            <label class="form-label">Max power (W)</label>
+            <input type="number" class="form-input light-entity-watts" value="${w}" min="0" max="500" step="1" placeholder="0" title="Running power when on">
+            <div class="tts-msg-desc" style="margin-top: 4px;">Used when measuring power from configured wattage (not sensor mode).</div>
+          </div>
+          <div class="form-group light-entity-wrgb-block">
+            <label class="toggle-row" style="margin-bottom: 0;">
+              <input type="checkbox" class="form-checkbox light-entity-wrgb-toggle" ${wrgb} title="WRGB-capable light">
+              <span class="toggle-label">WRGB light</span>
+            </label>
+            <div class="tts-msg-desc" style="margin-top: 6px;">Enable for responsive color warnings on white/RGB-capable lights.</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   _renderLightSettings(device, deviceIndex, roomIndex, isCollapsed = true) {
-    // Switch Entity: only switch.* entities (e.g. switch.hallway_switch)
-    const allSwitches = this._getFilteredSwitches(roomIndex);
-    const switches = (allSwitches || []).filter(s => (s.entity_id || '').startsWith('switch.'));
-    // Mapped Light Entities: only light.* entities (e.g. light.bathroom_light)
-    const allLights = this._entities?.lights || [];
-    const lights = allLights.filter(l => (l.entity_id || '').startsWith('light.'));
     const displayName = device.name || 'Unnamed Light';
     const lightPowerSource = device.power_source === 'sensor' ? 'sensor' : 'configured';
     const collapsedClass = isCollapsed ? 'collapsed' : '';
@@ -6539,26 +7163,9 @@ class EnergyPanel extends HTMLElement {
     }
     if (lightEntityRows.length === 0) lightEntityRows = [{ entity_id: '', watts: 0, wrgb: false }];
 
-    const lightRowsHtml = lightEntityRows.map((row, idx) => `
-      <div class="light-entity-row" data-row-index="${idx}">
-        <div class="light-field-inline">
-          <span class="light-label">Entity</span>
-          ${this._renderEntityAutocomplete(row.entity_id || '', 'light', roomIndex, 'light-entity-select', 'light.bathroom_light')}
-        </div>
-        <div class="light-field-inline">
-          <span class="light-label">Max Power</span>
-          <input type="number" class="form-input light-entity-watts" value="${row.watts}" min="0" max="500" step="1" placeholder="0" title="Running power when on">
-        </div>
-        <div class="light-field-inline">
-          <span class="light-label">Is this a smart WRGB light?</span>
-          <label class="toggle-switch">
-            <input type="checkbox" class="light-entity-wrgb-toggle" ${row.wrgb ? 'checked' : ''} title="WRGB (White/Red/Green/Blue) light">
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-        <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
-      </div>
-    `).join('');
+    const lightRowsHtml = lightEntityRows
+      .map((row, idx) => this._htmlLightMappedRow(idx, row, roomIndex))
+      .join('');
 
     return `
       <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="light" draggable="true">
@@ -6584,10 +7191,11 @@ class EnergyPanel extends HTMLElement {
           <div class="plugs-settings-grid single-plug">
             <div class="plug-settings-card" data-plug="1">
               <div class="plug-settings-title">Switch & Lights</div>
+              <p class="tts-msg-desc" style="margin: 0 0 10px 0;">The relay (<code style="font-size: 9px;">switch.*</code>) controls room power on/off. Mapped lights (<code style="font-size: 9px;">light.*</code>) below define wattage for totals and WRGB behavior.</p>
               <div class="form-group">
-                <label class="form-label">Switch Entity</label>
+                <label class="form-label">Room relay (switch)</label>
                 ${this._renderEntityAutocomplete(device.switch_entity || '', 'switch', roomIndex, 'light-switch-entity', 'switch.hallway_switch')}
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Switch entities only (switch.*). Type to search. Primary switch for on/off state.</div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">switch.* only. Type to search.</div>
               </div>
               <div class="form-group">
                 <label class="form-label">How to measure power</label>
@@ -6605,15 +7213,16 @@ class EnergyPanel extends HTMLElement {
                 </div>
               </div>
               <div class="form-group">
-                <label class="form-label">Mapped Lights & Running Power (W)</label>
+                <label class="form-label">Mapped lights</label>
                 <div class="light-entity-rows">
                   ${lightRowsHtml}
                 </div>
                 <button type="button" class="btn btn-secondary light-entity-add-btn" style="margin-top: 8px;">+ Add light</button>
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Used for room totals and daily energy.</div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Each row is one light.* entity and its max watts when on.</div>
               </div>
-              <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
-                <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
+              <button type="button" class="btn btn-secondary light-test-switch-btn" data-switch="${(device.switch_entity || '').replace(/"/g, '&quot;')}" title="Pulse the room relay on/off">
+                <svg viewBox="0 0 24 24">${icons.power}</svg>
+                <span>Test switch</span>
               </button>
               ${this._renderPresenceAutoOffRow(
                 'presence-auto-off-appliance',
@@ -6688,7 +7297,7 @@ class EnergyPanel extends HTMLElement {
               ${this._renderPresenceAutoOffRow(
                 'presence-auto-off-appliance',
                 !!device.presence_auto_off,
-                'Uses room Presence & zones. Turns off the plug switch when away. Opt-in: use with care for HVAC.',
+                'Uses room Presence & zones. Turns plug switch off when away and can turn it back on when returning if this feature turned it off. Opt-in: use with care for HVAC.',
               )}
             </div>
           </div>
@@ -6744,12 +7353,85 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
-  _renderCeilingVentSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed = true) {
-    const displayName = device.name || 'Unnamed Ceiling Vent';
+  _renderVentLikeSettings(device, deviceIndex, powerSensors, roomIndex, applianceKind, isCollapsed = true) {
+    const isWallHeater = applianceKind === 'wall_heater';
+    const displayName = device.name || (isWallHeater ? 'Unnamed wall heater' : 'Unnamed vent');
     const ventPowerSource = device.power_source === 'sensor' ? 'sensor' : 'configured';
     const collapsedClass = isCollapsed ? 'collapsed' : '';
+    const nameLabel = isWallHeater ? 'Wall heater name' : 'Vent name';
+    const ventTitle = isWallHeater ? 'Wall heater' : 'Vent';
+    const ventAutomationSection = !isWallHeater ? `
+      <div class="divider" style="margin: 16px 0;"></div>
+      <div class="plug-settings-title">Vent automation</div>
+      <p class="tts-msg-desc" style="margin-bottom: 12px;">Optional: turn the switch on when the presence sensor is active (after debounce), and off after no presence for the duration below. Auto-off only applies when this automation turned the switch on.</p>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="toggle-row">
+          <input type="checkbox" class="form-checkbox vent-automation-enabled" ${device.vent_automation_enabled ? 'checked' : ''}>
+          <span class="toggle-label">Enable presence-based vent control</span>
+        </label>
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Presence sensor</label>
+        ${this._renderEntityAutocomplete(device.vent_presence_entity || '', 'binary_sensor', roomIndex, 'vent-presence-entity', 'binary_sensor.bathroom_motion')}
+        <div class="tts-msg-desc" style="margin-top: 4px;">binary_sensor.* (motion, occupancy, etc.)</div>
+      </div>
+      <div class="grid-2" style="margin-bottom: 12px;">
+        <div class="form-group">
+          <label class="form-label">On debounce (seconds)</label>
+          <input type="number" class="form-input vent-on-debounce-seconds" value="${device.vent_on_debounce_seconds ?? 30}" min="0" max="600" step="1">
+          <div class="tts-msg-desc" style="margin-top: 4px;">Presence must stay active this long before turning on</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Off after no presence (seconds)</label>
+          <input type="number" class="form-input vent-off-after-no-presence-seconds" value="${device.vent_off_after_no_presence_seconds ?? 300}" min="10" max="86400" step="1">
+          <div class="tts-msg-desc" style="margin-top: 4px;">Turn off after presence clears for this long</div>
+        </div>
+      </div>
+    ` : '';
+    const heaterAutomationSection = isWallHeater ? `
+      <div class="divider" style="margin: 16px 0;"></div>
+      <div class="plug-settings-title">Heater automation</div>
+      <p class="tts-msg-desc" style="margin-bottom: 12px;">Turns on when temperature is at or below the threshold (same unit as the sensor). Stays on for the set duration, then turns off. If "require presence" is enabled, both low temperature and presence must be true; cooldown limits rapid re-triggers.</p>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="toggle-row">
+          <input type="checkbox" class="form-checkbox heater-automation-enabled" ${device.heater_automation_enabled ? 'checked' : ''}>
+          <span class="toggle-label">Enable heater automation</span>
+        </label>
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Temperature sensor</label>
+        ${this._renderEntityAutocomplete(device.heater_temperature_entity || '', 'sensor', roomIndex, 'heater-temperature-entity', 'sensor.room_temperature')}
+      </div>
+      <div class="grid-2" style="margin-bottom: 12px;">
+        <div class="form-group">
+          <label class="form-label">Turn on at or below (°)</label>
+          <input type="number" class="form-input heater-on-below-temperature" value="${device.heater_on_below_temperature ?? 65}" min="-60" max="160" step="0.1">
+          <div class="tts-msg-desc" style="margin-top: 4px;">Matches your sensor unit (°F or °C)</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Stay on (minutes)</label>
+          <input type="number" class="form-input heater-stay-on-minutes" value="${device.heater_stay_on_minutes ?? 5}" min="1" max="240" step="1">
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="toggle-row">
+          <input type="checkbox" class="form-checkbox heater-presence-optional-enabled" ${device.heater_presence_optional_enabled ? 'checked' : ''}>
+          <span class="toggle-label">Require presence to turn on</span>
+        </label>
+        <div class="tts-msg-desc" style="margin-top: 4px;">When off, heater turns on whenever temperature is low enough. When on, a presence sensor must also be active.</div>
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Presence sensor</label>
+        ${this._renderEntityAutocomplete(device.heater_presence_entity || '', 'binary_sensor', roomIndex, 'heater-presence-entity', 'binary_sensor.room_motion')}
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Presence cooldown (seconds)</label>
+        <input type="number" class="form-input heater-presence-cooldown-seconds" value="${device.heater_presence_cooldown_seconds ?? 60}" min="0" max="7200" step="1">
+        <div class="tts-msg-desc" style="margin-top: 4px;">After an automation turn-on, ignore a new presence trigger within this window (only when require presence is on)</div>
+      </div>
+    ` : '';
     return `
-      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="ceiling_vent_fan" draggable="true">
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="${applianceKind}" draggable="true">
         <div class="outlet-settings-bar">
           <div class="outlet-drag-handle" title="Drag to reorder">
             <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0 4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
@@ -6765,8 +7447,8 @@ class EnergyPanel extends HTMLElement {
         <div class="outlet-settings-body">
           <div class="outlet-settings-header">
             <div class="form-group" style="flex: 1;">
-              <label class="form-label">Ceiling Vent Fan Name</label>
-              <input type="text" class="form-input outlet-name" value="${device.name || ''}" placeholder="Ceiling vent name...">
+              <label class="form-label">${nameLabel}</label>
+              <input type="text" class="form-input outlet-name" value="${device.name || ''}" placeholder="${ventTitle} name...">
             </div>
             <div class="form-group">
               <label class="form-label">Warn Limit</label>
@@ -6777,9 +7459,9 @@ class EnergyPanel extends HTMLElement {
             <div class="plug-settings-card" data-plug="1">
               <div class="plug-settings-title">Switch & Power</div>
               <div class="form-group">
-                <label class="form-label">Switch Entity</label>
+                <label class="form-label">Switch entity</label>
                 ${this._renderEntityAutocomplete(device.switch_entity || '', 'switch', roomIndex, 'ceiling-vent-switch', 'switch.bathroom_vent')}
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Vent fan on/off state</div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">On/off state for this ${ventTitle.toLowerCase()}</div>
               </div>
               <div class="form-group">
                 <label class="form-label">How to measure power</label>
@@ -6797,19 +7479,22 @@ class EnergyPanel extends HTMLElement {
               </div>
               <div class="ceiling-vent-watts-block" style="display: ${ventPowerSource === 'configured' ? 'block' : 'none'};">
                 <div class="form-group">
-                  <label class="form-label">Power When On (W)</label>
+                  <label class="form-label">Power when on (W)</label>
                   <input type="number" class="form-input ceiling-vent-watts" value="${device.watts_when_on || ''}" placeholder="e.g. 25" min="0" max="500">
                   <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Predefined draw when switch is on</div>
                 </div>
               </div>
-              <button class="test-switch-btn" data-switch="${device.switch_entity || ''}" title="Test switch">
-                <svg viewBox="0 0 24 24">${icons.power}</svg> Test Switch
+              <button type="button" class="btn btn-secondary light-test-switch-btn" data-switch="${(device.switch_entity || '').replace(/"/g, '&quot;')}" title="Pulse the switch on/off">
+                <svg viewBox="0 0 24 24">${icons.power}</svg>
+                <span>Test switch</span>
               </button>
               ${this._renderPresenceAutoOffRow(
                 'presence-auto-off-appliance',
                 !!device.presence_auto_off,
-                'Uses room Presence & zones. Targets the vent switch above.',
+                'Uses room Presence & zones. Targets the switch above.',
               )}
+              ${ventAutomationSection}
+              ${heaterAutomationSection}
             </div>
           </div>
         </div>
@@ -6910,7 +7595,7 @@ class EnergyPanel extends HTMLElement {
 
     const presenceApplianceHelp =
       deviceType === 'stove'
-        ? 'Uses room Presence & zones. Turns off the stove plug switch when away. Opt-in: use with care.'
+        ? 'Uses room Presence & zones. Turns stove plug off when away and can restore when returning if this turned it off. Opt-in: use with care.'
         : 'Uses room Presence & zones when a switch exists. Microwaves usually have no switch; saved for compatibility.';
     const presenceApplianceBlock =
       deviceType === 'stove' || deviceType === 'microwave'
@@ -7277,6 +7962,13 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
+    this.shadowRoot.querySelectorAll('.room-presence-person').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const card = sel.closest('.room-settings-card');
+        this._syncRoomPresenceLiveStrip(card);
+      });
+    });
+
     // Room card drag-and-drop for reordering
     this._attachRoomDragListeners();
 
@@ -7334,8 +8026,8 @@ class EnergyPanel extends HTMLElement {
     });
     this._initEntityAutocompletes(this.shadowRoot);
 
-    // Test switch buttons
-    this.shadowRoot.querySelectorAll('.test-switch-btn').forEach(btn => {
+    // Test switch buttons (compact icon on outlets; full-width .light-test-switch-btn on light/vent)
+    this.shadowRoot.querySelectorAll('.test-switch-btn, .light-test-switch-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         this._testToggleSwitch(btn);
@@ -7509,6 +8201,7 @@ class EnergyPanel extends HTMLElement {
       volume: 0.7,
       presence_person_entity: null,
       presence_zone_entities: [],
+      room_icon: null,
       outlets: [],
     };
     
@@ -7519,6 +8212,7 @@ class EnergyPanel extends HTMLElement {
     const newCard = list.querySelector(`.room-settings-card[data-room-index="${index}"]`);
     this._initEntityAutocompletes(newCard);
     this._attachRoomDragListeners(newCard);
+    this._attachRoomIconPickerListeners(newCard);
 
     const toggleBtn = newCard.querySelector('.toggle-room-btn');
     toggleBtn.addEventListener('click', () => {
@@ -7585,16 +8279,16 @@ class EnergyPanel extends HTMLElement {
     // Generate new device based on type
     const isAppliance = deviceType === 'stove' || deviceType === 'microwave';
     const isLight = deviceType === 'light';
-    const isCeilingVent = deviceType === 'ceiling_vent_fan';
+    const isVentLike = isVentLikeType(deviceType);
     const newOutlet = {
       name: '',
       type: deviceType,
-      plug1_entity: isLight || isCeilingVent ? null : '',
+      plug1_entity: isLight || isVentLike ? null : '',
       plug2_entity: deviceType === 'outlet' ? '' : null,
-      plug1_switch: isAppliance || isLight || isCeilingVent ? null : '',
+      plug1_switch: isAppliance || isLight || isVentLike ? null : '',
       plug2_switch: deviceType === 'outlet' ? '' : null,
       threshold: 0,
-      plug1_shutoff: isAppliance || isLight || isCeilingVent ? 0 : 0,
+      plug1_shutoff: isAppliance || isLight || isVentLike ? 0 : 0,
       plug2_shutoff: deviceType === 'outlet' ? 0 : null,
     };
     if (isLight) {
@@ -7603,11 +8297,16 @@ class EnergyPanel extends HTMLElement {
       newOutlet.power_source = 'configured';
       newOutlet.power_sensor_entity = '';
     }
-    if (isCeilingVent) {
+    if (isVentLike) {
       newOutlet.switch_entity = '';
       newOutlet.watts_when_on = 25;
       newOutlet.power_source = 'configured';
       newOutlet.power_sensor_entity = '';
+      if (deviceType === 'wall_heater') {
+        newOutlet.heater_on_below_temperature = 65;
+        newOutlet.heater_stay_on_minutes = 5;
+        newOutlet.heater_presence_cooldown_seconds = 60;
+      }
     }
     if (deviceType === 'minisplit') {
       newOutlet.minisplit_enforcement_off_seconds = 60;
@@ -7700,32 +8399,13 @@ class EnergyPanel extends HTMLElement {
     // Light entity rows: add/remove
     const lightEntityRows = outletItem.querySelector('.light-entity-rows');
     const lightEntityAddBtn = outletItem.querySelector('.light-entity-add-btn');
-    const lights = (this._entities?.lights || []).filter(l => (l.entity_id || '').startsWith('light.'));
     if (lightEntityRows && lightEntityAddBtn) {
       const addRow = () => {
-        const row = document.createElement('div');
-        row.className = 'light-entity-row';
-        const acHtml = this._renderEntityAutocomplete('', 'light', roomIndex, 'light-entity-select', 'light.bathroom_light');
-        row.innerHTML = `
-          <div class="light-field-inline">
-            <span class="light-label">Entity</span>
-            ${acHtml}
-          </div>
-          <div class="light-field-inline">
-            <span class="light-label">Max Power</span>
-            <input type="number" class="form-input light-entity-watts" value="0" min="0" max="500" step="1" placeholder="0" title="Running power when on">
-          </div>
-          <div class="light-field-inline">
-            <span class="light-label">Is this a smart WRGB light?</span>
-            <label class="toggle-switch">
-              <input type="checkbox" class="light-entity-wrgb-toggle" title="WRGB (White/Red/Green/Blue) light">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <button type="button" class="icon-btn danger light-entity-remove-btn" title="Remove"><svg viewBox="0 0 24 24">${icons.delete}</svg></button>
-        `;
+        const idx = lightEntityRows.querySelectorAll('.light-entity-row').length;
+        const html = this._htmlLightMappedRow(idx, { entity_id: '', watts: 0, wrgb: false }, roomIndex);
+        lightEntityRows.insertAdjacentHTML('beforeend', html);
+        const row = lightEntityRows.lastElementChild;
         row.querySelector('.light-entity-remove-btn').addEventListener('click', () => row.remove());
-        lightEntityRows.appendChild(row);
         this._initEntityAutocompletes(row);
       };
       lightEntityAddBtn.addEventListener('click', addRow);
@@ -7846,7 +8526,7 @@ class EnergyPanel extends HTMLElement {
     });
 
     // Test switch buttons
-    outletItem.querySelectorAll('.test-switch-btn').forEach(btn => {
+    outletItem.querySelectorAll('.test-switch-btn, .light-test-switch-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         this._testToggleSwitch(btn);
@@ -8037,31 +8717,32 @@ class EnergyPanel extends HTMLElement {
             device.plug2_switch = null;
             device.plug1_shutoff = 0;
             device.plug2_shutoff = 0;
-          } else if (deviceTypeFromItem === 'ceiling_vent_fan') {
-            device.type = 'ceiling_vent_fan';
+          } else if (deviceTypeFromItem === 'vent' || deviceTypeFromItem === 'wall_heater') {
+            device.type = deviceTypeFromItem;
             device.plug1_entity = null;
             device.plug2_entity = null;
             device.plug1_switch = null;
             device.plug2_switch = null;
             device.plug1_shutoff = 0;
             device.plug2_shutoff = 0;
-            const switchVal = (item.querySelector('input.ceiling-vent-switch') || item.querySelector('.entity-datalist-input.ceiling-vent-switch'))?.value;
-            device.switch_entity = (switchVal && switchVal.startsWith('switch.')) ? switchVal : null;
-            const cvps = item.querySelector('.ceiling-vent-power-source')?.value;
-            device.power_source = cvps === 'sensor' ? 'sensor' : 'configured';
-            const cvpseIn =
-              item.querySelector('.entity-datalist-input.ceiling-vent-power-sensor-entity')
-              || item.querySelector('input.ceiling-vent-power-sensor-entity');
-            const cvpse = (cvpseIn?.value || '').trim();
-            device.power_sensor_entity =
-              device.power_source === 'sensor'
-              && (cvpse.startsWith('sensor.') || cvpse.startsWith('switch.'))
-                ? cvpse
-                : null;
-            device.watts_when_on =
-              device.power_source === 'sensor'
-                ? 0
-                : parseInt(item.querySelector('.ceiling-vent-watts')?.value, 10) || 0;
+            this._applyVentLikePowerFromItem(item, device);
+            if (device.type === 'vent') {
+              device.vent_automation_enabled = item.querySelector('.vent-automation-enabled')?.checked === true;
+              const vpe = (item.querySelector('.entity-datalist-input.vent-presence-entity') || item.querySelector('input.vent-presence-entity'))?.value?.trim() || '';
+              device.vent_presence_entity = vpe.startsWith('binary_sensor.') ? vpe : null;
+              device.vent_on_debounce_seconds = Math.max(0, Math.min(600, parseInt(item.querySelector('.vent-on-debounce-seconds')?.value, 10) || 30));
+              device.vent_off_after_no_presence_seconds = Math.max(10, Math.min(86400, parseInt(item.querySelector('.vent-off-after-no-presence-seconds')?.value, 10) || 300));
+            } else {
+              device.heater_automation_enabled = item.querySelector('.heater-automation-enabled')?.checked === true;
+              const hte = (item.querySelector('.entity-datalist-input.heater-temperature-entity') || item.querySelector('input.heater-temperature-entity'))?.value?.trim() || '';
+              device.heater_temperature_entity = hte.startsWith('sensor.') ? hte : null;
+              device.heater_on_below_temperature = Math.max(-60, Math.min(160, parseFloat(item.querySelector('.heater-on-below-temperature')?.value) || 65));
+              device.heater_stay_on_minutes = Math.max(1, Math.min(240, parseInt(item.querySelector('.heater-stay-on-minutes')?.value, 10) || 5));
+              device.heater_presence_optional_enabled = item.querySelector('.heater-presence-optional-enabled')?.checked === true;
+              const hpe = (item.querySelector('.entity-datalist-input.heater-presence-entity') || item.querySelector('input.heater-presence-entity'))?.value?.trim() || '';
+              device.heater_presence_entity = hpe.startsWith('binary_sensor.') ? hpe : null;
+              device.heater_presence_cooldown_seconds = Math.max(0, Math.min(7200, parseInt(item.querySelector('.heater-presence-cooldown-seconds')?.value, 10) || 60));
+            }
           } else {
             device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
             device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
@@ -8112,6 +8793,7 @@ class EnergyPanel extends HTMLElement {
           responsive_light_interval: interval,
           presence_person_entity: this._collectPresencePersonFromCard(card),
           presence_zone_entities: this._collectPresenceZonesFromCard(card),
+          room_icon: this._collectRoomIconFromCard(card),
           outlets: outlets,
         });
       }
@@ -8386,31 +9068,32 @@ class EnergyPanel extends HTMLElement {
           device.plug2_switch = null;
           device.plug1_shutoff = 0;
           device.plug2_shutoff = 0;
-        } else if (deviceTypeFromItem === 'ceiling_vent_fan') {
-          device.type = 'ceiling_vent_fan';
+        } else if (deviceTypeFromItem === 'vent' || deviceTypeFromItem === 'wall_heater') {
+          device.type = deviceTypeFromItem;
           device.plug1_entity = null;
           device.plug2_entity = null;
           device.plug1_switch = null;
           device.plug2_switch = null;
           device.plug1_shutoff = 0;
           device.plug2_shutoff = 0;
-          const switchVal = item.querySelector('.ceiling-vent-switch')?.value || item.querySelector('.entity-datalist-input.ceiling-vent-switch')?.value;
-          device.switch_entity = (switchVal && switchVal.startsWith('switch.')) ? switchVal : null;
-          const cvps2 = item.querySelector('.ceiling-vent-power-source')?.value;
-          device.power_source = cvps2 === 'sensor' ? 'sensor' : 'configured';
-          const cvpseIn2 =
-            item.querySelector('.entity-datalist-input.ceiling-vent-power-sensor-entity')
-            || item.querySelector('input.ceiling-vent-power-sensor-entity');
-          const cvpse2 = (cvpseIn2?.value || '').trim();
-          device.power_sensor_entity =
-            device.power_source === 'sensor'
-            && (cvpse2.startsWith('sensor.') || cvpse2.startsWith('switch.'))
-              ? cvpse2
-              : null;
-          device.watts_when_on =
-            device.power_source === 'sensor'
-              ? 0
-              : parseInt(item.querySelector('.ceiling-vent-watts')?.value, 10) || 0;
+          this._applyVentLikePowerFromItem(item, device);
+          if (device.type === 'vent') {
+            device.vent_automation_enabled = item.querySelector('.vent-automation-enabled')?.checked === true;
+            const vpe = (item.querySelector('.entity-datalist-input.vent-presence-entity') || item.querySelector('input.vent-presence-entity'))?.value?.trim() || '';
+            device.vent_presence_entity = vpe.startsWith('binary_sensor.') ? vpe : null;
+            device.vent_on_debounce_seconds = Math.max(0, Math.min(600, parseInt(item.querySelector('.vent-on-debounce-seconds')?.value, 10) || 30));
+            device.vent_off_after_no_presence_seconds = Math.max(10, Math.min(86400, parseInt(item.querySelector('.vent-off-after-no-presence-seconds')?.value, 10) || 300));
+          } else {
+            device.heater_automation_enabled = item.querySelector('.heater-automation-enabled')?.checked === true;
+            const hte = (item.querySelector('.entity-datalist-input.heater-temperature-entity') || item.querySelector('input.heater-temperature-entity'))?.value?.trim() || '';
+            device.heater_temperature_entity = hte.startsWith('sensor.') ? hte : null;
+            device.heater_on_below_temperature = Math.max(-60, Math.min(160, parseFloat(item.querySelector('.heater-on-below-temperature')?.value) || 65));
+            device.heater_stay_on_minutes = Math.max(1, Math.min(240, parseInt(item.querySelector('.heater-stay-on-minutes')?.value, 10) || 5));
+            device.heater_presence_optional_enabled = item.querySelector('.heater-presence-optional-enabled')?.checked === true;
+            const hpe = (item.querySelector('.entity-datalist-input.heater-presence-entity') || item.querySelector('input.heater-presence-entity'))?.value?.trim() || '';
+            device.heater_presence_entity = hpe.startsWith('binary_sensor.') ? hpe : null;
+            device.heater_presence_cooldown_seconds = Math.max(0, Math.min(7200, parseInt(item.querySelector('.heater-presence-cooldown-seconds')?.value, 10) || 60));
+          }
         } else {
           device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
           device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
@@ -8472,6 +9155,7 @@ class EnergyPanel extends HTMLElement {
       responsive_light_interval: interval,
       presence_person_entity: this._collectPresencePersonFromCard(card),
       presence_zone_entities: this._collectPresenceZonesFromCard(card),
+      room_icon: this._collectRoomIconFromCard(card),
       outlets: outlets,
     };
 

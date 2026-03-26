@@ -11,8 +11,10 @@ import voluptuous as vol
 
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
+from .config_manager import vent_like_energy_tracking_key
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,6 +59,17 @@ _STATISTICS_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 _STATISTICS_CACHE_TTL_LIVE = 60.0
 _STATISTICS_CACHE_TTL_PAST = 3600.0
 _STATISTICS_QUERY_CONCURRENCY = 6
+# Throttle background cache priming vs. statistics_refresh_seconds
+_last_stats_prime_at: float = 0.0
+
+
+async def _async_register_statistics_cache_primer(hass: HomeAssistant) -> None:
+    """Periodic background prime of default-range statistics cache."""
+
+    async def _tick(_now: datetime) -> None:
+        await _statistics_cache_prime_tick(hass, _now)
+
+    async_track_time_interval(hass, _tick, timedelta(seconds=15))
 
 
 @callback
@@ -122,6 +135,7 @@ async def websocket_save_energy(
         return
     try:
         await config_manager.async_update_energy(msg["config"])
+        _reset_statistics_prime_clock()
         connection.send_result(msg["id"], {"success": True})
     except Exception as e:
         _LOGGER.exception("Failed to save energy config: %s", e)
@@ -384,8 +398,8 @@ async def websocket_get_power_data(
                         room_data["total_day_wh"] += total_day_wh
                 else:
                     outlet_data["switch_state"] = False
-            elif outlet_type == "ceiling_vent_fan":
-                # Ceiling vent: switch on + static watts or power sensor
+            elif outlet_type in ("vent", "wall_heater"):
+                # Vent / wall heater: switch on + static watts or power sensor
                 switch_entity = outlet.get("switch_entity")
                 watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
                 power_ent = (
@@ -401,14 +415,14 @@ async def websocket_get_power_data(
                         day_wh = config_manager.get_day_energy(power_ent)
                     else:
                         watts = watts_when_on if is_on else 0.0
-                        tracking_key = f"ceiling_vent_{room_id}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
+                        tracking_key = vent_like_energy_tracking_key(room_id, outlet)
                         day_wh = config_manager.get_day_energy(tracking_key)
                 else:
                     watts = 0.0
                     if power_ent:
                         day_wh = config_manager.get_day_energy(power_ent)
                     else:
-                        tracking_key = f"ceiling_vent_{room_id}_{(outlet.get('name') or 'vent').lower().replace(' ', '_')}"
+                        tracking_key = vent_like_energy_tracking_key(room_id, outlet)
                         day_wh = config_manager.get_day_energy(tracking_key)
                 outlet_data["plug1"] = {"watts": watts, "day_wh": round(day_wh, 2)}
                 room_data["total_watts"] += watts
@@ -554,7 +568,7 @@ async def websocket_get_intraday_history(
                                         le.get("entity_id", "")
                                     ).startswith("light."):
                                         current_watts += float(le.get("watts", 0) or 0)
-                elif otype == "ceiling_vent_fan":
+                elif otype in ("vent", "wall_heater"):
                     switch_entity = outlet.get("switch_entity")
                     watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
                     power_ent = (
@@ -915,7 +929,7 @@ def _collect_statistics_energy_sources(
                         "switch_entity": sw,
                         "watts": total_w,
                     })
-            elif otype == "ceiling_vent_fan":
+            elif otype in ("vent", "wall_heater"):
                 pe = (
                     outlet.get("power_sensor_entity")
                     if outlet.get("power_source") == "sensor"
@@ -1026,14 +1040,29 @@ def _sync_integrate_switch_constant_wh_total_and_by_day(
     return total, by_day
 
 
-def _statistics_cache_ttl_seconds(end_date_str: str) -> float:
-    """Past-only ranges can cache longer; ranges through today stay short."""
+def _statistics_cache_ttl_seconds(end_date_str: str, config_manager: Any = None) -> float:
+    """Past-only ranges can cache longer; ranges through today match user refresh."""
     from homeassistant.util import dt as dt_util
 
     today = dt_util.now().strftime("%Y-%m-%d")
     if end_date_str < today:
         return _STATISTICS_CACHE_TTL_PAST
+    if config_manager is not None:
+        stats = config_manager.energy_config.get("statistics_settings") or {}
+        try:
+            u = int(stats.get("statistics_refresh_seconds") or 60)
+        except (TypeError, ValueError):
+            u = 60
+        u = max(15, min(600, u))
+        # Live TTL aligns with background priming interval so cache stays valid until next refresh
+        return float(u)
     return _STATISTICS_CACHE_TTL_LIVE
+
+
+def _reset_statistics_prime_clock() -> None:
+    """Allow immediate cache prime on next tick (e.g. after save_energy)."""
+    global _last_stats_prime_at
+    _last_stats_prime_at = 0.0
 
 
 async def _compute_kwh_from_history(
@@ -1112,46 +1141,21 @@ async def _compute_kwh_from_history(
     return total_wh, room_wh, room_day_wh
 
 
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): "smart_dashboards/get_statistics",
-        vol.Optional("date_start"): str,
-        vol.Optional("date_end"): str,
-    }
-)
-@websocket_api.async_response
-async def websocket_get_statistics(
+async def async_build_statistics_payload(
     hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict[str, Any],
-) -> None:
-    """Get aggregated statistics for a date range."""
-    config_manager = hass.data[DOMAIN].get("config_manager")
-    if not config_manager:
-        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
-        return
-
-    date_start = (msg.get("date_start") or "").strip() or None
-    date_end = (msg.get("date_end") or "").strip() or None
+    config_manager,
+    *,
+    date_start: str | None,
+    date_end: str | None,
+) -> dict[str, Any]:
+    """Build statistics payload (shared by WebSocket and background cache priming)."""
+    ds = (date_start or "").strip() or None
+    de = (date_end or "").strip() or None
     start, end, is_narrowed = config_manager.get_statistics_date_range(
-        date_start=date_start, date_end=date_end
+        date_start=ds, date_end=de
     )
     billing_a, billing_b = config_manager.get_billing_date_range()
     period_source = "billing" if (billing_a and billing_b) else "rolling"
-
-    # Return cached result if valid (avoids heavy recorder query)
-    cache_key = (start or "", end or "")
-    now = time.monotonic()
-    cache_ttl = _statistics_cache_ttl_seconds(end or "")
-    if cache_key[0] and cache_key[1]:
-        entry = _STATISTICS_CACHE.get(cache_key)
-        if entry:
-            cached_at, cached_result = entry
-            if now - cached_at < cache_ttl:
-                connection.send_result(
-                    msg["id"], {**cached_result, "period_source": period_source}
-                )
-                return
 
     result: dict[str, Any] = {
         "date_start": start,
@@ -1171,15 +1175,10 @@ async def websocket_get_statistics(
         "sensor_meta": {"supplier_last_updated": None},
     }
 
-    # Record billing cycle if changed
     if billing_a and billing_b:
         await config_manager.record_billing_cycle_if_changed(billing_a, billing_b)
 
-    # Utility / supplier sensors (always, so UI can show values without a billing range)
-    from homeassistant.util import dt as dt_util
-
     stats_settings = config_manager.energy_config.get("statistics_settings", {})
-    # UI freshness: last time state *value* changed (not last poll / attribute update).
     usage_last_changed: datetime | None = None
     fallback_last_changed: datetime | None = None
     for key, sensor_key in [
@@ -1215,12 +1214,10 @@ async def websocket_get_statistics(
         ).isoformat()
 
     if not start or not end:
-        connection.send_result(msg["id"], result)
-        return
+        return result
 
     today = dt_util.now().strftime("%Y-%m-%d")
 
-    # kWh from HA recorder history (same source as sensor graphs)
     try:
         total_wh, room_wh_map, room_day_wh_map = await _compute_kwh_from_history(
             hass, config_manager, start, end
@@ -1231,7 +1228,6 @@ async def websocket_get_statistics(
         room_wh_map = {}
         room_day_wh_map = {}
     total_kwh = total_wh / 1000.0 if total_wh else 0.0
-    # Elapsed window only: match integration (clipped to now); exclude future billing dates
     if start <= today:
         effective_end = min(end, today)
         stat_day_keys = (
@@ -1259,7 +1255,6 @@ async def websocket_get_statistics(
             "daily_avg_kwh": round(kwh_total / n_stat_days, 2),
         }
 
-    # Warnings and shutoffs from daily_totals
     daily_totals = config_manager.daily_totals
     all_dates = set(daily_totals.keys())
     if start <= today <= end:
@@ -1305,7 +1300,6 @@ async def websocket_get_statistics(
     result["total_shutoffs"] = total_shutoffs
     result["total_power_cycles"] = total_power_cycles
 
-    # Build rooms list with name and percentage
     rooms_config = config_manager.energy_config.get("rooms", [])
     for room in rooms_config:
         rid = room.get("id", room["name"].lower().replace(" ", "_"))
@@ -1327,7 +1321,6 @@ async def websocket_get_statistics(
             **_room_daily_kwh_stats(rid, kwh),
         })
 
-    # Add any rooms in daily totals that aren't in config
     for rid in room_sums:
         if not any(r["id"] == rid for r in result["rooms"]):
             rsum = room_sums[rid]
@@ -1344,8 +1337,102 @@ async def websocket_get_statistics(
                 **_room_daily_kwh_stats(rid, kwh),
             })
 
+    return result
+
+
+async def _prime_statistics_cache(hass: HomeAssistant) -> None:
+    """Fill _STATISTICS_CACHE for the default statistics date range (same as WS without dates)."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        return
+    try:
+        result = await async_build_statistics_payload(
+            hass, config_manager, date_start=None, date_end=None
+        )
+    except Exception as err:
+        _LOGGER.warning("Statistics cache prime failed: %s", err)
+        return
+    start = result.get("date_start") or ""
+    end = result.get("date_end") or ""
+    if not start or not end:
+        return
+    cache_key = (start, end)
+    now = time.monotonic()
+    _STATISTICS_CACHE[cache_key] = (now, result)
+
+
+async def _statistics_cache_prime_tick(hass: HomeAssistant, _now: datetime) -> None:
+    """Respect statistics_refresh_seconds between primes; 15s scheduler tick."""
+    global _last_stats_prime_at
+
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        return
+    stats = config_manager.energy_config.get("statistics_settings") or {}
+    try:
+        refresh = int(stats.get("statistics_refresh_seconds") or 60)
+    except (TypeError, ValueError):
+        refresh = 60
+    refresh = max(15, min(600, refresh))
+    now_m = time.monotonic()
+    if _last_stats_prime_at > 0 and now_m - _last_stats_prime_at < refresh - 0.25:
+        return
+    _last_stats_prime_at = now_m
+    await _prime_statistics_cache(hass)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_statistics",
+        vol.Optional("date_start"): str,
+        vol.Optional("date_end"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_statistics(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get aggregated statistics for a date range."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    date_start = (msg.get("date_start") or "").strip() or None
+    date_end = (msg.get("date_end") or "").strip() or None
+    start, end, _is_narrowed = config_manager.get_statistics_date_range(
+        date_start=date_start, date_end=date_end
+    )
+    billing_a, billing_b = config_manager.get_billing_date_range()
+    period_source = "billing" if (billing_a and billing_b) else "rolling"
+
+    cache_key = (start or "", end or "")
+    now = time.monotonic()
+    cache_ttl = _statistics_cache_ttl_seconds(end or "", config_manager)
     if cache_key[0] and cache_key[1]:
-        _STATISTICS_CACHE[cache_key] = (now, result)
+        entry = _STATISTICS_CACHE.get(cache_key)
+        if entry:
+            cached_at, cached_result = entry
+            if now - cached_at < cache_ttl:
+                connection.send_result(
+                    msg["id"], {**cached_result, "period_source": period_source}
+                )
+                return
+
+    result = await async_build_statistics_payload(
+        hass, config_manager, date_start=date_start, date_end=date_end
+    )
+    start_r = result.get("date_start") or ""
+    end_r = result.get("date_end") or ""
+    if not start_r or not end_r:
+        connection.send_result(msg["id"], result)
+        return
+
+    cache_key2 = (start_r, end_r)
+    if cache_key2[0] and cache_key2[1]:
+        _STATISTICS_CACHE[cache_key2] = (time.monotonic(), result)
 
     connection.send_result(msg["id"], result)
 
