@@ -498,6 +498,64 @@ class EnergyMonitor:
         except Exception as e:
             _LOGGER.warning("Appliance automation TTS failed: %s", e)
 
+    async def _send_notification_to_room_person(
+        self, room: dict, title: str, message: str, notification_type: str
+    ) -> None:
+        """Send HA notification to person assigned to room if notifications enabled."""
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        if not tts_settings.get("notifications_enabled"):
+            return
+        type_key = f"notify_{notification_type}"
+        if not tts_settings.get(type_key, True):
+            return
+        person_ent = room.get("presence_person_entity")
+        if not person_ent:
+            return
+        person_state = self.hass.states.get(person_ent)
+        if not person_state:
+            return
+        person_name = (
+            person_state.attributes.get("friendly_name")
+            or person_ent.replace("person.", "").replace("_", " ").title()
+        )
+        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        full_title = f"{prefix}. {title}" if prefix else title
+        notify_target = f"mobile_app_{person_name.lower().replace(' ', '_')}"
+        try:
+            await self.hass.services.async_call(
+                "notify",
+                notify_target,
+                {"title": full_title, "message": message},
+                blocking=False,
+            )
+            _LOGGER.debug(
+                "Sent notification to %s: %s - %s", notify_target, full_title, message
+            )
+        except Exception as e:
+            _LOGGER.warning(
+                "Failed to send notification to %s: %s", notify_target, e
+            )
+
+    def _find_outlet_by_switch(self, room: dict, switch_entity: str) -> dict | None:
+        """Find outlet config in room that uses the given switch entity."""
+        for outlet in room.get("outlets", []):
+            otype = outlet.get("type", "outlet")
+            if otype == "outlet":
+                if outlet.get("plug1_switch") == switch_entity:
+                    return outlet
+                if outlet.get("plug2_switch") == switch_entity:
+                    return outlet
+            elif otype == "light":
+                if outlet.get("switch_entity") == switch_entity:
+                    return outlet
+            elif otype in ("vent", "wall_heater"):
+                if outlet.get("switch_entity") == switch_entity:
+                    return outlet
+            elif otype in ("single_outlet", "minisplit", "stove", "microwave", "fridge"):
+                if outlet.get("plug1_switch") == switch_entity:
+                    return outlet
+        return None
+
     async def _tick_vent_automation(
         self, room: dict, room_id: str, outlet: dict, now: datetime
     ) -> None:
@@ -733,6 +791,15 @@ class EnergyMonitor:
                         sw,
                         room_id,
                     )
+                    outlet = self._find_outlet_by_switch(room, sw)
+                    if outlet and outlet.get("type") == "minisplit":
+                        outlet_name = outlet.get("name") or "Air Conditioner"
+                        await self._send_notification_to_room_person(
+                            room,
+                            "Air Conditioner Off",
+                            f"{outlet_name} was turned off because you left {room.get('name', room_id)}",
+                            "ac_auto_off",
+                        )
                 except Exception as e:
                     _LOGGER.warning("Presence auto-off failed for %s: %s", sw, e)
 
@@ -759,6 +826,15 @@ class EnergyMonitor:
                         sw,
                         room_id,
                     )
+                    outlet = self._find_outlet_by_switch(room, sw)
+                    if outlet and outlet.get("type") == "minisplit":
+                        outlet_name = outlet.get("name") or "Air Conditioner"
+                        await self._send_notification_to_room_person(
+                            room,
+                            "Air Conditioner On",
+                            f"{outlet_name} was turned back on because you returned to {room.get('name', room_id)}",
+                            "ac_auto_on",
+                        )
                 except Exception as e:
                     _LOGGER.warning("Presence auto-restore failed for %s: %s", sw, e)
             if not pending:
@@ -907,6 +983,12 @@ class EnergyMonitor:
                     )
                     await self._async_send_tts_with_lights(
                         room, media_player, message, room_volume, tts_settings
+                    )
+                    await self._send_notification_to_room_person(
+                        room,
+                        "Budget Exceeded",
+                        f"{room_name} has exceeded its daily budget of {round(effective_kwh_budget, 1)} kWh (used {round(room_day_kwh, 1)} kWh)",
+                        "room_budget_hit",
                     )
                 except (KeyError, ValueError) as e:
                     _LOGGER.warning("Budget exceeded message format failed for %s: %s", room_name, e)
@@ -1785,6 +1867,12 @@ class EnergyMonitor:
             # Check for phase 2 (power cycling) - set message; power cycle happens AFTER TTS
             if phase2_enabled and warnings_in_phase2_window >= phase2_count and phase < 2:
                 await self.config_manager.async_set_enforcement_phase(room_id, 2)
+                await self._send_notification_to_room_person(
+                    room,
+                    "Enforcement Phase 2",
+                    f"{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage.",
+                    "enforcement_phase_change",
+                )
                 ms_o = self._select_minisplit_enforcement_target(
                     room, float(current_watts), float(room_threshold or 0)
                 )
@@ -1811,6 +1899,12 @@ class EnergyMonitor:
             # Check for phase 1 (volume escalation)
             elif phase1_enabled and warnings_in_phase1_window >= phase1_count and phase < 1:
                 await self.config_manager.async_set_enforcement_phase(room_id, 1)
+                await self._send_notification_to_room_person(
+                    room,
+                    "Enforcement Phase 1",
+                    f"{room_name} has entered enforcement phase 1 (volume escalation). Please reduce power usage.",
+                    "enforcement_phase_change",
+                )
                 now_p1 = dt_util.now()
                 boost_tmpl = (tts_settings.get("phase1_warn_msg_boost_day") or "").strip()
                 room_uses_kwh_boost = room.get("kwh_budget_use_boost", True) is not False

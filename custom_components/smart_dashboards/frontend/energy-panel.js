@@ -117,6 +117,7 @@ class EnergyPanel extends HTMLElement {
     /** Serializes async pie mount so concurrent _render() passes cannot stack ApexCharts. */
     this._statsPieSyncChain = Promise.resolve();
     this._statPieBillingDelegation = false;
+    this._applianceToggleDelegation = false;
     this._summaryStatsResizeObs = null;
     this._summaryStatsWindowResizeBound = null;
     this._summaryFitDebounce = null;
@@ -4079,6 +4080,121 @@ class EnergyPanel extends HTMLElement {
         background: rgba(244, 67, 54, 0.15);
         color: var(--panel-danger);
       }
+
+      /* Clickable appliance cards */
+      .device-card,
+      .outlet-card.outlet-face {
+        cursor: pointer;
+        transition: transform 0.1s ease, box-shadow 0.15s ease;
+      }
+
+      .device-card:hover,
+      .outlet-card.outlet-face:hover {
+        transform: translateY(-2px);
+      }
+
+      .outlet-card.outlet-face .receptacle {
+        cursor: pointer;
+        transition: box-shadow 0.15s ease;
+      }
+
+      .outlet-card.outlet-face .receptacle:hover {
+        box-shadow: 0 0 0 2px rgba(3, 169, 244, 0.5), inset 0 2px 4px rgba(0, 0, 0, 0.15);
+      }
+
+      .outlet-card.outlet-face .plug-receptacle {
+        cursor: pointer;
+      }
+
+      /* Toggle confirmation modal */
+      .toggle-confirm-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+        animation: fadeIn 0.15s ease;
+      }
+
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+
+      .toggle-confirm-modal {
+        background: var(--card-background, #fff);
+        border-radius: 12px;
+        padding: 20px 24px;
+        min-width: 280px;
+        max-width: 90vw;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        animation: scaleIn 0.15s ease;
+      }
+
+      @keyframes scaleIn {
+        from { transform: scale(0.95); opacity: 0; }
+        to { transform: scale(1); opacity: 1; }
+      }
+
+      .toggle-confirm-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--primary-text-color, #333);
+        margin-bottom: 12px;
+      }
+
+      .toggle-confirm-message {
+        font-size: 14px;
+        color: var(--secondary-text-color, #666);
+        margin-bottom: 20px;
+        line-height: 1.5;
+      }
+
+      .toggle-confirm-message strong {
+        color: var(--primary-text-color, #333);
+      }
+
+      .toggle-confirm-buttons {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+      }
+
+      .toggle-confirm-cancel,
+      .toggle-confirm-ok {
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: background 0.15s, transform 0.1s;
+      }
+
+      .toggle-confirm-cancel {
+        background: var(--card-border, #e0e0e0);
+        color: var(--primary-text-color, #333);
+      }
+
+      .toggle-confirm-cancel:hover {
+        background: #d0d0d0;
+      }
+
+      .toggle-confirm-ok {
+        background: var(--panel-accent, #03a9f4);
+        color: #fff;
+      }
+
+      .toggle-confirm-ok:hover {
+        background: #029ae5;
+      }
+
+      .toggle-confirm-ok:active,
+      .toggle-confirm-cancel:active {
+        transform: scale(0.97);
+      }
     `;
 
     this._destroyStatsRoomsPie();
@@ -5819,7 +5935,7 @@ class EnergyPanel extends HTMLElement {
       <div class="outlet-card outlet-face" data-outlet-index="${index}">
         <div class="faceplate">
           <div class="outlet-name outlet-name-top" title="${(outlet.name || '').replace(/"/g, '&quot;')}">${outlet.name || ''}</div>
-          <div class="receptacle ${plug1Active ? 'active' : ''}">
+          <div class="receptacle plug-receptacle ${plug1Active ? 'active' : ''}" data-plug-index="1" title="Click to toggle Plug 1">
             <div class="holes" aria-hidden="true">
               <span class="slot left"></span>
               <span class="slot right"></span>
@@ -5833,7 +5949,7 @@ class EnergyPanel extends HTMLElement {
 
           <div class="center-screw" aria-hidden="true"></div>
 
-          <div class="receptacle ${plug2Active ? 'active' : ''}">
+          <div class="receptacle plug-receptacle ${plug2Active ? 'active' : ''}" data-plug-index="2" title="Click to toggle Plug 2">
             <div class="holes" aria-hidden="true">
               <span class="slot left"></span>
               <span class="slot right"></span>
@@ -6352,6 +6468,47 @@ class EnergyPanel extends HTMLElement {
                 <input type="text" class="form-input" id="tts-heater-automation-msg"
                   value="${(ttsSettings.heater_automation_on_msg || TTS_DEFAULTS.heater_automation_on_msg).replace(/"/g, '&quot;')}" />
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{threshold}</code> <code>{temperature}</code> (spoken whole numbers)</div>
+              </div>
+
+              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Mobile Push Notifications</h3>
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
+                Send push notifications to a person's mobile device for rooms where they are assigned. Notifications use the Home Assistant mobile app service (notify.mobile_app_*).
+              </p>
+              <div class="form-group" style="margin-bottom: 12px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notifications-enabled" ${ttsSettings.notifications_enabled ? 'checked' : ''} />
+                  Enable push notifications
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notify-room-budget-hit" ${ttsSettings.notify_room_budget_hit !== false ? 'checked' : ''} />
+                  Notify when room budget is exceeded
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notify-enforcement-phase-change" ${ttsSettings.notify_enforcement_phase_change !== false ? 'checked' : ''} />
+                  Notify on enforcement phase changes
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notify-ac-auto-off" ${ttsSettings.notify_ac_auto_off !== false ? 'checked' : ''} />
+                  Notify when air conditioner auto-off (presence)
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notify-ac-auto-on" ${ttsSettings.notify_ac_auto_on !== false ? 'checked' : ''} />
+                  Notify when air conditioner restored (presence)
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notify-manual-toggle" ${ttsSettings.notify_manual_toggle !== false ? 'checked' : ''} />
+                  Notify on manual appliance toggle by others
+                </label>
               </div>
 
               <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Power Enforcement Messages</h3>
@@ -7082,6 +7239,127 @@ class EnergyPanel extends HTMLElement {
       }
       row.remove();
     }
+  }
+
+  async _handleApplianceToggleClick(e) {
+    if (this._showSettings) return;
+
+    const plugEl = e.target.closest('.plug-receptacle');
+    const deviceCard = e.target.closest('.device-card, .outlet-card');
+    if (!deviceCard) return;
+
+    if (e.target.closest('.graph-clickable')) return;
+
+    const roomCard = deviceCard.closest('.room-card');
+    if (!roomCard) return;
+    const roomId = roomCard.dataset.roomId;
+    if (!roomId) return;
+
+    const outletIndex = parseInt(deviceCard.dataset.outletIndex, 10);
+    if (Number.isNaN(outletIndex)) return;
+
+    const room = this._getRoomConfig(roomId);
+    if (!room) return;
+    const outlet = room.outlets?.[outletIndex];
+    if (!outlet) return;
+
+    const otype = outlet.type || 'outlet';
+    let switchEntity = null;
+    let plugName = '';
+    let outletName = outlet.name || 'Appliance';
+
+    if (otype === 'outlet') {
+      if (plugEl) {
+        const plugIndex = plugEl.dataset.plugIndex;
+        if (plugIndex === '1') {
+          switchEntity = outlet.plug1_switch;
+          plugName = 'Plug 1';
+        } else if (plugIndex === '2') {
+          switchEntity = outlet.plug2_switch;
+          plugName = 'Plug 2';
+        }
+      }
+      if (!switchEntity) return;
+    } else if (otype === 'light') {
+      switchEntity = outlet.switch_entity;
+    } else if (otype === 'single_outlet' || otype === 'minisplit' || otype === 'stove' || otype === 'microwave' || otype === 'fridge') {
+      switchEntity = outlet.plug1_switch;
+    } else if (otype === 'vent' || otype === 'wall_heater') {
+      switchEntity = outlet.switch_entity;
+    } else {
+      return;
+    }
+
+    if (!switchEntity || !switchEntity.startsWith('switch.')) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    try {
+      const authResult = await this._hass.callWS({
+        type: 'smart_dashboards/check_toggle_auth',
+        room_id: roomId,
+      });
+
+      if (!authResult.authorized) {
+        showToast(this.shadowRoot, `Not authorized. Only ${authResult.room_person || 'the assigned person'} can control devices in this room.`, 'error');
+        return;
+      }
+
+      const currentState = this._hass.states.get(switchEntity)?.state;
+      const actionWord = currentState === 'on' ? 'turn off' : 'turn on';
+      const displayName = plugName ? `${outletName} ${plugName}` : outletName;
+
+      const confirmed = await this._showToggleConfirmation(displayName, actionWord);
+      if (!confirmed) return;
+
+      const announceTts = authResult.requires_tts === true;
+      await this._hass.callWS({
+        type: 'smart_dashboards/toggle_switch',
+        entity_id: switchEntity,
+        room_id: roomId,
+        outlet_name: outletName,
+        plug_name: plugName,
+        announce_tts: announceTts,
+      });
+
+      const newState = currentState === 'on' ? 'off' : 'on';
+      showToast(this.shadowRoot, `${displayName} turned ${newState}`, 'success');
+
+    } catch (err) {
+      showToast(this.shadowRoot, `Failed to toggle: ${err.message || err}`, 'error');
+    }
+  }
+
+  _showToggleConfirmation(applianceName, actionWord) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'toggle-confirm-overlay';
+      overlay.innerHTML = `
+        <div class="toggle-confirm-modal">
+          <div class="toggle-confirm-title">Confirm Action</div>
+          <div class="toggle-confirm-message">Are you sure you want to ${actionWord} <strong>${applianceName.replace(/</g, '&lt;')}</strong>?</div>
+          <div class="toggle-confirm-buttons">
+            <button type="button" class="toggle-confirm-cancel">Cancel</button>
+            <button type="button" class="toggle-confirm-ok">Confirm</button>
+          </div>
+        </div>
+      `;
+
+      const cleanup = (result) => {
+        overlay.remove();
+        resolve(result);
+      };
+
+      overlay.querySelector('.toggle-confirm-cancel').addEventListener('click', () => cleanup(false));
+      overlay.querySelector('.toggle-confirm-ok').addEventListener('click', () => cleanup(true));
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) cleanup(false);
+      });
+
+      this.shadowRoot.appendChild(overlay);
+      overlay.querySelector('.toggle-confirm-ok').focus();
+    });
   }
 
   _renderRoomSettings(room, index, mediaPlayers, powerSensors) {
@@ -7855,6 +8133,11 @@ class EnergyPanel extends HTMLElement {
     if (!this._roomZoneClickDelegation) {
       this._roomZoneClickDelegation = true;
       this.shadowRoot.addEventListener('click', (e) => this._handleRoomZoneClick(e));
+    }
+
+    if (!this._applianceToggleDelegation) {
+      this._applianceToggleDelegation = true;
+      this.shadowRoot.addEventListener('click', (e) => this._handleApplianceToggleClick(e));
     }
 
     if (!this._statPieBillingDelegation) {
@@ -9028,6 +9311,12 @@ class EnergyPanel extends HTMLElement {
         heater_automation_tts_enabled: this.shadowRoot.querySelector('#tts-heater-automation-enabled')?.checked === true,
         vent_automation_on_msg: this.shadowRoot.querySelector('#tts-vent-automation-msg')?.value ?? '',
         heater_automation_on_msg: this.shadowRoot.querySelector('#tts-heater-automation-msg')?.value ?? '',
+        notifications_enabled: this.shadowRoot.querySelector('#tts-notifications-enabled')?.checked === true,
+        notify_room_budget_hit: this.shadowRoot.querySelector('#tts-notify-room-budget-hit')?.checked !== false,
+        notify_enforcement_phase_change: this.shadowRoot.querySelector('#tts-notify-enforcement-phase-change')?.checked !== false,
+        notify_ac_auto_off: this.shadowRoot.querySelector('#tts-notify-ac-auto-off')?.checked !== false,
+        notify_ac_auto_on: this.shadowRoot.querySelector('#tts-notify-ac-auto-on')?.checked !== false,
+        notify_manual_toggle: this.shadowRoot.querySelector('#tts-notify-manual-toggle')?.checked !== false,
         phase1_warn_msg: ttsPhase1Warn,
         phase2_warn_msg: ttsPhase2Warn,
         phase2_after_msg: ttsPhase2After,
