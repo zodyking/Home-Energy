@@ -486,7 +486,9 @@ async def websocket_get_daily_history(
     date_start = (msg.get("date_start") or "").strip() or None
     date_end = (msg.get("date_end") or "").strip() or None
     if date_start and date_end:
-        result = config_manager.get_daily_history_for_range(date_start, date_end)
+        result = await async_build_billing_daily_history_from_recorder(
+            hass, config_manager, date_start, date_end
+        )
     else:
         days = min(45, max(1, msg.get("days", 30)))
         result = config_manager.get_daily_history(days=days)
@@ -688,6 +690,65 @@ def _parse_power_from_state_object(state) -> float:
         return _parse_power_from_state(state.state, unit)
     except (AttributeError, TypeError, ValueError):
         return 0.0
+
+
+_SUPPLIER_USAGE_EQ_TOL = 1e-3
+
+
+def _parse_statistics_usage_float(state_str: str | None) -> float | None:
+    """Parse current_usage-style sensor state to float; None if missing or non-numeric."""
+    if state_str is None:
+        return None
+    s = str(state_str).strip()
+    if s in ("unknown", "unavailable", ""):
+        return None
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _sync_supplier_usage_plateau_started_at(
+    hass: HomeAssistant,
+    entity_id: str,
+    window_start_utc: datetime,
+    window_end_utc: datetime,
+    target_kwh: float,
+) -> datetime | None:
+    """Most recent time in [window_start_utc, window_end_utc] the reading entered the current plateau (≈ target_kWh)."""
+    from homeassistant.components.recorder.history import get_significant_states_with_session
+    from homeassistant.components.recorder.util import session_scope
+
+    if window_end_utc <= window_start_utc:
+        return None
+    with session_scope(hass=hass, read_only=True) as session:
+        states_dict = get_significant_states_with_session(
+            hass,
+            session,
+            window_start_utc,
+            window_end_utc,
+            [entity_id],
+            None,
+            include_start_time_state=True,
+            significant_changes_only=True,
+            minimal_response=False,
+            no_attributes=False,
+        )
+    states = states_dict.get(entity_id) or []
+    states = sorted(states, key=lambda s: s.last_updated)
+    tol = _SUPPLIER_USAGE_EQ_TOL
+    ts_result: datetime | None = None
+    prev_on_plateau = False
+    for st in states:
+        v = _parse_statistics_usage_float(st.state)
+        if v is None:
+            prev_on_plateau = False
+            continue
+        on_plateau = abs(v - target_kwh) <= tol
+        if on_plateau and not prev_on_plateau:
+            ts_result = st.last_changed
+        prev_on_plateau = on_plateau
+    return ts_result
 
 
 def _integrate_power_to_wh_clipped(states: list, start_dt, end_dt) -> float:
@@ -979,6 +1040,8 @@ def _sync_integrate_entity_wh_total_and_by_day(
     from homeassistant.components.recorder.history import get_significant_states_with_session
     from homeassistant.components.recorder.util import session_scope
 
+    # switch.* power often lives in current_power_w; significant_changes_only drops attribute-only rows
+    sig_only = not entity_id.startswith("switch.")
     with session_scope(hass=hass, read_only=True) as session:
         states_dict = get_significant_states_with_session(
             hass,
@@ -988,7 +1051,7 @@ def _sync_integrate_entity_wh_total_and_by_day(
             [entity_id],
             None,
             include_start_time_state=True,
-            significant_changes_only=True,
+            significant_changes_only=sig_only,
             minimal_response=False,
             no_attributes=False,
         )
@@ -1143,6 +1206,87 @@ async def _compute_kwh_from_history(
     return total_wh, room_wh, room_day_wh
 
 
+async def async_build_billing_daily_history_from_recorder(
+    hass: HomeAssistant,
+    config_manager,
+    date_start: str,
+    date_end: str,
+) -> dict[str, Any]:
+    """Daily Wh for billing charts from recorder (matches Statistics table Usage).
+
+    Per-day warnings/shutoffs/power_cycles still come from smart_dashboards_daily_totals
+    snapshots (same as get_daily_history_for_range) so event series stay file-backed.
+    """
+    today = dt_util.now().strftime("%Y-%m-%d")
+    all_room_ids = [
+        r.get("id", r["name"].lower().replace(" ", "_"))
+        for r in config_manager.energy_config.get("rooms", [])
+    ]
+    result: dict[str, Any] = {
+        "dates": [],
+        "total_wh": [],
+        "total_warnings": [],
+        "total_shutoffs": [],
+        "total_power_cycles": [],
+        "rooms": {
+            rid: {"wh": [], "warnings": [], "shutoffs": [], "power_cycles": []}
+            for rid in all_room_ids
+        },
+    }
+
+    effective_end = date_end if date_end <= today else today
+    if date_start > effective_end:
+        return result
+
+    try:
+        _, _, room_day_wh_map = await _compute_kwh_from_history(
+            hass, config_manager, date_start, date_end
+        )
+    except Exception as err:
+        _LOGGER.warning("Billing daily history recorder integration failed: %s", err)
+        room_day_wh_map = {}
+
+    dates_list = _enumerate_date_range_iso(date_start, effective_end)
+    daily_snapshots = config_manager.daily_totals
+
+    for d in dates_list:
+        if d > today:
+            break
+        total_wh_day = sum(
+            float(rdays.get(d, 0.0)) for rdays in room_day_wh_map.values()
+        )
+        for rid in all_room_ids:
+            wh = float(room_day_wh_map.get(rid, {}).get(d, 0.0))
+            result["rooms"][rid]["wh"].append(round(wh, 2))
+
+        if d == today:
+            row = config_manager._build_today_totals()
+        else:
+            row = daily_snapshots.get(d)
+            if row is None:
+                row = {
+                    "total_wh": 0,
+                    "total_warnings": 0,
+                    "total_shutoffs": 0,
+                    "total_power_cycles": 0,
+                    "rooms": {},
+                }
+
+        result["dates"].append(d)
+        result["total_wh"].append(round(total_wh_day, 2))
+        result["total_warnings"].append(int(row.get("total_warnings", 0)))
+        result["total_shutoffs"].append(int(row.get("total_shutoffs", 0)))
+        result["total_power_cycles"].append(int(row.get("total_power_cycles", 0)))
+        row_rooms = row.get("rooms") or {}
+        for rid in all_room_ids:
+            rdata = row_rooms.get(rid) or {}
+            result["rooms"][rid]["warnings"].append(int(rdata.get("warnings", 0)))
+            result["rooms"][rid]["shutoffs"].append(int(rdata.get("shutoffs", 0)))
+            result["rooms"][rid]["power_cycles"].append(int(rdata.get("power_cycles", 0)))
+
+    return result
+
+
 async def async_build_statistics_payload(
     hass: HomeAssistant,
     config_manager,
@@ -1209,7 +1353,29 @@ async def async_build_statistics_payload(
                 result["sensor_values"][key] = float(val)
             except (ValueError, TypeError):
                 pass
-    supplier_meta_ts = usage_last_changed or fallback_last_changed
+    supplier_meta_ts: datetime | None = usage_last_changed or fallback_last_changed
+    current_usage_ent = (stats_settings.get("current_usage_sensor") or "").strip()
+    cur_usage_val = result["sensor_values"]["current_usage"]
+    if current_usage_ent and cur_usage_val is not None and start:
+        now_utc = dt_util.utcnow()
+        cycle_start_date = billing_a if billing_a else start
+        try:
+            ws_local = dt_util.parse_datetime(f"{cycle_start_date} 00:00:00")
+            if ws_local is not None:
+                window_start_utc = dt_util.as_utc(ws_local)
+                if window_start_utc < now_utc:
+                    plateau_ts = await hass.async_add_executor_job(
+                        _sync_supplier_usage_plateau_started_at,
+                        hass,
+                        current_usage_ent,
+                        window_start_utc,
+                        now_utc,
+                        float(cur_usage_val),
+                    )
+                    if plateau_ts is not None:
+                        supplier_meta_ts = plateau_ts
+        except (TypeError, ValueError):
+            pass
     if supplier_meta_ts is not None:
         result["sensor_meta"]["supplier_last_updated"] = dt_util.as_local(
             supplier_meta_ts

@@ -333,7 +333,7 @@ class EnergyPanel extends HTMLElement {
     return `${d} day${d === 1 ? '' : 's'} ago`;
   }
 
-  /** Format HA ISO from sensor_meta.supplier_last_updated (bill-cycle usage sensor last_changed). */
+  /** Format HA ISO from sensor_meta.supplier_last_updated (recorder: last transition to current cycle usage value). */
   _formatSupplierLastUpdated(iso) {
     if (!iso || typeof iso !== 'string') return '—';
     const ms = Date.parse(iso);
