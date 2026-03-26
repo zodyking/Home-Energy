@@ -5672,11 +5672,12 @@ class EnergyPanel extends HTMLElement {
     const isOverThreshold = device.threshold > 0 && watts > device.threshold;
     const isActive = watts > 0.1;
     const kind = (device.type || 'vent') === 'wall_heater' ? 'Wall heater' : 'Vent';
+    const displayTitle = device.name || kind;
 
     return `
       <div class="device-card ceiling-vent-card" data-outlet-index="${index}">
         <div class="ceiling-vent-faceplate">
-          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}<span style="opacity:0.65;font-size:0.85em;margin-left:6px;">${kind}</span></div>
+          <div class="outlet-name outlet-name-top" title="${displayTitle.replace(/"/g, '&quot;')}">${displayTitle.replace(/</g, '&lt;')}</div>
           <div class="ceiling-vent-body ${isActive ? 'vent-on' : ''}">
             <div class="ceiling-vent-grill">
               <span class="cv-slat"></span>
