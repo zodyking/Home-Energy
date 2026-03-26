@@ -59,6 +59,11 @@ _STATISTICS_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 _STATISTICS_CACHE_TTL_LIVE = 60.0
 _STATISTICS_CACHE_TTL_PAST = 3600.0
 _STATISTICS_QUERY_CONCURRENCY = 6
+# Shared result of _compute_kwh_from_history — same work as get_statistics + billing daily chart
+_KWH_HISTORY_CACHE: dict[
+    tuple[str, str],
+    tuple[float, tuple[float, dict[str, float], dict[str, dict[str, float]]]],
+] = {}
 # Throttle background cache priming vs. statistics_refresh_seconds
 _last_stats_prime_at: float = 0.0
 
@@ -136,6 +141,7 @@ async def websocket_save_energy(
     try:
         await config_manager.async_update_energy(msg["config"])
         _reset_statistics_prime_clock()
+        _clear_recorder_derived_caches()
         connection.send_result(msg["id"], {"success": True})
     except Exception as e:
         _LOGGER.exception("Failed to save energy config: %s", e)
@@ -1130,6 +1136,12 @@ def _reset_statistics_prime_clock() -> None:
     _last_stats_prime_at = 0.0
 
 
+def _clear_recorder_derived_caches() -> None:
+    """Statistics + billing charts share recorder integration; clear when energy config changes."""
+    _STATISTICS_CACHE.clear()
+    _KWH_HISTORY_CACHE.clear()
+
+
 async def _compute_kwh_from_history(
     hass: HomeAssistant,
     config_manager,
@@ -1202,6 +1214,9 @@ async def _compute_kwh_from_history(
         rmap = room_day_wh.setdefault(room_id, {})
         for dkey, dwh in by_day.items():
             rmap[dkey] = rmap.get(dkey, 0.0) + float(dwh)
+
+    if ds_key[0] and ds_key[1]:
+        _KWH_HISTORY_CACHE[ds_key] = (time.monotonic(), (total_wh, room_wh, room_day_wh))
 
     return total_wh, room_wh, room_day_wh
 

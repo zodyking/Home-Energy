@@ -104,6 +104,8 @@ class EnergyPanel extends HTMLElement {
     this._draggedRoomCard = null;
     this._graphOpen = null;  // { type, roomId?, roomName?, billingStart?, billingEnd? }
     this._graphData = null;  // from get_daily_history
+    this._graphLoading = false;
+    this._graphLoadError = null;
     this._apexChartInstance = null;
     this._statsData = null;  // from get_statistics
     this._statsLoading = false;
@@ -3233,6 +3235,35 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
       }
+      .graph-modal-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        min-height: 200px;
+        padding: 24px;
+        color: var(--secondary-text-color, #9b9b9b);
+        font-size: 14px;
+        text-align: center;
+      }
+      .graph-modal-loading-spinner {
+        width: 36px;
+        height: 36px;
+        border: 3px solid rgba(255,255,255,0.15);
+        border-top-color: var(--panel-accent, #03a9f4);
+        border-radius: 50%;
+        animation: graph-modal-spin 0.75s linear infinite;
+      }
+      @keyframes graph-modal-spin {
+        to { transform: rotate(360deg); }
+      }
+      .graph-modal-error {
+        color: var(--panel-danger, #ff5252);
+        padding: 16px;
+        text-align: center;
+        font-size: 14px;
+      }
       .event-log-container {
         max-height: 360px;
         overflow-y: auto;
@@ -4250,11 +4281,11 @@ class EnergyPanel extends HTMLElement {
     return hasMsg || !!this._eventLogReadingsLine(e);
   }
 
-  _renderGraphModal() {
-    if (!this._graphData || !this._graphOpen) return '';
-    const type = this._graphOpen.type;
-    const roomId = this._graphOpen.roomId;
-    const roomName = this._graphOpen.roomName || '';
+  _graphModalTitle() {
+    const go = this._graphOpen;
+    if (!go) return 'History';
+    const type = go.type;
+    const roomName = go.roomName || '';
     const labels = {
       total_wh: 'Usage (kWh)', total_watts_intraday: 'Power now (W)', total_wh_intraday: 'Home kWh today (minute data)',
       total_warnings: 'Threshold Warnings (24h)', total_shutoffs: 'Safety Shutoffs (24h)',
@@ -4271,13 +4302,53 @@ class EnergyPanel extends HTMLElement {
       stat_room_power_cycles: `${roomName || 'Room'} Power Cycles`,
     };
     let title = labels[type] || 'History';
-    const go = this._graphOpen;
     const statPeriodEvent =
       type === 'stat_total_warnings' || type === 'stat_total_shutoffs' || type === 'stat_total_power_cycles'
       || type === 'stat_room_warnings' || type === 'stat_room_shutoffs' || type === 'stat_room_power_cycles';
     if ((type === 'stat_total_wh' || type === 'stat_room_wh' || statPeriodEvent) && go?.date_start && go?.date_end) {
       title = `${title} · ${this._formatDateRange(go.date_start)} – ${this._formatDateRange(go.date_end)}`;
     }
+    return title;
+  }
+
+  _renderGraphModal() {
+    if (!this._graphOpen) return '';
+    const type = this._graphOpen.type;
+    const roomId = this._graphOpen.roomId;
+    const roomName = this._graphOpen.roomName || '';
+    const title = this._graphModalTitle();
+    if (this._graphLoading) {
+      return `
+      <div class="graph-modal-overlay" id="graph-modal-overlay">
+        <div class="graph-modal">
+          <div class="graph-modal-header">
+            <h2 class="graph-modal-title">${title}</h2>
+            <button type="button" class="graph-modal-close" id="graph-modal-close" aria-label="Close">×</button>
+          </div>
+          <div class="graph-modal-body">
+            <div class="graph-modal-loading">
+              <div class="graph-modal-loading-spinner" aria-hidden="true"></div>
+              <span>Loading history…</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+    if (this._graphLoadError) {
+      return `
+      <div class="graph-modal-overlay" id="graph-modal-overlay">
+        <div class="graph-modal">
+          <div class="graph-modal-header">
+            <h2 class="graph-modal-title">${title}</h2>
+            <button type="button" class="graph-modal-close" id="graph-modal-close" aria-label="Close">×</button>
+          </div>
+          <div class="graph-modal-body">
+            <p class="graph-modal-error">${this._eventLogEscape(this._graphLoadError)}</p>
+          </div>
+        </div>
+      </div>`;
+    }
+    if (!this._graphData) return '';
     const isEventLog = this._isEventLogType(type);
     let bodyContent = '';
     if (isEventLog) {
@@ -4286,7 +4357,7 @@ class EnergyPanel extends HTMLElement {
       if (type.includes('shutoffs')) filterType = 'shutoff';
       else if (type.includes('power_cycles')) filterType = 'power_cycle';
       const filtered = events.filter(e => e.type === filterType);
-      const periodLog = !!(go?.date_start && go?.date_end);
+      const periodLog = !!(this._graphOpen?.date_start && this._graphOpen?.date_end);
       const emptyMsg = periodLog
         ? 'No events in this period'
         : 'No events in the last 24 hours';
@@ -4842,8 +4913,9 @@ class EnergyPanel extends HTMLElement {
 
   /** After any full _render(), modal DOM is recreated; re-bind close + chart if a graph is open. */
   _syncGraphModalAfterRender() {
-    if (!this._graphOpen || !this._graphData) return;
+    if (!this._graphOpen) return;
     this._attachGraphModalListeners();
+    if (this._graphLoading || this._graphLoadError || !this._graphData) return;
     if (!this._isEventLogType(this._graphOpen.type)) {
       queueMicrotask(() => void this._initApexChart());
     }
@@ -4868,6 +4940,8 @@ class EnergyPanel extends HTMLElement {
       this._teardownBillingBarChartNative();
       this._graphOpen = null;
       this._graphData = null;
+      this._graphLoading = false;
+      this._graphLoadError = null;
       this._render();
     };
     this._graphModalEscapeHandler = (e) => {
@@ -7882,6 +7956,8 @@ class EnergyPanel extends HTMLElement {
         if (verified) {
           this._graphOpen = null;
           this._graphData = null;
+          this._graphLoading = false;
+          this._graphLoadError = null;
           this._showSettings = true;
           this._stopRefresh();
           await this._loadConfig();
@@ -7896,6 +7972,8 @@ class EnergyPanel extends HTMLElement {
         if (verified) {
           this._graphOpen = null;
           this._graphData = null;
+          this._graphLoading = false;
+          this._graphLoadError = null;
           this._showSettings = true;
           this._stopRefresh();
           await this._loadConfig();
