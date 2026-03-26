@@ -36,6 +36,18 @@ const TTS_DEFAULTS = {
     '{prefix} {room_name} vent is on.',
   heater_automation_on_msg:
     '{prefix} {room_name} temp below {threshold} degrees, warming up {room_name}.',
+  notify_budget_hit_title: '{prefix} Budget Exceeded',
+  notify_budget_hit_msg: '{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh).',
+  notify_enforcement_phase1_title: '{prefix} Enforcement Phase 1',
+  notify_enforcement_phase1_msg: '{room_name} has entered enforcement phase 1 (volume escalation). Please reduce power usage.',
+  notify_enforcement_phase2_title: '{prefix} Enforcement Phase 2',
+  notify_enforcement_phase2_msg: '{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage.',
+  notify_ac_auto_off_title: '{prefix} Air Conditioner Off',
+  notify_ac_auto_off_msg: '{outlet_name} was turned off because you left {room_name}.',
+  notify_ac_auto_on_title: '{prefix} Air Conditioner On',
+  notify_ac_auto_on_msg: '{outlet_name} was turned back on because you returned to {room_name}.',
+  notify_manual_toggle_title: '{prefix} Appliance Toggled',
+  notify_manual_toggle_msg: '{user_name} turned {action} {outlet_name} in {room_name}.',
 };
 
 /** Tooltip + visible label for room header enforcement badge (index = phase 0–2). */
@@ -6582,42 +6594,165 @@ class EnergyPanel extends HTMLElement {
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
                 For rooms with a person assigned (<strong>Presence person</strong> in room settings), optional mobile alerts. Titles use your TTS prefix. Targets the Home Assistant <code>notify.mobile_app_*</code> service matching the person’s device name.
               </p>
-              <div class="form-group" style="margin-bottom: 12px;">
+              <div class="form-group" style="margin-bottom: 16px;">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                   <input type="checkbox" id="tts-notifications-enabled" ${ttsSettings.notifications_enabled ? 'checked' : ''} />
-                  Enable push notifications
+                  <strong>Enable push notifications</strong>
                 </label>
               </div>
-              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+
+              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Budget Exceeded Notification</h3>
+              <div class="form-group" style="margin-bottom: 12px;">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                   <input type="checkbox" id="tts-notify-room-budget-hit" ${ttsSettings.notify_room_budget_hit !== false ? 'checked' : ''} />
                   Notify when room budget is exceeded
                 </label>
               </div>
-              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Title</div>
+                <input type="text" class="form-input" id="notify-budget-hit-title"
+                  value="${(ttsSettings.notify_budget_hit_title || TTS_DEFAULTS.notify_budget_hit_title).replace(/"/g, '&quot;')}"
+                  placeholder="{prefix} Budget Exceeded">
+                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Message</div>
+                <input type="text" class="form-input" id="notify-budget-hit-msg"
+                  value="${(ttsSettings.notify_budget_hit_msg || TTS_DEFAULTS.notify_budget_hit_msg).replace(/"/g, '&quot;')}"
+                  placeholder="{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh).">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{kwh_budget}</code> <code>{kwh_used}</code></div>
+              </div>
+
+              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Enforcement Phase Change Notifications</h3>
+              <div class="form-group" style="margin-bottom: 12px;">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                   <input type="checkbox" id="tts-notify-enforcement-phase-change" ${ttsSettings.notify_enforcement_phase_change !== false ? 'checked' : ''} />
                   Notify on enforcement phase changes
                 </label>
               </div>
-              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Phase 1 Title</div>
+                <input type="text" class="form-input" id="notify-enforcement-phase1-title"
+                  value="${(ttsSettings.notify_enforcement_phase1_title || TTS_DEFAULTS.notify_enforcement_phase1_title).replace(/"/g, '&quot;')}"
+                  placeholder="{prefix} Enforcement Phase 1">
+                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Phase 1 Message</div>
+                <input type="text" class="form-input" id="notify-enforcement-phase1-msg"
+                  value="${(ttsSettings.notify_enforcement_phase1_msg || TTS_DEFAULTS.notify_enforcement_phase1_msg).replace(/"/g, '&quot;')}"
+                  placeholder="{room_name} has entered enforcement phase 1 (volume escalation). Please reduce power usage.">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Phase 2 Title</div>
+                <input type="text" class="form-input" id="notify-enforcement-phase2-title"
+                  value="${(ttsSettings.notify_enforcement_phase2_title || TTS_DEFAULTS.notify_enforcement_phase2_title).replace(/"/g, '&quot;')}"
+                  placeholder="{prefix} Enforcement Phase 2">
+                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Phase 2 Message</div>
+                <input type="text" class="form-input" id="notify-enforcement-phase2-msg"
+                  value="${(ttsSettings.notify_enforcement_phase2_msg || TTS_DEFAULTS.notify_enforcement_phase2_msg).replace(/"/g, '&quot;')}"
+                  placeholder="{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage.">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code></div>
+              </div>
+
+              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Air Conditioner Presence Notifications</h3>
+              <div class="form-group" style="margin-bottom: 12px;">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                   <input type="checkbox" id="tts-notify-ac-auto-off" ${ttsSettings.notify_ac_auto_off !== false ? 'checked' : ''} />
                   Notify when air conditioner auto-off (presence)
                 </label>
               </div>
-              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">AC Auto-Off Title</div>
+                <input type="text" class="form-input" id="notify-ac-auto-off-title"
+                  value="${(ttsSettings.notify_ac_auto_off_title || TTS_DEFAULTS.notify_ac_auto_off_title).replace(/"/g, '&quot;')}"
+                  placeholder="{prefix} Air Conditioner Off">
+                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">AC Auto-Off Message</div>
+                <input type="text" class="form-input" id="notify-ac-auto-off-msg"
+                  value="${(ttsSettings.notify_ac_auto_off_msg || TTS_DEFAULTS.notify_ac_auto_off_msg).replace(/"/g, '&quot;')}"
+                  placeholder="{outlet_name} was turned off because you left {room_name}.">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code></div>
+              </div>
+              <div class="form-group" style="margin: 16px 0 12px 0;">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                   <input type="checkbox" id="tts-notify-ac-auto-on" ${ttsSettings.notify_ac_auto_on !== false ? 'checked' : ''} />
                   Notify when air conditioner restored (presence)
                 </label>
               </div>
-              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">AC Auto-On Title</div>
+                <input type="text" class="form-input" id="notify-ac-auto-on-title"
+                  value="${(ttsSettings.notify_ac_auto_on_title || TTS_DEFAULTS.notify_ac_auto_on_title).replace(/"/g, '&quot;')}"
+                  placeholder="{prefix} Air Conditioner On">
+                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">AC Auto-On Message</div>
+                <input type="text" class="form-input" id="notify-ac-auto-on-msg"
+                  value="${(ttsSettings.notify_ac_auto_on_msg || TTS_DEFAULTS.notify_ac_auto_on_msg).replace(/"/g, '&quot;')}"
+                  placeholder="{outlet_name} was turned back on because you returned to {room_name}.">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code></div>
+              </div>
+
+              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Manual Toggle Notification</h3>
+              <div class="form-group" style="margin-bottom: 12px;">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                   <input type="checkbox" id="tts-notify-manual-toggle" ${ttsSettings.notify_manual_toggle !== false ? 'checked' : ''} />
                   Notify on manual appliance toggle by others
                 </label>
               </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Title</div>
+                <input type="text" class="form-input" id="notify-manual-toggle-title"
+                  value="${(ttsSettings.notify_manual_toggle_title || TTS_DEFAULTS.notify_manual_toggle_title).replace(/"/g, '&quot;')}"
+                  placeholder="{prefix} Appliance Toggled">
+                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Message</div>
+                <input type="text" class="form-input" id="notify-manual-toggle-msg"
+                  value="${(ttsSettings.notify_manual_toggle_msg || TTS_DEFAULTS.notify_manual_toggle_msg).replace(/"/g, '&quot;')}"
+                  placeholder="{user_name} turned {action} {outlet_name} in {room_name}.">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{user_name}</code> <code>{action}</code></div>
+              </div>
+
+              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Test Notification</h3>
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
+                Send a test notification to verify your setup. Select a person and notification type, then click Send Test.
+              </p>
+              <div class="grid-2" style="margin-bottom: 12px;">
+                <div class="form-group">
+                  <label class="form-label">Target Person</label>
+                  <select class="form-select" id="notify-test-person">
+                    <option value="">Select a person...</option>
+                    ${(Array.isArray(this._entities?.persons) ? this._entities.persons : [])
+                      .filter(p => (p.entity_id || '').startsWith('person.'))
+                      .map(p => `<option value="${(p.entity_id || '').replace(/"/g, '&quot;')}">${(p.friendly_name || p.entity_id || '').replace(/</g, '&lt;')}</option>`)
+                      .join('')}
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Notification Type</label>
+                  <select class="form-select" id="notify-test-type">
+                    <option value="budget_hit">Budget Exceeded</option>
+                    <option value="enforcement_phase1">Enforcement Phase 1</option>
+                    <option value="enforcement_phase2">Enforcement Phase 2</option>
+                    <option value="ac_auto_off">AC Auto-Off</option>
+                    <option value="ac_auto_on">AC Auto-On</option>
+                    <option value="manual_toggle">Manual Toggle</option>
+                  </select>
+                </div>
+              </div>
+              <button type="button" class="btn btn-secondary" id="notify-send-test" style="margin-top: 8px;">
+                Send Test Notification
+              </button>
             </div>
           </div>
           
@@ -7340,7 +7475,7 @@ class EnergyPanel extends HTMLElement {
         return;
       }
 
-      const currentState = this._hass.states.get(switchEntity)?.state;
+      const currentState = this._hass.states[switchEntity]?.state;
       const actionWord = currentState === 'on' ? 'turn off' : 'turn on';
       const displayName = plugName ? `${outletName} ${plugName}` : outletName;
 
@@ -7394,6 +7529,29 @@ class EnergyPanel extends HTMLElement {
       this.shadowRoot.appendChild(overlay);
       overlay.querySelector('.toggle-confirm-ok').focus();
     });
+  }
+
+  async _sendTestNotification() {
+    const personSelect = this.shadowRoot.querySelector('#notify-test-person');
+    const typeSelect = this.shadowRoot.querySelector('#notify-test-type');
+    const targetPerson = personSelect?.value || '';
+    const notificationType = typeSelect?.value || 'budget_hit';
+
+    if (!targetPerson) {
+      showToast(this.shadowRoot, 'Please select a target person', 'error');
+      return;
+    }
+
+    try {
+      await this._hass.callWS({
+        type: 'smart_dashboards/send_test_notification',
+        target_person: targetPerson,
+        notification_type: notificationType,
+      });
+      showToast(this.shadowRoot, 'Test notification sent!', 'success');
+    } catch (err) {
+      showToast(this.shadowRoot, `Failed to send notification: ${err.message || err}`, 'error');
+    }
   }
 
   _renderRoomSettings(room, index, mediaPlayers, powerSensors) {
@@ -8357,6 +8515,12 @@ class EnergyPanel extends HTMLElement {
         });
       });
     });
+
+    // Test notification button
+    const notifyTestBtn = this.shadowRoot.querySelector('#notify-send-test');
+    if (notifyTestBtn) {
+      notifyTestBtn.addEventListener('click', () => this._sendTestNotification());
+    }
 
     // Toggle room details
     this.shadowRoot.querySelectorAll('.toggle-room-btn').forEach(btn => {
@@ -9342,6 +9506,18 @@ class EnergyPanel extends HTMLElement {
         notify_ac_auto_off: this.shadowRoot.querySelector('#tts-notify-ac-auto-off')?.checked !== false,
         notify_ac_auto_on: this.shadowRoot.querySelector('#tts-notify-ac-auto-on')?.checked !== false,
         notify_manual_toggle: this.shadowRoot.querySelector('#tts-notify-manual-toggle')?.checked !== false,
+        notify_budget_hit_title: this.shadowRoot.querySelector('#notify-budget-hit-title')?.value ?? '',
+        notify_budget_hit_msg: this.shadowRoot.querySelector('#notify-budget-hit-msg')?.value ?? '',
+        notify_enforcement_phase1_title: this.shadowRoot.querySelector('#notify-enforcement-phase1-title')?.value ?? '',
+        notify_enforcement_phase1_msg: this.shadowRoot.querySelector('#notify-enforcement-phase1-msg')?.value ?? '',
+        notify_enforcement_phase2_title: this.shadowRoot.querySelector('#notify-enforcement-phase2-title')?.value ?? '',
+        notify_enforcement_phase2_msg: this.shadowRoot.querySelector('#notify-enforcement-phase2-msg')?.value ?? '',
+        notify_ac_auto_off_title: this.shadowRoot.querySelector('#notify-ac-auto-off-title')?.value ?? '',
+        notify_ac_auto_off_msg: this.shadowRoot.querySelector('#notify-ac-auto-off-msg')?.value ?? '',
+        notify_ac_auto_on_title: this.shadowRoot.querySelector('#notify-ac-auto-on-title')?.value ?? '',
+        notify_ac_auto_on_msg: this.shadowRoot.querySelector('#notify-ac-auto-on-msg')?.value ?? '',
+        notify_manual_toggle_title: this.shadowRoot.querySelector('#notify-manual-toggle-title')?.value ?? '',
+        notify_manual_toggle_msg: this.shadowRoot.querySelector('#notify-manual-toggle-msg')?.value ?? '',
         phase1_warn_msg: ttsPhase1Warn,
         phase2_warn_msg: ttsPhase2Warn,
         phase2_after_msg: ttsPhase2After,

@@ -100,6 +100,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_breaker_data)
     websocket_api.async_register_command(hass, websocket_test_trip_breaker)
     websocket_api.async_register_command(hass, websocket_get_stove_data)
+    websocket_api.async_register_command(hass, websocket_send_test_notification)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -2200,3 +2201,106 @@ def _get_power_value(hass: HomeAssistant, entity_id: str) -> float:
             return 0.0
 
     return 0.0
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/send_test_notification",
+        vol.Required("target_person"): str,
+        vol.Required("notification_type"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_send_test_notification(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Send a test notification to a specific person."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    target_person = msg["target_person"]
+    notification_type = msg["notification_type"]
+
+    person_state = hass.states.get(target_person)
+    if not person_state:
+        connection.send_error(msg["id"], "invalid_person", f"Person entity not found: {target_person}")
+        return
+
+    person_name = (
+        person_state.attributes.get("friendly_name")
+        or target_person.replace("person.", "").replace("_", " ").title()
+    )
+
+    tts_settings = config_manager.energy_config.get("tts_settings", {})
+    prefix = tts_settings.get("prefix", "Message from Home Energy.")
+
+    type_map = {
+        "budget_hit": ("notify_budget_hit_title", "notify_budget_hit_msg"),
+        "enforcement_phase1": ("notify_enforcement_phase1_title", "notify_enforcement_phase1_msg"),
+        "enforcement_phase2": ("notify_enforcement_phase2_title", "notify_enforcement_phase2_msg"),
+        "ac_auto_off": ("notify_ac_auto_off_title", "notify_ac_auto_off_msg"),
+        "ac_auto_on": ("notify_ac_auto_on_title", "notify_ac_auto_on_msg"),
+        "manual_toggle": ("notify_manual_toggle_title", "notify_manual_toggle_msg"),
+    }
+
+    if notification_type not in type_map:
+        connection.send_error(msg["id"], "invalid_type", f"Unknown notification type: {notification_type}")
+        return
+
+    title_key, msg_key = type_map[notification_type]
+
+    default_titles = {
+        "notify_budget_hit_title": "{prefix} Budget Exceeded",
+        "notify_enforcement_phase1_title": "{prefix} Enforcement Phase 1",
+        "notify_enforcement_phase2_title": "{prefix} Enforcement Phase 2",
+        "notify_ac_auto_off_title": "{prefix} Air Conditioner Off",
+        "notify_ac_auto_on_title": "{prefix} Air Conditioner On",
+        "notify_manual_toggle_title": "{prefix} Appliance Toggled",
+    }
+    default_msgs = {
+        "notify_budget_hit_msg": "{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh).",
+        "notify_enforcement_phase1_msg": "{room_name} has entered enforcement phase 1 (volume escalation). Please reduce power usage.",
+        "notify_enforcement_phase2_msg": "{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage.",
+        "notify_ac_auto_off_msg": "{outlet_name} was turned off because you left {room_name}.",
+        "notify_ac_auto_on_msg": "{outlet_name} was turned back on because you returned to {room_name}.",
+        "notify_manual_toggle_msg": "{user_name} turned {action} {outlet_name} in {room_name}.",
+    }
+
+    title_template = tts_settings.get(title_key) or default_titles.get(title_key, "Test Notification")
+    msg_template = tts_settings.get(msg_key) or default_msgs.get(msg_key, "This is a test notification.")
+
+    sample_vars = {
+        "prefix": prefix,
+        "room_name": "Sample Room",
+        "kwh_budget": "5.0",
+        "kwh_used": "6.2",
+        "outlet_name": "Sample Appliance",
+        "user_name": "Test User",
+        "action": "on",
+    }
+
+    try:
+        title = title_template.format(**sample_vars)
+        message = msg_template.format(**sample_vars)
+    except (KeyError, ValueError) as e:
+        _LOGGER.warning("Failed to format test notification template: %s", e)
+        title = f"{prefix} Test Notification"
+        message = "This is a test notification from Smart Dashboards."
+
+    notify_target = f"mobile_app_{person_name.lower().replace(' ', '_')}"
+
+    try:
+        await hass.services.async_call(
+            "notify",
+            notify_target,
+            {"title": title, "message": message},
+            blocking=False,
+        )
+        connection.send_result(msg["id"], {"success": True, "target": notify_target})
+    except Exception as e:
+        _LOGGER.warning("Failed to send test notification to %s: %s", notify_target, e)
+        connection.send_error(msg["id"], "send_failed", f"Failed to send notification: {e}")
