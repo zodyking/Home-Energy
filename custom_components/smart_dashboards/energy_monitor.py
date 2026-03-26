@@ -39,6 +39,8 @@ from .const import (
     DEFAULT_MINISPLIT_PHASE2_WARN_MSG,
     DEFAULT_MINISPLIT_PHASE2_AFTER_MSG,
     DEFAULT_MINISPLIT_PHASE2_RESTORE_MSG,
+    DEFAULT_HEATER_AUTOMATION_ON_MSG,
+    DEFAULT_VENT_AUTOMATION_ON_MSG,
 )
 from .tts_helper import async_send_tts
 from .tts_queue import async_send_tts_or_queue
@@ -380,6 +382,7 @@ class EnergyMonitor:
             "occupied",
             "motion",
             "active",
+            "present",
         )
 
     def _parse_temperature_sensor(self, entity_id: str | None) -> float | None:
@@ -407,8 +410,29 @@ class EnergyMonitor:
                 e,
             )
 
+    async def _async_speak_appliance_automation_tts(
+        self, room: dict, message: str
+    ) -> None:
+        mp = (room.get("media_player") or "").strip()
+        if not mp.startswith("media_player."):
+            return
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        vol = float(room.get("volume", 0.7) or 0.7)
+        try:
+            await async_send_tts_or_queue(
+                self.hass,
+                media_player=mp,
+                message=message,
+                language=tts_settings.get("language"),
+                volume=vol,
+                tts_settings=tts_settings,
+                room=room,
+            )
+        except Exception as e:
+            _LOGGER.warning("Appliance automation TTS failed: %s", e)
+
     async def _tick_vent_automation(
-        self, room_id: str, outlet: dict, now: datetime
+        self, room: dict, room_id: str, outlet: dict, now: datetime
     ) -> None:
         if outlet.get("type") != "vent":
             return
@@ -430,7 +454,6 @@ class EnergyMonitor:
 
         if not sw_on:
             st["armed"] = False
-            st["presence_since"] = None
             st["no_presence_since"] = None
 
         if pres:
@@ -442,6 +465,25 @@ class EnergyMonitor:
                     await self._async_switch_set(str(switch), True)
                     st["armed"] = True
                     st["presence_since"] = None
+                    tts_settings = (
+                        self.config_manager.energy_config.get("tts_settings") or {}
+                    )
+                    if tts_settings.get("vent_automation_tts_enabled"):
+                        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                        tmpl = (
+                            tts_settings.get("vent_automation_on_msg") or ""
+                        ).strip() or DEFAULT_VENT_AUTOMATION_ON_MSG
+                        room_name = str(room.get("name") or room_id)
+                        outlet_name = str(outlet.get("name") or "vent")
+                        try:
+                            msg = tmpl.format(
+                                prefix=prefix,
+                                room_name=room_name,
+                                outlet_name=outlet_name,
+                            )
+                            await self._async_speak_appliance_automation_tts(room, msg)
+                        except (KeyError, ValueError) as e:
+                            _LOGGER.warning("Vent automation TTS template failed: %s", e)
         else:
             st["presence_since"] = None
             if sw_on and st.get("armed"):
@@ -453,7 +495,7 @@ class EnergyMonitor:
                     st["no_presence_since"] = None
 
     async def _tick_wall_heater_automation(
-        self, room_id: str, outlet: dict, now: datetime
+        self, room: dict, room_id: str, outlet: dict, now: datetime
     ) -> None:
         if outlet.get("type") != "wall_heater":
             return
@@ -480,7 +522,7 @@ class EnergyMonitor:
         )
         sw_on = self._switch_entity_is_on(switch)
         pres_ok = (
-            self._binary_presence_positive(pres_ent) if pres_ent else False
+            self._binary_presence_positive(pres_ent) if pres_ent else True
         )
         temp_ok = temp <= threshold
 
@@ -495,7 +537,7 @@ class EnergyMonitor:
         if not sw_on and temp_ok:
             can_turn_on = True
             if need_presence:
-                if not pres_ok:
+                if not pres_ent or not pres_ok:
                     can_turn_on = False
                 elif (
                     st.get("last_on")
@@ -506,6 +548,29 @@ class EnergyMonitor:
                 await self._async_switch_set(str(switch), True)
                 st["last_on"] = now
                 st["run_until"] = now + stay_delta
+                tts_settings = (
+                    self.config_manager.energy_config.get("tts_settings") or {}
+                )
+                if tts_settings.get("heater_automation_tts_enabled"):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    tmpl = (
+                        tts_settings.get("heater_automation_on_msg") or ""
+                    ).strip() or DEFAULT_HEATER_AUTOMATION_ON_MSG
+                    room_name = str(room.get("name") or room_id)
+                    outlet_name = str(outlet.get("name") or "heater")
+                    thr_spoken = spoken_cardinal(int(round(threshold)))
+                    temp_spoken = spoken_cardinal(int(round(temp)))
+                    try:
+                        msg = tmpl.format(
+                            prefix=prefix,
+                            room_name=room_name,
+                            outlet_name=outlet_name,
+                            threshold=thr_spoken,
+                            temperature=temp_spoken,
+                        )
+                        await self._async_speak_appliance_automation_tts(room, msg)
+                    except (KeyError, ValueError) as e:
+                        _LOGGER.warning("Heater automation TTS template failed: %s", e)
 
     def _presence_auto_off_configured_switch_ids(self, room: dict) -> list[str]:
         """switch.* IDs marked for presence auto-off (on or off), for restore eligibility."""
@@ -858,8 +923,8 @@ class EnergyMonitor:
                                     tracking_key, outlet_total_watts
                                 )
                     room_total_watts += outlet_total_watts
-                    await self._tick_vent_automation(room_id, outlet, now)
-                    await self._tick_wall_heater_automation(room_id, outlet, now)
+                    await self._tick_vent_automation(room, room_id, outlet, now)
+                    await self._tick_wall_heater_automation(room, room_id, outlet, now)
                     # Check outlet warning threshold (only when budget exceeded)
                     if budget_exceeded and outlet_threshold > 0 and outlet_total_watts > outlet_threshold:
                         await self._send_outlet_alert(

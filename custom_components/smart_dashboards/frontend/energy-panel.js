@@ -32,6 +32,10 @@ const TTS_DEFAULTS = {
     '{prefix} {room_name} has exceeded threshold {warning_count} times. Kilo watt hour budget is {budget_multiplier} times higher {period_label}, effective {kwh_budget_effective} versus usual {kwh_budget} kilo watt hours. Volume will rise until power stays under {threshold} watts.',
   stove_timer_progress_msg:
     '{prefix} Stove unattended timer: about {minutes_remaining} minutes and {seconds_remaining} seconds remaining.',
+  vent_automation_on_msg:
+    '{prefix} {room_name} vent is on.',
+  heater_automation_on_msg:
+    '{prefix} {room_name} temp below {threshold} degrees, warming up {room_name}.',
 };
 
 /** Tooltip + visible label for room header enforcement badge (index = phase 0–2). */
@@ -6250,6 +6254,35 @@ class EnergyPanel extends HTMLElement {
                 </div>
               </div>
               
+              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Vent and heater automation</h3>
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
+                Spoken when presence or temperature automation turns on the vent or wall heater switch from the appliance card. Uses each room's media player and volume. Heater TTS is off by default.
+              </p>
+              <div class="form-group" style="margin-bottom: 12px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-vent-automation-enabled" ${ttsSettings.vent_automation_tts_enabled ? 'checked' : ''} />
+                  Speak when vent automation turns the fan on
+                </label>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Vent automation — on message</div>
+                <input type="text" class="form-input" id="tts-vent-automation-msg"
+                  value="${(ttsSettings.vent_automation_on_msg || TTS_DEFAULTS.vent_automation_on_msg).replace(/"/g, '&quot;')}" />
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code></div>
+              </div>
+              <div class="form-group" style="margin: 16px 0 12px 0;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-heater-automation-enabled" ${ttsSettings.heater_automation_tts_enabled ? 'checked' : ''} />
+                  Speak when heater automation turns the heater on
+                </label>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Heater automation — on message</div>
+                <input type="text" class="form-input" id="tts-heater-automation-msg"
+                  value="${(ttsSettings.heater_automation_on_msg || TTS_DEFAULTS.heater_automation_on_msg).replace(/"/g, '&quot;')}" />
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{threshold}</code> <code>{temperature}</code> (spoken whole numbers)</div>
+              </div>
+
               <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Power Enforcement Messages</h3>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Phase 1 Warning (Volume Escalation)</div>
@@ -8908,6 +8941,10 @@ class EnergyPanel extends HTMLElement {
         stove_15min_warn_msg: ttsStove15Min,
         stove_30sec_warn_msg: ttsStove30Sec,
         stove_auto_off_msg: ttsStoveAutoOff,
+        vent_automation_tts_enabled: this.shadowRoot.querySelector('#tts-vent-automation-enabled')?.checked === true,
+        heater_automation_tts_enabled: this.shadowRoot.querySelector('#tts-heater-automation-enabled')?.checked === true,
+        vent_automation_on_msg: this.shadowRoot.querySelector('#tts-vent-automation-msg')?.value ?? '',
+        heater_automation_on_msg: this.shadowRoot.querySelector('#tts-heater-automation-msg')?.value ?? '',
         phase1_warn_msg: ttsPhase1Warn,
         phase2_warn_msg: ttsPhase2Warn,
         phase2_after_msg: ttsPhase2After,
