@@ -76,6 +76,12 @@ DEFAULT_PHASE1_WARN_BOOST_DAY_MSG = (
     "effective {kwh_budget_effective} versus usual {kwh_budget} kilo watt hours. "
     "Volume will rise until power stays under {threshold} watts."
 )
+DEFAULT_HEATER_AUTOMATION_ON_MSG = (
+    "{prefix} {room_name} temp below {threshold} degrees, warming up {room_name}."
+)
+DEFAULT_VENT_AUTOMATION_ON_MSG = (
+    "{prefix} {room_name} vent is on."
+)
 
 # Default config structure
 DEFAULT_CONFIG = {
@@ -124,6 +130,10 @@ DEFAULT_CONFIG = {
             "budget_boost_scheduled_msg": DEFAULT_BUDGET_BOOST_SCHEDULED_MSG,
             "phase1_warn_msg_boost_day": DEFAULT_PHASE1_WARN_BOOST_DAY_MSG,
             "stove_timer_progress_msg": DEFAULT_STOVE_TIMER_PROGRESS_MSG,
+            "heater_automation_tts_enabled": False,
+            "vent_automation_tts_enabled": False,
+            "heater_automation_on_msg": DEFAULT_HEATER_AUTOMATION_ON_MSG,
+            "vent_automation_on_msg": DEFAULT_VENT_AUTOMATION_ON_MSG,
         },
         "power_enforcement": {
             "enabled": False,

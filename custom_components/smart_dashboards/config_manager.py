@@ -846,6 +846,26 @@ class ConfigManager:
                 "stove_timer_progress_msg",
                 default_tts.get("stove_timer_progress_msg", ""),
             ),
+            "heater_automation_tts_enabled": bool(
+                tts.get(
+                    "heater_automation_tts_enabled",
+                    default_tts.get("heater_automation_tts_enabled", False),
+                )
+            ),
+            "vent_automation_tts_enabled": bool(
+                tts.get(
+                    "vent_automation_tts_enabled",
+                    default_tts.get("vent_automation_tts_enabled", False),
+                )
+            ),
+            "heater_automation_on_msg": tts.get(
+                "heater_automation_on_msg",
+                default_tts.get("heater_automation_on_msg", ""),
+            ),
+            "vent_automation_on_msg": tts.get(
+                "vent_automation_on_msg",
+                default_tts.get("vent_automation_on_msg", ""),
+            ),
         }
 
         # Validate power enforcement settings
