@@ -83,6 +83,20 @@ DEFAULT_VENT_AUTOMATION_ON_MSG = (
     "{prefix} {room_name} vent is on."
 )
 
+# Notification message templates (for mobile push notifications)
+DEFAULT_NOTIFY_BUDGET_HIT_TITLE = "{prefix} Budget Exceeded"
+DEFAULT_NOTIFY_BUDGET_HIT_MSG = "{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh)."
+DEFAULT_NOTIFY_ENFORCEMENT_PHASE1_TITLE = "{prefix} Enforcement Phase 1"
+DEFAULT_NOTIFY_ENFORCEMENT_PHASE1_MSG = "{room_name} has entered enforcement phase 1 (volume escalation). Please reduce power usage."
+DEFAULT_NOTIFY_ENFORCEMENT_PHASE2_TITLE = "{prefix} Enforcement Phase 2"
+DEFAULT_NOTIFY_ENFORCEMENT_PHASE2_MSG = "{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage."
+DEFAULT_NOTIFY_AC_AUTO_OFF_TITLE = "{prefix} Air Conditioner Off"
+DEFAULT_NOTIFY_AC_AUTO_OFF_MSG = "{outlet_name} was turned off because you left {room_name}."
+DEFAULT_NOTIFY_AC_AUTO_ON_TITLE = "{prefix} Air Conditioner On"
+DEFAULT_NOTIFY_AC_AUTO_ON_MSG = "{outlet_name} was turned back on because you returned to {room_name}."
+DEFAULT_NOTIFY_MANUAL_TOGGLE_TITLE = "{prefix} Appliance Toggled"
+DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG = "{user_name} turned {action} {outlet_name} in {room_name}."
+
 # Default config structure
 DEFAULT_CONFIG = {
     "energy": {
@@ -140,6 +154,18 @@ DEFAULT_CONFIG = {
             "notify_ac_auto_off": True,
             "notify_ac_auto_on": True,
             "notify_manual_toggle": True,
+            "notify_budget_hit_title": DEFAULT_NOTIFY_BUDGET_HIT_TITLE,
+            "notify_budget_hit_msg": DEFAULT_NOTIFY_BUDGET_HIT_MSG,
+            "notify_enforcement_phase1_title": DEFAULT_NOTIFY_ENFORCEMENT_PHASE1_TITLE,
+            "notify_enforcement_phase1_msg": DEFAULT_NOTIFY_ENFORCEMENT_PHASE1_MSG,
+            "notify_enforcement_phase2_title": DEFAULT_NOTIFY_ENFORCEMENT_PHASE2_TITLE,
+            "notify_enforcement_phase2_msg": DEFAULT_NOTIFY_ENFORCEMENT_PHASE2_MSG,
+            "notify_ac_auto_off_title": DEFAULT_NOTIFY_AC_AUTO_OFF_TITLE,
+            "notify_ac_auto_off_msg": DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
+            "notify_ac_auto_on_title": DEFAULT_NOTIFY_AC_AUTO_ON_TITLE,
+            "notify_ac_auto_on_msg": DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
+            "notify_manual_toggle_title": DEFAULT_NOTIFY_MANUAL_TOGGLE_TITLE,
+            "notify_manual_toggle_msg": DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG,
         },
         "power_enforcement": {
             "enabled": False,
