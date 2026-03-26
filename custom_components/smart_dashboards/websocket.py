@@ -95,6 +95,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_areas)
     websocket_api.async_register_command(hass, websocket_get_switches)
     websocket_api.async_register_command(hass, websocket_verify_passcode)
+    websocket_api.async_register_command(hass, websocket_check_toggle_auth)
     websocket_api.async_register_command(hass, websocket_toggle_switch)
     websocket_api.async_register_command(hass, websocket_get_breaker_data)
     websocket_api.async_register_command(hass, websocket_test_trip_breaker)
@@ -1152,6 +1153,16 @@ async def _compute_kwh_from_history(
     Returns (total_wh, room_wh_map, room_day_wh_map) with room_day_wh_map[room_id][YYYY-MM-DD] = Wh."""
     from homeassistant.util import dt as dt_util
 
+    ds_key = (str(start_date or "").strip(), str(end_date or "").strip())
+    if ds_key[0] and ds_key[1]:
+        now_m = time.monotonic()
+        ttl = _statistics_cache_ttl_seconds(ds_key[1], config_manager)
+        hit = _KWH_HISTORY_CACHE.get(ds_key)
+        if hit:
+            cached_at, payload = hit
+            if now_m - cached_at < ttl:
+                return payload
+
     entity_to_room, switch_specs = _collect_statistics_energy_sources(config_manager)
 
     try:
@@ -1734,8 +1745,62 @@ async def websocket_verify_passcode(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): "smart_dashboards/check_toggle_auth",
+        vol.Required("room_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_check_toggle_auth(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Check if the current user can toggle switches in a room."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_result(msg["id"], {"authorized": False, "error": "config_not_ready"})
+        return
+
+    room_id = msg["room_id"]
+    rooms = config_manager.energy_config.get("rooms", [])
+    room = next((r for r in rooms if r.get("id") == room_id), None)
+
+    if not room:
+        connection.send_result(msg["id"], {"authorized": False, "error": "room_not_found"})
+        return
+
+    user = connection.user
+    user_name = user.name if user else "Guest"
+
+    person_ent = room.get("presence_person_entity")
+    if not person_ent:
+        connection.send_result(msg["id"], {"authorized": True, "user_name": user_name, "requires_tts": True})
+        return
+
+    person_state = hass.states.get(person_ent)
+    person_name = (
+        person_state.attributes.get("friendly_name", "")
+        if person_state
+        else ""
+    )
+
+    authorized = user_name.lower().strip() == person_name.lower().strip()
+    connection.send_result(msg["id"], {
+        "authorized": authorized,
+        "user_name": user_name,
+        "requires_tts": not authorized,
+        "room_person": person_name,
+    })
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): "smart_dashboards/toggle_switch",
         vol.Required("entity_id"): str,
+        vol.Optional("room_id"): str,
+        vol.Optional("outlet_name"): str,
+        vol.Optional("plug_name"): str,
+        vol.Optional("announce_tts"): bool,
     }
 )
 @websocket_api.async_response
@@ -1744,22 +1809,28 @@ async def websocket_toggle_switch(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Toggle a switch entity for testing."""
+    """Toggle a switch entity with optional TTS announcement."""
     entity_id = msg["entity_id"]
-    
+    room_id = msg.get("room_id")
+    outlet_name = msg.get("outlet_name", "")
+    plug_name = msg.get("plug_name", "")
+    announce_tts = msg.get("announce_tts", False)
+
     if not entity_id or not entity_id.startswith("switch."):
         connection.send_error(msg["id"], "invalid_entity", "Not a valid switch entity")
         return
-    
+
     state = hass.states.get(entity_id)
     if state is None:
         connection.send_error(msg["id"], "entity_not_found", f"Switch {entity_id} not found")
         return
-    
-    # Toggle the switch
+
+    user = connection.user
+    user_name = user.name if user else "Someone"
+
     current_state = state.state
     new_state = "off" if current_state == "on" else "on"
-    
+
     try:
         await hass.services.async_call(
             "switch",
@@ -1767,7 +1838,40 @@ async def websocket_toggle_switch(
             {"entity_id": entity_id},
             blocking=True,
         )
-        connection.send_result(msg["id"], {"state": new_state})
+
+        if announce_tts and room_id:
+            config_manager = hass.data[DOMAIN].get("config_manager")
+            if config_manager:
+                rooms = config_manager.energy_config.get("rooms", [])
+                room = next((r for r in rooms if r.get("id") == room_id), None)
+                if room:
+                    media_player = (room.get("media_player") or "").strip()
+                    if media_player.startswith("media_player."):
+                        tts_settings = config_manager.energy_config.get("tts_settings") or {}
+                        prefix = tts_settings.get("prefix", "")
+                        action_word = "on" if new_state == "on" else "off"
+                        appliance_desc = outlet_name
+                        if plug_name:
+                            appliance_desc = f"{outlet_name} {plug_name}"
+                        tts_msg = f"{prefix}. {user_name} turned {action_word} {appliance_desc}".strip()
+                        if tts_msg.startswith("."):
+                            tts_msg = tts_msg[1:].strip()
+                        try:
+                            from .tts_queue import async_send_tts_or_queue
+                            vol_level = float(room.get("volume", 0.7) or 0.7)
+                            await async_send_tts_or_queue(
+                                hass,
+                                media_player=media_player,
+                                message=tts_msg,
+                                language=tts_settings.get("language"),
+                                volume=vol_level,
+                                tts_settings=tts_settings,
+                                room=room,
+                            )
+                        except Exception as tts_err:
+                            _LOGGER.warning("TTS announcement failed: %s", tts_err)
+
+        connection.send_result(msg["id"], {"state": new_state, "user_name": user_name})
     except Exception as e:
         _LOGGER.error("Failed to toggle switch %s: %s", entity_id, e)
         connection.send_error(msg["id"], "toggle_failed", str(e))

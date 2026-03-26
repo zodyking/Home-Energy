@@ -866,6 +866,42 @@ class ConfigManager:
                 "vent_automation_on_msg",
                 default_tts.get("vent_automation_on_msg", ""),
             ),
+            "notifications_enabled": bool(
+                tts.get(
+                    "notifications_enabled",
+                    default_tts.get("notifications_enabled", False),
+                )
+            ),
+            "notify_room_budget_hit": bool(
+                tts.get(
+                    "notify_room_budget_hit",
+                    default_tts.get("notify_room_budget_hit", True),
+                )
+            ),
+            "notify_enforcement_phase_change": bool(
+                tts.get(
+                    "notify_enforcement_phase_change",
+                    default_tts.get("notify_enforcement_phase_change", True),
+                )
+            ),
+            "notify_ac_auto_off": bool(
+                tts.get(
+                    "notify_ac_auto_off",
+                    default_tts.get("notify_ac_auto_off", True),
+                )
+            ),
+            "notify_ac_auto_on": bool(
+                tts.get(
+                    "notify_ac_auto_on",
+                    default_tts.get("notify_ac_auto_on", True),
+                )
+            ),
+            "notify_manual_toggle": bool(
+                tts.get(
+                    "notify_manual_toggle",
+                    default_tts.get("notify_manual_toggle", True),
+                )
+            ),
         }
 
         # Validate power enforcement settings

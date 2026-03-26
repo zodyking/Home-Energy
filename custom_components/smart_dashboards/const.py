@@ -134,6 +134,12 @@ DEFAULT_CONFIG = {
             "vent_automation_tts_enabled": False,
             "heater_automation_on_msg": DEFAULT_HEATER_AUTOMATION_ON_MSG,
             "vent_automation_on_msg": DEFAULT_VENT_AUTOMATION_ON_MSG,
+            "notifications_enabled": False,
+            "notify_room_budget_hit": True,
+            "notify_enforcement_phase_change": True,
+            "notify_ac_auto_off": True,
+            "notify_ac_auto_on": True,
+            "notify_manual_toggle": True,
         },
         "power_enforcement": {
             "enabled": False,
