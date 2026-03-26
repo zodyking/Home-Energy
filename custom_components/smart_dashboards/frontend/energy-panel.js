@@ -112,6 +112,9 @@ class EnergyPanel extends HTMLElement {
     this._statsRoomsView = 'pie'; // 'table' | 'pie' — statistics rooms card only
     this._statsRoomsPieInstance = null;
     this._statsPieRoomRows = null; // aligned with pie series for tooltips / selection
+    /** Serializes async pie mount so concurrent _render() passes cannot stack ApexCharts. */
+    this._statsPieSyncChain = Promise.resolve();
+    this._statPieBillingDelegation = false;
     this._summaryStatsResizeObs = null;
     this._summaryStatsWindowResizeBound = null;
     this._summaryFitDebounce = null;
@@ -280,7 +283,7 @@ class EnergyPanel extends HTMLElement {
     }
     const hasExisting = !!this._statsData;
     this._statsLoading = !hasExisting;
-    if (this._dashboardView === 'statistics') {
+    if (this._dashboardView === 'statistics' && !hasExisting) {
       this._render();
     }
     try {
@@ -452,7 +455,6 @@ class EnergyPanel extends HTMLElement {
           </tr>`;
         }).join('');
     }
-    void this._syncStatsRoomsPie();
   }
 
   _destroyStatsRoomsPie() {
@@ -491,22 +493,15 @@ class EnergyPanel extends HTMLElement {
     el.innerHTML = `
       <div class="stat-pie-selection-title">${title}</div>
       ${open}`;
-    const btn = el.querySelector('.stat-room-billing-chart');
-    if (btn) {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const ds2 = this._statsData?.date_start;
-        const de2 = this._statsData?.date_end;
-        const id = btn.dataset.roomId;
-        const nm = btn.dataset.roomName || '';
-        if (ds2 && de2 && id) {
-          this._openGraph('stat_room_wh', id, nm, { date_start: ds2, date_end: de2 });
-        }
-      });
-    }
   }
 
-  async _syncStatsRoomsPie() {
+  _syncStatsRoomsPie() {
+    this._statsPieSyncChain = this._statsPieSyncChain
+      .catch(() => {})
+      .then(() => this._syncStatsRoomsPieImpl());
+  }
+
+  async _syncStatsRoomsPieImpl() {
     if (this._showSettings || this._dashboardView !== 'statistics') {
       this._destroyStatsRoomsPie();
       return;
@@ -611,7 +606,9 @@ class EnergyPanel extends HTMLElement {
       await this._statsRoomsPieInstance.render();
     } catch (e) {
       console.error('Statistics rooms pie chart failed:', e);
-      container.innerHTML = `<p class="statistics-pie-empty" style="color:${muted}">Chart failed to load.</p>`;
+      const errMuted =
+        getComputedStyle(this).getPropertyValue('--secondary-text-color').trim() || '#9b9b9b';
+      container.innerHTML = `<p class="statistics-pie-empty" style="color:${errMuted}">Chart failed to load.</p>`;
     }
   }
 
@@ -7786,6 +7783,27 @@ class EnergyPanel extends HTMLElement {
       this.shadowRoot.addEventListener('click', (e) => this._handleRoomZoneClick(e));
     }
 
+    if (!this._statPieBillingDelegation) {
+      this._statPieBillingDelegation = true;
+      this.shadowRoot.addEventListener('click', (e) => {
+        const t = e.target;
+        if (!t || !t.closest) return;
+        const btn = t.closest('.stat-room-billing-chart');
+        if (!btn || !this.shadowRoot.contains(btn)) return;
+        const pieSel = this.shadowRoot.getElementById('stat-pie-selection');
+        if (!pieSel || !pieSel.contains(btn)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rid = btn.dataset.roomId;
+        const rname = btn.dataset.roomName || '';
+        const ds = this._statsData?.date_start;
+        const de = this._statsData?.date_end;
+        if (ds && de && rid) {
+          this._openGraph('stat_room_wh', rid, rname, { date_start: ds, date_end: de });
+        }
+      });
+    }
+
     this.shadowRoot.querySelectorAll('.view-tab').forEach(tab => {
       tab.addEventListener('click', () => {
         const view = tab.dataset.view;
@@ -7828,19 +7846,6 @@ class EnergyPanel extends HTMLElement {
         }
       });
     }
-    this.shadowRoot.querySelectorAll('.stat-room-billing-chart').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const rid = btn.dataset.roomId;
-        const rname = btn.dataset.roomName || '';
-        const ds = this._statsData?.date_start;
-        const de = this._statsData?.date_end;
-        if (ds && de && rid) {
-          this._openGraph('stat_room_wh', rid, rname, { date_start: ds, date_end: de });
-        }
-      });
-    });
-
     this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((seg) => {
       seg.addEventListener('click', (e) => {
         e.preventDefault();

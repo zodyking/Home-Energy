@@ -365,25 +365,63 @@ class EnergyMonitor:
         return bool(entity_id and str(entity_id).startswith("switch."))
 
     @staticmethod
+    def _is_appliance_control_entity(entity_id: str | None) -> bool:
+        """Vent/heater card may use switch.* or fan.* as the controlled load."""
+        if not entity_id:
+            return False
+        s = str(entity_id).strip()
+        return s.startswith("switch.") or s.startswith("fan.")
+
+    @staticmethod
     def _appliance_automation_key(room_id: str, outlet: dict) -> str:
         slug = (outlet.get("name") or "device").lower().replace(" ", "_")
         return f"{room_id}|{slug}"
 
     def _binary_presence_positive(self, entity_id: str | None) -> bool:
-        st = self.hass.states.get(entity_id or "")
+        eid = str(entity_id or "").strip()
+        if not eid:
+            return False
+        st = self.hass.states.get(eid)
         if not st or st.state in ("unknown", "unavailable", ""):
             return False
-        raw = (st.state or "").lower()
-        return raw in (
-            "on",
-            "true",
-            "1",
-            "detected",
-            "occupied",
-            "motion",
-            "active",
-            "present",
+        raw = (st.state or "").lower().strip()
+        positives = frozenset(
+            (
+                "on",
+                "true",
+                "1",
+                "yes",
+                "detected",
+                "occupied",
+                "motion",
+                "active",
+                "present",
+                "home",
+            )
         )
+        if raw in positives:
+            return True
+        if eid.startswith("input_boolean."):
+            return raw == "on"
+        dc = str(st.attributes.get("device_class") or "").lower()
+        if dc in ("occupancy", "motion", "presence", "sound", "vibration", "moisture"):
+            return raw == "on"
+        return False
+
+    def _appliance_entity_is_on(self, entity_id: str | None) -> bool:
+        """True if switch or fan entity reads as running (for vent/heater automation)."""
+        if not entity_id:
+            return False
+        eid = str(entity_id).strip()
+        st = self.hass.states.get(eid)
+        if not st:
+            return False
+        raw = (st.state or "").lower()
+        if eid.startswith("switch."):
+            return raw == "on"
+        if eid.startswith("fan."):
+            return raw in ("on", "true", "1")
+        return False
 
     def _parse_temperature_sensor(self, entity_id: str | None) -> float | None:
         st = self.hass.states.get(entity_id or "")
@@ -406,6 +444,35 @@ class EnergyMonitor:
             _LOGGER.warning(
                 "Switch %s %s failed: %s",
                 entity_id,
+                "on" if turn_on else "off",
+                e,
+            )
+
+    async def _async_appliance_power_set(self, entity_id: str, turn_on: bool) -> None:
+        """Turn vent/heater load on or off (switch or fan domain)."""
+        eid = str(entity_id or "").strip()
+        if eid.startswith("switch."):
+            domain = "switch"
+        elif eid.startswith("fan."):
+            domain = "fan"
+        else:
+            _LOGGER.warning(
+                "Appliance control entity %s must be switch.* or fan.*",
+                eid,
+            )
+            return
+        try:
+            await self.hass.services.async_call(
+                domain,
+                "turn_on" if turn_on else "turn_off",
+                {"entity_id": eid},
+                blocking=True,
+            )
+        except Exception as e:
+            _LOGGER.warning(
+                "%s %s %s failed: %s",
+                domain,
+                eid,
                 "on" if turn_on else "off",
                 e,
             )
@@ -441,8 +508,8 @@ class EnergyMonitor:
             self._vent_automation_state.pop(key, None)
             return
         switch = outlet.get("switch_entity")
-        pres_ent = outlet.get("vent_presence_entity")
-        if not self._is_switch_entity_id(switch) or not pres_ent:
+        pres_ent = str(outlet.get("vent_presence_entity") or "").strip()
+        if not self._is_appliance_control_entity(switch) or not pres_ent:
             return
         on_deb = max(0, int(outlet.get("vent_on_debounce_seconds", 30)))
         off_after = max(1, int(outlet.get("vent_off_after_no_presence_seconds", 300)))
@@ -450,7 +517,7 @@ class EnergyMonitor:
             key, {"armed": False, "presence_since": None, "no_presence_since": None}
         )
         pres = self._binary_presence_positive(pres_ent)
-        sw_on = self._switch_entity_is_on(switch)
+        sw_on = self._appliance_entity_is_on(switch)
 
         if not sw_on:
             st["armed"] = False
@@ -462,7 +529,7 @@ class EnergyMonitor:
                 if st["presence_since"] is None:
                     st["presence_since"] = now
                 elif (now - st["presence_since"]).total_seconds() >= on_deb:
-                    await self._async_switch_set(str(switch), True)
+                    await self._async_appliance_power_set(str(switch), True)
                     st["armed"] = True
                     st["presence_since"] = None
                     tts_settings = (
@@ -490,7 +557,7 @@ class EnergyMonitor:
                 if st["no_presence_since"] is None:
                     st["no_presence_since"] = now
                 elif (now - st["no_presence_since"]).total_seconds() >= off_after:
-                    await self._async_switch_set(str(switch), False)
+                    await self._async_appliance_power_set(str(switch), False)
                     st["armed"] = False
                     st["no_presence_since"] = None
 
@@ -505,7 +572,7 @@ class EnergyMonitor:
             return
         switch = outlet.get("switch_entity")
         temp_ent = outlet.get("heater_temperature_entity")
-        if not self._is_switch_entity_id(switch) or not temp_ent:
+        if not self._is_appliance_control_entity(switch) or not temp_ent:
             return
         temp = self._parse_temperature_sensor(temp_ent)
         if temp is None:
@@ -514,13 +581,13 @@ class EnergyMonitor:
         stay_min = max(1, min(240, int(outlet.get("heater_stay_on_minutes", 5))))
         stay_delta = timedelta(minutes=stay_min)
         need_presence = bool(outlet.get("heater_presence_optional_enabled"))
-        pres_ent = outlet.get("heater_presence_entity")
+        pres_ent = str(outlet.get("heater_presence_entity") or "").strip()
         cooldown = max(0, int(outlet.get("heater_presence_cooldown_seconds", 60)))
 
         st = self._heater_automation_state.setdefault(
             key, {"run_until": None, "last_on": None}
         )
-        sw_on = self._switch_entity_is_on(switch)
+        sw_on = self._appliance_entity_is_on(switch)
         pres_ok = (
             self._binary_presence_positive(pres_ent) if pres_ent else True
         )
@@ -528,7 +595,7 @@ class EnergyMonitor:
 
         if st.get("run_until") and now >= st["run_until"]:
             if sw_on:
-                await self._async_switch_set(str(switch), False)
+                await self._async_appliance_power_set(str(switch), False)
             st["run_until"] = None
 
         if not sw_on:
@@ -545,7 +612,7 @@ class EnergyMonitor:
                 ):
                     can_turn_on = False
             if can_turn_on:
-                await self._async_switch_set(str(switch), True)
+                await self._async_appliance_power_set(str(switch), True)
                 st["last_on"] = now
                 st["run_until"] = now + stay_delta
                 tts_settings = (
