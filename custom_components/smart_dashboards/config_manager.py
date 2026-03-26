@@ -1728,7 +1728,7 @@ class ConfigManager:
 
     def get_statistics_date_range(
         self, date_start: str | None = None, date_end: str | None = None
-    ) -> tuple[str | None, str | None, bool]:
+    ) -> tuple[str, str, bool]:
         """Resolve final date range. Returns (start, end, is_narrowed).
         Uses billing cycle dates; includes today if billing end is in the past.
         Optional date_start/date_end (YYYY-MM-DD) narrow the range, clamped to billing/base."""
@@ -1748,6 +1748,15 @@ class ConfigManager:
             pass  # today is in range
         elif today > base_end:
             base_end = today  # extend to today if billing end is in the past
+
+        # Never return invalid or inverted ranges (empty stats / missing graphs)
+        if (
+            not self._is_valid_date(base_start)
+            or not self._is_valid_date(base_end)
+            or base_start > base_end
+        ):
+            base_start = (dt_util.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            base_end = today
 
         ds = (date_start or "").strip() or None
         de = (date_end or "").strip() or None

@@ -778,18 +778,23 @@ class EnergyMonitor:
         prev = self._room_presence_was_in_zone.get(room_id)
         self._room_presence_was_in_zone[room_id] = in_zone
 
-        if prev is True and not in_zone:
+        # Turn off when: first detection with person outside zones, or transition out
+        should_turn_off = (prev is None and not in_zone) or (prev is True and not in_zone)
+        if should_turn_off:
             pending = self._presence_auto_turned_off.setdefault(room_id, set())
             for sw in self._presence_auto_off_switch_targets(room):
+                if sw in pending:
+                    continue
                 try:
                     await self.hass.services.async_call(
                         "switch", "turn_off", {"entity_id": sw}, blocking=True
                     )
                     pending.add(sw)
                     _LOGGER.info(
-                        "Presence auto-off: turned off %s (room %s left zones)",
+                        "Presence auto-off: turned off %s (room %s %s)",
                         sw,
                         room_id,
+                        "already outside zones" if prev is None else "left zones",
                     )
                     outlet = self._find_outlet_by_switch(room, sw)
                     if outlet and outlet.get("type") == "minisplit":

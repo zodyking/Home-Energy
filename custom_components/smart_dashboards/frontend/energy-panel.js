@@ -94,7 +94,7 @@ class EnergyPanel extends HTMLElement {
     this._entities = null;
     this._powerData = null;
     this._showSettings = false;
-    this._settingsTab = 'rooms'; // 'rooms' | 'tts' | 'statistics' | 'enforcement'
+    this._settingsTab = 'rooms'; // 'rooms' | 'tts' | 'notifications' | 'statistics' | 'enforcement'
     this._dashboardView = 'rooms'; // 'rooms' | 'statistics' | 'stove'
     this._stoveData = null;
     this._refreshInterval = null;
@@ -362,6 +362,26 @@ class EnergyPanel extends HTMLElement {
       minute: '2-digit',
     });
     return `${abs} · ${relPart}`;
+  }
+
+  /** Date range for statistics billing graphs; aligns with server rolling window when API dates are missing. */
+  _statisticsGraphDateRange() {
+    const s = this._statsData;
+    const ds = (s?.date_start || '').trim();
+    const de = (s?.date_end || '').trim();
+    if (ds && de) {
+      return { date_start: ds, date_end: de };
+    }
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - 30);
+    const iso = (d) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+    return { date_start: iso(start), date_end: iso(end) };
   }
 
   _updateStatisticsDisplay() {
@@ -4568,12 +4588,17 @@ class EnergyPanel extends HTMLElement {
           payload.since_hours = 24;
         }
         result = await this._hass.callWS(payload);
-      } else if (isStatBilling && billingRange?.date_start && billingRange?.date_end) {
+      } else if (isStatBilling) {
+        const br =
+          billingRange?.date_start && billingRange?.date_end
+            ? billingRange
+            : this._statisticsGraphDateRange();
         result = await this._hass.callWS({
           type: 'smart_dashboards/get_daily_history',
-          date_start: billingRange.date_start,
-          date_end: billingRange.date_end,
+          date_start: br.date_start,
+          date_end: br.date_end,
         });
+        billingRange = br;
       } else if (isIntraday) {
         const payload = { type: 'smart_dashboards/get_intraday_history', minutes: 1440 };
         if (roomId) payload.room_id = roomId;
@@ -6242,6 +6267,9 @@ class EnergyPanel extends HTMLElement {
             <button class="settings-tab ${this._settingsTab === 'tts' ? 'active' : ''}" data-tab="tts">
               TTS Settings
             </button>
+            <button class="settings-tab ${this._settingsTab === 'notifications' ? 'active' : ''}" data-tab="notifications">
+              Notifications
+            </button>
             <button class="settings-tab ${this._settingsTab === 'statistics' ? 'active' : ''}" data-tab="statistics">
               Statistics
             </button>
@@ -6470,47 +6498,6 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{threshold}</code> <code>{temperature}</code> (spoken whole numbers)</div>
               </div>
 
-              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Mobile Push Notifications</h3>
-              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
-                Send push notifications to a person's mobile device for rooms where they are assigned. Notifications use the Home Assistant mobile app service (notify.mobile_app_*).
-              </p>
-              <div class="form-group" style="margin-bottom: 12px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notifications-enabled" ${ttsSettings.notifications_enabled ? 'checked' : ''} />
-                  Enable push notifications
-                </label>
-              </div>
-              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notify-room-budget-hit" ${ttsSettings.notify_room_budget_hit !== false ? 'checked' : ''} />
-                  Notify when room budget is exceeded
-                </label>
-              </div>
-              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notify-enforcement-phase-change" ${ttsSettings.notify_enforcement_phase_change !== false ? 'checked' : ''} />
-                  Notify on enforcement phase changes
-                </label>
-              </div>
-              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notify-ac-auto-off" ${ttsSettings.notify_ac_auto_off !== false ? 'checked' : ''} />
-                  Notify when air conditioner auto-off (presence)
-                </label>
-              </div>
-              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notify-ac-auto-on" ${ttsSettings.notify_ac_auto_on !== false ? 'checked' : ''} />
-                  Notify when air conditioner restored (presence)
-                </label>
-              </div>
-              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notify-manual-toggle" ${ttsSettings.notify_manual_toggle !== false ? 'checked' : ''} />
-                  Notify on manual appliance toggle by others
-                </label>
-              </div>
-
               <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Power Enforcement Messages</h3>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Phase 1 Warning (Volume Escalation)</div>
@@ -6583,6 +6570,53 @@ class EnergyPanel extends HTMLElement {
                   value="${ttsSettings.home_kwh_warn_msg || TTS_DEFAULTS.home_kwh_warn_msg}" 
                   placeholder="Home over {kwh_limit} kWh today — reduce consumption.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{kwh_limit}</code></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-tab-content ${this._settingsTab === 'notifications' ? 'active' : ''}" id="tab-notifications">
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Push Notifications</h2>
+              </div>
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
+                For rooms with a person assigned (<strong>Presence person</strong> in room settings), optional mobile alerts. Titles use your TTS prefix. Targets the Home Assistant <code>notify.mobile_app_*</code> service matching the person’s device name.
+              </p>
+              <div class="form-group" style="margin-bottom: 12px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notifications-enabled" ${ttsSettings.notifications_enabled ? 'checked' : ''} />
+                  Enable push notifications
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notify-room-budget-hit" ${ttsSettings.notify_room_budget_hit !== false ? 'checked' : ''} />
+                  Notify when room budget is exceeded
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notify-enforcement-phase-change" ${ttsSettings.notify_enforcement_phase_change !== false ? 'checked' : ''} />
+                  Notify on enforcement phase changes
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notify-ac-auto-off" ${ttsSettings.notify_ac_auto_off !== false ? 'checked' : ''} />
+                  Notify when air conditioner auto-off (presence)
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notify-ac-auto-on" ${ttsSettings.notify_ac_auto_on !== false ? 'checked' : ''} />
+                  Notify when air conditioner restored (presence)
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px; padding-left: 20px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="tts-notify-manual-toggle" ${ttsSettings.notify_manual_toggle !== false ? 'checked' : ''} />
+                  Notify on manual appliance toggle by others
+                </label>
               </div>
             </div>
           </div>
@@ -8153,10 +8187,8 @@ class EnergyPanel extends HTMLElement {
         e.stopPropagation();
         const rid = btn.dataset.roomId;
         const rname = btn.dataset.roomName || '';
-        const ds = this._statsData?.date_start;
-        const de = this._statsData?.date_end;
-        if (ds && de && rid) {
-          this._openGraph('stat_room_wh', rid, rname, { date_start: ds, date_end: de });
+        if (rid) {
+          this._openGraph('stat_room_wh', rid, rname, this._statisticsGraphDateRange());
         }
       });
     }
@@ -8182,11 +8214,8 @@ class EnergyPanel extends HTMLElement {
         const nameFromData = el.dataset.roomName || null;
         const room = roomId ? this._config?.rooms?.find(r => r.id === roomId) : null;
         let billingRange = null;
-        if (type && type.startsWith('stat_') && this._statsData?.date_start && this._statsData?.date_end) {
-          billingRange = {
-            date_start: this._statsData.date_start,
-            date_end: this._statsData.date_end,
-          };
+        if (type && type.startsWith('stat_')) {
+          billingRange = this._statisticsGraphDateRange();
         }
         this._openGraph(type, roomId, nameFromData || room?.name || null, billingRange);
       });
@@ -8196,11 +8225,7 @@ class EnergyPanel extends HTMLElement {
     if (statHomeChart) {
       statHomeChart.addEventListener('click', (e) => {
         e.stopPropagation();
-        const ds = this._statsData?.date_start;
-        const de = this._statsData?.date_end;
-        if (ds && de) {
-          this._openGraph('stat_total_wh', null, null, { date_start: ds, date_end: de });
-        }
+        this._openGraph('stat_total_wh', null, null, this._statisticsGraphDateRange());
       });
     }
     this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((seg) => {
