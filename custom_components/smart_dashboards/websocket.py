@@ -15,10 +15,18 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .config_manager import vent_like_energy_tracking_key
-from .const import DOMAIN
+from .const import DEFAULT_NOTIFICATION_TITLE, DOMAIN
 from .mobile_notify_target import resolve_mobile_app_notify_slug
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _ws_connection_user_is_admin(connection: websocket_api.ActiveConnection) -> bool:
+    """True if the websocket user is active and in the admin group (or owner)."""
+    user = connection.user
+    if user is None or not user.is_active:
+        return False
+    return bool(user.is_admin)
 
 
 def _attach_stove_timer_to_outlet_data(
@@ -52,6 +60,56 @@ def _attach_stove_timer_to_outlet_data(
             outlet_data["time_remaining"] = int(max(0, cooking_time_sec - elapsed))
         elif timer_phase == "30sec":
             outlet_data["time_remaining"] = int(max(0, final_warning_sec - elapsed))
+
+
+def _parse_temperature_sensor_state(hass: HomeAssistant, entity_id: str | None) -> float | None:
+    st = hass.states.get(entity_id or "")
+    if not st or st.state in ("unknown", "unavailable", ""):
+        return None
+    try:
+        return float(st.state)
+    except (TypeError, ValueError):
+        return None
+
+
+def _attach_wall_heater_dashboard_fields(
+    outlet_data: dict[str, Any],
+    outlet: dict[str, Any],
+    room_id: str,
+    hass: HomeAssistant,
+    energy_monitor: Any,
+) -> None:
+    """Expose live temp, thresholds, and run timer for wall heater cards."""
+    if outlet.get("type") != "wall_heater":
+        return
+    threshold = float(outlet.get("heater_on_below_temperature", 65))
+    hct = outlet.get("heater_comfort_temperature")
+    try:
+        if hct is None or hct == "":
+            comfort_disp = threshold + 2.0
+        else:
+            comfort_disp = float(hct)
+    except (TypeError, ValueError):
+        comfort_disp = threshold + 2.0
+    outlet_data["heater_on_below_temperature"] = round(threshold, 2)
+    outlet_data["heater_comfort_temperature"] = round(comfort_disp, 2)
+    te = str(outlet.get("heater_temperature_entity") or "").strip()
+    outlet_data["heater_current_temperature"] = (
+        _parse_temperature_sensor_state(hass, te) if te.startswith("sensor.") else None
+    )
+    outlet_data["heater_time_remaining_sec"] = 0
+    slug = (outlet.get("name") or "device").lower().replace(" ", "_")
+    key = f"{room_id}|{slug}"
+    if energy_monitor and hasattr(energy_monitor, "_heater_automation_state"):
+        st = energy_monitor._heater_automation_state.get(key) or {}
+        ru = st.get("run_until")
+        if ru is not None:
+            now = dt_util.now()
+            try:
+                sec = (ru - now).total_seconds()
+                outlet_data["heater_time_remaining_sec"] = int(max(0, sec))
+            except TypeError:
+                pass
 
 
 # Server-side cache for get_statistics to avoid heavy recorder queries
@@ -456,6 +514,9 @@ async def websocket_get_power_data(
                     room_data["total_day_wh"] += day_wh
 
             _attach_stove_timer_to_outlet_data(outlet_data, outlet, energy_monitor)
+            _attach_wall_heater_dashboard_fields(
+                outlet_data, outlet, room_id, hass, energy_monitor
+            )
             room_data["outlets"].append(outlet_data)
 
         room_data["total_watts"] = round(room_data["total_watts"], 1)
@@ -1758,9 +1819,13 @@ async def websocket_check_toggle_auth(
     msg: dict[str, Any],
 ) -> None:
     """Check if the current user can toggle switches in a room."""
+    is_admin = _ws_connection_user_is_admin(connection)
     config_manager = hass.data[DOMAIN].get("config_manager")
     if not config_manager:
-        connection.send_result(msg["id"], {"authorized": False, "error": "config_not_ready"})
+        connection.send_result(
+            msg["id"],
+            {"authorized": False, "error": "config_not_ready", "is_admin": is_admin},
+        )
         return
 
     room_id = msg["room_id"]
@@ -1768,7 +1833,10 @@ async def websocket_check_toggle_auth(
     room = next((r for r in rooms if r.get("id") == room_id), None)
 
     if not room:
-        connection.send_result(msg["id"], {"authorized": False, "error": "room_not_found"})
+        connection.send_result(
+            msg["id"],
+            {"authorized": False, "error": "room_not_found", "is_admin": is_admin},
+        )
         return
 
     user = connection.user
@@ -1776,7 +1844,15 @@ async def websocket_check_toggle_auth(
 
     person_ent = room.get("presence_person_entity")
     if not person_ent:
-        connection.send_result(msg["id"], {"authorized": True, "user_name": user_name, "requires_tts": True})
+        connection.send_result(
+            msg["id"],
+            {
+                "authorized": True,
+                "user_name": user_name,
+                "requires_tts": True,
+                "is_admin": is_admin,
+            },
+        )
         return
 
     person_state = hass.states.get(person_ent)
@@ -1787,12 +1863,16 @@ async def websocket_check_toggle_auth(
     )
 
     authorized = user_name.lower().strip() == person_name.lower().strip()
-    connection.send_result(msg["id"], {
-        "authorized": authorized,
-        "user_name": user_name,
-        "requires_tts": not authorized,
-        "room_person": person_name,
-    })
+    connection.send_result(
+        msg["id"],
+        {
+            "authorized": authorized,
+            "user_name": user_name,
+            "requires_tts": not authorized,
+            "room_person": person_name,
+            "is_admin": is_admin,
+        },
+    )
 
 
 @websocket_api.websocket_command(
@@ -2238,6 +2318,9 @@ async def websocket_send_test_notification(
 
     tts_settings = config_manager.energy_config.get("tts_settings", {})
     prefix = tts_settings.get("prefix", "Message from Home Energy.")
+    notification_title = str(
+        tts_settings.get("notification_title") or DEFAULT_NOTIFICATION_TITLE
+    ).strip() or DEFAULT_NOTIFICATION_TITLE
 
     type_map = {
         "budget_hit": ("notify_budget_hit_title", "notify_budget_hit_msg"),
@@ -2255,12 +2338,12 @@ async def websocket_send_test_notification(
     title_key, msg_key = type_map[notification_type]
 
     default_titles = {
-        "notify_budget_hit_title": "{prefix} Budget Exceeded",
-        "notify_enforcement_phase1_title": "{prefix} Enforcement Phase 1",
-        "notify_enforcement_phase2_title": "{prefix} Enforcement Phase 2",
-        "notify_ac_auto_off_title": "{prefix} Air Conditioner Off",
-        "notify_ac_auto_on_title": "{prefix} Air Conditioner On",
-        "notify_manual_toggle_title": "{prefix} Appliance Toggled",
+        "notify_budget_hit_title": "{notification_title} Budget Exceeded",
+        "notify_enforcement_phase1_title": "{notification_title} Enforcement Phase 1",
+        "notify_enforcement_phase2_title": "{notification_title} Enforcement Phase 2",
+        "notify_ac_auto_off_title": "{notification_title} Air Conditioner Off",
+        "notify_ac_auto_on_title": "{notification_title} Air Conditioner On",
+        "notify_manual_toggle_title": "{notification_title} Appliance Toggled",
     }
     default_msgs = {
         "notify_budget_hit_msg": "{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh).",
@@ -2280,6 +2363,7 @@ async def websocket_send_test_notification(
 
     sample_vars = {
         "prefix": prefix,
+        "notification_title": notification_title,
         "room_name": "Sample Room",
         "kwh_budget": "5.0",
         "kwh_used": "6.2",
@@ -2295,7 +2379,7 @@ async def websocket_send_test_notification(
         message = msg_template.format(**sample_vars)
     except (KeyError, ValueError) as e:
         _LOGGER.warning("Failed to format test notification template: %s", e)
-        title = f"{prefix} Test Notification"
+        title = f"{notification_title} Test Notification"
         message = "This is a test notification from Smart Dashboards."
 
     slug = resolve_mobile_app_notify_slug(hass, target_person)

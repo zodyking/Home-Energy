@@ -705,11 +705,25 @@ class ConfigManager:
                                     -60.0,
                                     min(160.0, float(outlet.get("heater_on_below_temperature", 65))),
                                 )
+                                hct = outlet.get("heater_comfort_temperature")
+                                if hct is None or hct == "":
+                                    item["heater_comfort_temperature"] = None
+                                else:
+                                    try:
+                                        item["heater_comfort_temperature"] = max(
+                                            -60.0,
+                                            min(160.0, float(hct)),
+                                        )
+                                    except (TypeError, ValueError):
+                                        item["heater_comfort_temperature"] = None
                                 item["heater_stay_on_minutes"] = max(
                                     1, min(240, int(outlet.get("heater_stay_on_minutes", 5)))
                                 )
                                 item["heater_presence_optional_enabled"] = bool(
                                     outlet.get("heater_presence_optional_enabled")
+                                )
+                                item["heater_presence_turn_on_enabled"] = bool(
+                                    outlet.get("heater_presence_turn_on_enabled")
                                 )
                                 item["heater_presence_entity"] = _normalize_binary_sensor_entity(
                                     outlet.get("heater_presence_entity")
@@ -759,6 +773,13 @@ class ConfigManager:
         # Validate TTS settings
         tts = config.get("tts_settings", {})
         default_tts = DEFAULT_CONFIG["energy"]["tts_settings"]
+        _notification_title = str(
+            tts.get("notification_title")
+            or default_tts.get("notification_title")
+            or "Home Energy"
+        ).strip()
+        if not _notification_title:
+            _notification_title = "Home Energy"
         validated["tts_settings"] = {
             "language": tts.get("language", default_tts["language"]),
             "speed": _safe_float(tts.get("speed"), default_tts["speed"]),
@@ -1033,6 +1054,91 @@ class ConfigManager:
                     "notify_manual_toggle",
                     default_tts.get("notify_manual_toggle", True),
                 )
+            ),
+            "notification_title": _notification_title,
+            "notify_budget_hit_title": str(
+                tts.get(
+                    "notify_budget_hit_title",
+                    default_tts.get("notify_budget_hit_title", ""),
+                )
+                or ""
+            ),
+            "notify_budget_hit_msg": str(
+                tts.get(
+                    "notify_budget_hit_msg",
+                    default_tts.get("notify_budget_hit_msg", ""),
+                )
+                or ""
+            ),
+            "notify_enforcement_phase1_title": str(
+                tts.get(
+                    "notify_enforcement_phase1_title",
+                    default_tts.get("notify_enforcement_phase1_title", ""),
+                )
+                or ""
+            ),
+            "notify_enforcement_phase1_msg": str(
+                tts.get(
+                    "notify_enforcement_phase1_msg",
+                    default_tts.get("notify_enforcement_phase1_msg", ""),
+                )
+                or ""
+            ),
+            "notify_enforcement_phase2_title": str(
+                tts.get(
+                    "notify_enforcement_phase2_title",
+                    default_tts.get("notify_enforcement_phase2_title", ""),
+                )
+                or ""
+            ),
+            "notify_enforcement_phase2_msg": str(
+                tts.get(
+                    "notify_enforcement_phase2_msg",
+                    default_tts.get("notify_enforcement_phase2_msg", ""),
+                )
+                or ""
+            ),
+            "notify_ac_auto_off_title": str(
+                tts.get(
+                    "notify_ac_auto_off_title",
+                    default_tts.get("notify_ac_auto_off_title", ""),
+                )
+                or ""
+            ),
+            "notify_ac_auto_off_msg": str(
+                tts.get(
+                    "notify_ac_auto_off_msg",
+                    default_tts.get("notify_ac_auto_off_msg", ""),
+                )
+                or ""
+            ),
+            "notify_ac_auto_on_title": str(
+                tts.get(
+                    "notify_ac_auto_on_title",
+                    default_tts.get("notify_ac_auto_on_title", ""),
+                )
+                or ""
+            ),
+            "notify_ac_auto_on_msg": str(
+                tts.get(
+                    "notify_ac_auto_on_msg",
+                    default_tts.get("notify_ac_auto_on_msg", ""),
+                )
+                or ""
+            ),
+            "notify_manual_toggle_title": str(
+                tts.get(
+                    "notify_manual_toggle_title",
+                    default_tts.get("notify_manual_toggle_title", ""),
+                )
+                or ""
+            ),
+            "notify_manual_toggle_msg": str(
+                tts.get(
+                    "notify_manual_toggle_msg",
+                    default_tts.get("notify_manual_toggle_msg", ""),
+                )
+                or ""
             ),
         }
 
