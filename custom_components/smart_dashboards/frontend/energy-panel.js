@@ -7772,7 +7772,43 @@ class EnergyPanel extends HTMLElement {
     }, delay);
   }
 
-  /** Prefer linked device_tracker.* state (raw) over person.* home/not_home summary. */
+  /**
+   * Human-readable location for person or device_tracker state (matches typical HA UI: Home, Away, zone names).
+   */
+  _formatPresenceLocationDisplay(entityState) {
+    if (!entityState || !this._hass?.states) return 'unknown';
+    const raw = entityState.state;
+    if (raw == null || String(raw).trim() === '') return 'unknown';
+    const state = String(raw).trim();
+    const lower = state.toLowerCase();
+    if (lower === 'home') return 'Home';
+    if (lower === 'not_home') return 'Away';
+    if (lower === 'unknown') return 'unknown';
+    if (lower === 'unavailable') return 'unavailable';
+
+    const attrs = entityState.attributes || {};
+    const loc = attrs.location_name;
+    if (loc != null && String(loc).trim() !== '') {
+      return String(loc).trim();
+    }
+
+    if (!state.includes('.')) {
+      const zoneId = `zone.${state}`;
+      const zst = this._hass.states[zoneId];
+      if (zst && zst.attributes?.friendly_name != null && String(zst.attributes.friendly_name).trim() !== '') {
+        return String(zst.attributes.friendly_name).trim();
+      }
+    } else if (state.startsWith('zone.')) {
+      const zst = this._hass.states[state];
+      if (zst && zst.attributes?.friendly_name != null && String(zst.attributes.friendly_name).trim() !== '') {
+        return String(zst.attributes.friendly_name).trim();
+      }
+    }
+
+    return state.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  /** Prefer linked device_tracker.* state over person.*; label formatted for display. */
   _presenceLabelFromPersonState(personState) {
     if (!personState || !this._hass?.states) return 'unknown';
     const attrs = personState.attributes || {};
@@ -7780,7 +7816,11 @@ class EnergyPanel extends HTMLElement {
     let trackerId = '';
     if (source.startsWith('device_tracker.')) {
       trackerId = source;
-    } else {
+    } else if (source && !source.includes('.')) {
+      const cand = `device_tracker.${source}`;
+      if (this._hass.states[cand]) trackerId = cand;
+    }
+    if (!trackerId) {
       const raw = attrs.device_trackers;
       const list = Array.isArray(raw) ? raw : raw != null && String(raw).trim() ? [String(raw).trim()] : [];
       trackerId = list.map((t) => String(t).trim()).find((t) => t.startsWith('device_tracker.')) || '';
@@ -7788,11 +7828,9 @@ class EnergyPanel extends HTMLElement {
     if (trackerId) {
       const ts = this._hass.states[trackerId];
       if (!ts) return 'unavailable';
-      return ts.state != null && String(ts.state) !== '' ? String(ts.state) : 'unknown';
+      return this._formatPresenceLocationDisplay(ts);
     }
-    return personState.state != null && String(personState.state) !== ''
-      ? String(personState.state)
-      : 'unknown';
+    return this._formatPresenceLocationDisplay(personState);
   }
 
   _updateRoomPresenceLiveLabels() {
