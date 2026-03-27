@@ -138,8 +138,8 @@ class EnergyMonitor:
         # Vent / wall heater optional automations (key: room_id|outlet_name_slug)
         self._vent_automation_state: dict[str, dict] = {}
         self._heater_automation_state: dict[str, dict] = {}
-        # switch.* the integration toggled recently (exclude from "manual UI" edge detection)
-        self._heater_internal_switch_ids: set[str] = set()
+        # switch.* the integration toggled recently (exclude from external automation detection)
+        self._integration_internal_switch_ids: set[str] = set()
         # Universal push: switch.* state listener + suppression during internal cycling
         self._manual_toggle_listener_unsub: list = []
         # Re-entrant count per room (minisplit path calls _power_cycle nested)
@@ -533,6 +533,7 @@ class EnergyMonitor:
             return None
 
     async def _async_switch_set(self, entity_id: str, turn_on: bool) -> None:
+        self._mark_switch_internal(entity_id)
         try:
             await self.hass.services.async_call(
                 "switch",
@@ -553,6 +554,7 @@ class EnergyMonitor:
         eid = str(entity_id or "").strip()
         if eid.startswith("switch."):
             domain = "switch"
+            self._mark_switch_internal(eid)
         elif eid.startswith("fan."):
             domain = "fan"
         else:
@@ -577,20 +579,21 @@ class EnergyMonitor:
                 e,
             )
 
-    def _mark_wall_heater_switch_internal(self, entity_id: str) -> None:
+    def _mark_switch_internal(self, entity_id: str) -> None:
+        """Mark a switch as toggled by this integration (suppress external auto notify)."""
         eid = str(entity_id or "").strip()
         if not eid:
             return
-        self._heater_internal_switch_ids.add(eid)
+        self._integration_internal_switch_ids.add(eid)
 
         async def _clear() -> None:
             await asyncio.sleep(3.0)
-            self._heater_internal_switch_ids.discard(eid)
+            self._integration_internal_switch_ids.discard(eid)
 
         self.hass.async_create_task(_clear())
 
     async def _async_wall_heater_set_switch(self, entity_id: str, turn_on: bool) -> None:
-        self._mark_wall_heater_switch_internal(entity_id)
+        self._mark_switch_internal(entity_id)
         await self._async_appliance_power_set(entity_id, turn_on)
 
     async def _async_speak_appliance_automation_tts(
@@ -621,10 +624,14 @@ class EnergyMonitor:
         template_vars: dict | None = None,
         fallback_title: str = "",
         fallback_message: str = "",
+        *,
+        integration_auto: bool = False,
     ) -> None:
         """Send HA notification to person assigned to room using configured templates."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if not tts_settings.get("notifications_enabled"):
+            return
+        if integration_auto and not tts_settings.get("notify_integration_auto", True):
             return
         enable_key = self._notification_enable_key(notification_type)
         if not tts_settings.get(enable_key, True):
@@ -864,7 +871,7 @@ class EnergyMonitor:
         )
 
         sw_on = self._appliance_entity_is_on(switch)
-        internal = switch_ent in self._heater_internal_switch_ids
+        internal = switch_ent in self._integration_internal_switch_ids
 
         temp_ent = str(outlet.get("heater_temperature_entity") or "").strip()
         temp: float | None = None
@@ -1105,6 +1112,7 @@ class EnergyMonitor:
                             {"room_name": room.get("name", room_id), "outlet_name": outlet_name},
                             "Air Conditioner Off",
                             DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
+                            integration_auto=True,
                         )
                 except Exception as e:
                     _LOGGER.warning("Presence auto-off failed for %s: %s", sw, e)
@@ -1141,6 +1149,7 @@ class EnergyMonitor:
                             {"room_name": room.get("name", room_id), "outlet_name": outlet_name},
                             "Air Conditioner On",
                             DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
+                            integration_auto=True,
                         )
                 except Exception as e:
                     _LOGGER.warning("Presence auto-restore failed for %s: %s", sw, e)
@@ -1260,6 +1269,7 @@ class EnergyMonitor:
                         {"room_name": room.get("name", room_id), "outlet_name": outlet_name},
                         "Air Conditioner Off",
                         DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
+                        integration_auto=True,
                     )
             except Exception as e:
                 _LOGGER.warning("Presence auto-off (switch listener) failed for %s: %s", entity_id, e)
@@ -1346,10 +1356,8 @@ class EnergyMonitor:
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if not tts_settings.get("notifications_enabled"):
             return
-        if not tts_settings.get("notify_manual_toggle", True):
-            return
 
-        user_name = "Automation"
+        user_name: str | None = None
         try:
             ctx = getattr(new_state, "context", None)
             uid = getattr(ctx, "user_id", None) if ctx is not None else None
@@ -1362,11 +1370,26 @@ class EnergyMonitor:
         except Exception:
             pass
 
+        is_person = user_name is not None
+        is_integration = entity_id in self._integration_internal_switch_ids
+        if is_person:
+            if not tts_settings.get("notify_person_toggle", True):
+                return
+            actor = user_name
+        elif is_integration:
+            if not tts_settings.get("notify_integration_auto", True):
+                return
+            actor = "Automation"
+        else:
+            if not tts_settings.get("notify_external_auto", True):
+                return
+            actor = "Automation"
+
         action = "on" if new_state.state == "on" else "off"
         await self._send_notification_broadcast(
-            "manual_toggle",
+            "toggle",
             {
-                "user_name": user_name,
+                "user_name": actor,
                 "room_name": room_name,
                 "outlet_name": outlet_display,
                 "action": action,
@@ -1472,6 +1495,7 @@ class EnergyMonitor:
                         },
                         "Budget Exceeded",
                         f"{room_name} has exceeded its daily budget of {round(effective_kwh_budget, 1)} kWh (used {round(room_day_kwh, 1)} kWh)",
+                        integration_auto=True,
                     )
                 except Exception as e:
                     _LOGGER.warning("Budget exceeded notification failed for %s: %s", room_name, e)
@@ -2374,6 +2398,7 @@ class EnergyMonitor:
                     {"room_name": room_name},
                     "Enforcement Phase 2",
                     f"{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage.",
+                    integration_auto=True,
                 )
                 ms_o = self._select_minisplit_enforcement_target(
                     room, float(current_watts), float(room_threshold or 0)
@@ -2407,6 +2432,7 @@ class EnergyMonitor:
                     {"room_name": room_name},
                     "Enforcement Phase 1",
                     f"{room_name} has entered enforcement phase 1 (volume escalation). Please reduce power usage.",
+                    integration_auto=True,
                 )
                 now_p1 = dt_util.now()
                 boost_tmpl = (tts_settings.get("phase1_warn_msg_boost_day") or "").strip()
