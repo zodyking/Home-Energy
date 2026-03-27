@@ -866,6 +866,138 @@ class ConfigManager:
                 "vent_automation_on_msg",
                 default_tts.get("vent_automation_on_msg", ""),
             ),
+            "room_warn_tts_enabled": bool(
+                tts.get(
+                    "room_warn_tts_enabled",
+                    default_tts.get("room_warn_tts_enabled", True),
+                )
+            ),
+            "outlet_warn_tts_enabled": bool(
+                tts.get(
+                    "outlet_warn_tts_enabled",
+                    default_tts.get("outlet_warn_tts_enabled", True),
+                )
+            ),
+            "budget_exceeded_tts_enabled": bool(
+                tts.get(
+                    "budget_exceeded_tts_enabled",
+                    default_tts.get("budget_exceeded_tts_enabled", True),
+                )
+            ),
+            "budget_boost_scheduled_tts_enabled": bool(
+                tts.get(
+                    "budget_boost_scheduled_tts_enabled",
+                    default_tts.get("budget_boost_scheduled_tts_enabled", True),
+                )
+            ),
+            "phase1_warn_boost_day_tts_enabled": bool(
+                tts.get(
+                    "phase1_warn_boost_day_tts_enabled",
+                    default_tts.get("phase1_warn_boost_day_tts_enabled", True),
+                )
+            ),
+            "shutoff_tts_enabled": bool(
+                tts.get(
+                    "shutoff_tts_enabled",
+                    default_tts.get("shutoff_tts_enabled", True),
+                )
+            ),
+            "stove_on_tts_enabled": bool(
+                tts.get(
+                    "stove_on_tts_enabled",
+                    default_tts.get("stove_on_tts_enabled", True),
+                )
+            ),
+            "stove_off_tts_enabled": bool(
+                tts.get(
+                    "stove_off_tts_enabled",
+                    default_tts.get("stove_off_tts_enabled", True),
+                )
+            ),
+            "stove_timer_started_tts_enabled": bool(
+                tts.get(
+                    "stove_timer_started_tts_enabled",
+                    default_tts.get("stove_timer_started_tts_enabled", True),
+                )
+            ),
+            "stove_timer_progress_tts_enabled": bool(
+                tts.get(
+                    "stove_timer_progress_tts_enabled",
+                    default_tts.get("stove_timer_progress_tts_enabled", True),
+                )
+            ),
+            "stove_15min_warn_tts_enabled": bool(
+                tts.get(
+                    "stove_15min_warn_tts_enabled",
+                    default_tts.get("stove_15min_warn_tts_enabled", True),
+                )
+            ),
+            "stove_30sec_warn_tts_enabled": bool(
+                tts.get(
+                    "stove_30sec_warn_tts_enabled",
+                    default_tts.get("stove_30sec_warn_tts_enabled", True),
+                )
+            ),
+            "stove_auto_off_tts_enabled": bool(
+                tts.get(
+                    "stove_auto_off_tts_enabled",
+                    default_tts.get("stove_auto_off_tts_enabled", True),
+                )
+            ),
+            "phase1_warn_tts_enabled": bool(
+                tts.get(
+                    "phase1_warn_tts_enabled",
+                    default_tts.get("phase1_warn_tts_enabled", True),
+                )
+            ),
+            "phase2_warn_tts_enabled": bool(
+                tts.get(
+                    "phase2_warn_tts_enabled",
+                    default_tts.get("phase2_warn_tts_enabled", True),
+                )
+            ),
+            "phase2_after_tts_enabled": bool(
+                tts.get(
+                    "phase2_after_tts_enabled",
+                    default_tts.get("phase2_after_tts_enabled", True),
+                )
+            ),
+            "minisplit_phase2_warn_tts_enabled": bool(
+                tts.get(
+                    "minisplit_phase2_warn_tts_enabled",
+                    default_tts.get("minisplit_phase2_warn_tts_enabled", True),
+                )
+            ),
+            "minisplit_phase2_after_tts_enabled": bool(
+                tts.get(
+                    "minisplit_phase2_after_tts_enabled",
+                    default_tts.get("minisplit_phase2_after_tts_enabled", True),
+                )
+            ),
+            "minisplit_phase2_restore_tts_enabled": bool(
+                tts.get(
+                    "minisplit_phase2_restore_tts_enabled",
+                    default_tts.get("minisplit_phase2_restore_tts_enabled", True),
+                )
+            ),
+            "phase_reset_tts_enabled": bool(
+                tts.get(
+                    "phase_reset_tts_enabled",
+                    default_tts.get("phase_reset_tts_enabled", True),
+                )
+            ),
+            "room_kwh_warn_tts_enabled": bool(
+                tts.get(
+                    "room_kwh_warn_tts_enabled",
+                    default_tts.get("room_kwh_warn_tts_enabled", True),
+                )
+            ),
+            "home_kwh_warn_tts_enabled": bool(
+                tts.get(
+                    "home_kwh_warn_tts_enabled",
+                    default_tts.get("home_kwh_warn_tts_enabled", True),
+                )
+            ),
             "notifications_enabled": bool(
                 tts.get(
                     "notifications_enabled",

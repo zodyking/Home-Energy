@@ -16,6 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from .config_manager import vent_like_energy_tracking_key
 from .const import DOMAIN
+from .mobile_notify_target import resolve_mobile_app_notify_slug
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -2265,8 +2266,12 @@ async def websocket_send_test_notification(
         "notify_budget_hit_msg": "{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh).",
         "notify_enforcement_phase1_msg": "{room_name} has entered enforcement phase 1 (volume escalation). Please reduce power usage.",
         "notify_enforcement_phase2_msg": "{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage.",
-        "notify_ac_auto_off_msg": "{outlet_name} was turned off because you left {room_name}.",
-        "notify_ac_auto_on_msg": "{outlet_name} was turned back on because you returned to {room_name}.",
+        "notify_ac_auto_off_msg": (
+            "{outlet_name} was turned off because {person_name} left the monitored zone."
+        ),
+        "notify_ac_auto_on_msg": (
+            "{outlet_name} was turned back on because {person_name} is nearby."
+        ),
         "notify_manual_toggle_msg": "{user_name} turned {action} {outlet_name} in {room_name}.",
     }
 
@@ -2281,6 +2286,8 @@ async def websocket_send_test_notification(
         "outlet_name": "Sample Appliance",
         "user_name": "Test User",
         "action": "on",
+        "person_name": person_name,
+        "person": person_name,
     }
 
     try:
@@ -2291,7 +2298,17 @@ async def websocket_send_test_notification(
         title = f"{prefix} Test Notification"
         message = "This is a test notification from Smart Dashboards."
 
-    notify_target = f"mobile_app_{person_name.lower().replace(' ', '_')}"
+    slug = resolve_mobile_app_notify_slug(hass, target_person)
+    if not slug:
+        connection.send_error(
+            msg["id"],
+            "no_notify_target",
+            "Could not find notify.mobile_app_* for this person. Link a phone under "
+            "Settings → People (device must appear under the person), and ensure the "
+            "Home Assistant Companion app is logged in.",
+        )
+        return
+    notify_target = f"mobile_app_{slug}"
 
     try:
         await hass.services.async_call(

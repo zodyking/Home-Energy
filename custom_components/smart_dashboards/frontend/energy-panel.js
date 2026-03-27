@@ -43,9 +43,10 @@ const TTS_DEFAULTS = {
   notify_enforcement_phase2_title: '{prefix} Enforcement Phase 2',
   notify_enforcement_phase2_msg: '{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage.',
   notify_ac_auto_off_title: '{prefix} Air Conditioner Off',
-  notify_ac_auto_off_msg: '{outlet_name} was turned off because you left {room_name}.',
+  notify_ac_auto_off_msg:
+    '{outlet_name} was turned off because {person_name} left the monitored zone.',
   notify_ac_auto_on_title: '{prefix} Air Conditioner On',
-  notify_ac_auto_on_msg: '{outlet_name} was turned back on because you returned to {room_name}.',
+  notify_ac_auto_on_msg: '{outlet_name} was turned back on because {person_name} is nearby.',
   notify_manual_toggle_title: '{prefix} Appliance Toggled',
   notify_manual_toggle_msg: '{user_name} turned {action} {outlet_name} in {room_name}.',
 };
@@ -263,10 +264,14 @@ class EnergyPanel extends HTMLElement {
       this._entities.binary_sensors = this._entities.binary_sensors || [];
       this._areas = areasResult.areas || [];
       await this._loadPowerData();
-      // Statistics loaded lazily when user switches to Statistics tab (avoids slow recorder query on init)
       this._loading = false;
       this._render();
       this._startRefresh();
+      queueMicrotask(() => {
+        if (!this._showSettings && this._hass) {
+          void this._loadStatistics();
+        }
+      });
     } catch (e) {
       console.error('Failed to load energy config:', e);
       this._loading = false;
@@ -292,20 +297,15 @@ class EnergyPanel extends HTMLElement {
 
   async _loadStatistics() {
     if (!this._hass || this._showSettings) return;
+    this._statsLoading = true;
     this._statsFetchError = null;
-    if (!this._statsData) {
-      this._hydrateStatisticsFromStorage();
-    }
-    const hasExisting = !!this._statsData;
-    this._statsLoading = !hasExisting;
-    if (this._dashboardView === 'statistics' && !hasExisting) {
+    if (this._dashboardView === 'statistics') {
       this._render();
     }
     try {
       const data = await this._hass.callWS({ type: 'smart_dashboards/get_statistics' });
       this._statsData = data;
       this._statsFetchedAt = Date.now();
-      this._persistStatisticsToStorage(data);
     } catch (e) {
       console.error('Failed to load statistics:', e);
       this._statsFetchError = e.message || 'Failed to load statistics';
@@ -314,30 +314,6 @@ class EnergyPanel extends HTMLElement {
       if (this._dashboardView === 'statistics') {
         this._render();
       }
-    }
-  }
-
-  _hydrateStatisticsFromStorage() {
-    try {
-      const raw = localStorage.getItem('smart_dashboards_stats_v1');
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!parsed || parsed.schema !== 1 || !parsed.payload) return;
-      this._statsData = parsed.payload;
-      this._statsFetchedAt = typeof parsed.fetchedAt === 'number' ? parsed.fetchedAt : Date.now();
-    } catch (_e) {
-      /* ignore corrupt storage */
-    }
-  }
-
-  _persistStatisticsToStorage(payload) {
-    try {
-      localStorage.setItem(
-        'smart_dashboards_stats_v1',
-        JSON.stringify({ schema: 1, fetchedAt: Date.now(), payload }),
-      );
-    } catch (_e) {
-      /* quota / private mode */
     }
   }
 
@@ -1365,26 +1341,35 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-icon {
+        --room-card-icon-inner: clamp(15px, 3.8vw, 20px);
         width: clamp(28px, 7vw, 40px);
         height: clamp(28px, 7vw, 40px);
         border-radius: clamp(6px, 1.5vw, 10px);
         background: rgba(255, 255, 255, 0.06);
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: grid;
+        place-items: center;
         flex-shrink: 0;
+        line-height: 0;
+        box-sizing: border-box;
       }
 
       .room-icon svg {
-        width: clamp(15px, 3.8vw, 20px);
-        height: clamp(15px, 3.8vw, 20px);
+        width: var(--room-card-icon-inner);
+        height: var(--room-card-icon-inner);
         fill: var(--panel-accent);
+        display: block;
       }
 
       .room-icon ha-icon {
-        width: clamp(15px, 3.8vw, 20px);
-        height: clamp(15px, 3.8vw, 20px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: var(--room-card-icon-inner);
+        height: var(--room-card-icon-inner);
         color: var(--panel-accent);
+        flex-shrink: 0;
+        --mdc-icon-size: var(--room-card-icon-inner);
+        --ha-icon-size: var(--room-card-icon-inner);
       }
 
       .room-header-title-col {
@@ -3552,13 +3537,55 @@ class EnergyPanel extends HTMLElement {
 
       .room-settings-header {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-start;
         gap: 8px;
         padding: 16px 20px;
+        min-width: 0;
+        overflow-x: auto;
+        scrollbar-width: thin;
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
+      }
+
+      .room-settings-header-start {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .room-settings-header-presence {
+        flex: 1 1 clamp(4rem, 18vw, 12rem);
+        min-width: 0;
+        display: flex;
+        align-items: center;
+      }
+
+      .room-settings-header-presence:not(:has(.room-settings-presence-live)) {
+        flex: 0 0 0;
+        width: 0;
+        min-width: 0;
+        overflow: hidden;
+        padding: 0;
+        margin: 0;
+      }
+
+      .room-settings-header-actions {
+        flex-shrink: 0;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .room-settings-header .room-name-input {
+        flex: 1 1 clamp(5rem, 22vw, 14rem);
+        min-width: 0;
+        font-size: clamp(11px, 2.5vw, 13px);
+        font-weight: 500;
+        padding: 8px 10px;
       }
 
       .room-icon-picker-trigger {
@@ -3601,6 +3628,26 @@ class EnergyPanel extends HTMLElement {
         border: 1px solid var(--card-border);
         word-break: break-word;
         overflow-wrap: anywhere;
+      }
+
+      .room-settings-presence-live--header {
+        margin-bottom: 0;
+        width: 100%;
+        min-width: 0;
+        padding: 6px 8px;
+        font-size: clamp(10px, 2.2vw, 11px);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        word-break: normal;
+        overflow-wrap: normal;
+      }
+
+      .room-settings-presence-live--header .room-settings-presence-live-text {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .room-icon-modal-overlay {
@@ -3694,13 +3741,6 @@ class EnergyPanel extends HTMLElement {
         .room-icon-modal-grid-btn {
           transition: none;
         }
-      }
-
-      .room-settings-header input {
-        font-size: 13px;
-        font-weight: 500;
-        max-width: 160px;
-        padding: 8px 10px;
       }
 
       .room-settings-body {
@@ -4156,12 +4196,17 @@ class EnergyPanel extends HTMLElement {
       }
 
       .toggle-confirm-modal {
-        background: var(--card-background, #fff);
+        background: var(
+          --ha-card-background-color,
+          var(--card-background-color, var(--input-bg, #1e1e1e))
+        );
+        color: var(--primary-text-color, #e1e1e1);
+        border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
         border-radius: 12px;
         padding: 20px 24px;
         min-width: 280px;
         max-width: 90vw;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
         animation: scaleIn 0.15s ease;
       }
 
@@ -4173,19 +4218,20 @@ class EnergyPanel extends HTMLElement {
       .toggle-confirm-title {
         font-size: 18px;
         font-weight: 600;
-        color: var(--primary-text-color, #333);
+        color: var(--primary-text-color, #f5f5f5);
         margin-bottom: 12px;
       }
 
       .toggle-confirm-message {
         font-size: 14px;
-        color: var(--secondary-text-color, #666);
+        color: var(--secondary-text-color, #c8c8c8);
         margin-bottom: 20px;
         line-height: 1.5;
       }
 
       .toggle-confirm-message strong {
-        color: var(--primary-text-color, #333);
+        color: var(--primary-text-color, #ffffff);
+        font-weight: 600;
       }
 
       .toggle-confirm-buttons {
@@ -4206,12 +4252,13 @@ class EnergyPanel extends HTMLElement {
       }
 
       .toggle-confirm-cancel {
-        background: var(--card-border, #e0e0e0);
-        color: var(--primary-text-color, #333);
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--primary-text-color, #e8e8e8);
+        border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.18));
       }
 
       .toggle-confirm-cancel:hover {
-        background: #d0d0d0;
+        background: rgba(255, 255, 255, 0.14);
       }
 
       .toggle-confirm-ok {
@@ -6105,6 +6152,67 @@ class EnergyPanel extends HTMLElement {
     };
   }
 
+  /** Per-line TTS on/off (saved as `${lineKey}_tts_enabled`, default on). */
+  _ttsLineEnableHtml(tsSettings, lineKey, controlsSelector = '') {
+    const storageKey = `${lineKey}_tts_enabled`;
+    const on = tsSettings[storageKey] !== false;
+    const id = `tts-enable-${lineKey.replace(/_/g, '-')}`;
+    const dataAttr = controlsSelector
+      ? ` data-tts-controls="${controlsSelector.replace(/"/g, '&quot;')}"`
+      : '';
+    return `
+      <div class="toggle-row tts-line-enable-row" style="margin:0;justify-content:flex-end;">
+        <label class="toggle-switch">
+          <input type="checkbox" id="${id}" class="tts-line-enable"${dataAttr} data-tts-line="${lineKey}" ${on ? 'checked' : ''} />
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="toggle-label" style="font-size:11px;">Enable speech</span>
+      </div>
+    `;
+  }
+
+  _bindTtsLineEnableToggles() {
+    const tab = this.shadowRoot.querySelector('#tab-tts');
+    if (!tab) return;
+    const applyOne = (cb) => {
+      const controls = cb.getAttribute('data-tts-controls');
+      const on = cb.checked;
+      if (controls) {
+        const el = this.shadowRoot.querySelector(controls);
+        if (el) el.disabled = !on;
+        return;
+      }
+      const group = cb.closest('.tts-msg-group');
+      if (!group) return;
+      group.querySelectorAll('input.form-input, textarea.tts-msg-textarea').forEach((el) => {
+        if (el.classList.contains('tts-line-enable')) return;
+        el.disabled = !on;
+      });
+    };
+    tab.querySelectorAll('.tts-line-enable').forEach((cb) => {
+      applyOne(cb);
+      cb.addEventListener('change', () => applyOne(cb));
+    });
+    const ventCb = tab.querySelector('#tts-vent-automation-enabled');
+    const ventMsg = tab.querySelector('#tts-vent-automation-msg');
+    if (ventCb && ventMsg) {
+      const syncVent = () => {
+        ventMsg.disabled = !ventCb.checked;
+      };
+      syncVent();
+      ventCb.addEventListener('change', syncVent);
+    }
+    const hCb = tab.querySelector('#tts-heater-automation-enabled');
+    const hMsg = tab.querySelector('#tts-heater-automation-msg');
+    if (hCb && hMsg) {
+      const syncH = () => {
+        hMsg.disabled = !hCb.checked;
+      };
+      syncH();
+      hCb.addEventListener('change', syncH);
+    }
+  }
+
   _renderSettings(styles) {
     const rooms = this._config?.rooms || [];
     const mediaPlayers = this._entities?.media_players || [];
@@ -6232,14 +6340,40 @@ class EnergyPanel extends HTMLElement {
           min-height: 92px;
           resize: vertical;
           font-family: inherit;
-          font-size: 13px;
+          font-size: 14px;
           line-height: 1.45;
-          padding: 10px 12px;
-          border-radius: 6px;
-          border: 1px solid var(--card-border);
-          background: var(--card-bg);
-          color: var(--primary-text-color);
+          padding: 12px 14px;
+          border-radius: 8px;
+          border: 1px solid var(--input-border, rgba(255, 255, 255, 0.12));
+          background: var(--input-bg, #282828);
+          color: var(--primary-text-color, #e0e0e0);
           box-sizing: border-box;
+          transition: border-color 0.2s, background 0.2s;
+        }
+        .tts-msg-textarea:focus {
+          outline: none;
+          border-color: var(--panel-accent);
+          background: var(--input-bg, #282828);
+        }
+        .tts-msg-textarea:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+        .tts-msg-header-row {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 8px;
+          flex-wrap: wrap;
+        }
+        .tts-msg-header-row .tts-line-enable-row {
+          margin-bottom: 0 !important;
+          flex-shrink: 0;
+        }
+        .form-input:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
         }
         .pe-budget-boost-section {
           margin-bottom: 16px;
@@ -6350,8 +6484,13 @@ class EnergyPanel extends HTMLElement {
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Room Warning Message</div>
-                <div class="tts-msg-desc">Spoken when room total exceeds threshold</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Room Warning Message</div>
+                    <div class="tts-msg-desc">Spoken when room total exceeds threshold</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'room_warn')}
+                </div>
                 <input type="text" class="form-input" id="tts-room-warn" 
                   value="${ttsSettings.room_warn_msg || TTS_DEFAULTS.room_warn_msg}" 
                   placeholder="{room_name} is using {watts} watts — over your {threshold} watt limit.">
@@ -6361,8 +6500,13 @@ class EnergyPanel extends HTMLElement {
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Outlet Warning Message</div>
-                <div class="tts-msg-desc">Spoken when outlet total exceeds threshold</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Outlet Warning Message</div>
+                    <div class="tts-msg-desc">Spoken when outlet total exceeds threshold</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'outlet_warn')}
+                </div>
                 <input type="text" class="form-input" id="tts-outlet-warn" 
                   value="${ttsSettings.outlet_warn_msg || TTS_DEFAULTS.outlet_warn_msg}" 
                   placeholder="{outlet_name} in {room_name} is using {watts} watts — over the {threshold} watt limit.">
@@ -6372,8 +6516,13 @@ class EnergyPanel extends HTMLElement {
               </div>
 
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Budget Exceeded Message</div>
-                <div class="tts-msg-desc">Spoken when room first meets its daily kWh budget and threshold warnings become active</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Budget Exceeded Message</div>
+                    <div class="tts-msg-desc">Spoken when room first meets its daily kWh budget and threshold warnings become active</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'budget_exceeded')}
+                </div>
                 <input type="text" class="form-input" id="tts-budget-exceeded" 
                   value="${ttsSettings.budget_exceeded_msg || TTS_DEFAULTS.budget_exceeded_msg}" 
                   placeholder="{room_name} at {kwh_used} kWh — power alerts are on.">
@@ -6388,18 +6537,31 @@ class EnergyPanel extends HTMLElement {
                   Configure boost days, time window, and repeat interval under <strong>Enforcement</strong>.
                   Set <strong>Default media player</strong> above for scheduled reminders. If Saturday and Sunday are both selected, templates may use “weekend” in <code>{period_label}</code>.
                 </div>
-                <div class="tts-msg-title" style="margin-top:4px;">Scheduled reminder message</div>
+                <div class="tts-msg-header-row" style="margin-top:4px;">
+                  <div class="tts-msg-title" style="margin-bottom:0;">Scheduled reminder message</div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'budget_boost_scheduled', '#tts-budget-boost-scheduled')}
+                </div>
                 <textarea class="tts-msg-textarea" id="tts-budget-boost-scheduled" rows="4" spellcheck="false">${schedEsc}</textarea>
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{budget_multiplier}</code> <code>{period_label}</code></div>
-                <div class="tts-msg-title" style="margin-top:12px;">Phase 1 message on boost days</div>
-                <div class="tts-msg-desc">Used when entering volume escalation on a boost day (per room). Leave empty to use the standard Phase 1 message only.</div>
+                <div class="tts-msg-header-row" style="margin-top:12px;">
+                  <div>
+                    <div class="tts-msg-title" style="margin-bottom:4px;">Phase 1 message on boost days</div>
+                    <div class="tts-msg-desc">Used when entering volume escalation on a boost day (per room). Leave empty to use the standard Phase 1 message only.</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'phase1_warn_boost_day', '#tts-phase1-boost-day')}
+                </div>
                 <textarea class="tts-msg-textarea" id="tts-phase1-boost-day" rows="5" spellcheck="false">${p1BoostEsc}</textarea>
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code> <code>{threshold}</code> <code>{kwh_budget}</code> <code>{kwh_budget_effective}</code> <code>{budget_multiplier}</code> <code>{period_label}</code></div>
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Shutoff Reset Message</div>
-                <div class="tts-msg-desc">Spoken when a plug is shut off and reset due to overload</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Shutoff Reset Message</div>
+                    <div class="tts-msg-desc">Spoken when a plug is shut off and reset due to overload</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'shutoff')}
+                </div>
                 <input type="text" class="form-input" id="tts-shutoff" 
                   value="${ttsSettings.shutoff_msg || TTS_DEFAULTS.shutoff_msg}" 
                   placeholder="{room_name} {outlet_name} {plug} reset after overload — reduce power use.">
@@ -6409,8 +6571,13 @@ class EnergyPanel extends HTMLElement {
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Stove Turned On Message</div>
-                <div class="tts-msg-desc">Spoken when stove is detected as turned on</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Stove Turned On Message</div>
+                    <div class="tts-msg-desc">Spoken when stove is detected as turned on</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'stove_on')}
+                </div>
                 <input type="text" class="form-input" id="tts-stove-on" 
                   value="${ttsSettings.stove_on_msg || '{prefix} Stove has been turned on'}" 
                   placeholder="{prefix} Stove has been turned on">
@@ -6420,8 +6587,13 @@ class EnergyPanel extends HTMLElement {
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Stove Turned Off Message</div>
-                <div class="tts-msg-desc">Spoken when stove is detected as turned off</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Stove Turned Off Message</div>
+                    <div class="tts-msg-desc">Spoken when stove is detected as turned off</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'stove_off')}
+                </div>
                 <input type="text" class="form-input" id="tts-stove-off" 
                   value="${ttsSettings.stove_off_msg || '{prefix} Stove has been turned off'}" 
                   placeholder="{prefix} Stove has been turned off">
@@ -6431,8 +6603,13 @@ class EnergyPanel extends HTMLElement {
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Stove Timer Started Message</div>
-                <div class="tts-msg-desc">Spoken when stove is on and no one is in the kitchen (timer just started)</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Stove Timer Started Message</div>
+                    <div class="tts-msg-desc">Spoken when stove is on and no one is in the kitchen (timer just started)</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'stove_timer_started')}
+                </div>
                 <input type="text" class="form-input" id="tts-stove-timer-started" 
                   value="${ttsSettings.stove_timer_started_msg || '{prefix} The stove is on with no one in the kitchen. A {cooking_time_minutes} minute Unattended cooking timer has started.'}" 
                   placeholder="{prefix} The stove is on with no one in the kitchen. A {cooking_time_minutes} minute Unattended cooking timer has started.">
@@ -6442,15 +6619,25 @@ class EnergyPanel extends HTMLElement {
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Stove timer — progress announcements</div>
-                <div class="tts-msg-desc">Spoken periodically during the long unattended phase (before the final countdown). Interval is set per stove under room settings.</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Stove timer — progress announcements</div>
+                    <div class="tts-msg-desc">Spoken periodically during the long unattended phase (before the final countdown). Interval is set per stove under room settings.</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'stove_timer_progress')}
+                </div>
                 <textarea class="tts-msg-textarea" id="tts-stove-timer-progress" rows="3" spellcheck="false">${stoveProgressEsc}</textarea>
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{minutes_remaining}</code> <code>{seconds_remaining}</code></div>
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Stove Cooking-Time Warning</div>
-                <div class="tts-msg-desc">Spoken when stove has been on for the configured cooking time with no presence detected</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Stove Cooking-Time Warning</div>
+                    <div class="tts-msg-desc">Spoken when stove has been on for the configured cooking time with no presence detected</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'stove_15min_warn')}
+                </div>
                 <input type="text" class="form-input" id="tts-stove-15min" 
                   value="${ttsSettings.stove_15min_warn_msg || '{prefix} Stove has been on for {cooking_time_minutes} minutes with no one in the kitchen. Stove will automatically turn off in {final_warning_seconds} seconds if no one returns'}" 
                   placeholder="{prefix} Stove has been on for {cooking_time_minutes} minutes with no one in the kitchen. Stove will automatically turn off in {final_warning_seconds} seconds if no one returns">
@@ -6460,8 +6647,13 @@ class EnergyPanel extends HTMLElement {
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Stove Final Warning</div>
-                <div class="tts-msg-desc">Spoken when final countdown begins before auto-shutoff</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Stove Final Warning</div>
+                    <div class="tts-msg-desc">Spoken when final countdown begins before auto-shutoff</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'stove_30sec_warn')}
+                </div>
                 <input type="text" class="form-input" id="tts-stove-30sec" 
                   value="${ttsSettings.stove_30sec_warn_msg || '{prefix} Stove will automatically turn off in {final_warning_seconds} seconds if no one returns to the kitchen'}" 
                   placeholder="{prefix} Stove will automatically turn off in {final_warning_seconds} seconds if no one returns to the kitchen">
@@ -6471,8 +6663,13 @@ class EnergyPanel extends HTMLElement {
               </div>
               
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Stove Auto-Shutoff Message</div>
-                <div class="tts-msg-desc">Spoken when stove is automatically turned off for safety</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Stove Auto-Shutoff Message</div>
+                    <div class="tts-msg-desc">Spoken when stove is automatically turned off for safety</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'stove_auto_off')}
+                </div>
                 <input type="text" class="form-input" id="tts-stove-auto-off" 
                   value="${ttsSettings.stove_auto_off_msg || '{prefix} Stove has been automatically turned off for safety'}" 
                   placeholder="{prefix} Stove has been automatically turned off for safety">
@@ -6486,10 +6683,13 @@ class EnergyPanel extends HTMLElement {
                 Spoken when presence or temperature automation turns on the vent or wall heater switch from the appliance card. Uses each room's media player and volume. Heater TTS is off by default.
               </p>
               <div class="form-group" style="margin-bottom: 12px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-vent-automation-enabled" ${ttsSettings.vent_automation_tts_enabled ? 'checked' : ''} />
-                  Speak when vent automation turns the fan on
-                </label>
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-vent-automation-enabled" ${ttsSettings.vent_automation_tts_enabled ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Speak when vent automation turns the fan on</span>
+                </div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Vent automation — on message</div>
@@ -6498,10 +6698,13 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code></div>
               </div>
               <div class="form-group" style="margin: 16px 0 12px 0;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-heater-automation-enabled" ${ttsSettings.heater_automation_tts_enabled ? 'checked' : ''} />
-                  Speak when heater automation turns the heater on
-                </label>
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-heater-automation-enabled" ${ttsSettings.heater_automation_tts_enabled ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Speak when heater automation turns the heater on</span>
+                </div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Heater automation — on message</div>
@@ -6512,72 +6715,117 @@ class EnergyPanel extends HTMLElement {
 
               <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Power Enforcement Messages</h3>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Phase 1 Warning (Volume Escalation)</div>
-                <div class="tts-msg-desc">Spoken when warning count triggers volume escalation phase</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Phase 1 Warning (Volume Escalation)</div>
+                    <div class="tts-msg-desc">Spoken when warning count triggers volume escalation phase</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'phase1_warn')}
+                </div>
                 <input type="text" class="form-input" id="tts-phase1-warn" 
                   value="${ttsSettings.phase1_warn_msg || TTS_DEFAULTS.phase1_warn_msg}" 
                   placeholder="{room_name} has exceeded electricity threshold {warning_count} times. Volume will rise until under {threshold} watts.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code> <code>{threshold}</code></div>
               </div>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Phase 2 Warning (Power Cycling)</div>
-                <div class="tts-msg-desc">Spoken before power cycle (outlets will be cycled)</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Phase 2 Warning (Power Cycling)</div>
+                    <div class="tts-msg-desc">Spoken before power cycle (outlets will be cycled)</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'phase2_warn')}
+                </div>
                 <input type="text" class="form-input" id="tts-phase2-warn" 
                   value="${ttsSettings.phase2_warn_msg || TTS_DEFAULTS.phase2_warn_msg}" 
                   placeholder="{room_name} has exceeded electricity threshold {warning_count} times. Cycling outlets now.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{warning_count}</code></div>
               </div>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Phase 2 After Message</div>
-                <div class="tts-msg-desc">Spoken after power cycle completes (adhere to warning)</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Phase 2 After Message</div>
+                    <div class="tts-msg-desc">Spoken after power cycle completes (adhere to warning)</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'phase2_after')}
+                </div>
                 <input type="text" class="form-input" id="tts-phase2-after" 
                   value="${ttsSettings.phase2_after_msg || TTS_DEFAULTS.phase2_after_msg}" 
                   placeholder="Cycle complete in {room_name}. Stay under limit.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code></div>
               </div>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Phase 2 — Mini-Split Warning</div>
-                <div class="tts-msg-desc">When a qualifying mini-split is cut first (room overload attributed to that unit). Uses spoken cardinals for {restore_delay} and {room_threshold}.</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Phase 2 — Mini-Split Warning</div>
+                    <div class="tts-msg-desc">When a qualifying mini-split is cut first (room overload attributed to that unit). Uses spoken cardinals for {restore_delay} and {room_threshold}.</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'minisplit_phase2_warn')}
+                </div>
                 <input type="text" class="form-input" id="tts-minisplit-phase2-warn"
                   value="${(ttsSettings.minisplit_phase2_warn_msg ?? TTS_DEFAULTS.minisplit_phase2_warn_msg).replace(/"/g, '&quot;')}"
                   placeholder="Mini-split enforcement warning...">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{warning_count}</code> <code>{restore_delay}</code> <code>{room_threshold}</code></div>
               </div>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Phase 2 — Mini-Split After Message</div>
-                <div class="tts-msg-desc">After minimum off time and any excluded outlet cycle</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Phase 2 — Mini-Split After Message</div>
+                    <div class="tts-msg-desc">After minimum off time and any excluded outlet cycle</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'minisplit_phase2_after')}
+                </div>
                 <input type="text" class="form-input" id="tts-minisplit-phase2-after"
                   value="${(ttsSettings.minisplit_phase2_after_msg ?? TTS_DEFAULTS.minisplit_phase2_after_msg).replace(/"/g, '&quot;')}"
                   placeholder="Mini-split after message...">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{room_threshold}</code></div>
               </div>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Phase 2 — Mini-Split Restore (optional)</div>
-                <div class="tts-msg-desc">When room is back under threshold and power is restored. Leave empty for silent restore.</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Phase 2 — Mini-Split Restore (optional)</div>
+                    <div class="tts-msg-desc">When room is back under threshold and power is restored. Leave empty for silent restore.</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'minisplit_phase2_restore')}
+                </div>
                 <input type="text" class="form-input" id="tts-minisplit-phase2-restore"
                   value="${(ttsSettings.minisplit_phase2_restore_msg ?? TTS_DEFAULTS.minisplit_phase2_restore_msg).replace(/"/g, '&quot;')}"
                   placeholder="Restore announcement...">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{room_threshold}</code></div>
               </div>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Phase Reset Message</div>
-                <div class="tts-msg-desc">Spoken when room maintains power below threshold for reset time</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Phase Reset Message</div>
+                    <div class="tts-msg-desc">Spoken when room maintains power below threshold for reset time</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'phase_reset')}
+                </div>
                 <input type="text" class="form-input" id="tts-phase-reset" 
                   value="${ttsSettings.phase_reset_msg || TTS_DEFAULTS.phase_reset_msg}" 
                   placeholder="{room_name} under limit — enforcement reset.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code></div>
               </div>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Room kWh Warning</div>
-                <div class="tts-msg-desc">Spoken when room exceeds daily kWh interval</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Room kWh Warning</div>
+                    <div class="tts-msg-desc">Spoken when room exceeds daily kWh interval</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'room_kwh_warn')}
+                </div>
                 <input type="text" class="form-input" id="tts-room-kwh-warn" 
                   value="${ttsSettings.room_kwh_warn_msg || TTS_DEFAULTS.room_kwh_warn_msg}" 
                   placeholder="{room_name} used {kwh_limit} kWh today ({percentage}% of home) — reduce use.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{kwh_limit}</code> <code>{percentage}</code></div>
               </div>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Home kWh Warning</div>
-                <div class="tts-msg-desc">Spoken when home exceeds daily kWh limit</div>
+                <div class="tts-msg-header-row">
+                  <div>
+                    <div class="tts-msg-title">Home kWh Warning</div>
+                    <div class="tts-msg-desc">Spoken when home exceeds daily kWh limit</div>
+                  </div>
+                  ${this._ttsLineEnableHtml(ttsSettings, 'home_kwh_warn')}
+                </div>
                 <input type="text" class="form-input" id="tts-home-kwh-warn" 
                   value="${ttsSettings.home_kwh_warn_msg || TTS_DEFAULTS.home_kwh_warn_msg}" 
                   placeholder="Home over {kwh_limit} kWh today — reduce consumption.">
@@ -6592,21 +6840,27 @@ class EnergyPanel extends HTMLElement {
                 <h2 class="card-title">Push Notifications</h2>
               </div>
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
-                For rooms with a person assigned (<strong>Presence person</strong> in room settings), optional mobile alerts. Titles use your TTS prefix. Targets the Home Assistant <code>notify.mobile_app_*</code> service matching the person’s device name.
+                For rooms with a person assigned (<strong>Presence person</strong> in room settings), optional mobile alerts. Titles use your TTS prefix. Notifications use the <code>notify.mobile_app_*</code> service for each device linked to that person in <strong>Settings → People</strong> (same suffix as the linked <code>device_tracker.*</code> entity, e.g. <code>Brandon’s Iphone</code> → <code>notify.mobile_app_brandons_iphone</code>).
               </p>
               <div class="form-group" style="margin-bottom: 16px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notifications-enabled" ${ttsSettings.notifications_enabled ? 'checked' : ''} />
-                  <strong>Enable push notifications</strong>
-                </label>
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-notifications-enabled" ${ttsSettings.notifications_enabled ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label"><strong>Enable push notifications</strong></span>
+                </div>
               </div>
 
               <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Budget Exceeded Notification</h3>
               <div class="form-group" style="margin-bottom: 12px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notify-room-budget-hit" ${ttsSettings.notify_room_budget_hit !== false ? 'checked' : ''} />
-                  Notify when room budget is exceeded
-                </label>
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-notify-room-budget-hit" ${ttsSettings.notify_room_budget_hit !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Notify when room budget is exceeded</span>
+                </div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Title</div>
@@ -6625,10 +6879,13 @@ class EnergyPanel extends HTMLElement {
 
               <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Enforcement Phase Change Notifications</h3>
               <div class="form-group" style="margin-bottom: 12px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notify-enforcement-phase-change" ${ttsSettings.notify_enforcement_phase_change !== false ? 'checked' : ''} />
-                  Notify on enforcement phase changes
-                </label>
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-notify-enforcement-phase-change" ${ttsSettings.notify_enforcement_phase_change !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Notify on enforcement phase changes</span>
+                </div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Phase 1 Title</div>
@@ -6661,10 +6918,13 @@ class EnergyPanel extends HTMLElement {
 
               <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Air Conditioner Presence Notifications</h3>
               <div class="form-group" style="margin-bottom: 12px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notify-ac-auto-off" ${ttsSettings.notify_ac_auto_off !== false ? 'checked' : ''} />
-                  Notify when air conditioner auto-off (presence)
-                </label>
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-notify-ac-auto-off" ${ttsSettings.notify_ac_auto_off !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Notify when air conditioner auto-off (presence)</span>
+                </div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">AC Auto-Off Title</div>
@@ -6677,14 +6937,17 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">AC Auto-Off Message</div>
                 <input type="text" class="form-input" id="notify-ac-auto-off-msg"
                   value="${(ttsSettings.notify_ac_auto_off_msg || TTS_DEFAULTS.notify_ac_auto_off_msg).replace(/"/g, '&quot;')}"
-                  placeholder="{outlet_name} was turned off because you left {room_name}.">
-                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code></div>
+                  placeholder="{outlet_name} was turned off because {person_name} left the monitored zone.">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{outlet_name}</code> <code>{person_name}</code> <code>{person}</code> <code>{room_name}</code></div>
               </div>
               <div class="form-group" style="margin: 16px 0 12px 0;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notify-ac-auto-on" ${ttsSettings.notify_ac_auto_on !== false ? 'checked' : ''} />
-                  Notify when air conditioner restored (presence)
-                </label>
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-notify-ac-auto-on" ${ttsSettings.notify_ac_auto_on !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Notify when air conditioner restored (presence)</span>
+                </div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">AC Auto-On Title</div>
@@ -6697,16 +6960,19 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">AC Auto-On Message</div>
                 <input type="text" class="form-input" id="notify-ac-auto-on-msg"
                   value="${(ttsSettings.notify_ac_auto_on_msg || TTS_DEFAULTS.notify_ac_auto_on_msg).replace(/"/g, '&quot;')}"
-                  placeholder="{outlet_name} was turned back on because you returned to {room_name}.">
-                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code></div>
+                  placeholder="{outlet_name} was turned back on because {person_name} is nearby.">
+                <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{outlet_name}</code> <code>{person_name}</code> <code>{person}</code> <code>{room_name}</code></div>
               </div>
 
               <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Manual Toggle Notification</h3>
               <div class="form-group" style="margin-bottom: 12px;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" id="tts-notify-manual-toggle" ${ttsSettings.notify_manual_toggle !== false ? 'checked' : ''} />
-                  Notify on manual appliance toggle by others
-                </label>
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-notify-manual-toggle" ${ttsSettings.notify_manual_toggle !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Notify on manual appliance toggle by others</span>
+                </div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Title</div>
@@ -7176,21 +7442,19 @@ class EnergyPanel extends HTMLElement {
 
   _syncRoomPresenceLiveStrip(card) {
     if (!card) return;
-    const body = card.querySelector('.room-settings-body');
-    if (!body) return;
+    const slot = card.querySelector('.room-settings-header-presence');
+    if (!slot) return;
     const pid = (card.querySelector('.room-presence-person')?.value || '').trim();
-    let strip = body.querySelector('.room-settings-presence-live');
+    let strip = slot.querySelector('.room-settings-presence-live');
     if (!pid.startsWith('person.')) {
       if (strip) strip.remove();
       return;
     }
     if (!strip) {
       strip = document.createElement('div');
-      strip.className = 'room-settings-presence-live';
+      strip.className = 'room-settings-presence-live room-settings-presence-live--header';
       strip.innerHTML = '<span class="room-settings-presence-live-text">Loading…</span>';
-      const anchor = body.querySelector('.responsive-light-section');
-      if (anchor) anchor.insertAdjacentElement('afterend', strip);
-      else body.insertBefore(strip, body.firstChild);
+      slot.appendChild(strip);
     }
     strip.dataset.presencePerson = pid;
     this._updateRoomPresenceLiveLabels();
@@ -7561,22 +7825,25 @@ class EnergyPanel extends HTMLElement {
     const personEsc = personEnt.replace(/"/g, '&quot;');
     const presLive =
       personEnt.startsWith('person.')
-        ? `<div class="room-settings-presence-live" data-presence-person="${personEsc}">
+        ? `<div class="room-settings-presence-live room-settings-presence-live--header" data-presence-person="${personEsc}">
         <span class="room-settings-presence-live-text">Loading…</span>
       </div>`
         : '';
     return `
       <div class="room-settings-card" data-room-index="${index}" draggable="false">
         <div class="room-settings-header">
-          <div class="room-drag-handle" title="Drag to reorder rooms">
-            <svg viewBox="0 0 24 24">${icons.menu}</svg>
+          <div class="room-settings-header-start">
+            <div class="room-drag-handle" title="Drag to reorder rooms">
+              <svg viewBox="0 0 24 24">${icons.menu}</svg>
+            </div>
+            <input type="hidden" class="room-icon-mdi" value="${iconStored.replace(/"/g, '&quot;')}">
+            <button type="button" class="room-icon-picker-trigger" data-room-index="${index}" aria-label="Choose room icon" title="Room icon">
+              <ha-icon icon="${iconEffective.replace(/"/g, '&quot;')}"></ha-icon>
+            </button>
+            <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name">
           </div>
-          <input type="hidden" class="room-icon-mdi" value="${iconStored.replace(/"/g, '&quot;')}">
-          <button type="button" class="room-icon-picker-trigger" data-room-index="${index}" aria-label="Choose room icon" title="Room icon">
-            <ha-icon icon="${iconEffective.replace(/"/g, '&quot;')}"></ha-icon>
-          </button>
-          <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name" style="max-width: 180px;">
-          <div style="display: flex; gap: 8px;">
+          <div class="room-settings-header-presence">${presLive}</div>
+          <div class="room-settings-header-actions">
             <button class="btn btn-secondary toggle-room-btn" data-index="${index}">Edit</button>
             <button class="btn btn-primary room-save-btn" data-index="${index}" title="Save this room">
               <svg class="btn-icon" viewBox="0 0 24 24" style="width: 14px; height: 14px;">${icons.check}</svg>
@@ -7590,7 +7857,6 @@ class EnergyPanel extends HTMLElement {
 
         <div class="room-settings-body" id="room-body-${index}" style="display: none;">
           ${this._renderResponsiveLightWarnings(room, index)}
-          ${presLive}
           <div class="grid-2" style="margin-bottom: 12px;">
             <div class="form-group">
               <label class="form-label">Media Player</label>
@@ -8482,6 +8748,9 @@ class EnergyPanel extends HTMLElement {
         this._settingsTab = 'rooms';
         this._render();
         this._startRefresh();
+        if (this._dashboardView === 'statistics') {
+          void this._loadStatistics();
+        }
       });
     }
 
@@ -8623,6 +8892,7 @@ class EnergyPanel extends HTMLElement {
       });
     });
 
+    this._bindTtsLineEnableToggles();
   }
 
   async _testToggleSwitch(btn) {
@@ -9417,6 +9687,8 @@ class EnergyPanel extends HTMLElement {
       this.shadowRoot.querySelector('.entity-datalist-input.tts-default-mp')?.value || ''
     ).trim();
 
+    const ttsLineOn = (id) => this.shadowRoot.querySelector(`#${id}`)?.checked !== false;
+
     const tabStats = this.shadowRoot.querySelector('#tab-statistics');
     const _si = (cls) => (tabStats?.querySelector(`input.${cls}`)?.value ?? '').trim();
     const statsRefreshEl = tabStats?.querySelector('#stats-refresh-seconds');
@@ -9485,6 +9757,28 @@ class EnergyPanel extends HTMLElement {
         min_interval_seconds: Math.max(1, Math.min(60, parseInt(this.shadowRoot.querySelector('#tts-min-interval')?.value) || 3)),
         tts_default_media_player: ttsDefaultMediaPlayer,
         prefix: ttsPrefix,
+        room_warn_tts_enabled: ttsLineOn('tts-enable-room-warn'),
+        outlet_warn_tts_enabled: ttsLineOn('tts-enable-outlet-warn'),
+        budget_exceeded_tts_enabled: ttsLineOn('tts-enable-budget-exceeded'),
+        budget_boost_scheduled_tts_enabled: ttsLineOn('tts-enable-budget-boost-scheduled'),
+        phase1_warn_boost_day_tts_enabled: ttsLineOn('tts-enable-phase1-warn-boost-day'),
+        shutoff_tts_enabled: ttsLineOn('tts-enable-shutoff'),
+        stove_on_tts_enabled: ttsLineOn('tts-enable-stove-on'),
+        stove_off_tts_enabled: ttsLineOn('tts-enable-stove-off'),
+        stove_timer_started_tts_enabled: ttsLineOn('tts-enable-stove-timer-started'),
+        stove_timer_progress_tts_enabled: ttsLineOn('tts-enable-stove-timer-progress'),
+        stove_15min_warn_tts_enabled: ttsLineOn('tts-enable-stove-15min-warn'),
+        stove_30sec_warn_tts_enabled: ttsLineOn('tts-enable-stove-30sec-warn'),
+        stove_auto_off_tts_enabled: ttsLineOn('tts-enable-stove-auto-off'),
+        phase1_warn_tts_enabled: ttsLineOn('tts-enable-phase1-warn'),
+        phase2_warn_tts_enabled: ttsLineOn('tts-enable-phase2-warn'),
+        phase2_after_tts_enabled: ttsLineOn('tts-enable-phase2-after'),
+        minisplit_phase2_warn_tts_enabled: ttsLineOn('tts-enable-minisplit-phase2-warn'),
+        minisplit_phase2_after_tts_enabled: ttsLineOn('tts-enable-minisplit-phase2-after'),
+        minisplit_phase2_restore_tts_enabled: ttsLineOn('tts-enable-minisplit-phase2-restore'),
+        phase_reset_tts_enabled: ttsLineOn('tts-enable-phase-reset'),
+        room_kwh_warn_tts_enabled: ttsLineOn('tts-enable-room-kwh-warn'),
+        home_kwh_warn_tts_enabled: ttsLineOn('tts-enable-home-kwh-warn'),
         room_warn_msg: ttsRoomWarn,
         outlet_warn_msg: ttsOutletWarn,
         budget_exceeded_msg: ttsBudgetExceeded,
@@ -9543,10 +9837,21 @@ class EnergyPanel extends HTMLElement {
       this._config = config;
       showToast(this.shadowRoot, 'Settings saved!', 'success');
 
+      try {
+        localStorage.removeItem('smart_dashboards_stats_v1');
+      } catch (_e) {
+        /* ignore */
+      }
+      this._statsData = null;
+      this._statsFetchedAt = null;
+
       setTimeout(async () => {
         await this._loadPowerData({ force: true });
         this._render();
         this._startRefresh();
+        if (!this._showSettings) {
+          void this._loadStatistics();
+        }
       }, 500);
     } catch (e) {
       console.error('Failed to save settings:', e);

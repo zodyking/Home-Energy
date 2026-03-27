@@ -91,9 +91,13 @@ DEFAULT_NOTIFY_ENFORCEMENT_PHASE1_MSG = "{room_name} has entered enforcement pha
 DEFAULT_NOTIFY_ENFORCEMENT_PHASE2_TITLE = "{prefix} Enforcement Phase 2"
 DEFAULT_NOTIFY_ENFORCEMENT_PHASE2_MSG = "{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage."
 DEFAULT_NOTIFY_AC_AUTO_OFF_TITLE = "{prefix} Air Conditioner Off"
-DEFAULT_NOTIFY_AC_AUTO_OFF_MSG = "{outlet_name} was turned off because you left {room_name}."
+DEFAULT_NOTIFY_AC_AUTO_OFF_MSG = (
+    "{outlet_name} was turned off because {person_name} left the monitored zone."
+)
 DEFAULT_NOTIFY_AC_AUTO_ON_TITLE = "{prefix} Air Conditioner On"
-DEFAULT_NOTIFY_AC_AUTO_ON_MSG = "{outlet_name} was turned back on because you returned to {room_name}."
+DEFAULT_NOTIFY_AC_AUTO_ON_MSG = (
+    "{outlet_name} was turned back on because {person_name} is nearby."
+)
 DEFAULT_NOTIFY_MANUAL_TOGGLE_TITLE = "{prefix} Appliance Toggled"
 DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG = "{user_name} turned {action} {outlet_name} in {room_name}."
 
@@ -148,6 +152,28 @@ DEFAULT_CONFIG = {
             "vent_automation_tts_enabled": False,
             "heater_automation_on_msg": DEFAULT_HEATER_AUTOMATION_ON_MSG,
             "vent_automation_on_msg": DEFAULT_VENT_AUTOMATION_ON_MSG,
+            "room_warn_tts_enabled": True,
+            "outlet_warn_tts_enabled": True,
+            "budget_exceeded_tts_enabled": True,
+            "budget_boost_scheduled_tts_enabled": True,
+            "phase1_warn_boost_day_tts_enabled": True,
+            "shutoff_tts_enabled": True,
+            "stove_on_tts_enabled": True,
+            "stove_off_tts_enabled": True,
+            "stove_timer_started_tts_enabled": True,
+            "stove_timer_progress_tts_enabled": True,
+            "stove_15min_warn_tts_enabled": True,
+            "stove_30sec_warn_tts_enabled": True,
+            "stove_auto_off_tts_enabled": True,
+            "phase1_warn_tts_enabled": True,
+            "phase2_warn_tts_enabled": True,
+            "phase2_after_tts_enabled": True,
+            "minisplit_phase2_warn_tts_enabled": True,
+            "minisplit_phase2_after_tts_enabled": True,
+            "minisplit_phase2_restore_tts_enabled": True,
+            "phase_reset_tts_enabled": True,
+            "room_kwh_warn_tts_enabled": True,
+            "home_kwh_warn_tts_enabled": True,
             "notifications_enabled": False,
             "notify_room_budget_hit": True,
             "notify_enforcement_phase_change": True,
