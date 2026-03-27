@@ -41,7 +41,10 @@ from .const import (
     DEFAULT_MINISPLIT_PHASE2_RESTORE_MSG,
     DEFAULT_HEATER_AUTOMATION_ON_MSG,
     DEFAULT_VENT_AUTOMATION_ON_MSG,
+    DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
+    DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
 )
+from .mobile_notify_target import resolve_mobile_app_notify_slug
 from .tts_helper import async_send_tts
 from .tts_queue import async_send_tts_or_queue
 from .tts_numbers import spoken_cardinal
@@ -133,6 +136,14 @@ class EnergyMonitor:
         # Vent / wall heater optional automations (key: room_id|outlet_name_slug)
         self._vent_automation_state: dict[str, dict] = {}
         self._heater_automation_state: dict[str, dict] = {}
+
+    def _tts_line_enabled(self, tts: dict, line: str) -> bool:
+        """Per-message TTS toggle from tts_settings (default on). Vent/heater use legacy keys."""
+        if line == "vent_automation":
+            return bool(tts.get("vent_automation_tts_enabled"))
+        if line == "heater_automation":
+            return bool(tts.get("heater_automation_tts_enabled"))
+        return tts.get(f"{line}_tts_enabled", True) is not False
 
     @staticmethod
     def _budget_boost_period_label(weekdays: list) -> str:
@@ -266,6 +277,8 @@ class EnergyMonitor:
             or str(tts_settings.get("budget_boost_announce_media_player") or "").strip()
         )
         if not mp:
+            return
+        if not self._tts_line_enabled(tts_settings, "budget_boost_scheduled"):
             return
         start_s = str(tts_settings.get("budget_boost_window_start") or "").strip() or str(
             tts_settings.get("budget_boost_announce_time") or "09:00"
@@ -534,16 +547,24 @@ class EnergyMonitor:
         title_template = tts_settings.get(title_key) or fallback_title or "{prefix} Notification"
         msg_template = tts_settings.get(msg_key) or fallback_message or "Notification from Smart Dashboards."
 
-        vars_with_prefix = {"prefix": prefix, **(template_vars or {})}
+        vars_fmt = {
+            "prefix": prefix,
+            **(template_vars or {}),
+            "person_name": person_name,
+            "person": person_name,
+        }
         try:
-            title = title_template.format(**vars_with_prefix)
-            message = msg_template.format(**vars_with_prefix)
+            title = title_template.format(**vars_fmt)
+            message = msg_template.format(**vars_fmt)
         except (KeyError, ValueError) as e:
             _LOGGER.warning("Notification template format failed: %s", e)
             title = f"{prefix} {fallback_title}" if fallback_title else f"{prefix} Notification"
             message = fallback_message or "Notification from Smart Dashboards."
 
-        notify_target = f"mobile_app_{person_name.lower().replace(' ', '_')}"
+        slug = resolve_mobile_app_notify_slug(self.hass, person_ent)
+        if not slug:
+            return
+        notify_target = f"mobile_app_{slug}"
         try:
             await self.hass.services.async_call(
                 "notify",
@@ -616,7 +637,7 @@ class EnergyMonitor:
                     tts_settings = (
                         self.config_manager.energy_config.get("tts_settings") or {}
                     )
-                    if tts_settings.get("vent_automation_tts_enabled"):
+                    if self._tts_line_enabled(tts_settings, "vent_automation"):
                         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                         tmpl = (
                             tts_settings.get("vent_automation_on_msg") or ""
@@ -699,7 +720,7 @@ class EnergyMonitor:
                 tts_settings = (
                     self.config_manager.energy_config.get("tts_settings") or {}
                 )
-                if tts_settings.get("heater_automation_tts_enabled"):
+                if self._tts_line_enabled(tts_settings, "heater_automation"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     tmpl = (
                         tts_settings.get("heater_automation_on_msg") or ""
@@ -827,7 +848,7 @@ class EnergyMonitor:
                             "ac_auto_off",
                             {"room_name": room.get("name", room_id), "outlet_name": outlet_name},
                             "Air Conditioner Off",
-                            f"{outlet_name} was turned off because you left {room.get('name', room_id)}",
+                            DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
                         )
                 except Exception as e:
                     _LOGGER.warning("Presence auto-off failed for %s: %s", sw, e)
@@ -863,7 +884,7 @@ class EnergyMonitor:
                             "ac_auto_on",
                             {"room_name": room.get("name", room_id), "outlet_name": outlet_name},
                             "Air Conditioner On",
-                            f"{outlet_name} was turned back on because you returned to {room.get('name', room_id)}",
+                            DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
                         )
                 except Exception as e:
                     _LOGGER.warning("Presence auto-restore failed for %s: %s", sw, e)
@@ -981,7 +1002,7 @@ class EnergyMonitor:
                         "ac_auto_off",
                         {"room_name": room.get("name", room_id), "outlet_name": outlet_name},
                         "Air Conditioner Off",
-                        f"{outlet_name} was turned off because you are outside {room.get('name', room_id)}",
+                        DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
                     )
             except Exception as e:
                 _LOGGER.warning("Presence auto-off (switch listener) failed for %s: %s", entity_id, e)
@@ -1073,17 +1094,21 @@ class EnergyMonitor:
                 and room_id not in self._room_budget_announced
             ):
                 self._room_budget_announced.add(room_id)
-                prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
-                msg_template = tts_settings.get("budget_exceeded_msg") or DEFAULT_BUDGET_EXCEEDED_MSG
+                if self._tts_line_enabled(tts_settings, "budget_exceeded"):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg_template = tts_settings.get("budget_exceeded_msg") or DEFAULT_BUDGET_EXCEEDED_MSG
+                    try:
+                        message = msg_template.format(
+                            prefix=prefix,
+                            room_name=room_name,
+                            kwh_used=spoken_cardinal(round(room_day_kwh)),
+                        )
+                        await self._async_send_tts_with_lights(
+                            room, media_player, message, room_volume, tts_settings
+                        )
+                    except (KeyError, ValueError) as e:
+                        _LOGGER.warning("Budget exceeded message format failed for %s: %s", room_name, e)
                 try:
-                    message = msg_template.format(
-                        prefix=prefix,
-                        room_name=room_name,
-                        kwh_used=spoken_cardinal(round(room_day_kwh)),
-                    )
-                    await self._async_send_tts_with_lights(
-                        room, media_player, message, room_volume, tts_settings
-                    )
                     await self._send_notification_to_room_person(
                         room,
                         "room_budget_hit",
@@ -1095,8 +1120,8 @@ class EnergyMonitor:
                         "Budget Exceeded",
                         f"{room_name} has exceeded its daily budget of {round(effective_kwh_budget, 1)} kWh (used {round(room_day_kwh, 1)} kWh)",
                     )
-                except (KeyError, ValueError) as e:
-                    _LOGGER.warning("Budget exceeded message format failed for %s: %s", room_name, e)
+                except Exception as e:
+                    _LOGGER.warning("Budget exceeded notification failed for %s: %s", room_name, e)
 
             # Calculate total room watts and track energy
             room_total_watts = 0.0
@@ -1482,6 +1507,8 @@ class EnergyMonitor:
         rest_tmpl = (tts_settings.get("minisplit_phase2_restore_msg") or "").strip()
         if not media_player or not rest_tmpl:
             return
+        if not self._tts_line_enabled(tts_settings, "minisplit_phase2_restore"):
+            return
         try:
             rmsg = rest_tmpl.format(
                 prefix=prefix,
@@ -1575,6 +1602,12 @@ class EnergyMonitor:
             if not after_tmpl:
                 after_tmpl = DEFAULT_MINISPLIT_PHASE2_AFTER_MSG
             if media_player:
+                use_ms_after = bool(
+                    (tts_settings.get("minisplit_phase2_after_msg") or "").strip()
+                )
+                after_line = (
+                    "minisplit_phase2_after" if use_ms_after else "phase2_after"
+                )
                 try:
                     after_msg = after_tmpl.format(
                         prefix=prefix,
@@ -1584,7 +1617,7 @@ class EnergyMonitor:
                     )
                 except (KeyError, ValueError):
                     after_msg = ""
-                if after_msg:
+                if after_msg and self._tts_line_enabled(tts_settings, after_line):
                     await async_send_tts_or_queue(
                         self.hass,
                         media_player=media_player,
@@ -1605,7 +1638,11 @@ class EnergyMonitor:
                             "switch", "turn_on", {"entity_id": s}, blocking=True
                         )
                 rest_tmpl = (tts_settings.get("minisplit_phase2_restore_msg") or "").strip()
-                if media_player and rest_tmpl:
+                if (
+                    media_player
+                    and rest_tmpl
+                    and self._tts_line_enabled(tts_settings, "minisplit_phase2_restore")
+                ):
                     try:
                         rmsg = rest_tmpl.format(
                             prefix=prefix,
@@ -1684,9 +1721,10 @@ class EnergyMonitor:
                 if plug_shutoff_threshold is not None:
                     shutoff_extra["outlet_threshold"] = int(plug_shutoff_threshold)
                 try:
-                    await self._async_send_tts_with_lights(
-                        room, media_player, message, volume, tts_settings
-                    )
+                    if self._tts_line_enabled(tts_settings, "shutoff"):
+                        await self._async_send_tts_with_lights(
+                            room, media_player, message, volume, tts_settings
+                        )
                     # Count only when TTS was actually sent
                     await self.config_manager.async_increment_shutoff(room_id)
                     await self.config_manager.async_add_event_log_entry(
@@ -1982,7 +2020,7 @@ class EnergyMonitor:
                 ms_o = self._select_minisplit_enforcement_target(
                     room, float(current_watts), float(room_threshold or 0)
                 )
-                if ms_o:
+                if ms_o and self._tts_line_enabled(tts_settings, "minisplit_phase2_warn"):
                     message = self._format_minisplit_phase2_warn(
                         tts_settings,
                         prefix,
@@ -1991,7 +2029,7 @@ class EnergyMonitor:
                         tts_warning_cardinal,
                         room_threshold,
                     )
-                if not message:
+                if not message and self._tts_line_enabled(tts_settings, "phase2_warn"):
                     msg_template = tts_settings.get("phase2_warn_msg") or ""
                     try:
                         message = msg_template.format(
@@ -2019,6 +2057,7 @@ class EnergyMonitor:
                     self._is_budget_boost_day(now_p1, tts_settings)
                     and boost_tmpl
                     and room_uses_kwh_boost
+                    and self._tts_line_enabled(tts_settings, "phase1_warn_boost_day")
                 ):
                     base_b = float(room.get("kwh_budget", 5) or 5)
                     eff_b = self._effective_kwh_budget(
@@ -2045,7 +2084,7 @@ class EnergyMonitor:
                         message = ""
                 else:
                     message = ""
-                if not message:
+                if not message and self._tts_line_enabled(tts_settings, "phase1_warn"):
                     msg_template = tts_settings.get("phase1_warn_msg") or ""
                     try:
                         message = msg_template.format(
@@ -2071,7 +2110,7 @@ class EnergyMonitor:
                 ms_o = self._select_minisplit_enforcement_target(
                     room, float(current_watts), float(room_threshold or 0)
                 )
-                if ms_o:
+                if ms_o and self._tts_line_enabled(tts_settings, "minisplit_phase2_warn"):
                     message = self._format_minisplit_phase2_warn(
                         tts_settings,
                         prefix,
@@ -2080,7 +2119,7 @@ class EnergyMonitor:
                         tts_warning_cardinal,
                         room_threshold,
                     )
-                if not message:
+                if not message and self._tts_line_enabled(tts_settings, "phase2_warn"):
                     msg_template = tts_settings.get("phase2_warn_msg") or ""
                     try:
                         message = msg_template.format(
@@ -2106,7 +2145,7 @@ class EnergyMonitor:
             # Phase 2 power cycling moved to post_send_callback (runs after TTS actually plays)
 
         # Use standard message if no enforcement message was set (or format failed)
-        if not message:
+        if not message and self._tts_line_enabled(tts_settings, "room_warn"):
             msg_template = tts_settings.get("room_warn_msg") or DEFAULT_ROOM_WARN_MSG
             try:
                 message = msg_template.format(
@@ -2160,7 +2199,11 @@ class EnergyMonitor:
                         await self._power_cycle_room_outlets(
                             room_id, room, delay_sec, log_extra=cycle_log_extra
                         )
-                        if media_player and after_template:
+                        if (
+                            media_player
+                            and after_template
+                            and self._tts_line_enabled(tts_settings, "phase2_after")
+                        ):
                             try:
                                 after_msg = after_template.format(
                                     prefix=prefix,
@@ -2181,6 +2224,10 @@ class EnergyMonitor:
                             )
 
                 post_send_cb = _power_cycle_and_tts_after
+
+        msg_stripped = (message or "").strip()
+        if not msg_stripped and post_send_cb is None:
+            return
 
         try:
             rt_raw = room.get("threshold", 0)
@@ -2205,10 +2252,13 @@ class EnergyMonitor:
                     )
                 return ex
 
-            await self._async_send_tts_with_lights(
-                room, media_player, message, effective_volume, tts_settings,
-                post_send_callback=post_send_cb,
-            )
+            if msg_stripped:
+                await self._async_send_tts_with_lights(
+                    room, media_player, message, effective_volume, tts_settings,
+                    post_send_callback=post_send_cb,
+                )
+            elif post_send_cb:
+                await post_send_cb()
             # Count only when TTS was actually sent
             await self.config_manager.async_increment_warning(room_id)
             await self.config_manager.async_add_event_log_entry(
@@ -2377,9 +2427,10 @@ class EnergyMonitor:
             return ox
 
         try:
-            await self._async_send_tts_with_lights(
-                room, media_player, message, volume, tts_settings
-            )
+            if self._tts_line_enabled(tts_settings, "outlet_warn"):
+                await self._async_send_tts_with_lights(
+                    room, media_player, message, volume, tts_settings
+                )
             # Count only when TTS was actually sent
             await self.config_manager.async_increment_warning(room_id)
             await self.config_manager.async_add_event_log_entry(
@@ -2442,7 +2493,11 @@ class EnergyMonitor:
             if current_phase > 0 and self.config_manager.check_phase_reset(room_id, reset_minutes):
                 await self.config_manager.async_set_enforcement_phase(room_id, 0)
                 msg_template = tts_settings.get("phase_reset_msg", "")
-                if msg_template and media_player:
+                if (
+                    msg_template
+                    and media_player
+                    and self._tts_line_enabled(tts_settings, "phase_reset")
+                ):
                     message = msg_template.format(
                         prefix=prefix,
                         room_name=room_name,
@@ -2471,7 +2526,7 @@ class EnergyMonitor:
             if interval_hit is not None and media_player:
                 percentage = self.config_manager.get_room_percentage_of_total(room_id)
                 msg_template = tts_settings.get("room_kwh_warn_msg", "")
-                if msg_template:
+                if msg_template and self._tts_line_enabled(tts_settings, "room_kwh_warn"):
                     message = msg_template.format(
                         prefix=prefix,
                         room_name=room_name,
@@ -2502,7 +2557,7 @@ class EnergyMonitor:
 
             if media_player and room_for_tts:
                 msg_template = tts_settings.get("home_kwh_warn_msg", "")
-                if msg_template:
+                if msg_template and self._tts_line_enabled(tts_settings, "home_kwh_warn"):
                     total_kwh = self.config_manager.get_total_day_kwh()
                     message = msg_template.format(
                         prefix=prefix,
@@ -2812,7 +2867,7 @@ class EnergyMonitor:
                     self._stove_state[key] = "on"
                     self._stove_15min_warn_sent[key] = False
                     self._stove_30sec_warn_sent[key] = False
-                    if media_player:
+                    if media_player and self._tts_line_enabled(tts_settings, "stove_on"):
                         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                         msg_template = tts_settings.get("stove_on_msg", DEFAULT_STOVE_ON_MSG)
                         await async_send_tts_or_queue(
@@ -2833,7 +2888,11 @@ class EnergyMonitor:
                     self._stove_15min_warn_sent[key] = False
                     self._stove_30sec_warn_sent[key] = False
                     self._stove_progress_last_boundary[key] = 0
-                    if not self._stove_powered_off_by_microwave[key] and media_player:
+                    if (
+                        not self._stove_powered_off_by_microwave[key]
+                        and media_player
+                        and self._tts_line_enabled(tts_settings, "stove_off")
+                    ):
                         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                         msg_template = tts_settings.get("stove_off_msg", DEFAULT_STOVE_OFF_MSG)
                         await async_send_tts_or_queue(
@@ -2869,7 +2928,7 @@ class EnergyMonitor:
                             self._stove_presence_window_start[key] = None
                             self._stove_15min_warn_sent[key] = False
                             self._stove_30sec_warn_sent[key] = False
-                            if media_player:
+                            if media_player and self._tts_line_enabled(tts_settings, "stove_timer_started"):
                                 prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                                 msg_template = tts_settings.get(
                                     "stove_timer_started_msg", DEFAULT_STOVE_TIMER_STARTED_MSG
@@ -2896,6 +2955,7 @@ class EnergyMonitor:
                             media_player
                             and interval_sec > 0
                             and elapsed < cooking_time_sec - 0.5
+                            and self._tts_line_enabled(tts_settings, "stove_timer_progress")
                         ):
                             bnd = int(elapsed // interval_sec)
                             last_b = self._stove_progress_last_boundary.get(key, 0)
@@ -2922,7 +2982,7 @@ class EnergyMonitor:
                                 self._stove_progress_last_boundary[key] = bnd
                         if elapsed >= cooking_time_sec:
                             if not self._stove_15min_warn_sent[key]:
-                                if media_player:
+                                if media_player and self._tts_line_enabled(tts_settings, "stove_15min_warn"):
                                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                                     msg_template = tts_settings.get("stove_15min_warn_msg", DEFAULT_STOVE_15MIN_WARN_MSG)
                                     message = msg_template.format(
@@ -2947,7 +3007,7 @@ class EnergyMonitor:
                     elif self._stove_timer_phase[key] == "30sec":
                         if elapsed >= final_warning_sec:
                             if not self._stove_30sec_warn_sent[key]:
-                                if media_player:
+                                if media_player and self._tts_line_enabled(tts_settings, "stove_30sec_warn"):
                                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                                     msg_template = tts_settings.get("stove_30sec_warn_msg", DEFAULT_STOVE_30SEC_WARN_MSG)
                                     await async_send_tts_or_queue(
@@ -2968,7 +3028,7 @@ class EnergyMonitor:
                                         {"entity_id": stove_plug_switch},
                                         blocking=True,
                                     )
-                                    if media_player:
+                                    if media_player and self._tts_line_enabled(tts_settings, "stove_auto_off"):
                                         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                                         msg_template = tts_settings.get("stove_auto_off_msg", DEFAULT_STOVE_AUTO_OFF_MSG)
                                         message = msg_template.format(prefix=prefix)
