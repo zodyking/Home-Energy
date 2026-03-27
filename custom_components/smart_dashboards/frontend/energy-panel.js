@@ -836,35 +836,33 @@ class EnergyPanel extends HTMLElement {
         if (isVentLike) {
           const cvWatts = deviceCard.querySelector('.ceiling-vent-watts');
           if (cvWatts) {
-            cvWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
+            const cvFmt = this._formatCeilingVentWatts(outlet.plug1.watts);
+            cvWatts.textContent = cvFmt.text;
+            if (cvFmt.title) cvWatts.setAttribute('title', cvFmt.title);
+            else cvWatts.removeAttribute('title');
             cvWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
           }
           const ventBody = deviceCard.querySelector('.ceiling-vent-body');
           if (ventBody) ventBody.classList.toggle('vent-on', outlet.plug1.watts > 0.1);
           if (deviceType === 'wall_heater') {
-            const tEl = deviceCard.querySelector('.heater-dash-temp');
-            const mEl = deviceCard.querySelector('.heater-dash-onmax');
+            const nowEl = deviceCard.querySelector('.heater-dash-now-val');
+            const thEl = deviceCard.querySelector('.heater-dash-threshold-val');
             const timerEl = deviceCard.querySelector('.heater-dash-timer');
-            const sepTimer = deviceCard.querySelector('.heater-dash-sep-timer');
-            if (tEl) {
+            const runRow = deviceCard.querySelector('.heater-dash-row-run');
+            if (nowEl) {
               const ct = outlet.heater_current_temperature;
-              tEl.textContent = ct != null && ct !== '' && !Number.isNaN(Number(ct))
+              nowEl.textContent = ct != null && ct !== '' && !Number.isNaN(Number(ct))
                 ? `${Number(ct).toFixed(1)}°`
                 : '—';
             }
-            if (mEl) {
+            if (thEl) {
               const b = outlet.heater_on_below_temperature ?? deviceConfig?.heater_on_below_temperature ?? 65;
               const bd = Number(b) % 1 === 0 ? 0 : 1;
-              mEl.textContent = `≤${Number(b).toFixed(bd)}°`;
+              thEl.textContent = `${Number(b).toFixed(bd)}°`;
             }
             const tr = this._formatHeaterRunRemaining(outlet.heater_time_remaining_sec);
-            if (timerEl) {
-              timerEl.textContent = tr;
-              timerEl.style.display = tr ? '' : 'none';
-            }
-            if (sepTimer) {
-              sepTimer.style.display = (outlet.heater_time_remaining_sec || 0) > 0 ? '' : 'none';
-            }
+            if (timerEl) timerEl.textContent = tr;
+            if (runRow) runRow.style.display = tr ? '' : 'none';
           }
         }
         if (isFridge) {
@@ -3166,8 +3164,8 @@ class EnergyPanel extends HTMLElement {
         flex-shrink: 0;
         display: flex;
         flex-direction: column;
-        align-items: center;
-        justify-content: center;
+        align-items: stretch;
+        justify-content: flex-start;
         background: linear-gradient(180deg, #f5f5f5 0%, #e8e8e8 100%);
         border: 1px solid rgba(0, 0, 0, 0.1);
         border-radius: 6px;
@@ -3178,13 +3176,24 @@ class EnergyPanel extends HTMLElement {
       .device-card.ceiling-vent-card .ceiling-vent-body.vent-on {
         box-shadow: inset 0 0 0 2px rgba(3, 169, 244, 0.4);
       }
+      .device-card.ceiling-vent-card .ceiling-vent-grill-wrap {
+        position: relative;
+        flex: 1 1 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: center;
+        overflow: hidden;
+      }
       .device-card.ceiling-vent-card .ceiling-vent-grill {
         width: 100%;
-        padding: 6px 4px;
+        padding: 5px 4px 4px;
         display: flex;
         flex-direction: column;
         gap: 2px;
         align-items: stretch;
+        flex-shrink: 0;
       }
       .device-card.ceiling-vent-card .cv-slat {
         display: block;
@@ -3195,7 +3204,7 @@ class EnergyPanel extends HTMLElement {
       }
       .device-card.ceiling-vent-card .cv-air-particles {
         position: absolute;
-        inset: 8px;
+        inset: 6px 6px 4px;
         pointer-events: none;
       }
       .device-card.ceiling-vent-card .cv-particle {
@@ -3218,16 +3227,28 @@ class EnergyPanel extends HTMLElement {
       @media (prefers-reduced-motion: reduce) {
         .device-card.ceiling-vent-card .cv-particle { animation: none; opacity: 0.5; }
       }
+      .device-card.ceiling-vent-card .ceiling-vent-watts-row {
+        flex-shrink: 0;
+        width: 100%;
+        min-height: 15px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 2px 3px;
+        box-sizing: border-box;
+      }
       .device-card.ceiling-vent-card .ceiling-vent-watts {
-        position: absolute;
-        bottom: 3px;
-        left: 50%;
-        transform: translateX(-50%);
-        font-size: 9px;
+        font-size: clamp(7px, 2.1vw, 9px);
         font-weight: 800;
         color: var(--panel-accent, #03a9f4);
         font-variant-numeric: tabular-nums;
         text-shadow: 0 0 3px rgba(255,255,255,0.5);
+        white-space: nowrap;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.1;
+        text-align: center;
       }
       .device-card.ceiling-vent-card .ceiling-vent-watts.over-threshold {
         color: var(--panel-danger, #ff5252);
@@ -3235,12 +3256,43 @@ class EnergyPanel extends HTMLElement {
       .device-card.ceiling-vent-card .heater-dash-meta {
         margin-top: 3px;
         font-size: 9px;
-        line-height: 1.25;
+        line-height: 1.2;
         color: var(--secondary-text-color, rgba(255,255,255,0.52));
         font-variant-numeric: tabular-nums;
         text-align: center;
         max-width: 100%;
         padding: 0 2px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+      }
+      .device-card.ceiling-vent-card .heater-dash-row {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: baseline;
+        justify-content: center;
+        gap: 3px;
+        max-width: 100%;
+      }
+      .device-card.ceiling-vent-card .heater-dash-lbl {
+        font-size: 8px;
+        font-weight: 600;
+        opacity: 0.72;
+        flex-shrink: 0;
+      }
+      .device-card.ceiling-vent-card .heater-dash-val {
+        font-size: 9px;
+        font-weight: 800;
+        color: var(--primary-text-color, rgba(255,255,255,0.9));
+        flex-shrink: 0;
+      }
+      .device-card.ceiling-vent-card .heater-dash-dot {
+        opacity: 0.45;
+        font-size: 8px;
+        flex-shrink: 0;
+        padding: 0 1px;
       }
       .device-card.ceiling-vent-card .heater-dash-timer {
         color: var(--panel-accent, #03a9f4);
@@ -4410,6 +4462,76 @@ class EnergyPanel extends HTMLElement {
       }
       .ac-safety-steps li:last-child {
         margin-bottom: 0;
+      }
+      .ac-safety-setup-intro {
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--secondary-text-color, #c8c8c8);
+        margin: 0 0 12px;
+      }
+      .ac-safety-part {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
+      }
+      .ac-safety-setup-intro + .ac-safety-part {
+        margin-top: 0;
+        padding-top: 0;
+        border-top: none;
+      }
+      .ac-safety-part-title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--secondary-text-color, #b0b0b0);
+        margin: 0 0 8px;
+      }
+      .ac-safety-steps.ac-safety-steps--tight li {
+        margin-bottom: 6px;
+      }
+      .ac-safety-disclosure {
+        margin-top: 10px;
+        border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
+        border-radius: 8px;
+        overflow: hidden;
+        background: rgba(0, 0, 0, 0.15);
+      }
+      .ac-safety-disclosure summary {
+        cursor: pointer;
+        padding: 9px 12px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--panel-accent, #03a9f4);
+        list-style: none;
+        user-select: none;
+      }
+      .ac-safety-disclosure summary::-webkit-details-marker {
+        display: none;
+      }
+      .ac-safety-disclosure summary::marker {
+        content: '';
+      }
+      .ac-safety-disclosure summary:hover {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .ac-safety-disclosure summary:focus-visible {
+        outline: 2px solid var(--panel-accent, #03a9f4);
+        outline-offset: -2px;
+      }
+      .ac-safety-disclosure[open] summary {
+        border-bottom: 1px solid var(--divider-color, rgba(255, 255, 255, 0.1));
+      }
+      .ac-safety-screenshot {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        height: auto;
+        border-radius: 0 0 6px 6px;
+        box-sizing: border-box;
+        border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.1));
+        border-top: none;
+        background: rgba(255, 255, 255, 0.03);
       }
       .ac-safety-buttons {
         display: flex;
@@ -5931,6 +6053,16 @@ class EnergyPanel extends HTMLElement {
     return '';
   }
 
+  /** Compact readout for vent/heater card; kW + title when >= 1000 W. */
+  _formatCeilingVentWatts(watts) {
+    const w = Number(watts) || 0;
+    const full = `${w.toFixed(1)} W`;
+    if (w >= 1000) {
+      return { text: `${(w / 1000).toFixed(2)} kW`, title: full };
+    }
+    return { text: full, title: '' };
+  }
+
   /** Wall heater run segment countdown (matches stove-style compact line). */
   _formatHeaterRunRemaining(totalSec) {
     const t = Math.max(0, Math.floor(Number(totalSec) || 0));
@@ -6145,25 +6277,38 @@ class EnergyPanel extends HTMLElement {
     const timerStr = ht > 0 ? this._formatHeaterRunRemaining(ht) : '';
     const heaterDash = isWallHeater ? `
             <div class="heater-dash-meta">
-              <span class="heater-dash-temp">${tempStr}</span><span class="heater-dash-sep"> · </span><span class="heater-dash-onmax">≤${Number(belowN).toFixed(belowDec)}°</span><span class="heater-dash-sep heater-dash-sep-timer"${timerStr ? '' : ' style="display:none"'}> · </span><span class="heater-dash-timer"${timerStr ? '' : ' style="display:none"'}">${timerStr}</span>
+              <div class="heater-dash-row heater-dash-row-temps">
+                <span class="heater-dash-lbl">Now</span><span class="heater-dash-val heater-dash-now-val">${tempStr}</span>
+                <span class="heater-dash-dot">·</span>
+                <span class="heater-dash-lbl">On≤</span><span class="heater-dash-val heater-dash-threshold-val">${Number(belowN).toFixed(belowDec)}°</span>
+              </div>
+              <div class="heater-dash-row heater-dash-row-run"${timerStr ? '' : ' style="display:none"'}>
+                <span class="heater-dash-lbl">Run</span><span class="heater-dash-val heater-dash-timer">${timerStr}</span>
+              </div>
             </div>` : '';
+    const wFmt = this._formatCeilingVentWatts(watts);
+    const cvTitleAttr = wFmt.title ? ` title="${wFmt.title.replace(/"/g, '&quot;')}"` : '';
 
     return `
       <div class="device-card ceiling-vent-card" data-outlet-index="${index}">
         <div class="ceiling-vent-faceplate">
           <div class="outlet-name outlet-name-top" title="${displayTitle.replace(/"/g, '&quot;')}">${displayTitle.replace(/</g, '&lt;')}</div>
           <div class="ceiling-vent-body ${isActive ? 'vent-on' : ''}">
-            <div class="ceiling-vent-grill">
-              <span class="cv-slat"></span>
-              <span class="cv-slat"></span>
-              <span class="cv-slat"></span>
-              <span class="cv-slat"></span>
-              <span class="cv-slat"></span>
-              <span class="cv-slat"></span>
-              <span class="cv-slat"></span>
+            <div class="ceiling-vent-grill-wrap">
+              <div class="ceiling-vent-grill">
+                <span class="cv-slat"></span>
+                <span class="cv-slat"></span>
+                <span class="cv-slat"></span>
+                <span class="cv-slat"></span>
+                <span class="cv-slat"></span>
+                <span class="cv-slat"></span>
+                <span class="cv-slat"></span>
+              </div>
+              ${isActive ? '<div class="cv-air-particles"><span class="cv-particle"></span><span class="cv-particle"></span><span class="cv-particle"></span><span class="cv-particle"></span><span class="cv-particle"></span></div>' : ''}
             </div>
-            ${isActive ? '<div class="cv-air-particles"><span class="cv-particle"></span><span class="cv-particle"></span><span class="cv-particle"></span><span class="cv-particle"></span><span class="cv-particle"></span></div>' : ''}
-            <div class="ceiling-vent-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
+            <div class="ceiling-vent-watts-row">
+              <div class="ceiling-vent-watts ${isOverThreshold ? 'over-threshold' : ''}"${cvTitleAttr}>${wFmt.text}</div>
+            </div>
           </div>
           <div class="outlet-meta ceiling-vent-meta">
             <div class="outlet-threshold">
@@ -8036,6 +8181,16 @@ class EnergyPanel extends HTMLElement {
     });
   }
 
+  /** Absolute URL for a file under the panel static root (/smart_dashboards_panel/). */
+  _panelStaticFileUrl(filename) {
+    const path = `/smart_dashboards_panel/ac-setup/${filename}`;
+    const h = this._hass;
+    if (h && typeof h.hassUrl === 'function') {
+      return h.hassUrl(path);
+    }
+    return path;
+  }
+
   /**
    * One-step modal for non-admin users toggling a mini-split (AC): zone automation warning,
    * privacy note, Companion / zone setup steps, then primary action to confirm toggle.
@@ -8043,6 +8198,9 @@ class EnergyPanel extends HTMLElement {
   _showMinisplitAcSafetyModal(displayName, actionWord) {
     const actLabel = String(actionWord || 'turn on').replace(/^\w/, (c) => c.toUpperCase());
     const nameStr = String(displayName || 'AC');
+    const escAttr = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const urlCompanion = escAttr(this._panelStaticFileUrl('companion-app-location.jpeg'));
+    const urlIos = escAttr(this._panelStaticFileUrl('ios-system-location.jpeg'));
 
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
@@ -8054,17 +8212,44 @@ class EnergyPanel extends HTMLElement {
           <div class="ac-safety-title">Air conditioner / zone automation</div>
           <div class="ac-safety-body">
             <p class="ac-safety-lead">
-              This room uses zone-based automation for air conditioning. Turning the unit on or off manually at the wrong time can shorten compressor life or make the system fight your automations. Use manual control only when you understand what is running.
+              This room uses zone-based automation for air conditioning. Manual changes at the wrong time can stress the compressor or fight your automations. Use manual control only when you know what is running.
             </p>
             <p class="ac-safety-note">
-              <strong>Privacy:</strong> Your exact GPS position is not shared with this dashboard. Home Assistant only uses <strong>zone states</strong> (for example Home, Nearby, Away) from the mobile app to drive automations.
+              <strong>Privacy:</strong> Your exact GPS position is not shown on this dashboard. Home Assistant uses <strong>zone states</strong> from the app (for example Home, Nearby, Away) to drive automations.
             </p>
             <div class="ac-safety-steps-title">Set up zone tracking</div>
-            <ol class="ac-safety-steps">
-              <li>Install <strong>Home Assistant Companion</strong> on your phone (iOS App Store or Google Play).</li>
-              <li>Enable location for the app: <strong>iOS:</strong> Settings → Home Assistant → Location (choose While Using the App or Always if you use small zones). <strong>Android:</strong> allow location permission for the app in system settings.</li>
-              <li>In Home Assistant, define <strong>Zones</strong> (Settings → Areas &amp; zones, or your Zones page) so presence resolves to states like Home, Nearby, and Away for your automations.</li>
-            </ol>
+            <p class="ac-safety-setup-intro">Complete the phone steps below, then add zones in Home Assistant.</p>
+
+            <div class="ac-safety-part">
+              <div class="ac-safety-part-title">Home Assistant Companion app</div>
+              <ul class="ac-safety-steps ac-safety-steps--tight">
+                <li>Install <strong>Home Assistant Companion</strong> (iOS App Store or Google Play).</li>
+                <li>Open <strong>App Configuration</strong> → <strong>Companion App</strong> → <strong>Location</strong>. Set <strong>Location permission</strong> to <strong>Always</strong> — not &quot;While Using the App&quot; — so zone enter/exit works in the background (required for small zones). Keep <strong>Location accuracy</strong> on <strong>Full</strong> and <strong>Background refresh</strong> enabled when the OS offers those options.</li>
+                <li><strong>Android:</strong> In system settings, allow location for Companion and choose <strong>Allow all the time</strong> (wording varies by device). Enable any background-location options your phone shows.</li>
+              </ul>
+              <details class="ac-safety-disclosure">
+                <summary>Show screenshot: Companion app Location</summary>
+                <img class="ac-safety-screenshot" loading="lazy" width="390" height="844" alt="Home Assistant Companion Location screen: Location permission set to Always, Location accuracy Full, Background refresh enabled." src="${urlCompanion}">
+              </details>
+            </div>
+
+            <div class="ac-safety-part">
+              <div class="ac-safety-part-title">iOS system settings</div>
+              <ul class="ac-safety-steps ac-safety-steps--tight">
+                <li>On the iPhone <strong>Settings</strong> app (not inside Home Assistant), go to <strong>Home Assistant</strong> → <strong>Location</strong> and choose <strong>Always</strong>. This must match the in-app setting above.</li>
+              </ul>
+              <details class="ac-safety-disclosure">
+                <summary>Show screenshot: iOS Settings → Home Assistant → Location</summary>
+                <img class="ac-safety-screenshot" loading="lazy" width="390" height="844" alt="iOS Settings for the Home Assistant app with Location set to Always." src="${urlIos}">
+              </details>
+            </div>
+
+            <div class="ac-safety-part">
+              <div class="ac-safety-part-title">Home Assistant (server)</div>
+              <ul class="ac-safety-steps ac-safety-steps--tight">
+                <li>Define <strong>Zones</strong> in Home Assistant (<strong>Settings</strong> → <strong>Areas &amp; zones</strong>, or your Zones page) so presence resolves to states like Home, Nearby, and Away for your automations.</li>
+              </ul>
+            </div>
           </div>
           <div class="ac-safety-buttons">
             <button type="button" class="ac-safety-cancel">Cancel</button>
