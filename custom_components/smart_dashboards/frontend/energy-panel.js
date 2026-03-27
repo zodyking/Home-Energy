@@ -8212,7 +8212,7 @@ class EnergyPanel extends HTMLElement {
         if (temp != null && temp > th) {
           showToast(
             this.shadowRoot,
-            `Cannot turn on ${outletName}: ${temp.toFixed(1)}° is above the turn-on setpoint (${Number.isInteger(th) ? String(th) : th.toFixed(1)}°). The heater is only meant to run when at or below that temperature.`,
+            `It's already ${Math.round(temp)}° in here—the heater only turns on below ${Math.round(th)}°.`,
             'error',
           );
           return;
@@ -8245,9 +8245,9 @@ class EnergyPanel extends HTMLElement {
       const m = err?.message || err?.error?.message || '';
       if (
         code === 'heater_too_warm'
-        || (typeof m === 'string' && m.includes('turn-on setpoint'))
+        || (typeof m === 'string' && m.includes('only turns on below'))
       ) {
-        showToast(this.shadowRoot, m || 'Room is too warm to turn on the heater.', 'error');
+        showToast(this.shadowRoot, m || "It's too warm in here to turn on the heater.", 'error');
         return;
       }
       showToast(this.shadowRoot, `Failed to toggle: ${err.message || err}`, 'error');

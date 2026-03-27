@@ -10,7 +10,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import Context, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
@@ -1939,17 +1939,19 @@ async def websocket_toggle_switch(
                         connection.send_error(
                             msg["id"],
                             "heater_too_warm",
-                            f"Cannot turn on: {temp:.1f}° is above the turn-on setpoint ({threshold:.1f}°).",
+                            f"It's already {temp:.0f}° in here—the heater only turns on below {threshold:.0f}°.",
                         )
                         return
                     break
 
     try:
+        ctx = Context(user_id=user.id) if user else None
         await hass.services.async_call(
             "switch",
             f"turn_{new_state}",
             {"entity_id": entity_id},
             blocking=False,
+            context=ctx,
         )
 
         if announce_tts and room_id:
