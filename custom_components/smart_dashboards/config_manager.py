@@ -1049,10 +1049,22 @@ class ConfigManager:
                     default_tts.get("notify_ac_auto_on", True),
                 )
             ),
-            "notify_manual_toggle": bool(
+            "notify_person_toggle": bool(
                 tts.get(
-                    "notify_manual_toggle",
-                    default_tts.get("notify_manual_toggle", True),
+                    "notify_person_toggle",
+                    tts.get("notify_manual_toggle", default_tts.get("notify_person_toggle", True)),
+                )
+            ),
+            "notify_integration_auto": bool(
+                tts.get(
+                    "notify_integration_auto",
+                    default_tts.get("notify_integration_auto", True),
+                )
+            ),
+            "notify_external_auto": bool(
+                tts.get(
+                    "notify_external_auto",
+                    tts.get("notify_manual_toggle", default_tts.get("notify_external_auto", True)),
                 )
             ),
             "notification_title": _notification_title,
@@ -1126,17 +1138,17 @@ class ConfigManager:
                 )
                 or ""
             ),
-            "notify_manual_toggle_title": str(
+            "notify_toggle_title": str(
                 tts.get(
-                    "notify_manual_toggle_title",
-                    default_tts.get("notify_manual_toggle_title", ""),
+                    "notify_toggle_title",
+                    tts.get("notify_manual_toggle_title", default_tts.get("notify_toggle_title", "")),
                 )
                 or ""
             ),
-            "notify_manual_toggle_msg": str(
+            "notify_toggle_msg": str(
                 tts.get(
-                    "notify_manual_toggle_msg",
-                    default_tts.get("notify_manual_toggle_msg", ""),
+                    "notify_toggle_msg",
+                    tts.get("notify_manual_toggle_msg", default_tts.get("notify_toggle_msg", "")),
                 )
                 or ""
             ),

@@ -48,8 +48,8 @@ const TTS_DEFAULTS = {
     '{outlet_name} was turned off because {person_name} left the monitored zone.',
   notify_ac_auto_on_title: '{notification_title} Air Conditioner On',
   notify_ac_auto_on_msg: '{outlet_name} was turned back on because {person_name} is nearby.',
-  notify_manual_toggle_title: '{notification_title} Appliance Toggled',
-  notify_manual_toggle_msg: '{user_name} turned {action} {outlet_name} in {room_name}.',
+  notify_toggle_title: '{notification_title} Appliance Toggled',
+  notify_toggle_msg: '{user_name} turned {action} {outlet_name} in {room_name}.',
 };
 
 /** Tooltip + visible label for room header enforcement badge (index = phase 0–2). */
@@ -7317,27 +7317,48 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{outlet_name}</code> <code>{person_name}</code> <code>{person}</code> <code>{room_name}</code></div>
               </div>
 
-              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Manual Toggle Notification</h3>
+              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Appliance Toggle Notifications</h3>
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
+                Control which appliance on/off changes trigger notifications.
+              </p>
+              <div class="form-group" style="margin-bottom: 8px;">
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-notify-person-toggle" ${ttsSettings.notify_person_toggle !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Notify when a person toggles an appliance</span>
+                </div>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px;">
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-notify-integration-auto" ${ttsSettings.notify_integration_auto !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Notify when this integration's automations toggle an appliance</span>
+                </div>
+              </div>
               <div class="form-group" style="margin-bottom: 12px;">
                 <div class="toggle-row">
                   <label class="toggle-switch">
-                    <input type="checkbox" id="tts-notify-manual-toggle" ${ttsSettings.notify_manual_toggle !== false ? 'checked' : ''} />
+                    <input type="checkbox" id="tts-notify-external-auto" ${ttsSettings.notify_external_auto !== false ? 'checked' : ''} />
                     <span class="toggle-slider"></span>
                   </label>
-                  <span class="toggle-label">Notify on manual appliance toggle by others</span>
+                  <span class="toggle-label">Notify when external automations toggle an appliance</span>
                 </div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Title</div>
-                <input type="text" class="form-input" id="notify-manual-toggle-title"
-                  value="${(ttsSettings.notify_manual_toggle_title || TTS_DEFAULTS.notify_manual_toggle_title).replace(/"/g, '&quot;')}"
+                <input type="text" class="form-input" id="notify-toggle-title"
+                  value="${(ttsSettings.notify_toggle_title || TTS_DEFAULTS.notify_toggle_title).replace(/"/g, '&quot;')}"
                   placeholder="{notification_title} Appliance Toggled">
                 <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Message</div>
-                <input type="text" class="form-input" id="notify-manual-toggle-msg"
-                  value="${(ttsSettings.notify_manual_toggle_msg || TTS_DEFAULTS.notify_manual_toggle_msg).replace(/"/g, '&quot;')}"
+                <input type="text" class="form-input" id="notify-toggle-msg"
+                  value="${(ttsSettings.notify_toggle_msg || TTS_DEFAULTS.notify_toggle_msg).replace(/"/g, '&quot;')}"
                   placeholder="{user_name} turned {action} {outlet_name} in {room_name}.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{user_name}</code> <code>{action}</code></div>
               </div>
@@ -8088,6 +8109,32 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  /**
+   * Live heater temperature for wall_heater guard: prefer get_power_data outlet, else HA sensor state.
+   * @returns {number|null} degrees, or null if unknown
+   */
+  _getWallHeaterLiveTemp(roomId, outletIndex, outletConfig) {
+    const rooms = this._powerData?.rooms || [];
+    const pr = rooms.find((r) => r.id === roomId);
+    const po = pr?.outlets?.[outletIndex];
+    if (po) {
+      const hc = po.heater_current_temperature;
+      if (hc != null && hc !== '' && !Number.isNaN(Number(hc))) {
+        const n = Number(hc);
+        if (Number.isFinite(n)) return n;
+      }
+    }
+    const te = String(outletConfig?.heater_temperature_entity || '').trim();
+    if (te.startsWith('sensor.')) {
+      const st = this._hass?.states?.[te];
+      if (st?.state != null && String(st.state) !== '') {
+        const n = Number(st.state);
+        if (!Number.isNaN(n) && Number.isFinite(n)) return n;
+      }
+    }
+    return null;
+  }
+
   async _handleApplianceToggleClick(e) {
     if (this._showSettings) return;
 
@@ -8157,6 +8204,21 @@ class EnergyPanel extends HTMLElement {
       const actionWord = currentState === 'on' ? 'turn off' : 'turn on';
       const displayName = plugName ? `${outletName} ${plugName}` : outletName;
 
+      if (otype === 'wall_heater' && currentState !== 'on') {
+        const thRaw = outlet.heater_on_below_temperature;
+        const threshold = Number(thRaw != null && thRaw !== '' ? thRaw : 65);
+        const th = Number.isFinite(threshold) ? threshold : 65;
+        const temp = this._getWallHeaterLiveTemp(roomId, outletIndex, outlet);
+        if (temp != null && temp > th) {
+          showToast(
+            this.shadowRoot,
+            `Cannot turn on ${outletName}: ${temp.toFixed(1)}° is above the turn-on setpoint (${Number.isInteger(th) ? String(th) : th.toFixed(1)}°). The heater is only meant to run when at or below that temperature.`,
+            'error',
+          );
+          return;
+        }
+      }
+
       let confirmed = false;
       if (otype === 'minisplit' && authResult.is_admin !== true) {
         confirmed = await this._showMinisplitAcSafetyModal(displayName, actionWord);
@@ -8175,15 +8237,19 @@ class EnergyPanel extends HTMLElement {
         announce_tts: announceTts,
       });
 
-      await this._loadPowerData({ force: true });
-      if (this._dashboardView === 'rooms') {
-        this._updatePowerDisplay();
-      }
-
       const newState = currentState === 'on' ? 'off' : 'on';
       showToast(this.shadowRoot, `${displayName} turned ${newState}`, 'success');
 
     } catch (err) {
+      const code = err?.code ?? err?.error?.code;
+      const m = err?.message || err?.error?.message || '';
+      if (
+        code === 'heater_too_warm'
+        || (typeof m === 'string' && m.includes('turn-on setpoint'))
+      ) {
+        showToast(this.shadowRoot, m || 'Room is too warm to turn on the heater.', 'error');
+        return;
+      }
       showToast(this.shadowRoot, `Failed to toggle: ${err.message || err}`, 'error');
     }
   }
@@ -10355,7 +10421,9 @@ class EnergyPanel extends HTMLElement {
         notify_enforcement_phase_change: this.shadowRoot.querySelector('#tts-notify-enforcement-phase-change')?.checked !== false,
         notify_ac_auto_off: this.shadowRoot.querySelector('#tts-notify-ac-auto-off')?.checked !== false,
         notify_ac_auto_on: this.shadowRoot.querySelector('#tts-notify-ac-auto-on')?.checked !== false,
-        notify_manual_toggle: this.shadowRoot.querySelector('#tts-notify-manual-toggle')?.checked !== false,
+        notify_person_toggle: this.shadowRoot.querySelector('#tts-notify-person-toggle')?.checked !== false,
+        notify_integration_auto: this.shadowRoot.querySelector('#tts-notify-integration-auto')?.checked !== false,
+        notify_external_auto: this.shadowRoot.querySelector('#tts-notify-external-auto')?.checked !== false,
         notify_budget_hit_title: this.shadowRoot.querySelector('#notify-budget-hit-title')?.value ?? '',
         notify_budget_hit_msg: this.shadowRoot.querySelector('#notify-budget-hit-msg')?.value ?? '',
         notify_enforcement_phase1_title: this.shadowRoot.querySelector('#notify-enforcement-phase1-title')?.value ?? '',
@@ -10366,8 +10434,8 @@ class EnergyPanel extends HTMLElement {
         notify_ac_auto_off_msg: this.shadowRoot.querySelector('#notify-ac-auto-off-msg')?.value ?? '',
         notify_ac_auto_on_title: this.shadowRoot.querySelector('#notify-ac-auto-on-title')?.value ?? '',
         notify_ac_auto_on_msg: this.shadowRoot.querySelector('#notify-ac-auto-on-msg')?.value ?? '',
-        notify_manual_toggle_title: this.shadowRoot.querySelector('#notify-manual-toggle-title')?.value ?? '',
-        notify_manual_toggle_msg: this.shadowRoot.querySelector('#notify-manual-toggle-msg')?.value ?? '',
+        notify_toggle_title: this.shadowRoot.querySelector('#notify-toggle-title')?.value ?? '',
+        notify_toggle_msg: this.shadowRoot.querySelector('#notify-toggle-msg')?.value ?? '',
         phase1_warn_msg: ttsPhase1Warn,
         phase2_warn_msg: ttsPhase2Warn,
         phase2_after_msg: ttsPhase2After,

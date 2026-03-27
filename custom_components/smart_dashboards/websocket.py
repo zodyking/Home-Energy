@@ -1913,12 +1913,43 @@ async def websocket_toggle_switch(
     current_state = state.state
     new_state = "off" if current_state == "on" else "on"
 
+    # Block manual wall heater ON when warmer than heater_on_below_temperature (same rule as automation).
+    if new_state == "on" and room_id:
+        cm = hass.data.get(DOMAIN, {}).get("config_manager")
+        if cm:
+            rooms_cfg = cm.energy_config.get("rooms", [])
+            room_cfg = next((r for r in rooms_cfg if r.get("id") == room_id), None)
+            if room_cfg:
+                for out in room_cfg.get("outlets") or []:
+                    if out.get("type") != "wall_heater":
+                        continue
+                    if (out.get("switch_entity") or "").strip() != entity_id:
+                        continue
+                    try:
+                        threshold = float(out.get("heater_on_below_temperature", 65))
+                    except (TypeError, ValueError):
+                        threshold = 65.0
+                    te = str(out.get("heater_temperature_entity") or "").strip()
+                    temp = (
+                        _parse_temperature_sensor_state(hass, te)
+                        if te.startswith("sensor.")
+                        else None
+                    )
+                    if temp is not None and temp > threshold:
+                        connection.send_error(
+                            msg["id"],
+                            "heater_too_warm",
+                            f"Cannot turn on: {temp:.1f}° is above the turn-on setpoint ({threshold:.1f}°).",
+                        )
+                        return
+                    break
+
     try:
         await hass.services.async_call(
             "switch",
             f"turn_{new_state}",
             {"entity_id": entity_id},
-            blocking=True,
+            blocking=False,
         )
 
         if announce_tts and room_id:
