@@ -43,6 +43,8 @@ from .const import (
     DEFAULT_VENT_AUTOMATION_ON_MSG,
     DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
     DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
+    DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG,
+    DEFAULT_NOTIFICATION_TITLE,
 )
 from .mobile_notify_target import resolve_mobile_app_notify_slug
 from .tts_helper import async_send_tts
@@ -136,6 +138,91 @@ class EnergyMonitor:
         # Vent / wall heater optional automations (key: room_id|outlet_name_slug)
         self._vent_automation_state: dict[str, dict] = {}
         self._heater_automation_state: dict[str, dict] = {}
+        # switch.* the integration toggled recently (exclude from "manual UI" edge detection)
+        self._heater_internal_switch_ids: set[str] = set()
+        # Universal push: switch.* state listener + suppression during internal cycling
+        self._manual_toggle_listener_unsub: list = []
+        # Re-entrant count per room (minisplit path calls _power_cycle nested)
+        self._enforcement_power_cycle_depth: dict[str, int] = {}
+        self._plug_shutoff_switch_entities: set[str] = set()
+        self._manual_toggle_notify_last: dict[str, datetime] = {}
+
+    @staticmethod
+    def _notification_enable_key(notification_type: str) -> str:
+        if notification_type == "budget_hit":
+            return "notify_room_budget_hit"
+        if notification_type in ("enforcement_phase1", "enforcement_phase2"):
+            return "notify_enforcement_phase_change"
+        return f"notify_{notification_type}"
+
+    @staticmethod
+    def _notification_template_keys(notification_type: str) -> tuple[str, str]:
+        if notification_type == "budget_hit":
+            return "notify_budget_hit_title", "notify_budget_hit_msg"
+        return (
+            f"notify_{notification_type}_title",
+            f"notify_{notification_type}_msg",
+        )
+
+    def _all_configured_outlet_switch_ids(self) -> set[str]:
+        """switch.* entities referenced by room/outlet config (for manual-toggle notify)."""
+        found: set[str] = set()
+        for room in self.config_manager.energy_config.get("rooms", []):
+            for outlet in room.get("outlets", []):
+                for key in ("plug1_switch", "plug2_switch", "switch_entity"):
+                    eid = outlet.get(key)
+                    if eid and str(eid).startswith("switch."):
+                        found.add(str(eid))
+        return found
+
+    def _room_outlet_context_for_switch(
+        self, entity_id: str
+    ) -> tuple[str, str, str, str] | None:
+        """Return room_id, room_name, outlet_display_name, plug_slot for a switch.* or None."""
+        for room in self.config_manager.energy_config.get("rooms", []):
+            outlet = self._find_outlet_by_switch(room, entity_id)
+            if not outlet:
+                continue
+            room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+            room_name = str(room.get("name") or room_id)
+            outlet_name = str(outlet.get("name") or "Outlet")
+            plug_slot = ""
+            if outlet.get("plug1_switch") == entity_id:
+                plug_slot = str(outlet.get("plug1_name") or "plug 1")
+            elif outlet.get("plug2_switch") == entity_id:
+                plug_slot = str(outlet.get("plug2_name") or "plug 2")
+            parts = [outlet_name, plug_slot] if plug_slot else [outlet_name]
+            display = " ".join(p for p in parts if p).strip()
+            return room_id, room_name, display, plug_slot
+        return None
+
+    def _distinct_presence_person_entity_ids(self) -> list[str]:
+        """Unique person.* from all rooms (targets for universal notifications)."""
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for room in self.config_manager.energy_config.get("rooms", []):
+            pe = room.get("presence_person_entity")
+            if not pe or not str(pe).startswith("person."):
+                continue
+            if pe not in seen:
+                seen.add(pe)
+                ordered.append(pe)
+        return ordered
+
+    def _enforcement_cycle_enter(self, room_id: str) -> None:
+        self._enforcement_power_cycle_depth[room_id] = (
+            self._enforcement_power_cycle_depth.get(room_id, 0) + 1
+        )
+
+    def _enforcement_cycle_exit(self, room_id: str) -> None:
+        c = self._enforcement_power_cycle_depth.get(room_id, 0) - 1
+        if c <= 0:
+            self._enforcement_power_cycle_depth.pop(room_id, None)
+        else:
+            self._enforcement_power_cycle_depth[room_id] = c
+
+    def _room_in_enforcement_power_cycle(self, room_id: str) -> bool:
+        return self._enforcement_power_cycle_depth.get(room_id, 0) > 0
 
     def _tts_line_enabled(self, tts: dict, line: str) -> bool:
         """Per-message TTS toggle from tts_settings (default on). Vent/heater use legacy keys."""
@@ -490,6 +577,22 @@ class EnergyMonitor:
                 e,
             )
 
+    def _mark_wall_heater_switch_internal(self, entity_id: str) -> None:
+        eid = str(entity_id or "").strip()
+        if not eid:
+            return
+        self._heater_internal_switch_ids.add(eid)
+
+        async def _clear() -> None:
+            await asyncio.sleep(3.0)
+            self._heater_internal_switch_ids.discard(eid)
+
+        self.hass.async_create_task(_clear())
+
+    async def _async_wall_heater_set_switch(self, entity_id: str, turn_on: bool) -> None:
+        self._mark_wall_heater_switch_internal(entity_id)
+        await self._async_appliance_power_set(entity_id, turn_on)
+
     async def _async_speak_appliance_automation_tts(
         self, room: dict, message: str
     ) -> None:
@@ -523,11 +626,7 @@ class EnergyMonitor:
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if not tts_settings.get("notifications_enabled"):
             return
-        enable_key_map = {
-            "enforcement_phase1": "notify_enforcement_phase_change",
-            "enforcement_phase2": "notify_enforcement_phase_change",
-        }
-        enable_key = enable_key_map.get(notification_type, f"notify_{notification_type}")
+        enable_key = self._notification_enable_key(notification_type)
         if not tts_settings.get(enable_key, True):
             return
         person_ent = room.get("presence_person_entity")
@@ -541,14 +640,21 @@ class EnergyMonitor:
             or person_ent.replace("person.", "").replace("_", " ").title()
         )
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        notification_title = str(
+            tts_settings.get("notification_title") or DEFAULT_NOTIFICATION_TITLE
+        ).strip() or DEFAULT_NOTIFICATION_TITLE
 
-        title_key = f"notify_{notification_type}_title"
-        msg_key = f"notify_{notification_type}_msg"
-        title_template = tts_settings.get(title_key) or fallback_title or "{prefix} Notification"
+        title_key, msg_key = self._notification_template_keys(notification_type)
+        title_template = (
+            tts_settings.get(title_key)
+            or fallback_title
+            or "{notification_title} Notification"
+        )
         msg_template = tts_settings.get(msg_key) or fallback_message or "Notification from Smart Dashboards."
 
         vars_fmt = {
             "prefix": prefix,
+            "notification_title": notification_title,
             **(template_vars or {}),
             "person_name": person_name,
             "person": person_name,
@@ -558,9 +664,19 @@ class EnergyMonitor:
             message = msg_template.format(**vars_fmt)
         except (KeyError, ValueError) as e:
             _LOGGER.warning("Notification template format failed: %s", e)
-            title = f"{prefix} {fallback_title}" if fallback_title else f"{prefix} Notification"
+            title = (
+                f"{notification_title} {fallback_title}".strip()
+                if fallback_title
+                else f"{notification_title} Notification"
+            )
             message = fallback_message or "Notification from Smart Dashboards."
 
+        await self._async_send_mobile_notification_to_person(person_ent, title, message)
+
+    async def _async_send_mobile_notification_to_person(
+        self, person_ent: str, title: str, message: str
+    ) -> None:
+        """Deliver a formatted push to one person's mobile_app notify target."""
         slug = resolve_mobile_app_notify_slug(self.hass, person_ent)
         if not slug:
             return
@@ -578,6 +694,63 @@ class EnergyMonitor:
         except Exception as e:
             _LOGGER.warning(
                 "Failed to send notification to %s: %s", notify_target, e
+            )
+
+    async def _send_notification_broadcast(
+        self,
+        notification_type: str,
+        template_vars: dict | None,
+        fallback_title: str,
+        fallback_message: str,
+    ) -> None:
+        """Send the same push to every person assigned on any room (universal alerts)."""
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        if not tts_settings.get("notifications_enabled"):
+            return
+        enable_key = self._notification_enable_key(notification_type)
+        if not tts_settings.get(enable_key, True):
+            return
+        recipients = self._distinct_presence_person_entity_ids()
+        if not recipients:
+            _LOGGER.debug(
+                "No presence persons configured on any room; skip %s broadcast",
+                notification_type,
+            )
+            return
+        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        notification_title = str(
+            tts_settings.get("notification_title") or DEFAULT_NOTIFICATION_TITLE
+        ).strip() or DEFAULT_NOTIFICATION_TITLE
+        title_key, msg_key = self._notification_template_keys(notification_type)
+        title_template = (
+            tts_settings.get(title_key)
+            or fallback_title
+            or "{notification_title} Notification"
+        )
+        msg_template = (
+            tts_settings.get(msg_key)
+            or fallback_message
+            or DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG
+        )
+        vars_fmt = {
+            "prefix": prefix,
+            "notification_title": notification_title,
+            **(template_vars or {}),
+        }
+        try:
+            title = title_template.format(**vars_fmt)
+            message = msg_template.format(**vars_fmt)
+        except (KeyError, ValueError) as e:
+            _LOGGER.warning("Broadcast notification template format failed: %s", e)
+            title = (
+                f"{notification_title} {fallback_title}".strip()
+                if fallback_title
+                else f"{notification_title} Notification"
+            )
+            message = fallback_message or "Notification from Smart Dashboards."
+        for person_ent in recipients:
+            await self._async_send_mobile_notification_to_person(
+                person_ent, title, message
             )
 
     def _find_outlet_by_switch(self, room: dict, switch_entity: str) -> dict | None:
@@ -669,58 +842,137 @@ class EnergyMonitor:
         if outlet.get("type") != "wall_heater":
             return
         key = self._appliance_automation_key(room_id, outlet)
-        if not outlet.get("heater_automation_enabled"):
-            self._heater_automation_state.pop(key, None)
-            return
         switch = outlet.get("switch_entity")
-        temp_ent = outlet.get("heater_temperature_entity")
-        if not self._is_appliance_control_entity(switch) or not temp_ent:
+        if not self._is_appliance_control_entity(switch):
             return
-        temp = self._parse_temperature_sensor(temp_ent)
-        if temp is None:
-            return
-        threshold = float(outlet.get("heater_on_below_temperature", 65))
+
+        switch_ent = str(switch)
         stay_min = max(1, min(240, int(outlet.get("heater_stay_on_minutes", 5))))
         stay_delta = timedelta(minutes=stay_min)
-        need_presence = bool(outlet.get("heater_presence_optional_enabled"))
-        pres_ent = str(outlet.get("heater_presence_entity") or "").strip()
-        cooldown = max(0, int(outlet.get("heater_presence_cooldown_seconds", 60)))
+        auto_enabled = bool(outlet.get("heater_automation_enabled"))
 
         st = self._heater_automation_state.setdefault(
-            key, {"run_until": None, "last_on": None}
+            key,
+            {
+                "run_until": None,
+                "last_on": None,
+                "prev_sw_on": None,
+                "prev_presence": False,
+                "mode": None,
+                "auto_session_announced": False,
+            },
         )
-        sw_on = self._appliance_entity_is_on(switch)
-        pres_ok = (
-            self._binary_presence_positive(pres_ent) if pres_ent else True
-        )
-        temp_ok = temp <= threshold
 
-        if st.get("run_until") and now >= st["run_until"]:
-            if sw_on:
-                await self._async_appliance_power_set(str(switch), False)
-            st["run_until"] = None
+        sw_on = self._appliance_entity_is_on(switch)
+        internal = switch_ent in self._heater_internal_switch_ids
+
+        temp_ent = str(outlet.get("heater_temperature_entity") or "").strip()
+        temp: float | None = None
+        if temp_ent.startswith("sensor."):
+            temp = self._parse_temperature_sensor(temp_ent)
+
+        threshold = float(outlet.get("heater_on_below_temperature", 65))
+        comfort_raw = outlet.get("heater_comfort_temperature")
+        try:
+            if comfort_raw is None or comfort_raw == "":
+                comfort = threshold + 2.0
+            else:
+                comfort = float(comfort_raw)
+        except (TypeError, ValueError):
+            comfort = threshold + 2.0
+
+        need_presence = bool(outlet.get("heater_presence_optional_enabled"))
+        pres_turn_on = bool(outlet.get("heater_presence_turn_on_enabled"))
+        pres_ent = str(outlet.get("heater_presence_entity") or "").strip()
+        pres_ok = self._binary_presence_positive(pres_ent) if pres_ent else False
+        prev_pres = bool(st.get("prev_presence"))
+        pres_edge = bool(pres_ent and pres_ok and not prev_pres)
+        cooldown = max(0, int(outlet.get("heater_presence_cooldown_seconds", 60)))
+
+        if st.get("prev_sw_on") is None:
+            st["prev_sw_on"] = sw_on
+            st["prev_presence"] = pres_ok if pres_ent else False
+            return
+
+        prev_sw = bool(st["prev_sw_on"])
+
+        def _cooldown_blocks() -> bool:
+            if not need_presence:
+                return False
+            last_on = st.get("last_on")
+            if last_on and (now - last_on).total_seconds() < cooldown:
+                return True
+            return False
+
+        if sw_on and st.get("run_until") and now >= st["run_until"]:
+            mode = st.get("mode")
+            if mode == "manual":
+                await self._async_wall_heater_set_switch(switch_ent, False)
+                st["run_until"] = None
+                st["mode"] = None
+            elif mode == "auto":
+                if temp is None:
+                    await self._async_wall_heater_set_switch(switch_ent, False)
+                    st["run_until"] = None
+                    st["mode"] = None
+                    st["auto_session_announced"] = False
+                elif temp >= comfort:
+                    await self._async_wall_heater_set_switch(switch_ent, False)
+                    st["run_until"] = None
+                    st["mode"] = None
+                    st["auto_session_announced"] = False
+                else:
+                    st["run_until"] = now + stay_delta
+            else:
+                await self._async_wall_heater_set_switch(switch_ent, False)
+                st["run_until"] = None
+                st["mode"] = None
+                st["auto_session_announced"] = False
+
+        sw_on = self._appliance_entity_is_on(switch)
+
+        if sw_on and not prev_sw and not internal:
+            st["mode"] = "manual"
+            st["run_until"] = now + stay_delta
 
         if not sw_on:
             st["run_until"] = None
+            st["mode"] = None
+            st["auto_session_announced"] = False
 
-        if not sw_on and temp_ok:
-            can_turn_on = True
+        sw_on = self._appliance_entity_is_on(switch)
+
+        if auto_enabled and temp is not None and not sw_on:
+            can_steady = temp <= threshold
             if need_presence:
                 if not pres_ent or not pres_ok:
-                    can_turn_on = False
-                elif (
-                    st.get("last_on")
-                    and (now - st["last_on"]).total_seconds() < cooldown
-                ):
-                    can_turn_on = False
-            if can_turn_on:
-                await self._async_appliance_power_set(str(switch), True)
+                    can_steady = False
+                elif _cooldown_blocks():
+                    can_steady = False
+
+            can_edge = (
+                pres_turn_on
+                and bool(pres_ent)
+                and pres_edge
+                and temp <= threshold
+            )
+            if need_presence:
+                if not pres_ent or not pres_ok:
+                    can_edge = False
+                elif _cooldown_blocks():
+                    can_edge = False
+
+            if can_steady or can_edge:
+                await self._async_wall_heater_set_switch(switch_ent, True)
                 st["last_on"] = now
                 st["run_until"] = now + stay_delta
+                st["mode"] = "auto"
                 tts_settings = (
                     self.config_manager.energy_config.get("tts_settings") or {}
                 )
-                if self._tts_line_enabled(tts_settings, "heater_automation"):
+                if not st.get("auto_session_announced") and self._tts_line_enabled(
+                    tts_settings, "heater_automation"
+                ):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     tmpl = (
                         tts_settings.get("heater_automation_on_msg") or ""
@@ -740,6 +992,10 @@ class EnergyMonitor:
                         await self._async_speak_appliance_automation_tts(room, msg)
                     except (KeyError, ValueError) as e:
                         _LOGGER.warning("Heater automation TTS template failed: %s", e)
+                st["auto_session_announced"] = True
+
+        st["prev_sw_on"] = self._appliance_entity_is_on(switch)
+        st["prev_presence"] = pres_ok if pres_ent else False
 
     def _presence_auto_off_configured_switch_ids(self, room: dict) -> list[str]:
         """switch.* IDs marked for presence auto-off (on or off), for restore eligibility."""
@@ -911,6 +1167,7 @@ class EnergyMonitor:
                 pass
         self._presence_listener_unsub = []
         self._setup_presence_listeners()
+        self._setup_manual_toggle_switch_listeners()
 
     def _setup_presence_listeners(self) -> None:
         track_ids: set[str] = set()
@@ -1022,6 +1279,101 @@ class EnergyMonitor:
         entity_ids = self._get_power_entity_ids()
         _LOGGER.info("Energy monitor started (poll-based accumulation for %d plug entities)", len(entity_ids))
         self._setup_presence_listeners()
+        self._setup_manual_toggle_switch_listeners()
+
+    def _teardown_manual_toggle_switch_listeners(self) -> None:
+        for unsub in self._manual_toggle_listener_unsub:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._manual_toggle_listener_unsub.clear()
+
+    def _setup_manual_toggle_switch_listeners(self) -> None:
+        """Notify all configured persons when a monitored switch changes (UI or automation)."""
+        self._teardown_manual_toggle_switch_listeners()
+        switch_ids = self._all_configured_outlet_switch_ids()
+        if not switch_ids:
+            return
+
+        @callback
+        def _on_switch(event: Event) -> None:
+            self.hass.async_create_task(
+                self._async_handle_manual_toggle_switch_event(event)
+            )
+
+        unsub = async_track_state_change_event(
+            self.hass,
+            list(switch_ids),
+            _on_switch,
+        )
+        self._manual_toggle_listener_unsub.append(unsub)
+
+    async def _async_handle_manual_toggle_switch_event(self, event: Event) -> None:
+        """Universal manual-toggle push: all persons with a room assignment."""
+        entity_id = event.data.get("entity_id")
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if not entity_id or not str(entity_id).startswith("switch."):
+            return
+        if old_state is None:
+            return
+        if not new_state or new_state.state not in ("on", "off"):
+            return
+        if old_state.state == new_state.state:
+            return
+        monitored = self._all_configured_outlet_switch_ids()
+        if entity_id not in monitored:
+            return
+        if entity_id in self._plug_shutoff_switch_entities:
+            return
+        loc = self._room_outlet_context_for_switch(entity_id)
+        if not loc:
+            return
+        room_id, room_name, outlet_display, _plug_slot = loc
+        if self._room_in_enforcement_power_cycle(room_id):
+            return
+
+        now = dt_util.now()
+        debounce_key = f"{entity_id}|{new_state.state}"
+        last = self._manual_toggle_notify_last.get(debounce_key)
+        if last and (now - last).total_seconds() < 1.5:
+            return
+        self._manual_toggle_notify_last[debounce_key] = now
+        if len(self._manual_toggle_notify_last) > 200:
+            self._manual_toggle_notify_last.clear()
+
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        if not tts_settings.get("notifications_enabled"):
+            return
+        if not tts_settings.get("notify_manual_toggle", True):
+            return
+
+        user_name = "Automation"
+        try:
+            ctx = getattr(new_state, "context", None)
+            uid = getattr(ctx, "user_id", None) if ctx is not None else None
+            if uid:
+                get_user = getattr(self.hass.auth, "async_get_user", None)
+                if callable(get_user):
+                    user = await get_user(uid)
+                    if user is not None and getattr(user, "name", None):
+                        user_name = str(user.name)
+        except Exception:
+            pass
+
+        action = "on" if new_state.state == "on" else "off"
+        await self._send_notification_broadcast(
+            "manual_toggle",
+            {
+                "user_name": user_name,
+                "room_name": room_name,
+                "outlet_name": outlet_display,
+                "action": action,
+            },
+            "Appliance Toggled",
+            DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG,
+        )
 
     async def async_stop(self) -> None:
         """Stop the energy monitoring loop and listeners."""
@@ -1032,6 +1384,7 @@ class EnergyMonitor:
             except Exception:
                 pass
         self._presence_listener_unsub = []
+        self._teardown_manual_toggle_switch_listeners()
         for unsub in self._power_listener_unsub:
             unsub()
         self._power_listener_unsub = []
@@ -1111,7 +1464,7 @@ class EnergyMonitor:
                 try:
                     await self._send_notification_to_room_person(
                         room,
-                        "room_budget_hit",
+                        "budget_hit",
                         {
                             "room_name": room_name,
                             "kwh_budget": str(round(effective_kwh_budget, 1)),
@@ -1553,6 +1906,7 @@ class EnergyMonitor:
         outlet_name = ms_outlet.get("name") or "Mini-split"
         room_name_log = str(room.get("name") or room_id)
 
+        self._enforcement_cycle_enter(room_id)
         try:
             merged_cycle = {**(cycle_log_extra or {})}
             merged_cycle["outlets_cycled"] = 1
@@ -1662,6 +2016,8 @@ class EnergyMonitor:
                         _LOGGER.warning("Minisplit immediate restore TTS failed: %s", e)
         except Exception as e:
             _LOGGER.error("Phase-2 minisplit enforcement failed: %s", e)
+        finally:
+            self._enforcement_cycle_exit(room_id)
 
     async def _handle_plug_shutoff(
         self,
@@ -1686,7 +2042,8 @@ class EnergyMonitor:
             return
         
         self._shutoff_pending[shutoff_key] = True
-        
+        self._plug_shutoff_switch_entities.add(switch_entity)
+
         try:
             # Turn off the switch
             await self.hass.services.async_call(
@@ -1763,6 +2120,7 @@ class EnergyMonitor:
             _LOGGER.error("Plug shutoff error: %s", e)
         finally:
             self._shutoff_pending[shutoff_key] = False
+            self._plug_shutoff_switch_entities.discard(switch_entity)
 
     def _get_wrgb_light_entities(self, room: dict) -> list[str]:
         """Get all WRGB light entity IDs for a room."""
@@ -2341,6 +2699,7 @@ class EnergyMonitor:
             )
             return
 
+        self._enforcement_cycle_enter(room_id)
         try:
             room_name = str(room.get("name") or room_id)
             if record_cycle:
@@ -2368,6 +2727,8 @@ class EnergyMonitor:
             )
         except Exception as e:
             _LOGGER.error("Failed to power cycle outlets in %s: %s", room_id, e)
+        finally:
+            self._enforcement_cycle_exit(room_id)
 
     async def _send_outlet_alert(
         self,

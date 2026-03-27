@@ -36,18 +36,19 @@ const TTS_DEFAULTS = {
     '{prefix} {room_name} vent is on.',
   heater_automation_on_msg:
     '{prefix} {room_name} temp below {threshold} degrees, warming up {room_name}.',
-  notify_budget_hit_title: '{prefix} Budget Exceeded',
+  notification_title: 'Home Energy',
+  notify_budget_hit_title: '{notification_title} Budget Exceeded',
   notify_budget_hit_msg: '{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh).',
-  notify_enforcement_phase1_title: '{prefix} Enforcement Phase 1',
+  notify_enforcement_phase1_title: '{notification_title} Enforcement Phase 1',
   notify_enforcement_phase1_msg: '{room_name} has entered enforcement phase 1 (volume escalation). Please reduce power usage.',
-  notify_enforcement_phase2_title: '{prefix} Enforcement Phase 2',
+  notify_enforcement_phase2_title: '{notification_title} Enforcement Phase 2',
   notify_enforcement_phase2_msg: '{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage.',
-  notify_ac_auto_off_title: '{prefix} Air Conditioner Off',
+  notify_ac_auto_off_title: '{notification_title} Air Conditioner Off',
   notify_ac_auto_off_msg:
     '{outlet_name} was turned off because {person_name} left the monitored zone.',
-  notify_ac_auto_on_title: '{prefix} Air Conditioner On',
+  notify_ac_auto_on_title: '{notification_title} Air Conditioner On',
   notify_ac_auto_on_msg: '{outlet_name} was turned back on because {person_name} is nearby.',
-  notify_manual_toggle_title: '{prefix} Appliance Toggled',
+  notify_manual_toggle_title: '{notification_title} Appliance Toggled',
   notify_manual_toggle_msg: '{user_name} turned {action} {outlet_name} in {room_name}.',
 };
 
@@ -831,6 +832,49 @@ class EnergyPanel extends HTMLElement {
         if (isMinisplit) {
           const msUnit = deviceCard.querySelector('.ms-unit');
           if (msUnit) msUnit.classList.toggle('ms-on', outlet.plug1.watts > 0.1);
+        }
+        if (isVentLike) {
+          const cvWatts = deviceCard.querySelector('.ceiling-vent-watts');
+          if (cvWatts) {
+            cvWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
+            cvWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
+          }
+          const ventBody = deviceCard.querySelector('.ceiling-vent-body');
+          if (ventBody) ventBody.classList.toggle('vent-on', outlet.plug1.watts > 0.1);
+          if (deviceType === 'wall_heater') {
+            const tEl = deviceCard.querySelector('.heater-dash-temp');
+            const mEl = deviceCard.querySelector('.heater-dash-onmax');
+            const timerEl = deviceCard.querySelector('.heater-dash-timer');
+            const sepTimer = deviceCard.querySelector('.heater-dash-sep-timer');
+            if (tEl) {
+              const ct = outlet.heater_current_temperature;
+              tEl.textContent = ct != null && ct !== '' && !Number.isNaN(Number(ct))
+                ? `${Number(ct).toFixed(1)}°`
+                : '—';
+            }
+            if (mEl) {
+              const b = outlet.heater_on_below_temperature ?? deviceConfig?.heater_on_below_temperature ?? 65;
+              const bd = Number(b) % 1 === 0 ? 0 : 1;
+              mEl.textContent = `≤${Number(b).toFixed(bd)}°`;
+            }
+            const tr = this._formatHeaterRunRemaining(outlet.heater_time_remaining_sec);
+            if (timerEl) {
+              timerEl.textContent = tr;
+              timerEl.style.display = tr ? '' : 'none';
+            }
+            if (sepTimer) {
+              sepTimer.style.display = (outlet.heater_time_remaining_sec || 0) > 0 ? '' : 'none';
+            }
+          }
+        }
+        if (isFridge) {
+          const fridgeW = deviceCard.querySelector('.fridge-watts');
+          if (fridgeW) {
+            fridgeW.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
+            fridgeW.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
+          }
+          const fridgeBody = deviceCard.querySelector('.fridge-body');
+          if (fridgeBody) fridgeBody.classList.toggle('fridge-on', outlet.plug1.watts > 0.1);
         }
         if (deviceType === 'light') {
           const isOn = outlet.switch_state === true;
@@ -3188,6 +3232,19 @@ class EnergyPanel extends HTMLElement {
       .device-card.ceiling-vent-card .ceiling-vent-watts.over-threshold {
         color: var(--panel-danger, #ff5252);
       }
+      .device-card.ceiling-vent-card .heater-dash-meta {
+        margin-top: 3px;
+        font-size: 9px;
+        line-height: 1.25;
+        color: var(--secondary-text-color, rgba(255,255,255,0.52));
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+        max-width: 100%;
+        padding: 0 2px;
+      }
+      .device-card.ceiling-vent-card .heater-dash-timer {
+        color: var(--panel-accent, #03a9f4);
+      }
 
       .graph-modal-overlay {
         position: fixed;
@@ -4272,6 +4329,124 @@ class EnergyPanel extends HTMLElement {
 
       .toggle-confirm-ok:active,
       .toggle-confirm-cancel:active {
+        transform: scale(0.97);
+      }
+
+      /* Minisplit / AC zone automation safety (non-admin) */
+      .ac-safety-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10001;
+        padding: 16px;
+        box-sizing: border-box;
+        animation: fadeIn 0.15s ease;
+      }
+      .ac-safety-modal {
+        background: var(
+          --ha-card-background-color,
+          var(--card-background-color, var(--input-bg, #1e1e1e))
+        );
+        color: var(--primary-text-color, #e1e1e1);
+        border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
+        border-radius: 12px;
+        width: 100%;
+        max-width: 440px;
+        max-height: min(85vh, 640px);
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        animation: scaleIn 0.15s ease;
+      }
+      .ac-safety-title {
+        font-size: 17px;
+        font-weight: 600;
+        color: var(--primary-text-color, #f5f5f5);
+        padding: 18px 20px 0;
+        flex-shrink: 0;
+      }
+      .ac-safety-body {
+        padding: 12px 20px 16px;
+        overflow-y: auto;
+        flex: 1;
+        min-height: 0;
+      }
+      .ac-safety-lead {
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--primary-text-color, #e8e8e8);
+        margin: 0 0 12px;
+      }
+      .ac-safety-note {
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--secondary-text-color, #a8a8a8);
+        margin: 0 0 14px;
+        padding: 10px 12px;
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 8px;
+        border-left: 3px solid var(--panel-accent, #03a9f4);
+      }
+      .ac-safety-steps-title {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--secondary-text-color, #b0b0b0);
+        margin: 0 0 8px;
+      }
+      .ac-safety-steps {
+        margin: 0;
+        padding-left: 1.15rem;
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--secondary-text-color, #c8c8c8);
+      }
+      .ac-safety-steps li {
+        margin-bottom: 8px;
+      }
+      .ac-safety-steps li:last-child {
+        margin-bottom: 0;
+      }
+      .ac-safety-buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        padding: 12px 20px 18px;
+        border-top: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
+        flex-shrink: 0;
+      }
+      .ac-safety-cancel,
+      .ac-safety-ok {
+        padding: 10px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: background 0.15s, transform 0.1s;
+      }
+      .ac-safety-cancel {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--primary-text-color, #e8e8e8);
+        border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.18));
+      }
+      .ac-safety-cancel:hover {
+        background: rgba(255, 255, 255, 0.14);
+      }
+      .ac-safety-ok {
+        background: var(--panel-accent, #03a9f4);
+        color: #fff;
+      }
+      .ac-safety-ok:hover {
+        background: #029ae5;
+      }
+      .ac-safety-ok:active,
+      .ac-safety-cancel:active {
         transform: scale(0.97);
       }
     `;
@@ -5756,6 +5931,16 @@ class EnergyPanel extends HTMLElement {
     return '';
   }
 
+  /** Wall heater run segment countdown (matches stove-style compact line). */
+  _formatHeaterRunRemaining(totalSec) {
+    const t = Math.max(0, Math.floor(Number(totalSec) || 0));
+    if (t <= 0) return '';
+    const m = Math.floor(t / 60);
+    const s = t % 60;
+    if (m > 0) return `${m}:${String(s).padStart(2, '0')} left`;
+    return `${s}s left`;
+  }
+
   _renderStoveCard(device, index, deviceData) {
     const data = deviceData || { plug1: { watts: 0 } };
     const watts = data.plug1?.watts || 0;
@@ -5948,6 +6133,20 @@ class EnergyPanel extends HTMLElement {
     const isActive = watts > 0.1;
     const kind = (device.type || 'vent') === 'wall_heater' ? 'Wall heater' : 'Vent';
     const displayTitle = device.name || kind;
+    const isWallHeater = (device.type || 'vent') === 'wall_heater';
+    const belowN = device.heater_on_below_temperature ?? 65;
+    const belowDec = belowN % 1 === 0 ? 0 : 1;
+    let tempStr = '—';
+    const hc = data.heater_current_temperature;
+    if (isWallHeater && hc != null && hc !== '' && !Number.isNaN(Number(hc))) {
+      tempStr = `${Number(hc).toFixed(1)}°`;
+    }
+    const ht = isWallHeater ? (data.heater_time_remaining_sec || 0) : 0;
+    const timerStr = ht > 0 ? this._formatHeaterRunRemaining(ht) : '';
+    const heaterDash = isWallHeater ? `
+            <div class="heater-dash-meta">
+              <span class="heater-dash-temp">${tempStr}</span><span class="heater-dash-sep"> · </span><span class="heater-dash-onmax">≤${Number(belowN).toFixed(belowDec)}°</span><span class="heater-dash-sep heater-dash-sep-timer"${timerStr ? '' : ' style="display:none"'}> · </span><span class="heater-dash-timer"${timerStr ? '' : ' style="display:none"'}">${timerStr}</span>
+            </div>` : '';
 
     return `
       <div class="device-card ceiling-vent-card" data-outlet-index="${index}">
@@ -5970,6 +6169,7 @@ class EnergyPanel extends HTMLElement {
             <div class="outlet-threshold">
               <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
             </div>
+            ${heaterDash}
           </div>
         </div>
       </div>
@@ -6161,7 +6361,7 @@ class EnergyPanel extends HTMLElement {
       ? ` data-tts-controls="${controlsSelector.replace(/"/g, '&quot;')}"`
       : '';
     return `
-      <div class="toggle-row tts-line-enable-row" style="margin:0;justify-content:flex-end;">
+      <div class="toggle-row tts-line-enable-row">
         <label class="toggle-switch">
           <input type="checkbox" id="${id}" class="tts-line-enable"${dataAttr} data-tts-line="${lineKey}" ${on ? 'checked' : ''} />
           <span class="toggle-slider"></span>
@@ -6361,15 +6561,16 @@ class EnergyPanel extends HTMLElement {
         }
         .tts-msg-header-row {
           display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 12px;
+          flex-direction: column;
+          align-items: stretch;
+          gap: 8px;
           margin-bottom: 8px;
-          flex-wrap: wrap;
         }
         .tts-msg-header-row .tts-line-enable-row {
-          margin-bottom: 0 !important;
+          margin: 0 !important;
+          align-self: flex-end;
           flex-shrink: 0;
+          justify-content: flex-end;
         }
         .form-input:disabled {
           opacity: 0.55;
@@ -6840,7 +7041,7 @@ class EnergyPanel extends HTMLElement {
                 <h2 class="card-title">Push Notifications</h2>
               </div>
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
-                For rooms with a person assigned (<strong>Presence person</strong> in room settings), optional mobile alerts. Titles use your TTS prefix. Notifications use the <code>notify.mobile_app_*</code> service for each device linked to that person in <strong>Settings → People</strong> (same suffix as the linked <code>device_tracker.*</code> entity, e.g. <code>Brandon’s Iphone</code> → <code>notify.mobile_app_brandons_iphone</code>).
+                Assign a <strong>Presence person</strong> per room to enable mobile alerts. <strong>Personal</strong> alerts (room budget exceeded, enforcement phase changes, presence-based AC off/on) go only to that room’s person. <strong>Universal</strong> alerts (optional below) go to <em>every</em> person who is set as Presence person on <em>any</em> room when a monitored switch changes from the dashboard, Home Assistant UI, or an automation. Use <strong>Notification title</strong> as <code>{notification_title}</code> in title templates (separate from the TTS message prefix). Delivery uses each person’s <code>notify.mobile_app_*</code> target from devices linked under <strong>Settings → People</strong> (e.g. <code>Brandon’s Iphone</code> → <code>notify.mobile_app_brandons_iphone</code>).
               </p>
               <div class="form-group" style="margin-bottom: 16px;">
                 <div class="toggle-row">
@@ -6850,6 +7051,13 @@ class EnergyPanel extends HTMLElement {
                   </label>
                   <span class="toggle-label"><strong>Enable push notifications</strong></span>
                 </div>
+              </div>
+              <div class="tts-msg-group" style="margin-bottom: 16px;">
+                <div class="tts-msg-title">Notification title</div>
+                <div class="tts-msg-desc">Shown at the start of push notification titles via <code>{notification_title}</code> (independent of TTS message prefix).</div>
+                <input type="text" class="form-input" id="notify-notification-title"
+                  value="${(ttsSettings.notification_title || TTS_DEFAULTS.notification_title).replace(/"/g, '&quot;')}"
+                  placeholder="Home Energy">
               </div>
 
               <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Budget Exceeded Notification</h3>
@@ -6866,8 +7074,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Title</div>
                 <input type="text" class="form-input" id="notify-budget-hit-title"
                   value="${(ttsSettings.notify_budget_hit_title || TTS_DEFAULTS.notify_budget_hit_title).replace(/"/g, '&quot;')}"
-                  placeholder="{prefix} Budget Exceeded">
-                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+                  placeholder="{notification_title} Budget Exceeded">
+                <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Message</div>
@@ -6891,8 +7099,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Phase 1 Title</div>
                 <input type="text" class="form-input" id="notify-enforcement-phase1-title"
                   value="${(ttsSettings.notify_enforcement_phase1_title || TTS_DEFAULTS.notify_enforcement_phase1_title).replace(/"/g, '&quot;')}"
-                  placeholder="{prefix} Enforcement Phase 1">
-                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+                  placeholder="{notification_title} Enforcement Phase 1">
+                <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Phase 1 Message</div>
@@ -6905,8 +7113,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Phase 2 Title</div>
                 <input type="text" class="form-input" id="notify-enforcement-phase2-title"
                   value="${(ttsSettings.notify_enforcement_phase2_title || TTS_DEFAULTS.notify_enforcement_phase2_title).replace(/"/g, '&quot;')}"
-                  placeholder="{prefix} Enforcement Phase 2">
-                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+                  placeholder="{notification_title} Enforcement Phase 2">
+                <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Phase 2 Message</div>
@@ -6930,8 +7138,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">AC Auto-Off Title</div>
                 <input type="text" class="form-input" id="notify-ac-auto-off-title"
                   value="${(ttsSettings.notify_ac_auto_off_title || TTS_DEFAULTS.notify_ac_auto_off_title).replace(/"/g, '&quot;')}"
-                  placeholder="{prefix} Air Conditioner Off">
-                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+                  placeholder="{notification_title} Air Conditioner Off">
+                <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">AC Auto-Off Message</div>
@@ -6953,8 +7161,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">AC Auto-On Title</div>
                 <input type="text" class="form-input" id="notify-ac-auto-on-title"
                   value="${(ttsSettings.notify_ac_auto_on_title || TTS_DEFAULTS.notify_ac_auto_on_title).replace(/"/g, '&quot;')}"
-                  placeholder="{prefix} Air Conditioner On">
-                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+                  placeholder="{notification_title} Air Conditioner On">
+                <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">AC Auto-On Message</div>
@@ -6978,8 +7186,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Title</div>
                 <input type="text" class="form-input" id="notify-manual-toggle-title"
                   value="${(ttsSettings.notify_manual_toggle_title || TTS_DEFAULTS.notify_manual_toggle_title).replace(/"/g, '&quot;')}"
-                  placeholder="{prefix} Appliance Toggled">
-                <div class="tts-var-help">Variables: <code>{prefix}</code></div>
+                  placeholder="{notification_title} Appliance Toggled">
+                <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
               </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Message</div>
@@ -7419,6 +7627,29 @@ class EnergyPanel extends HTMLElement {
     }, delay);
   }
 
+  /** Prefer linked device_tracker.* state (raw) over person.* home/not_home summary. */
+  _presenceLabelFromPersonState(personState) {
+    if (!personState || !this._hass?.states) return 'unknown';
+    const attrs = personState.attributes || {};
+    const source = attrs.source != null ? String(attrs.source).trim() : '';
+    let trackerId = '';
+    if (source.startsWith('device_tracker.')) {
+      trackerId = source;
+    } else {
+      const raw = attrs.device_trackers;
+      const list = Array.isArray(raw) ? raw : raw != null && String(raw).trim() ? [String(raw).trim()] : [];
+      trackerId = list.map((t) => String(t).trim()).find((t) => t.startsWith('device_tracker.')) || '';
+    }
+    if (trackerId) {
+      const ts = this._hass.states[trackerId];
+      if (!ts) return 'unavailable';
+      return ts.state != null && String(ts.state) !== '' ? String(ts.state) : 'unknown';
+    }
+    return personState.state != null && String(personState.state) !== ''
+      ? String(personState.state)
+      : 'unknown';
+  }
+
   _updateRoomPresenceLiveLabels() {
     if (!this._hass?.states || !this.shadowRoot) return;
     this.shadowRoot.querySelectorAll('.room-settings-presence-live').forEach((strip) => {
@@ -7435,8 +7666,8 @@ class EnergyPanel extends HTMLElement {
         return;
       }
       const name = st.attributes?.friendly_name || pid;
-      const zoneState = st.state != null ? String(st.state) : 'unknown';
-      textEl.textContent = `${name} — ${zoneState}`;
+      const report = this._presenceLabelFromPersonState(st);
+      textEl.textContent = `${name} — ${report}`;
     });
   }
 
@@ -7743,7 +7974,12 @@ class EnergyPanel extends HTMLElement {
       const actionWord = currentState === 'on' ? 'turn off' : 'turn on';
       const displayName = plugName ? `${outletName} ${plugName}` : outletName;
 
-      const confirmed = await this._showToggleConfirmation(displayName, actionWord);
+      let confirmed = false;
+      if (otype === 'minisplit' && authResult.is_admin !== true) {
+        confirmed = await this._showMinisplitAcSafetyModal(displayName, actionWord);
+      } else {
+        confirmed = await this._showToggleConfirmation(displayName, actionWord);
+      }
       if (!confirmed) return;
 
       const announceTts = authResult.requires_tts === true;
@@ -7755,6 +7991,11 @@ class EnergyPanel extends HTMLElement {
         plug_name: plugName,
         announce_tts: announceTts,
       });
+
+      await this._loadPowerData({ force: true });
+      if (this._dashboardView === 'rooms') {
+        this._updatePowerDisplay();
+      }
 
       const newState = currentState === 'on' ? 'off' : 'on';
       showToast(this.shadowRoot, `${displayName} turned ${newState}`, 'success');
@@ -7792,6 +8033,70 @@ class EnergyPanel extends HTMLElement {
 
       this.shadowRoot.appendChild(overlay);
       overlay.querySelector('.toggle-confirm-ok').focus();
+    });
+  }
+
+  /**
+   * One-step modal for non-admin users toggling a mini-split (AC): zone automation warning,
+   * privacy note, Companion / zone setup steps, then primary action to confirm toggle.
+   */
+  _showMinisplitAcSafetyModal(displayName, actionWord) {
+    const actLabel = String(actionWord || 'turn on').replace(/^\w/, (c) => c.toUpperCase());
+    const nameStr = String(displayName || 'AC');
+
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'ac-safety-overlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.innerHTML = `
+        <div class="ac-safety-modal">
+          <div class="ac-safety-title">Air conditioner / zone automation</div>
+          <div class="ac-safety-body">
+            <p class="ac-safety-lead">
+              This room uses zone-based automation for air conditioning. Turning the unit on or off manually at the wrong time can shorten compressor life or make the system fight your automations. Use manual control only when you understand what is running.
+            </p>
+            <p class="ac-safety-note">
+              <strong>Privacy:</strong> Your exact GPS position is not shared with this dashboard. Home Assistant only uses <strong>zone states</strong> (for example Home, Nearby, Away) from the mobile app to drive automations.
+            </p>
+            <div class="ac-safety-steps-title">Set up zone tracking</div>
+            <ol class="ac-safety-steps">
+              <li>Install <strong>Home Assistant Companion</strong> on your phone (iOS App Store or Google Play).</li>
+              <li>Enable location for the app: <strong>iOS:</strong> Settings → Home Assistant → Location (choose While Using the App or Always if you use small zones). <strong>Android:</strong> allow location permission for the app in system settings.</li>
+              <li>In Home Assistant, define <strong>Zones</strong> (Settings → Areas &amp; zones, or your Zones page) so presence resolves to states like Home, Nearby, and Away for your automations.</li>
+            </ol>
+          </div>
+          <div class="ac-safety-buttons">
+            <button type="button" class="ac-safety-cancel">Cancel</button>
+            <button type="button" class="ac-safety-ok"></button>
+          </div>
+        </div>
+      `;
+      const okBtn = overlay.querySelector('.ac-safety-ok');
+      if (okBtn) okBtn.textContent = `${actLabel} ${nameStr}`;
+
+      const cleanup = (result) => {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+        resolve(result);
+      };
+
+      const onKey = (ev) => {
+        if (ev.key === 'Escape') {
+          ev.preventDefault();
+          cleanup(false);
+        }
+      };
+      document.addEventListener('keydown', onKey);
+
+      overlay.querySelector('.ac-safety-cancel').addEventListener('click', () => cleanup(false));
+      overlay.querySelector('.ac-safety-ok').addEventListener('click', () => cleanup(true));
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) cleanup(false);
+      });
+
+      this.shadowRoot.appendChild(overlay);
+      overlay.querySelector('.ac-safety-ok').focus();
     });
   }
 
@@ -8229,10 +8534,13 @@ class EnergyPanel extends HTMLElement {
         </div>
       </div>
     ` : '';
+    const heaterComfortVal = device.heater_comfort_temperature != null && device.heater_comfort_temperature !== ''
+      ? device.heater_comfort_temperature
+      : '';
     const heaterAutomationSection = isWallHeater ? `
       <div class="divider" style="margin: 16px 0;"></div>
       <div class="plug-settings-title">Heater automation</div>
-      <p class="tts-msg-desc" style="margin-bottom: 12px;">Turns on when temperature is at or below the threshold (same unit as the sensor). Stays on for the set duration, then turns off. If "require presence" is enabled, both low temperature and presence must be true; cooldown limits rapid re-triggers.</p>
+      <p class="tts-msg-desc" style="margin-bottom: 12px;">Evaluated about every second. Turns on when temperature is at or below the threshold. Each segment runs for the stay duration; when a segment ends, if temperature is at or above comfort the heater turns off (automation TTS/notifications only on the first segment of a run). If still below comfort, another segment runs without a new announcement. Dashboard or HA toggles that turn the heater on run one segment only, then off.</p>
       <div class="form-group" style="margin-bottom: 12px;">
         <label class="toggle-row">
           <input type="checkbox" class="form-checkbox heater-automation-enabled" ${device.heater_automation_enabled ? 'checked' : ''}>
@@ -8255,11 +8563,23 @@ class EnergyPanel extends HTMLElement {
         </div>
       </div>
       <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Comfort temperature (°)</label>
+        <input type="number" class="form-input heater-comfort-temperature" value="${heaterComfortVal}" placeholder="default: turn-on + 2" min="-60" max="160" step="0.1">
+        <div class="tts-msg-desc" style="margin-top: 4px;">After each stay period, if temp is at or above this, the heater turns off. Leave empty to use turn-on threshold + 2°.</div>
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
         <label class="toggle-row">
           <input type="checkbox" class="form-checkbox heater-presence-optional-enabled" ${device.heater_presence_optional_enabled ? 'checked' : ''}>
           <span class="toggle-label">Require presence to turn on</span>
         </label>
         <div class="tts-msg-desc" style="margin-top: 4px;">When off, heater turns on whenever temperature is low enough. When on, a presence sensor must also be active.</div>
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="toggle-row">
+          <input type="checkbox" class="form-checkbox heater-presence-turn-on-enabled" ${device.heater_presence_turn_on_enabled ? 'checked' : ''}>
+          <span class="toggle-label">Turn on when presence activates</span>
+        </label>
+        <div class="tts-msg-desc" style="margin-top: 4px;">On a rising edge of the presence sensor, if temperature is at or below the turn-on threshold, start the same heat cycle (comfort re-check rules apply). Uses the presence sensor and cooldown below when "require presence" is on.</div>
       </div>
       <div class="form-group" style="margin-bottom: 12px;">
         <label class="form-label">Presence sensor</label>
@@ -9165,6 +9485,8 @@ class EnergyPanel extends HTMLElement {
         newOutlet.heater_on_below_temperature = 65;
         newOutlet.heater_stay_on_minutes = 5;
         newOutlet.heater_presence_cooldown_seconds = 60;
+        newOutlet.heater_comfort_temperature = null;
+        newOutlet.heater_presence_turn_on_enabled = false;
       }
     }
     if (deviceType === 'minisplit') {
@@ -9597,7 +9919,17 @@ class EnergyPanel extends HTMLElement {
               device.heater_temperature_entity = hte.startsWith('sensor.') ? hte : null;
               device.heater_on_below_temperature = Math.max(-60, Math.min(160, parseFloat(item.querySelector('.heater-on-below-temperature')?.value) || 65));
               device.heater_stay_on_minutes = Math.max(1, Math.min(240, parseInt(item.querySelector('.heater-stay-on-minutes')?.value, 10) || 5));
+              const hctRaw = (item.querySelector('.heater-comfort-temperature')?.value ?? '').trim();
+              if (hctRaw === '') {
+                device.heater_comfort_temperature = null;
+              } else {
+                const hv = parseFloat(hctRaw);
+                device.heater_comfort_temperature = Number.isFinite(hv)
+                  ? Math.max(-60, Math.min(160, hv))
+                  : null;
+              }
               device.heater_presence_optional_enabled = item.querySelector('.heater-presence-optional-enabled')?.checked === true;
+              device.heater_presence_turn_on_enabled = item.querySelector('.heater-presence-turn-on-enabled')?.checked === true;
               const hpe = (item.querySelector('.entity-datalist-input.heater-presence-entity') || item.querySelector('input.heater-presence-entity'))?.value?.trim() || '';
               device.heater_presence_entity = hpe.startsWith('binary_sensor.') ? hpe : null;
               device.heater_presence_cooldown_seconds = Math.max(0, Math.min(7200, parseInt(item.querySelector('.heater-presence-cooldown-seconds')?.value, 10) || 60));
@@ -9795,6 +10127,7 @@ class EnergyPanel extends HTMLElement {
         vent_automation_on_msg: this.shadowRoot.querySelector('#tts-vent-automation-msg')?.value ?? '',
         heater_automation_on_msg: this.shadowRoot.querySelector('#tts-heater-automation-msg')?.value ?? '',
         notifications_enabled: this.shadowRoot.querySelector('#tts-notifications-enabled')?.checked === true,
+        notification_title: this.shadowRoot.querySelector('#notify-notification-title')?.value ?? '',
         notify_room_budget_hit: this.shadowRoot.querySelector('#tts-notify-room-budget-hit')?.checked !== false,
         notify_enforcement_phase_change: this.shadowRoot.querySelector('#tts-notify-enforcement-phase-change')?.checked !== false,
         notify_ac_auto_off: this.shadowRoot.querySelector('#tts-notify-ac-auto-off')?.checked !== false,
@@ -10005,7 +10338,17 @@ class EnergyPanel extends HTMLElement {
             device.heater_temperature_entity = hte.startsWith('sensor.') ? hte : null;
             device.heater_on_below_temperature = Math.max(-60, Math.min(160, parseFloat(item.querySelector('.heater-on-below-temperature')?.value) || 65));
             device.heater_stay_on_minutes = Math.max(1, Math.min(240, parseInt(item.querySelector('.heater-stay-on-minutes')?.value, 10) || 5));
+            const hctRaw2 = (item.querySelector('.heater-comfort-temperature')?.value ?? '').trim();
+            if (hctRaw2 === '') {
+              device.heater_comfort_temperature = null;
+            } else {
+              const hv2 = parseFloat(hctRaw2);
+              device.heater_comfort_temperature = Number.isFinite(hv2)
+                ? Math.max(-60, Math.min(160, hv2))
+                : null;
+            }
             device.heater_presence_optional_enabled = item.querySelector('.heater-presence-optional-enabled')?.checked === true;
+            device.heater_presence_turn_on_enabled = item.querySelector('.heater-presence-turn-on-enabled')?.checked === true;
             const hpe = (item.querySelector('.entity-datalist-input.heater-presence-entity') || item.querySelector('input.heater-presence-entity'))?.value?.trim() || '';
             device.heater_presence_entity = hpe.startsWith('binary_sensor.') ? hpe : null;
             device.heater_presence_cooldown_seconds = Math.max(0, Math.min(7200, parseInt(item.querySelector('.heater-presence-cooldown-seconds')?.value, 10) || 60));

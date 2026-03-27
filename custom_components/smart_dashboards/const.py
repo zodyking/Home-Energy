@@ -84,21 +84,22 @@ DEFAULT_VENT_AUTOMATION_ON_MSG = (
 )
 
 # Notification message templates (for mobile push notifications)
-DEFAULT_NOTIFY_BUDGET_HIT_TITLE = "{prefix} Budget Exceeded"
+DEFAULT_NOTIFICATION_TITLE = "Home Energy"
+DEFAULT_NOTIFY_BUDGET_HIT_TITLE = "{notification_title} Budget Exceeded"
 DEFAULT_NOTIFY_BUDGET_HIT_MSG = "{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh)."
-DEFAULT_NOTIFY_ENFORCEMENT_PHASE1_TITLE = "{prefix} Enforcement Phase 1"
+DEFAULT_NOTIFY_ENFORCEMENT_PHASE1_TITLE = "{notification_title} Enforcement Phase 1"
 DEFAULT_NOTIFY_ENFORCEMENT_PHASE1_MSG = "{room_name} has entered enforcement phase 1 (volume escalation). Please reduce power usage."
-DEFAULT_NOTIFY_ENFORCEMENT_PHASE2_TITLE = "{prefix} Enforcement Phase 2"
+DEFAULT_NOTIFY_ENFORCEMENT_PHASE2_TITLE = "{notification_title} Enforcement Phase 2"
 DEFAULT_NOTIFY_ENFORCEMENT_PHASE2_MSG = "{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage."
-DEFAULT_NOTIFY_AC_AUTO_OFF_TITLE = "{prefix} Air Conditioner Off"
+DEFAULT_NOTIFY_AC_AUTO_OFF_TITLE = "{notification_title} Air Conditioner Off"
 DEFAULT_NOTIFY_AC_AUTO_OFF_MSG = (
     "{outlet_name} was turned off because {person_name} left the monitored zone."
 )
-DEFAULT_NOTIFY_AC_AUTO_ON_TITLE = "{prefix} Air Conditioner On"
+DEFAULT_NOTIFY_AC_AUTO_ON_TITLE = "{notification_title} Air Conditioner On"
 DEFAULT_NOTIFY_AC_AUTO_ON_MSG = (
     "{outlet_name} was turned back on because {person_name} is nearby."
 )
-DEFAULT_NOTIFY_MANUAL_TOGGLE_TITLE = "{prefix} Appliance Toggled"
+DEFAULT_NOTIFY_MANUAL_TOGGLE_TITLE = "{notification_title} Appliance Toggled"
 DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG = "{user_name} turned {action} {outlet_name} in {room_name}."
 
 # Default config structure
@@ -180,6 +181,7 @@ DEFAULT_CONFIG = {
             "notify_ac_auto_off": True,
             "notify_ac_auto_on": True,
             "notify_manual_toggle": True,
+            "notification_title": DEFAULT_NOTIFICATION_TITLE,
             "notify_budget_hit_title": DEFAULT_NOTIFY_BUDGET_HIT_TITLE,
             "notify_budget_hit_msg": DEFAULT_NOTIFY_BUDGET_HIT_MSG,
             "notify_enforcement_phase1_title": DEFAULT_NOTIFY_ENFORCEMENT_PHASE1_TITLE,
