@@ -5593,10 +5593,10 @@ class EnergyPanel extends HTMLElement {
                     <span class="statistics-total-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
                   </div>
                 </div>
-                ${dateStart && dateEnd ? `
                 <div class="statistics-chart-actions">
-                  <button type="button" class="btn-stat-chart" id="stat-chart-billing-home" title="Daily kWh per day for the date range at the top">Open usage graph (whole home)</button>
-                </div>` : ''}
+                  ${dateStart && dateEnd ? `<button type="button" class="btn-stat-chart" id="stat-chart-billing-home" title="Daily kWh per day for the date range at the top">Open usage graph (whole home)</button>` : ''}
+                  <button type="button" class="btn-stat-chart btn-stat-refresh" id="stat-refresh-cache" title="Clear cache and recalculate all statistics from Home Assistant recorder">Refresh Statistics</button>
+                </div>
               </div>
             </div>
           </div>
@@ -9441,6 +9441,25 @@ class EnergyPanel extends HTMLElement {
       statHomeChart.addEventListener('click', (e) => {
         e.stopPropagation();
         this._openGraph('stat_total_wh', null, null, this._statisticsGraphDateRange());
+      });
+    }
+    const statRefreshBtn = this.shadowRoot.querySelector('#stat-refresh-cache');
+    if (statRefreshBtn) {
+      statRefreshBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        statRefreshBtn.disabled = true;
+        statRefreshBtn.textContent = 'Refreshing...';
+        try {
+          await this._hass.callWS({ type: 'smart_dashboards/clear_statistics_cache' });
+          await this._loadStatistics();
+          this._showToast('Statistics cache cleared and refreshed');
+        } catch (err) {
+          console.error('Failed to refresh statistics:', err);
+          this._showToast('Failed to refresh statistics');
+        } finally {
+          statRefreshBtn.disabled = false;
+          statRefreshBtn.textContent = 'Refresh Statistics';
+        }
       });
     }
     this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((seg) => {

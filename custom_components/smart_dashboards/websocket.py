@@ -176,6 +176,8 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_test_trip_breaker)
     websocket_api.async_register_command(hass, websocket_get_stove_data)
     websocket_api.async_register_command(hass, websocket_send_test_notification)
+    websocket_api.async_register_command(hass, websocket_clear_statistics_cache)
+    websocket_api.async_register_command(hass, websocket_get_statistics_sources)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -2477,3 +2479,60 @@ async def websocket_send_test_notification(
     except Exception as e:
         _LOGGER.warning("Failed to send test notification to %s: %s", notify_target, e)
         connection.send_error(msg["id"], "send_failed", f"Failed to send notification: {e}")
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "smart_dashboards/clear_statistics_cache"}
+)
+@websocket_api.async_response
+async def websocket_clear_statistics_cache(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Clear statistics and kWh history caches to force fresh recalculation."""
+    _clear_recorder_derived_caches()
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "smart_dashboards/get_statistics_sources"}
+)
+@websocket_api.async_response
+async def websocket_get_statistics_sources(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return which entities contribute to each room's statistics for debugging."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    entity_to_room, switch_specs = _collect_statistics_energy_sources(config_manager)
+
+    power_sensors = []
+    for entity_id, room_id in entity_to_room.items():
+        state = hass.states.get(entity_id)
+        power_sensors.append({
+            "entity_id": entity_id,
+            "room_id": room_id,
+            "state": state.state if state else None,
+            "unit": state.attributes.get("unit_of_measurement") if state else None,
+        })
+
+    switch_sources = []
+    for spec in switch_specs:
+        state = hass.states.get(spec["switch_entity"])
+        switch_sources.append({
+            "switch_entity": spec["switch_entity"],
+            "room_id": spec["room_id"],
+            "watts": spec["watts"],
+            "state": state.state if state else None,
+        })
+
+    connection.send_result(msg["id"], {
+        "power_sensors": power_sensors,
+        "switch_sources": switch_sources,
+    })
