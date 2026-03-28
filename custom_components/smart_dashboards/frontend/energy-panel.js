@@ -9201,6 +9201,8 @@ class EnergyPanel extends HTMLElement {
         <input type="number" class="form-input heater-presence-cooldown-seconds" value="${device.heater_presence_cooldown_seconds ?? 60}" min="0" max="7200" step="1">
         <div class="tts-msg-desc" style="margin-top: 4px;">After an automation turn-on, ignore a new presence trigger within this window (only when require presence is on)</div>
       </div>
+      <div class="plug-settings-title" style="margin-top: 12px;">Door and window</div>
+      <p class="tts-msg-desc" style="margin-bottom: 10px;">Optional: block heater on (manual and automation) while either sensor reports open.</p>
       <div class="form-group" style="margin-bottom: 12px;">
         <label class="form-label">Door sensor (optional)</label>
         ${this._renderEntityAutocomplete(device.heater_door_sensor_entity || '', 'binary_sensor', roomIndex, 'heater-door-sensor-entity', 'binary_sensor.bathroom_door')}
