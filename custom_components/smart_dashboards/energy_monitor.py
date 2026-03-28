@@ -797,10 +797,12 @@ class EnergyMonitor:
     ) -> None:
         """Send HA notification to person assigned to room using configured templates."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
-        if not tts_settings.get("notifications_enabled"):
-            return
-        if integration_auto and not tts_settings.get("notify_integration_auto", True):
-            return
+        if integration_auto:
+            if not tts_settings.get("notify_integration_auto", True):
+                return
+        else:
+            if not tts_settings.get("notifications_enabled"):
+                return
         enable_key = self._notification_enable_key(notification_type)
         if not tts_settings.get(enable_key, True):
             return
@@ -1087,6 +1089,7 @@ class EnergyMonitor:
         duty_enabled = bool(outlet.get("heater_duty_cycle_enabled"))
         duty_on_mins = max(1, int(outlet.get("heater_duty_on_minutes", 5) or 5))
         duty_off_mins = max(1, int(outlet.get("heater_duty_off_minutes", 2) or 2))
+        duty_margin = float(outlet.get("heater_duty_comfort_margin", 1.0) or 1.0)
         power_aware = bool(outlet.get("heater_power_aware_enabled"))
         power_threshold = int(outlet.get("heater_power_threshold_watts", 500) or 500)
         learning_enabled = bool(outlet.get("heater_learning_enabled", True))
@@ -1146,10 +1149,10 @@ class EnergyMonitor:
             smart_st["heating_since"] = None
 
         async def _announce_heater_on() -> None:
+            if st.get("auto_session_announced"):
+                return
             tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
-            if not st.get("auto_session_announced") and self._tts_line_enabled(
-                tts_settings, "heater_automation"
-            ):
+            if self._tts_line_enabled(tts_settings, "heater_automation"):
                 prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                 tmpl = (
                     tts_settings.get("heater_automation_on_msg") or ""
@@ -1167,19 +1170,19 @@ class EnergyMonitor:
                     await self._async_speak_appliance_automation_tts(room, msg)
                 except (KeyError, ValueError) as e:
                     _LOGGER.warning("Heater automation TTS template failed: %s", e)
-                await self._send_notification_to_room_person(
-                    room,
-                    "heater_auto_on",
-                    {
-                        "room_name": room_name,
-                        "outlet_name": outlet_name,
-                        "temperature": str(int(round(temp))) if temp else "?",
-                        "threshold": str(int(round(comfort))),
-                    },
-                    "Heater Auto On",
-                    f"{room_name} is {int(round(temp)) if temp else '?'}°, turning on {outlet_name}.",
-                    integration_auto=True,
-                )
+            await self._send_notification_to_room_person(
+                room,
+                "heater_auto_on",
+                {
+                    "room_name": room_name,
+                    "outlet_name": outlet_name,
+                    "temperature": str(int(round(temp))) if temp else "?",
+                    "threshold": str(int(round(comfort))),
+                },
+                "Heater Auto On",
+                f"{room_name} is {int(round(temp)) if temp else '?'}°, turning on {outlet_name}.",
+                integration_auto=True,
+            )
             st["auto_session_announced"] = True
 
         async def _announce_heater_off() -> None:
@@ -1281,21 +1284,22 @@ class EnergyMonitor:
                 smart_st["smart_mode"] = "idle"
                 await _announce_heater_off()
             elif optimization_enabled and duty_enabled:
+                close_to_comfort = temp >= (comfort - duty_margin)
                 heating_since = smart_st.get("heating_since")
-                if heating_since and (now - heating_since).total_seconds() >= duty_on_mins * 60:
+                if close_to_comfort and heating_since and (now - heating_since).total_seconds() >= duty_on_mins * 60:
                     await _turn_heater_off()
                     smart_st["smart_mode"] = "duty_pause"
                     smart_st["duty_pause_until"] = now + timedelta(minutes=duty_off_mins)
             elif optimization_enabled and power_aware:
-                room_power = self.config_manager.get_room_current_watts(room_id)
+                home_power = self._sum_all_rooms_watts_only()
                 heater_power = 0.0
                 if outlet.get("power_source") == "sensor":
                     pe = outlet.get("power_sensor_entity")
-                    if pe:
-                        heater_power = self._parse_temperature_sensor(pe) or 0.0
-                else:
+                    if pe and sw_on:
+                        heater_power = self._get_power_value(pe)
+                elif sw_on:
                     heater_power = float(outlet.get("watts_when_on", 0) or 0)
-                other_power = room_power - heater_power
+                other_power = home_power - heater_power
                 if other_power > power_threshold:
                     await _turn_heater_off()
                     smart_st["smart_mode"] = "power_pause"
@@ -1313,14 +1317,8 @@ class EnergyMonitor:
                     st["auto_session_announced"] = False
 
         elif smart_mode == "power_pause":
-            room_power = self.config_manager.get_room_current_watts(room_id)
-            heater_power = 0.0
-            if outlet.get("power_source") == "sensor":
-                pe = outlet.get("power_sensor_entity")
-                if pe:
-                    heater_power = self._parse_temperature_sensor(pe) or 0.0
-            other_power = room_power - heater_power
-            if other_power <= power_threshold * 0.8:
+            home_power = self._sum_all_rooms_watts_only()
+            if home_power <= power_threshold * 0.8:
                 if temp < turn_off_temp:
                     await _turn_heater_on()
                     smart_st["smart_mode"] = "heating"
@@ -2116,6 +2114,14 @@ class EnergyMonitor:
                 outlet_total_watts += self._get_power_value(outlet["plug2_entity"])
             room_total_watts += outlet_total_watts
         return room_total_watts
+
+    def _sum_all_rooms_watts_only(self) -> float:
+        """Sum current watts across all rooms without energy accounting side effects."""
+        total_watts = 0.0
+        rooms = self.config_manager.energy_config.get("rooms") or []
+        for room in rooms:
+            total_watts += self._sum_room_total_watts_only(room)
+        return total_watts
 
     def _select_minisplit_enforcement_target(
         self, room: dict, current_watts: float, room_threshold: float

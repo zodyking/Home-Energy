@@ -754,6 +754,10 @@ class ConfigManager:
                                     1,
                                     min(15, int(outlet.get("heater_duty_off_minutes", 2) or 2)),
                                 )
+                                item["heater_duty_comfort_margin"] = max(
+                                    0.0,
+                                    min(10.0, float(outlet.get("heater_duty_comfort_margin", 1.0) or 1.0)),
+                                )
                                 item["heater_power_aware_enabled"] = bool(
                                     outlet.get("heater_power_aware_enabled")
                                 )
@@ -1841,11 +1845,21 @@ class ConfigManager:
             room_wh = 0.0
             for outlet in room.get("outlets", []):
                 if outlet.get("type") == "light":
-                    key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
-                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                    if outlet.get("power_source") == "sensor":
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
+                    else:
+                        key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                        room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 elif outlet.get("type") in ("vent", "wall_heater"):
-                    key = vent_like_energy_tracking_key(room_id, outlet)
-                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                    if outlet.get("power_source") == "sensor":
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
+                    else:
+                        key = vent_like_energy_tracking_key(room_id, outlet)
+                        room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
                         if e:
