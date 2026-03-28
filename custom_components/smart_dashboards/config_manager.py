@@ -772,6 +772,10 @@ class ConfigManager:
                                     0,
                                     min(120, int(outlet.get("heater_preheat_minutes", 30) or 30)),
                                 )
+                                door_ent = str(outlet.get("heater_door_sensor_entity") or "").strip()
+                                item["heater_door_sensor_entity"] = door_ent if door_ent.startswith("binary_sensor.") else None
+                                window_ent = str(outlet.get("heater_window_sensor_entity") or "").strip()
+                                item["heater_window_sensor_entity"] = window_ent if window_ent.startswith("binary_sensor.") else None
                         else:
                             item["plug2_entity"] = None
                             item["plug1_switch"] = None
@@ -1259,6 +1263,12 @@ class ConfigManager:
                     default_tts.get("notify_vent_auto_off_msg", ""),
                 )
                 or ""
+            ),
+            "zone_health_check_enabled": bool(
+                tts.get(
+                    "zone_health_check_enabled",
+                    default_tts.get("zone_health_check_enabled", True),
+                )
             ),
         }
 

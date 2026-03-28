@@ -4579,6 +4579,118 @@ class EnergyPanel extends HTMLElement {
       .ac-safety-cancel:active {
         transform: scale(0.97);
       }
+      .ac-safety-ok:disabled {
+        background: rgba(255, 255, 255, 0.15);
+        color: rgba(255, 255, 255, 0.4);
+        cursor: not-allowed;
+      }
+      .ac-safety-ok:disabled:hover {
+        background: rgba(255, 255, 255, 0.15);
+      }
+      /* Wizard step indicators */
+      .ac-wizard-steps {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        padding: 14px 20px 0;
+        flex-shrink: 0;
+      }
+      .ac-wizard-step-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.2);
+        transition: background 0.2s, transform 0.2s;
+      }
+      .ac-wizard-step-dot.active {
+        background: var(--panel-accent, #03a9f4);
+        transform: scale(1.15);
+      }
+      .ac-wizard-step-dot.completed {
+        background: var(--success-color, #4caf50);
+      }
+      .ac-wizard-step-content {
+        display: none;
+        animation: fadeIn 0.2s ease;
+      }
+      .ac-wizard-step-content.active {
+        display: block;
+      }
+      .ac-wizard-nav {
+        display: flex;
+        gap: 10px;
+        justify-content: space-between;
+        padding: 12px 20px 18px;
+        border-top: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
+        flex-shrink: 0;
+      }
+      .ac-wizard-nav-left,
+      .ac-wizard-nav-right {
+        display: flex;
+        gap: 10px;
+      }
+      .ac-wizard-btn {
+        padding: 10px 18px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: background 0.15s, transform 0.1s;
+      }
+      .ac-wizard-btn-back {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--primary-text-color, #e8e8e8);
+        border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.18));
+      }
+      .ac-wizard-btn-back:hover {
+        background: rgba(255, 255, 255, 0.14);
+      }
+      .ac-wizard-btn-next {
+        background: var(--panel-accent, #03a9f4);
+        color: #fff;
+      }
+      .ac-wizard-btn-next:hover {
+        background: #029ae5;
+      }
+      .ac-wizard-btn:active {
+        transform: scale(0.97);
+      }
+      .ac-wizard-privacy-warning {
+        font-size: 12px;
+        line-height: 1.5;
+        color: #ff5252;
+        margin: 14px 0 0;
+        padding: 12px 14px;
+        background: rgba(255, 82, 82, 0.1);
+        border-radius: 8px;
+        border-left: 3px solid #ff5252;
+      }
+      .ac-wizard-privacy-warning strong {
+        color: #ff5252;
+      }
+      .ac-wizard-step-number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: var(--panel-accent, #03a9f4);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        margin-right: 8px;
+        flex-shrink: 0;
+      }
+      .ac-wizard-step-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--primary-text-color, #f5f5f5);
+        margin: 0 0 12px;
+        display: flex;
+        align-items: center;
+      }
     `;
 
     this._destroyStatsRoomsPie();
@@ -7395,6 +7507,15 @@ class EnergyPanel extends HTMLElement {
                   <span class="toggle-label">Notify when external automations toggle an appliance</span>
                 </div>
               </div>
+              <div class="form-group" style="margin-bottom: 12px;">
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-zone-health-check" ${ttsSettings.zone_health_check_enabled !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Zone tracking health check (alerts when app location setup isn't working)</span>
+                </div>
+              </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Person/External Toggle Title</div>
                 <input type="text" class="form-input" id="notify-toggle-title"
@@ -8419,8 +8540,10 @@ class EnergyPanel extends HTMLElement {
     const escAttr = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     const urlCompanion = escAttr(this._panelStaticFileUrl('companion-app-location.jpeg'));
     const urlIos = escAttr(this._panelStaticFileUrl('ios-system-location.jpeg'));
+    const totalSteps = 4;
 
     return new Promise((resolve) => {
+      let currentStep = 1;
       const overlay = document.createElement('div');
       overlay.className = 'ac-safety-overlay';
       overlay.setAttribute('role', 'dialog');
@@ -8428,55 +8551,125 @@ class EnergyPanel extends HTMLElement {
       overlay.innerHTML = `
         <div class="ac-safety-modal">
           <div class="ac-safety-title">Air conditioner / zone automation</div>
+          <div class="ac-wizard-steps">
+            <div class="ac-wizard-step-dot active" data-step="1"></div>
+            <div class="ac-wizard-step-dot" data-step="2"></div>
+            <div class="ac-wizard-step-dot" data-step="3"></div>
+            <div class="ac-wizard-step-dot" data-step="4"></div>
+          </div>
           <div class="ac-safety-body">
-            <p class="ac-safety-lead">
-              This room uses zone-based automation for air conditioning. Manual changes at the wrong time can stress the compressor or fight your automations. Use manual control only when you know what is running.
-            </p>
-            <p class="ac-safety-note">
-              <strong>Privacy:</strong> Your exact GPS position is not shown on this dashboard. Home Assistant uses <strong>zone states</strong> from the app (for example Home, Nearby, Away) to drive automations.
-            </p>
-            <div class="ac-safety-steps-title">Set up zone tracking</div>
-            <p class="ac-safety-setup-intro">Complete the phone steps below, then add zones in Home Assistant.</p>
+            <!-- Step 1: Introduction -->
+            <div class="ac-wizard-step-content active" data-step="1">
+              <div class="ac-wizard-step-title">
+                <span class="ac-wizard-step-number">1</span>
+                Why Zone Tracking Matters
+              </div>
+              <p class="ac-safety-lead">
+                This room uses <strong>zone-based automation</strong> for air conditioning. The system knows when you're Home, Away, or Nearby and adjusts cooling automatically to save electricity.
+              </p>
+              <p class="ac-safety-lead">
+                Manual changes at the wrong time can stress the compressor or conflict with automations. Use manual control only when you understand what's running.
+              </p>
+              <div class="ac-safety-note">
+                <strong>Privacy:</strong> Your exact GPS coordinates are never shown on this dashboard or shared with other users. Home Assistant only sees zone-based presence states like "Home", "Away", or "Nearby".
+              </div>
+            </div>
 
-            <div class="ac-safety-part">
-              <div class="ac-safety-part-title">Home Assistant Companion app</div>
-              <ul class="ac-safety-steps ac-safety-steps--tight">
-                <li>Install <strong>Home Assistant Companion</strong> (iOS App Store or Google Play).</li>
-                <li>Open <strong>App Configuration</strong> → <strong>Companion App</strong> → <strong>Location</strong>. Set <strong>Location permission</strong> to <strong>Always</strong> — not &quot;While Using the App&quot; — so zone enter/exit works in the background (required for small zones). Keep <strong>Location accuracy</strong> on <strong>Full</strong> and <strong>Background refresh</strong> enabled when the OS offers those options.</li>
-                <li><strong>Android:</strong> In system settings, allow location for Companion and choose <strong>Allow all the time</strong> (wording varies by device). Enable any background-location options your phone shows.</li>
+            <!-- Step 2: Install Companion App -->
+            <div class="ac-wizard-step-content" data-step="2">
+              <div class="ac-wizard-step-title">
+                <span class="ac-wizard-step-number">2</span>
+                Install the Companion App
+              </div>
+              <p class="ac-safety-lead">
+                Install <strong>Home Assistant Companion</strong> on your phone to enable zone tracking.
+              </p>
+              <ul class="ac-safety-steps">
+                <li><strong>iPhone:</strong> Download from the <strong>iOS App Store</strong></li>
+                <li><strong>Android:</strong> Download from <strong>Google Play</strong></li>
+              </ul>
+              <p class="ac-safety-lead" style="margin-top: 16px;">
+                After installing, sign in to your Home Assistant server using your account credentials.
+              </p>
+            </div>
+
+            <!-- Step 3: App Permissions -->
+            <div class="ac-wizard-step-content" data-step="3">
+              <div class="ac-wizard-step-title">
+                <span class="ac-wizard-step-number">3</span>
+                Configure App Permissions
+              </div>
+              <p class="ac-safety-lead">
+                In the Companion app, configure location settings:
+              </p>
+              <ul class="ac-safety-steps">
+                <li>Open <strong>App Configuration</strong> → <strong>Companion App</strong> → <strong>Location</strong></li>
+                <li>Set <strong>Location permission</strong> to <strong>Always</strong> (not "While Using")</li>
+                <li>Keep <strong>Location accuracy</strong> on <strong>Full</strong></li>
+                <li>Enable <strong>Background refresh</strong></li>
               </ul>
               <details class="ac-safety-disclosure">
                 <summary>Show screenshot: Companion app Location</summary>
-                <img class="ac-safety-screenshot" loading="lazy" width="390" height="844" alt="Home Assistant Companion Location screen: Location permission set to Always, Location accuracy Full, Background refresh enabled." src="${urlCompanion}">
+                <img class="ac-safety-screenshot" loading="lazy" width="390" height="844" alt="Home Assistant Companion Location screen" src="${urlCompanion}">
               </details>
             </div>
 
-            <div class="ac-safety-part">
-              <div class="ac-safety-part-title">iOS system settings</div>
-              <ul class="ac-safety-steps ac-safety-steps--tight">
-                <li>On the iPhone <strong>Settings</strong> app (not inside Home Assistant), go to <strong>Home Assistant</strong> → <strong>Location</strong> and choose <strong>Always</strong>. This must match the in-app setting above.</li>
+            <!-- Step 4: System Settings -->
+            <div class="ac-wizard-step-content" data-step="4">
+              <div class="ac-wizard-step-title">
+                <span class="ac-wizard-step-number">4</span>
+                System Location Settings
+              </div>
+              <p class="ac-safety-lead">
+                Configure your phone's system settings to allow precise location:
+              </p>
+              <ul class="ac-safety-steps">
+                <li><strong>iPhone:</strong> Go to <strong>Settings</strong> → <strong>Home Assistant</strong> → <strong>Location</strong> → select <strong>Always</strong></li>
+                <li><strong>Android:</strong> Go to <strong>Settings</strong> → <strong>Apps</strong> → <strong>Home Assistant</strong> → <strong>Permissions</strong> → <strong>Location</strong> → select <strong>Allow all the time</strong></li>
+                <li>Enable <strong>Precise Location</strong> if your phone offers this option</li>
               </ul>
               <details class="ac-safety-disclosure">
-                <summary>Show screenshot: iOS Settings → Home Assistant → Location</summary>
-                <img class="ac-safety-screenshot" loading="lazy" width="390" height="844" alt="iOS Settings for the Home Assistant app with Location set to Always." src="${urlIos}">
+                <summary>Show screenshot: iOS System Location Settings</summary>
+                <img class="ac-safety-screenshot" loading="lazy" width="390" height="844" alt="iOS Settings Location Always" src="${urlIos}">
               </details>
-            </div>
-
-            <div class="ac-safety-part">
-              <div class="ac-safety-part-title">Home Assistant (server)</div>
-              <ul class="ac-safety-steps ac-safety-steps--tight">
-                <li>Define <strong>Zones</strong> in Home Assistant (<strong>Settings</strong> → <strong>Areas &amp; zones</strong>, or your Zones page) so presence resolves to states like Home, Nearby, and Away for your automations.</li>
-              </ul>
+              <div class="ac-wizard-privacy-warning">
+                <strong>Privacy Notice:</strong> Your exact location is <strong>never shared</strong> with other users or stored by Home Assistant. Only zone-based presence is used (e.g., "John is Home", "John is Away", "John is Nearby"). This powers electricity-saving automations without compromising your privacy.
+              </div>
             </div>
           </div>
-          <div class="ac-safety-buttons">
-            <button type="button" class="ac-safety-cancel">Cancel</button>
-            <button type="button" class="ac-safety-ok"></button>
+          <div class="ac-wizard-nav">
+            <div class="ac-wizard-nav-left">
+              <button type="button" class="ac-wizard-btn ac-wizard-btn-back" style="display: none;">Back</button>
+              <button type="button" class="ac-safety-cancel">Cancel</button>
+            </div>
+            <div class="ac-wizard-nav-right">
+              <button type="button" class="ac-wizard-btn ac-wizard-btn-next">Next</button>
+              <button type="button" class="ac-safety-ok" disabled></button>
+            </div>
           </div>
         </div>
       `;
+
       const okBtn = overlay.querySelector('.ac-safety-ok');
+      const nextBtn = overlay.querySelector('.ac-wizard-btn-next');
+      const backBtn = overlay.querySelector('.ac-wizard-btn-back');
       if (okBtn) okBtn.textContent = `${actLabel} ${nameStr}`;
+
+      const updateStep = () => {
+        overlay.querySelectorAll('.ac-wizard-step-dot').forEach((dot) => {
+          const step = parseInt(dot.dataset.step, 10);
+          dot.classList.toggle('active', step === currentStep);
+          dot.classList.toggle('completed', step < currentStep);
+        });
+        overlay.querySelectorAll('.ac-wizard-step-content').forEach((content) => {
+          const step = parseInt(content.dataset.step, 10);
+          content.classList.toggle('active', step === currentStep);
+        });
+        backBtn.style.display = currentStep > 1 ? '' : 'none';
+        nextBtn.style.display = currentStep < totalSteps ? '' : 'none';
+        okBtn.style.display = currentStep === totalSteps ? '' : 'none';
+        okBtn.disabled = currentStep !== totalSteps;
+      };
 
       const cleanup = (result) => {
         document.removeEventListener('keydown', onKey);
@@ -8492,14 +8685,29 @@ class EnergyPanel extends HTMLElement {
       };
       document.addEventListener('keydown', onKey);
 
+      backBtn.addEventListener('click', () => {
+        if (currentStep > 1) {
+          currentStep--;
+          updateStep();
+        }
+      });
+
+      nextBtn.addEventListener('click', () => {
+        if (currentStep < totalSteps) {
+          currentStep++;
+          updateStep();
+        }
+      });
+
       overlay.querySelector('.ac-safety-cancel').addEventListener('click', () => cleanup(false));
-      overlay.querySelector('.ac-safety-ok').addEventListener('click', () => cleanup(true));
+      okBtn.addEventListener('click', () => cleanup(true));
       overlay.addEventListener('click', (e) => {
         if (e.target === overlay) cleanup(false);
       });
 
+      updateStep();
       this.shadowRoot.appendChild(overlay);
-      overlay.querySelector('.ac-safety-ok').focus();
+      nextBtn.focus();
     });
   }
 
@@ -8992,6 +9200,16 @@ class EnergyPanel extends HTMLElement {
         <label class="form-label">Presence cooldown (seconds)</label>
         <input type="number" class="form-input heater-presence-cooldown-seconds" value="${device.heater_presence_cooldown_seconds ?? 60}" min="0" max="7200" step="1">
         <div class="tts-msg-desc" style="margin-top: 4px;">After an automation turn-on, ignore a new presence trigger within this window (only when require presence is on)</div>
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Door sensor (optional)</label>
+        ${this._renderEntityAutocomplete(device.heater_door_sensor_entity || '', 'binary_sensor', roomIndex, 'heater-door-sensor-entity', 'binary_sensor.bathroom_door')}
+        <div class="tts-msg-desc" style="margin-top: 4px;">Heater will not turn on if door is open</div>
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Window sensor (optional)</label>
+        ${this._renderEntityAutocomplete(device.heater_window_sensor_entity || '', 'binary_sensor', roomIndex, 'heater-window-sensor-entity', 'binary_sensor.bathroom_window')}
+        <div class="tts-msg-desc" style="margin-top: 4px;">Heater will not turn on if window is open</div>
       </div>
       <details style="margin-top: 16px;">
         <summary style="cursor: pointer; font-weight: 500; color: var(--primary-text-color); margin-bottom: 8px;">Advanced Optimization</summary>
@@ -10457,6 +10675,8 @@ class EnergyPanel extends HTMLElement {
               device.heater_power_threshold_watts = Math.max(100, Math.min(5000, parseInt(item.querySelector('.heater-power-threshold-watts')?.value, 10) || 500));
               device.heater_learning_enabled = item.querySelector('.heater-learning-enabled')?.checked !== false;
               device.heater_preheat_minutes = Math.max(0, Math.min(120, parseInt(item.querySelector('.heater-preheat-minutes')?.value, 10) || 30));
+              device.heater_door_sensor_entity = (item.querySelector('.entity-datalist-input.heater-door-sensor-entity') || item.querySelector('input.heater-door-sensor-entity'))?.value?.trim() || null;
+              device.heater_window_sensor_entity = (item.querySelector('.entity-datalist-input.heater-window-sensor-entity') || item.querySelector('input.heater-window-sensor-entity'))?.value?.trim() || null;
             }
           } else {
             device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
@@ -10661,6 +10881,7 @@ class EnergyPanel extends HTMLElement {
         notify_heater_auto: this.shadowRoot.querySelector('#tts-notify-heater-auto')?.checked !== false,
         notify_vent_auto: this.shadowRoot.querySelector('#tts-notify-vent-auto')?.checked !== false,
         notify_external_auto: this.shadowRoot.querySelector('#tts-notify-external-auto')?.checked !== false,
+        zone_health_check_enabled: this.shadowRoot.querySelector('#tts-zone-health-check')?.checked !== false,
         notify_budget_hit_title: this.shadowRoot.querySelector('#notify-budget-hit-title')?.value ?? '',
         notify_budget_hit_msg: this.shadowRoot.querySelector('#notify-budget-hit-msg')?.value ?? '',
         notify_enforcement_phase1_title: this.shadowRoot.querySelector('#notify-enforcement-phase1-title')?.value ?? '',
@@ -10901,6 +11122,8 @@ class EnergyPanel extends HTMLElement {
             device.heater_power_threshold_watts = Math.max(100, Math.min(5000, parseInt(item.querySelector('.heater-power-threshold-watts')?.value, 10) || 500));
             device.heater_learning_enabled = item.querySelector('.heater-learning-enabled')?.checked !== false;
             device.heater_preheat_minutes = Math.max(0, Math.min(120, parseInt(item.querySelector('.heater-preheat-minutes')?.value, 10) || 30));
+            device.heater_door_sensor_entity = (item.querySelector('.entity-datalist-input.heater-door-sensor-entity') || item.querySelector('input.heater-door-sensor-entity'))?.value?.trim() || null;
+            device.heater_window_sensor_entity = (item.querySelector('.entity-datalist-input.heater-window-sensor-entity') || item.querySelector('input.heater-window-sensor-entity'))?.value?.trim() || null;
           }
         } else {
           device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
