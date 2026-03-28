@@ -732,6 +732,42 @@ class ConfigManager:
                                     0,
                                     min(7200, int(outlet.get("heater_presence_cooldown_seconds", 60))),
                                 )
+                                # Smart heater optimization settings
+                                item["heater_weather_entity"] = str(
+                                    outlet.get("heater_weather_entity") or ""
+                                ).strip()
+                                item["heater_optimization_enabled"] = bool(
+                                    outlet.get("heater_optimization_enabled", True)
+                                )
+                                item["heater_hysteresis_band"] = max(
+                                    0.0,
+                                    min(10.0, float(outlet.get("heater_hysteresis_band", 2.0) or 2.0)),
+                                )
+                                item["heater_duty_cycle_enabled"] = bool(
+                                    outlet.get("heater_duty_cycle_enabled")
+                                )
+                                item["heater_duty_on_minutes"] = max(
+                                    1,
+                                    min(30, int(outlet.get("heater_duty_on_minutes", 5) or 5)),
+                                )
+                                item["heater_duty_off_minutes"] = max(
+                                    1,
+                                    min(15, int(outlet.get("heater_duty_off_minutes", 2) or 2)),
+                                )
+                                item["heater_power_aware_enabled"] = bool(
+                                    outlet.get("heater_power_aware_enabled")
+                                )
+                                item["heater_power_threshold_watts"] = max(
+                                    100,
+                                    min(5000, int(outlet.get("heater_power_threshold_watts", 500) or 500)),
+                                )
+                                item["heater_learning_enabled"] = bool(
+                                    outlet.get("heater_learning_enabled", True)
+                                )
+                                item["heater_preheat_minutes"] = max(
+                                    0,
+                                    min(120, int(outlet.get("heater_preheat_minutes", 30) or 30)),
+                                )
                         else:
                             item["plug2_entity"] = None
                             item["plug1_switch"] = None
@@ -1061,6 +1097,18 @@ class ConfigManager:
                     default_tts.get("notify_integration_auto", True),
                 )
             ),
+            "notify_heater_auto": bool(
+                tts.get(
+                    "notify_heater_auto",
+                    tts.get("notify_integration_auto", default_tts.get("notify_heater_auto", True)),
+                )
+            ),
+            "notify_vent_auto": bool(
+                tts.get(
+                    "notify_vent_auto",
+                    tts.get("notify_integration_auto", default_tts.get("notify_vent_auto", True)),
+                )
+            ),
             "notify_external_auto": bool(
                 tts.get(
                     "notify_external_auto",
@@ -1149,6 +1197,62 @@ class ConfigManager:
                 tts.get(
                     "notify_toggle_msg",
                     tts.get("notify_manual_toggle_msg", default_tts.get("notify_toggle_msg", "")),
+                )
+                or ""
+            ),
+            "notify_heater_auto_on_title": str(
+                tts.get(
+                    "notify_heater_auto_on_title",
+                    default_tts.get("notify_heater_auto_on_title", ""),
+                )
+                or ""
+            ),
+            "notify_heater_auto_on_msg": str(
+                tts.get(
+                    "notify_heater_auto_on_msg",
+                    default_tts.get("notify_heater_auto_on_msg", ""),
+                )
+                or ""
+            ),
+            "notify_heater_auto_off_title": str(
+                tts.get(
+                    "notify_heater_auto_off_title",
+                    default_tts.get("notify_heater_auto_off_title", ""),
+                )
+                or ""
+            ),
+            "notify_heater_auto_off_msg": str(
+                tts.get(
+                    "notify_heater_auto_off_msg",
+                    default_tts.get("notify_heater_auto_off_msg", ""),
+                )
+                or ""
+            ),
+            "notify_vent_auto_on_title": str(
+                tts.get(
+                    "notify_vent_auto_on_title",
+                    default_tts.get("notify_vent_auto_on_title", ""),
+                )
+                or ""
+            ),
+            "notify_vent_auto_on_msg": str(
+                tts.get(
+                    "notify_vent_auto_on_msg",
+                    default_tts.get("notify_vent_auto_on_msg", ""),
+                )
+                or ""
+            ),
+            "notify_vent_auto_off_title": str(
+                tts.get(
+                    "notify_vent_auto_off_title",
+                    default_tts.get("notify_vent_auto_off_title", ""),
+                )
+                or ""
+            ),
+            "notify_vent_auto_off_msg": str(
+                tts.get(
+                    "notify_vent_auto_off_msg",
+                    default_tts.get("notify_vent_auto_off_msg", ""),
                 )
                 or ""
             ),
@@ -1292,11 +1396,21 @@ class ConfigManager:
         entity_ids = []
         for outlet in room.get("outlets", []):
             if outlet.get("type") == "light":
-                key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
-                entity_ids.append(key)
+                if outlet.get("power_source") == "sensor":
+                    pe = outlet.get("power_sensor_entity")
+                    if pe:
+                        entity_ids.append(pe)
+                else:
+                    key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                    entity_ids.append(key)
             elif outlet.get("type") in ("vent", "wall_heater"):
-                key = vent_like_energy_tracking_key(room_id, outlet)
-                entity_ids.append(key)
+                if outlet.get("power_source") == "sensor":
+                    pe = outlet.get("power_sensor_entity")
+                    if pe:
+                        entity_ids.append(pe)
+                else:
+                    key = vent_like_energy_tracking_key(room_id, outlet)
+                    entity_ids.append(key)
             else:
                 for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
                     if e:
@@ -1778,11 +1892,21 @@ class ConfigManager:
             room_wh = 0.0
             for outlet in room.get("outlets", []):
                 if outlet.get("type") == "light":
-                    key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
-                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                    if outlet.get("power_source") == "sensor":
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
+                    else:
+                        key = f"light_{rid}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
+                        room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 elif outlet.get("type") in ("vent", "wall_heater"):
-                    key = vent_like_energy_tracking_key(rid, outlet)
-                    room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
+                    if outlet.get("power_source") == "sensor":
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
+                    else:
+                        key = vent_like_energy_tracking_key(rid, outlet)
+                        room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
                         if e:
@@ -2177,8 +2301,11 @@ class ConfigManager:
 
     def get_total_day_kwh(self) -> float:
         """Get total kWh for all rooms today."""
-        total_wh = sum(d.get("energy", 0.0) for d in self._day_energy_data.values())
-        return total_wh / 1000.0
+        total_kwh = 0.0
+        for room in self.energy_config.get("rooms", []):
+            rid = room.get("id", room["name"].lower().replace(" ", "_"))
+            total_kwh += self.get_room_day_kwh(rid)
+        return total_kwh
 
     def get_room_percentage_of_total(self, room_id: str) -> float:
         """Get percentage of total home usage for a room."""

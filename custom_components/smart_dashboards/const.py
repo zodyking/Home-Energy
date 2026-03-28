@@ -102,6 +102,27 @@ DEFAULT_NOTIFY_AC_AUTO_ON_MSG = (
 DEFAULT_NOTIFY_MANUAL_TOGGLE_TITLE = "{notification_title} Appliance Toggled"
 DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG = "{user_name} turned {action} {outlet_name} in {room_name}."
 
+# Heater/vent automation notification message templates
+DEFAULT_NOTIFY_HEATER_AUTO_ON_TITLE = "{notification_title} Heater On"
+DEFAULT_NOTIFY_HEATER_AUTO_ON_MSG = "{room_name} is {temperature}°, turning on {outlet_name}."
+DEFAULT_NOTIFY_HEATER_AUTO_OFF_TITLE = "{notification_title} Heater Off"
+DEFAULT_NOTIFY_HEATER_AUTO_OFF_MSG = "{room_name} reached {temperature}°, turning off {outlet_name}."
+DEFAULT_NOTIFY_VENT_AUTO_ON_TITLE = "{notification_title} Vent On"
+DEFAULT_NOTIFY_VENT_AUTO_ON_MSG = "Motion detected in {room_name}, turning on {outlet_name}."
+DEFAULT_NOTIFY_VENT_AUTO_OFF_TITLE = "{notification_title} Vent Off"
+DEFAULT_NOTIFY_VENT_AUTO_OFF_MSG = "No motion in {room_name}, turning off {outlet_name}."
+
+# Smart heater automation defaults
+DEFAULT_HEATER_OPTIMIZATION_ENABLED = True
+DEFAULT_HEATER_HYSTERESIS_BAND = 2.0
+DEFAULT_HEATER_DUTY_CYCLE_ENABLED = False
+DEFAULT_HEATER_DUTY_ON_MINUTES = 5
+DEFAULT_HEATER_DUTY_OFF_MINUTES = 2
+DEFAULT_HEATER_POWER_AWARE_ENABLED = False
+DEFAULT_HEATER_POWER_THRESHOLD_WATTS = 500
+DEFAULT_HEATER_LEARNING_ENABLED = True
+DEFAULT_HEATER_PREHEAT_MINUTES = 30
+
 # Default config structure
 DEFAULT_CONFIG = {
     "energy": {
@@ -182,6 +203,8 @@ DEFAULT_CONFIG = {
             "notify_ac_auto_on": True,
             "notify_person_toggle": True,
             "notify_integration_auto": True,
+            "notify_heater_auto": True,
+            "notify_vent_auto": True,
             "notify_external_auto": True,
             "notification_title": DEFAULT_NOTIFICATION_TITLE,
             "notify_budget_hit_title": DEFAULT_NOTIFY_BUDGET_HIT_TITLE,
@@ -196,6 +219,14 @@ DEFAULT_CONFIG = {
             "notify_ac_auto_on_msg": DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
             "notify_toggle_title": DEFAULT_NOTIFY_MANUAL_TOGGLE_TITLE,
             "notify_toggle_msg": DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG,
+            "notify_heater_auto_on_title": DEFAULT_NOTIFY_HEATER_AUTO_ON_TITLE,
+            "notify_heater_auto_on_msg": DEFAULT_NOTIFY_HEATER_AUTO_ON_MSG,
+            "notify_heater_auto_off_title": DEFAULT_NOTIFY_HEATER_AUTO_OFF_TITLE,
+            "notify_heater_auto_off_msg": DEFAULT_NOTIFY_HEATER_AUTO_OFF_MSG,
+            "notify_vent_auto_on_title": DEFAULT_NOTIFY_VENT_AUTO_ON_TITLE,
+            "notify_vent_auto_on_msg": DEFAULT_NOTIFY_VENT_AUTO_ON_MSG,
+            "notify_vent_auto_off_title": DEFAULT_NOTIFY_VENT_AUTO_OFF_TITLE,
+            "notify_vent_auto_off_msg": DEFAULT_NOTIFY_VENT_AUTO_OFF_MSG,
         },
         "power_enforcement": {
             "enabled": False,
