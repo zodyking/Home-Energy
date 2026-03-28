@@ -50,6 +50,14 @@ const TTS_DEFAULTS = {
   notify_ac_auto_on_msg: '{outlet_name} was turned back on because {person_name} is nearby.',
   notify_toggle_title: '{notification_title} Appliance Toggled',
   notify_toggle_msg: '{user_name} turned {action} {outlet_name} in {room_name}.',
+  notify_heater_auto_on_title: '{notification_title} Heater On',
+  notify_heater_auto_on_msg: '{room_name} is {temperature}°, turning on {outlet_name}.',
+  notify_heater_auto_off_title: '{notification_title} Heater Off',
+  notify_heater_auto_off_msg: '{room_name} reached {temperature}°, turning off {outlet_name}.',
+  notify_vent_auto_on_title: '{notification_title} Vent On',
+  notify_vent_auto_on_msg: 'Motion detected in {room_name}, turning on {outlet_name}.',
+  notify_vent_auto_off_title: '{notification_title} Vent Off',
+  notify_vent_auto_off_msg: 'No motion in {room_name}, turning off {outlet_name}.',
 };
 
 /** Tooltip + visible label for room header enforcement badge (index = phase 0–2). */
@@ -7339,6 +7347,45 @@ class EnergyPanel extends HTMLElement {
                   <span class="toggle-label">Notify when this integration's automations toggle an appliance</span>
                 </div>
               </div>
+              <!-- Sub-toggles for integration automations -->
+              <div id="integration-sub-toggles" style="margin-left: 32px; margin-bottom: 12px; ${ttsSettings.notify_integration_auto === false ? 'display: none;' : ''}">
+                <div class="form-group" style="margin-bottom: 6px;">
+                  <div class="toggle-row" style="padding: 4px 0;">
+                    <label class="toggle-switch" style="transform: scale(0.85);">
+                      <input type="checkbox" id="tts-notify-heater-auto" ${ttsSettings.notify_heater_auto !== false ? 'checked' : ''} />
+                      <span class="toggle-slider"></span>
+                    </label>
+                    <span class="toggle-label" style="font-size: 12px;">Heater auto on/off</span>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom: 6px;">
+                  <div class="toggle-row" style="padding: 4px 0;">
+                    <label class="toggle-switch" style="transform: scale(0.85);">
+                      <input type="checkbox" id="tts-notify-vent-auto" ${ttsSettings.notify_vent_auto !== false ? 'checked' : ''} />
+                      <span class="toggle-slider"></span>
+                    </label>
+                    <span class="toggle-label" style="font-size: 12px;">Vent auto on/off</span>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom: 6px;">
+                  <div class="toggle-row" style="padding: 4px 0;">
+                    <label class="toggle-switch" style="transform: scale(0.85);">
+                      <input type="checkbox" id="tts-notify-ac-auto-off" ${ttsSettings.notify_ac_auto_off !== false ? 'checked' : ''} />
+                      <span class="toggle-slider"></span>
+                    </label>
+                    <span class="toggle-label" style="font-size: 12px;">AC presence off</span>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom: 6px;">
+                  <div class="toggle-row" style="padding: 4px 0;">
+                    <label class="toggle-switch" style="transform: scale(0.85);">
+                      <input type="checkbox" id="tts-notify-ac-auto-on" ${ttsSettings.notify_ac_auto_on !== false ? 'checked' : ''} />
+                      <span class="toggle-slider"></span>
+                    </label>
+                    <span class="toggle-label" style="font-size: 12px;">AC presence on</span>
+                  </div>
+                </div>
+              </div>
               <div class="form-group" style="margin-bottom: 12px;">
                 <div class="toggle-row">
                   <label class="toggle-switch">
@@ -7349,19 +7396,82 @@ class EnergyPanel extends HTMLElement {
                 </div>
               </div>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Title</div>
+                <div class="tts-msg-title">Person/External Toggle Title</div>
                 <input type="text" class="form-input" id="notify-toggle-title"
                   value="${(ttsSettings.notify_toggle_title || TTS_DEFAULTS.notify_toggle_title).replace(/"/g, '&quot;')}"
                   placeholder="{notification_title} Appliance Toggled">
                 <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
               </div>
               <div class="tts-msg-group">
-                <div class="tts-msg-title">Message</div>
+                <div class="tts-msg-title">Person/External Toggle Message</div>
                 <input type="text" class="form-input" id="notify-toggle-msg"
                   value="${(ttsSettings.notify_toggle_msg || TTS_DEFAULTS.notify_toggle_msg).replace(/"/g, '&quot;')}"
                   placeholder="{user_name} turned {action} {outlet_name} in {room_name}.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{user_name}</code> <code>{action}</code></div>
               </div>
+
+              <!-- Heater/Vent Auto Messages -->
+              <details style="margin-top: 16px;">
+                <summary style="cursor: pointer; font-weight: 500; color: var(--primary-text-color); margin-bottom: 8px;">Integration Automation Messages</summary>
+                <div style="padding-left: 12px; border-left: 2px solid var(--divider-color); margin-top: 8px;">
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Heater Auto-On Title</div>
+                    <input type="text" class="form-input" id="notify-heater-auto-on-title"
+                      value="${(ttsSettings.notify_heater_auto_on_title || TTS_DEFAULTS.notify_heater_auto_on_title).replace(/"/g, '&quot;')}"
+                      placeholder="{notification_title} Heater On">
+                    <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Heater Auto-On Message</div>
+                    <input type="text" class="form-input" id="notify-heater-auto-on-msg"
+                      value="${(ttsSettings.notify_heater_auto_on_msg || TTS_DEFAULTS.notify_heater_auto_on_msg).replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} is {temperature}°, turning on {outlet_name}.">
+                    <div class="tts-var-help">Variables: <code>{room_name}</code> <code>{outlet_name}</code> <code>{temperature}</code> <code>{threshold}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Heater Auto-Off Title</div>
+                    <input type="text" class="form-input" id="notify-heater-auto-off-title"
+                      value="${(ttsSettings.notify_heater_auto_off_title || TTS_DEFAULTS.notify_heater_auto_off_title).replace(/"/g, '&quot;')}"
+                      placeholder="{notification_title} Heater Off">
+                    <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Heater Auto-Off Message</div>
+                    <input type="text" class="form-input" id="notify-heater-auto-off-msg"
+                      value="${(ttsSettings.notify_heater_auto_off_msg || TTS_DEFAULTS.notify_heater_auto_off_msg).replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} reached {temperature}°, turning off {outlet_name}.">
+                    <div class="tts-var-help">Variables: <code>{room_name}</code> <code>{outlet_name}</code> <code>{temperature}</code> <code>{comfort}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Vent Auto-On Title</div>
+                    <input type="text" class="form-input" id="notify-vent-auto-on-title"
+                      value="${(ttsSettings.notify_vent_auto_on_title || TTS_DEFAULTS.notify_vent_auto_on_title).replace(/"/g, '&quot;')}"
+                      placeholder="{notification_title} Vent On">
+                    <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Vent Auto-On Message</div>
+                    <input type="text" class="form-input" id="notify-vent-auto-on-msg"
+                      value="${(ttsSettings.notify_vent_auto_on_msg || TTS_DEFAULTS.notify_vent_auto_on_msg).replace(/"/g, '&quot;')}"
+                      placeholder="Motion detected in {room_name}, turning on {outlet_name}.">
+                    <div class="tts-var-help">Variables: <code>{room_name}</code> <code>{outlet_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Vent Auto-Off Title</div>
+                    <input type="text" class="form-input" id="notify-vent-auto-off-title"
+                      value="${(ttsSettings.notify_vent_auto_off_title || TTS_DEFAULTS.notify_vent_auto_off_title).replace(/"/g, '&quot;')}"
+                      placeholder="{notification_title} Vent Off">
+                    <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Vent Auto-Off Message</div>
+                    <input type="text" class="form-input" id="notify-vent-auto-off-msg"
+                      value="${(ttsSettings.notify_vent_auto_off_msg || TTS_DEFAULTS.notify_vent_auto_off_msg).replace(/"/g, '&quot;')}"
+                      placeholder="No motion in {room_name}, turning off {outlet_name}.">
+                    <div class="tts-var-help">Variables: <code>{room_name}</code> <code>{outlet_name}</code></div>
+                  </div>
+                </div>
+              </details>
 
               <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Test Notification</h3>
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
@@ -7386,6 +7496,10 @@ class EnergyPanel extends HTMLElement {
                     <option value="enforcement_phase2">Enforcement Phase 2</option>
                     <option value="ac_auto_off">AC Auto-Off</option>
                     <option value="ac_auto_on">AC Auto-On</option>
+                    <option value="heater_auto_on">Heater Auto-On</option>
+                    <option value="heater_auto_off">Heater Auto-Off</option>
+                    <option value="vent_auto_on">Vent Auto-On</option>
+                    <option value="vent_auto_off">Vent Auto-Off</option>
                     <option value="manual_toggle">Manual Toggle</option>
                   </select>
                 </div>
@@ -8829,7 +8943,7 @@ class EnergyPanel extends HTMLElement {
     const heaterAutomationSection = isWallHeater ? `
       <div class="divider" style="margin: 16px 0;"></div>
       <div class="plug-settings-title">Heater automation</div>
-      <p class="tts-msg-desc" style="margin-bottom: 12px;">Evaluated about every second. Turns on when temperature is at or below the threshold. Each segment runs for the stay duration; when a segment ends, if temperature is at or above comfort the heater turns off (automation TTS/notifications only on the first segment of a run). If still below comfort, another segment runs without a new announcement. Dashboard or HA toggles that turn the heater on run one segment only, then off.</p>
+      <p class="tts-msg-desc" style="margin-bottom: 12px;"><strong>Smart mode:</strong> Automation uses comfort temperature as the target (with hysteresis). The "turn on below" threshold only guards manual turn-on from the dashboard. Manual turns also stop early if comfort is reached. Decimals are ignored for threshold checks (66.9° triggers "66 or below"). Advanced settings enable weather-aware pre-heating, duty cycling, and power-aware pausing.</p>
       <div class="form-group" style="margin-bottom: 12px;">
         <label class="toggle-row">
           <input type="checkbox" class="form-checkbox heater-automation-enabled" ${device.heater_automation_enabled ? 'checked' : ''}>
@@ -8879,6 +8993,69 @@ class EnergyPanel extends HTMLElement {
         <input type="number" class="form-input heater-presence-cooldown-seconds" value="${device.heater_presence_cooldown_seconds ?? 60}" min="0" max="7200" step="1">
         <div class="tts-msg-desc" style="margin-top: 4px;">After an automation turn-on, ignore a new presence trigger within this window (only when require presence is on)</div>
       </div>
+      <details style="margin-top: 16px;">
+        <summary style="cursor: pointer; font-weight: 500; color: var(--primary-text-color); margin-bottom: 8px;">Advanced Optimization</summary>
+        <div style="padding-left: 12px; border-left: 2px solid var(--divider-color); margin-top: 8px;">
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Weather / Outdoor Temp Entity</label>
+            ${this._renderEntityAutocomplete(device.heater_weather_entity || '', 'weather', roomIndex, 'heater-weather-entity', 'weather.home')}
+            <div class="tts-msg-desc" style="margin-top: 4px;">weather.* for forecast-based pre-heating, or sensor.* for outdoor temp</div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="toggle-row">
+              <input type="checkbox" class="form-checkbox heater-optimization-enabled" ${device.heater_optimization_enabled !== false ? 'checked' : ''}>
+              <span class="toggle-label">Enable smart optimization</span>
+            </label>
+            <div class="tts-msg-desc" style="margin-top: 4px;">Uses comfort temp for automation (threshold only guards manual), adds hysteresis and other optimizations</div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Hysteresis band (°)</label>
+            <input type="number" class="form-input heater-hysteresis-band" value="${device.heater_hysteresis_band ?? 2}" min="0" max="10" step="0.5">
+            <div class="tts-msg-desc" style="margin-top: 4px;">Turn on at comfort minus this value, turn off at comfort</div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="toggle-row">
+              <input type="checkbox" class="form-checkbox heater-duty-cycle-enabled" ${device.heater_duty_cycle_enabled ? 'checked' : ''}>
+              <span class="toggle-label">Enable duty cycling</span>
+            </label>
+            <div class="tts-msg-desc" style="margin-top: 4px;">Run heater in bursts to save energy while maintaining comfort</div>
+          </div>
+          <div class="grid-2" style="margin-bottom: 12px;">
+            <div class="form-group">
+              <label class="form-label">On time (minutes)</label>
+              <input type="number" class="form-input heater-duty-on-minutes" value="${device.heater_duty_on_minutes ?? 5}" min="1" max="30" step="1">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Pause time (minutes)</label>
+              <input type="number" class="form-input heater-duty-off-minutes" value="${device.heater_duty_off_minutes ?? 2}" min="1" max="15" step="1">
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="toggle-row">
+              <input type="checkbox" class="form-checkbox heater-power-aware-enabled" ${device.heater_power_aware_enabled ? 'checked' : ''}>
+              <span class="toggle-label">Power-aware heating</span>
+            </label>
+            <div class="tts-msg-desc" style="margin-top: 4px;">Pause heating when other room appliances are running high</div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Pause heating above (watts)</label>
+            <input type="number" class="form-input heater-power-threshold-watts" value="${device.heater_power_threshold_watts ?? 500}" min="100" max="5000" step="50">
+            <div class="tts-msg-desc" style="margin-top: 4px;">Room power threshold (excluding heater) that triggers pause</div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="toggle-row">
+              <input type="checkbox" class="form-checkbox heater-learning-enabled" ${device.heater_learning_enabled !== false ? 'checked' : ''}>
+              <span class="toggle-label">Learn room thermal characteristics</span>
+            </label>
+            <div class="tts-msg-desc" style="margin-top: 4px;">Track heating/cooling rates to optimize performance over time</div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Pre-heat ahead of forecast (minutes)</label>
+            <input type="number" class="form-input heater-preheat-minutes" value="${device.heater_preheat_minutes ?? 30}" min="0" max="120" step="5">
+            <div class="tts-msg-desc" style="margin-top: 4px;">Start heating this far ahead of a forecasted cold spell (requires weather entity)</div>
+          </div>
+        </div>
+      </details>
     ` : '';
     return `
       <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="${applianceKind}" draggable="true">
@@ -9400,6 +9577,15 @@ class EnergyPanel extends HTMLElement {
       notifyTestBtn.addEventListener('click', () => this._sendTestNotification());
     }
 
+    // Integration automation sub-toggles visibility
+    const integrationAutoToggle = this.shadowRoot.querySelector('#tts-notify-integration-auto');
+    const integrationSubToggles = this.shadowRoot.querySelector('#integration-sub-toggles');
+    if (integrationAutoToggle && integrationSubToggles) {
+      integrationAutoToggle.addEventListener('change', () => {
+        integrationSubToggles.style.display = integrationAutoToggle.checked ? '' : 'none';
+      });
+    }
+
     // Toggle room details
     this.shadowRoot.querySelectorAll('.toggle-room-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -9594,6 +9780,18 @@ class EnergyPanel extends HTMLElement {
         .filter(s => (s.entity_id || '').startsWith('switch.'))
         .map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
       return [...sensors, ...switches];
+    }
+    if (entityType === 'weather') {
+      const weathers = (this._entities?.weather || [])
+        .filter(w => (w.entity_id || '').startsWith('weather.'))
+        .map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+      const sensors = (this._entities?.sensors || this._entities?.power_sensors || [])
+        .filter(s => {
+          const eid = (s.entity_id || '').toLowerCase();
+          return eid.includes('outdoor') || eid.includes('outside') || eid.includes('external') || eid.includes('temp');
+        })
+        .map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+      return [...weathers, ...sensors];
     }
     return [];
   }
@@ -10222,6 +10420,18 @@ class EnergyPanel extends HTMLElement {
               const hpe = (item.querySelector('.entity-datalist-input.heater-presence-entity') || item.querySelector('input.heater-presence-entity'))?.value?.trim() || '';
               device.heater_presence_entity = hpe.startsWith('binary_sensor.') ? hpe : null;
               device.heater_presence_cooldown_seconds = Math.max(0, Math.min(7200, parseInt(item.querySelector('.heater-presence-cooldown-seconds')?.value, 10) || 60));
+              // Smart heater optimization fields
+              const hwe = (item.querySelector('.entity-datalist-input.heater-weather-entity') || item.querySelector('input.heater-weather-entity'))?.value?.trim() || '';
+              device.heater_weather_entity = (hwe.startsWith('weather.') || hwe.startsWith('sensor.')) ? hwe : '';
+              device.heater_optimization_enabled = item.querySelector('.heater-optimization-enabled')?.checked !== false;
+              device.heater_hysteresis_band = Math.max(0, Math.min(10, parseFloat(item.querySelector('.heater-hysteresis-band')?.value) || 2));
+              device.heater_duty_cycle_enabled = item.querySelector('.heater-duty-cycle-enabled')?.checked === true;
+              device.heater_duty_on_minutes = Math.max(1, Math.min(30, parseInt(item.querySelector('.heater-duty-on-minutes')?.value, 10) || 5));
+              device.heater_duty_off_minutes = Math.max(1, Math.min(15, parseInt(item.querySelector('.heater-duty-off-minutes')?.value, 10) || 2));
+              device.heater_power_aware_enabled = item.querySelector('.heater-power-aware-enabled')?.checked === true;
+              device.heater_power_threshold_watts = Math.max(100, Math.min(5000, parseInt(item.querySelector('.heater-power-threshold-watts')?.value, 10) || 500));
+              device.heater_learning_enabled = item.querySelector('.heater-learning-enabled')?.checked !== false;
+              device.heater_preheat_minutes = Math.max(0, Math.min(120, parseInt(item.querySelector('.heater-preheat-minutes')?.value, 10) || 30));
             }
           } else {
             device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
@@ -10423,6 +10633,8 @@ class EnergyPanel extends HTMLElement {
         notify_ac_auto_on: this.shadowRoot.querySelector('#tts-notify-ac-auto-on')?.checked !== false,
         notify_person_toggle: this.shadowRoot.querySelector('#tts-notify-person-toggle')?.checked !== false,
         notify_integration_auto: this.shadowRoot.querySelector('#tts-notify-integration-auto')?.checked !== false,
+        notify_heater_auto: this.shadowRoot.querySelector('#tts-notify-heater-auto')?.checked !== false,
+        notify_vent_auto: this.shadowRoot.querySelector('#tts-notify-vent-auto')?.checked !== false,
         notify_external_auto: this.shadowRoot.querySelector('#tts-notify-external-auto')?.checked !== false,
         notify_budget_hit_title: this.shadowRoot.querySelector('#notify-budget-hit-title')?.value ?? '',
         notify_budget_hit_msg: this.shadowRoot.querySelector('#notify-budget-hit-msg')?.value ?? '',
@@ -10436,6 +10648,14 @@ class EnergyPanel extends HTMLElement {
         notify_ac_auto_on_msg: this.shadowRoot.querySelector('#notify-ac-auto-on-msg')?.value ?? '',
         notify_toggle_title: this.shadowRoot.querySelector('#notify-toggle-title')?.value ?? '',
         notify_toggle_msg: this.shadowRoot.querySelector('#notify-toggle-msg')?.value ?? '',
+        notify_heater_auto_on_title: this.shadowRoot.querySelector('#notify-heater-auto-on-title')?.value ?? '',
+        notify_heater_auto_on_msg: this.shadowRoot.querySelector('#notify-heater-auto-on-msg')?.value ?? '',
+        notify_heater_auto_off_title: this.shadowRoot.querySelector('#notify-heater-auto-off-title')?.value ?? '',
+        notify_heater_auto_off_msg: this.shadowRoot.querySelector('#notify-heater-auto-off-msg')?.value ?? '',
+        notify_vent_auto_on_title: this.shadowRoot.querySelector('#notify-vent-auto-on-title')?.value ?? '',
+        notify_vent_auto_on_msg: this.shadowRoot.querySelector('#notify-vent-auto-on-msg')?.value ?? '',
+        notify_vent_auto_off_title: this.shadowRoot.querySelector('#notify-vent-auto-off-title')?.value ?? '',
+        notify_vent_auto_off_msg: this.shadowRoot.querySelector('#notify-vent-auto-off-msg')?.value ?? '',
         phase1_warn_msg: ttsPhase1Warn,
         phase2_warn_msg: ttsPhase2Warn,
         phase2_after_msg: ttsPhase2After,
@@ -10643,6 +10863,18 @@ class EnergyPanel extends HTMLElement {
             const hpe = (item.querySelector('.entity-datalist-input.heater-presence-entity') || item.querySelector('input.heater-presence-entity'))?.value?.trim() || '';
             device.heater_presence_entity = hpe.startsWith('binary_sensor.') ? hpe : null;
             device.heater_presence_cooldown_seconds = Math.max(0, Math.min(7200, parseInt(item.querySelector('.heater-presence-cooldown-seconds')?.value, 10) || 60));
+            // Smart heater optimization fields
+            const hwe2 = (item.querySelector('.entity-datalist-input.heater-weather-entity') || item.querySelector('input.heater-weather-entity'))?.value?.trim() || '';
+            device.heater_weather_entity = (hwe2.startsWith('weather.') || hwe2.startsWith('sensor.')) ? hwe2 : '';
+            device.heater_optimization_enabled = item.querySelector('.heater-optimization-enabled')?.checked !== false;
+            device.heater_hysteresis_band = Math.max(0, Math.min(10, parseFloat(item.querySelector('.heater-hysteresis-band')?.value) || 2));
+            device.heater_duty_cycle_enabled = item.querySelector('.heater-duty-cycle-enabled')?.checked === true;
+            device.heater_duty_on_minutes = Math.max(1, Math.min(30, parseInt(item.querySelector('.heater-duty-on-minutes')?.value, 10) || 5));
+            device.heater_duty_off_minutes = Math.max(1, Math.min(15, parseInt(item.querySelector('.heater-duty-off-minutes')?.value, 10) || 2));
+            device.heater_power_aware_enabled = item.querySelector('.heater-power-aware-enabled')?.checked === true;
+            device.heater_power_threshold_watts = Math.max(100, Math.min(5000, parseInt(item.querySelector('.heater-power-threshold-watts')?.value, 10) || 500));
+            device.heater_learning_enabled = item.querySelector('.heater-learning-enabled')?.checked !== false;
+            device.heater_preheat_minutes = Math.max(0, Math.min(120, parseInt(item.querySelector('.heater-preheat-minutes')?.value, 10) || 30));
           }
         } else {
           device.type = isSingleOutlet ? 'single_outlet' : 'outlet';

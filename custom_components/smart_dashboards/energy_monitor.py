@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import deque
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -138,6 +139,8 @@ class EnergyMonitor:
         # Vent / wall heater optional automations (key: room_id|outlet_name_slug)
         self._vent_automation_state: dict[str, dict] = {}
         self._heater_automation_state: dict[str, dict] = {}
+        # Smart heater state with thermal learning (key: room_id|outlet_name_slug)
+        self._heater_smart_state: dict[str, dict] = {}
         # switch.* the integration toggled recently (exclude from external automation detection)
         self._integration_internal_switch_ids: set[str] = set()
         # Universal push: switch.* state listener + suppression during internal cycling
@@ -153,6 +156,10 @@ class EnergyMonitor:
             return "notify_room_budget_hit"
         if notification_type in ("enforcement_phase1", "enforcement_phase2"):
             return "notify_enforcement_phase_change"
+        if notification_type in ("heater_auto_on", "heater_auto_off"):
+            return "notify_heater_auto"
+        if notification_type in ("vent_auto_on", "vent_auto_off"):
+            return "notify_vent_auto"
         return f"notify_{notification_type}"
 
     @staticmethod
@@ -532,6 +539,167 @@ class EnergyMonitor:
         except (TypeError, ValueError):
             return None
 
+    async def _get_weather_forecast(self, weather_entity: str) -> list[dict]:
+        """Call weather.get_forecasts service and return hourly forecast."""
+        if not weather_entity or not weather_entity.startswith("weather."):
+            return []
+        try:
+            result = await self.hass.services.async_call(
+                "weather",
+                "get_forecasts",
+                {"entity_id": weather_entity, "type": "hourly"},
+                blocking=True,
+                return_response=True,
+            )
+            if result and isinstance(result, dict):
+                forecasts = result.get(weather_entity, {}).get("forecast", [])
+                return forecasts if isinstance(forecasts, list) else []
+            return []
+        except Exception as e:
+            _LOGGER.debug("Failed to get weather forecast from %s: %s", weather_entity, e)
+            return []
+
+    async def _get_outdoor_and_forecast(
+        self, weather_entity: str
+    ) -> tuple[float | None, list[dict]]:
+        """Get outdoor temperature and forecast from weather or sensor entity."""
+        if not weather_entity:
+            return None, []
+
+        outdoor_temp: float | None = None
+        forecast: list[dict] = []
+
+        if weather_entity.startswith("weather."):
+            st = self.hass.states.get(weather_entity)
+            if st and st.state not in ("unknown", "unavailable", ""):
+                try:
+                    outdoor_temp = float(st.attributes.get("temperature", 0))
+                except (TypeError, ValueError):
+                    pass
+            forecast = await self._get_weather_forecast(weather_entity)
+        elif weather_entity.startswith("sensor."):
+            outdoor_temp = self._parse_temperature_sensor(weather_entity)
+
+        return outdoor_temp, forecast
+
+    def _forecast_needs_preheat(
+        self,
+        forecast: list[dict],
+        outdoor_temp: float | None,
+        indoor_temp: float | None,
+        comfort: float,
+        preheat_mins: int,
+    ) -> bool:
+        """Check if forecast shows cold spell requiring pre-heating."""
+        if not forecast or preheat_mins <= 0 or indoor_temp is None:
+            return False
+        if indoor_temp >= comfort:
+            return False
+
+        now = dt_util.utcnow()
+        preheat_window = now + timedelta(minutes=preheat_mins)
+
+        for entry in forecast:
+            dt_str = entry.get("datetime")
+            if not dt_str:
+                continue
+            try:
+                entry_time = dt_util.parse_datetime(dt_str)
+                if not entry_time:
+                    continue
+                if entry_time > preheat_window:
+                    break
+                forecast_temp = float(entry.get("temperature", 100))
+                if forecast_temp < comfort - 5:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    def _get_heater_smart_state(self, key: str) -> dict:
+        """Get or initialize smart heater state for a heater."""
+        if key not in self._heater_smart_state:
+            self._heater_smart_state[key] = {
+                "smart_mode": "idle",
+                "heating_since": None,
+                "duty_pause_until": None,
+                "power_pause_since": None,
+                "temp_history": deque(maxlen=120),
+                "heating_rate": 0.0,
+                "cooling_rate": 0.0,
+                "last_rate_calc": None,
+            }
+        return self._heater_smart_state[key]
+
+    def _update_temp_history(
+        self, key: str, now: datetime, temp: float | None, heater_on: bool
+    ) -> None:
+        """Add temperature sample to history for thermal rate learning."""
+        if temp is None:
+            return
+        smart_st = self._get_heater_smart_state(key)
+        history = smart_st["temp_history"]
+        history.append((now, temp, heater_on))
+
+    def _calculate_thermal_rates(self, key: str) -> tuple[float, float]:
+        """Calculate heating and cooling rates from temperature history.
+        
+        Returns (heating_rate, cooling_rate) in degrees per minute.
+        Positive values for both (heating goes up, cooling goes down).
+        """
+        smart_st = self._get_heater_smart_state(key)
+        history = smart_st["temp_history"]
+        
+        if len(history) < 10:
+            return smart_st.get("heating_rate", 0.0), smart_st.get("cooling_rate", 0.0)
+
+        now = dt_util.utcnow()
+        last_calc = smart_st.get("last_rate_calc")
+        if last_calc and (now - last_calc).total_seconds() < 60:
+            return smart_st.get("heating_rate", 0.0), smart_st.get("cooling_rate", 0.0)
+
+        heating_deltas: list[float] = []
+        cooling_deltas: list[float] = []
+
+        history_list = list(history)
+        for i in range(1, len(history_list)):
+            prev_time, prev_temp, prev_on = history_list[i - 1]
+            curr_time, curr_temp, curr_on = history_list[i]
+            
+            elapsed_mins = (curr_time - prev_time).total_seconds() / 60.0
+            if elapsed_mins <= 0 or elapsed_mins > 5:
+                continue
+            
+            temp_delta = curr_temp - prev_temp
+            rate = temp_delta / elapsed_mins
+            
+            if prev_on and curr_on and temp_delta > 0:
+                heating_deltas.append(rate)
+            elif not prev_on and not curr_on and temp_delta < 0:
+                cooling_deltas.append(abs(rate))
+
+        if heating_deltas:
+            new_heating = sum(heating_deltas) / len(heating_deltas)
+            old_heating = smart_st.get("heating_rate", 0.0)
+            smart_st["heating_rate"] = old_heating * 0.7 + new_heating * 0.3 if old_heating else new_heating
+
+        if cooling_deltas:
+            new_cooling = sum(cooling_deltas) / len(cooling_deltas)
+            old_cooling = smart_st.get("cooling_rate", 0.0)
+            smart_st["cooling_rate"] = old_cooling * 0.7 + new_cooling * 0.3 if old_cooling else new_cooling
+
+        smart_st["last_rate_calc"] = now
+        return smart_st.get("heating_rate", 0.0), smart_st.get("cooling_rate", 0.0)
+
+    def _estimate_time_to_comfort(
+        self, current_temp: float, comfort: float, heating_rate: float
+    ) -> float | None:
+        """Estimate minutes to reach comfort temp based on heating rate."""
+        if heating_rate <= 0 or current_temp >= comfort:
+            return None
+        temp_diff = comfort - current_temp
+        return temp_diff / heating_rate
+
     async def _async_switch_set(self, entity_id: str, turn_on: bool) -> None:
         self._mark_switch_internal(entity_id)
         try:
@@ -833,6 +1001,17 @@ class EnergyMonitor:
                             await self._async_speak_appliance_automation_tts(room, msg)
                         except (KeyError, ValueError) as e:
                             _LOGGER.warning("Vent automation TTS template failed: %s", e)
+                    await self._send_notification_to_room_person(
+                        room,
+                        "vent_auto_on",
+                        {
+                            "room_name": room_name,
+                            "outlet_name": outlet_name,
+                        },
+                        "Vent Auto On",
+                        f"Motion detected in {room_name}, turning on {outlet_name}.",
+                        integration_auto=True,
+                    )
         else:
             st["presence_since"] = None
             if sw_on and st.get("armed"):
@@ -842,10 +1021,24 @@ class EnergyMonitor:
                     await self._async_appliance_power_set(str(switch), False)
                     st["armed"] = False
                     st["no_presence_since"] = None
+                    room_name = str(room.get("name") or room_id)
+                    outlet_name = str(outlet.get("name") or "vent")
+                    await self._send_notification_to_room_person(
+                        room,
+                        "vent_auto_off",
+                        {
+                            "room_name": room_name,
+                            "outlet_name": outlet_name,
+                        },
+                        "Vent Auto Off",
+                        f"No motion in {room_name}, turning off {outlet_name}.",
+                        integration_auto=True,
+                    )
 
     async def _tick_wall_heater_automation(
         self, room: dict, room_id: str, outlet: dict, now: datetime
     ) -> None:
+        """Smart wall heater automation with state machine, weather awareness, and optimization."""
         if outlet.get("type") != "wall_heater":
             return
         key = self._appliance_automation_key(room_id, outlet)
@@ -869,6 +1062,7 @@ class EnergyMonitor:
                 "auto_session_announced": False,
             },
         )
+        smart_st = self._get_heater_smart_state(key)
 
         sw_on = self._appliance_entity_is_on(switch)
         internal = switch_ent in self._integration_internal_switch_ids
@@ -888,6 +1082,17 @@ class EnergyMonitor:
         except (TypeError, ValueError):
             comfort = threshold + 2.0
 
+        optimization_enabled = bool(outlet.get("heater_optimization_enabled", True))
+        hysteresis = float(outlet.get("heater_hysteresis_band", 2.0) or 2.0)
+        duty_enabled = bool(outlet.get("heater_duty_cycle_enabled"))
+        duty_on_mins = max(1, int(outlet.get("heater_duty_on_minutes", 5) or 5))
+        duty_off_mins = max(1, int(outlet.get("heater_duty_off_minutes", 2) or 2))
+        power_aware = bool(outlet.get("heater_power_aware_enabled"))
+        power_threshold = int(outlet.get("heater_power_threshold_watts", 500) or 500)
+        learning_enabled = bool(outlet.get("heater_learning_enabled", True))
+        preheat_mins = int(outlet.get("heater_preheat_minutes", 30) or 30)
+        weather_ent = str(outlet.get("heater_weather_entity") or "").strip()
+
         need_presence = bool(outlet.get("heater_presence_optional_enabled"))
         pres_turn_on = bool(outlet.get("heater_presence_turn_on_enabled"))
         pres_ent = str(outlet.get("heater_presence_entity") or "").strip()
@@ -902,6 +1107,17 @@ class EnergyMonitor:
             return
 
         prev_sw = bool(st["prev_sw_on"])
+        room_name = str(room.get("name") or room_id)
+        outlet_name = str(outlet.get("name") or "heater")
+
+        if temp is not None and learning_enabled:
+            self._update_temp_history(key, now, temp, sw_on)
+            self._calculate_thermal_rates(key)
+
+        outdoor_temp: float | None = None
+        forecast: list[dict] = []
+        if weather_ent and optimization_enabled:
+            outdoor_temp, forecast = await self._get_outdoor_and_forecast(weather_ent)
 
         def _cooldown_blocks() -> bool:
             if not need_presence:
@@ -911,95 +1127,207 @@ class EnergyMonitor:
                 return True
             return False
 
-        if sw_on and st.get("run_until") and now >= st["run_until"]:
-            mode = st.get("mode")
-            if mode == "manual":
-                await self._async_wall_heater_set_switch(switch_ent, False)
-                st["run_until"] = None
-                st["mode"] = None
-            elif mode == "auto":
-                if temp is None:
-                    await self._async_wall_heater_set_switch(switch_ent, False)
-                    st["run_until"] = None
-                    st["mode"] = None
-                    st["auto_session_announced"] = False
-                elif temp >= comfort:
-                    await self._async_wall_heater_set_switch(switch_ent, False)
-                    st["run_until"] = None
-                    st["mode"] = None
-                    st["auto_session_announced"] = False
-                else:
-                    st["run_until"] = now + stay_delta
-            else:
-                await self._async_wall_heater_set_switch(switch_ent, False)
-                st["run_until"] = None
-                st["mode"] = None
-                st["auto_session_announced"] = False
+        def _presence_allows() -> bool:
+            if not need_presence:
+                return True
+            if not pres_ent or not pres_ok:
+                return False
+            if _cooldown_blocks():
+                return False
+            return True
 
-        sw_on = self._appliance_entity_is_on(switch)
+        async def _turn_heater_on() -> None:
+            await self._async_wall_heater_set_switch(switch_ent, True)
+            st["last_on"] = now
+            smart_st["heating_since"] = now
+
+        async def _turn_heater_off() -> None:
+            await self._async_wall_heater_set_switch(switch_ent, False)
+            smart_st["heating_since"] = None
+
+        async def _announce_heater_on() -> None:
+            tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+            if not st.get("auto_session_announced") and self._tts_line_enabled(
+                tts_settings, "heater_automation"
+            ):
+                prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                tmpl = (
+                    tts_settings.get("heater_automation_on_msg") or ""
+                ).strip() or DEFAULT_HEATER_AUTOMATION_ON_MSG
+                comfort_spoken = spoken_cardinal(int(round(comfort)))
+                temp_spoken = spoken_cardinal(int(round(temp))) if temp else "unknown"
+                try:
+                    msg = tmpl.format(
+                        prefix=prefix,
+                        room_name=room_name,
+                        outlet_name=outlet_name,
+                        threshold=comfort_spoken,
+                        temperature=temp_spoken,
+                    )
+                    await self._async_speak_appliance_automation_tts(room, msg)
+                except (KeyError, ValueError) as e:
+                    _LOGGER.warning("Heater automation TTS template failed: %s", e)
+                await self._send_notification_to_room_person(
+                    room,
+                    "heater_auto_on",
+                    {
+                        "room_name": room_name,
+                        "outlet_name": outlet_name,
+                        "temperature": str(int(round(temp))) if temp else "?",
+                        "threshold": str(int(round(comfort))),
+                    },
+                    "Heater Auto On",
+                    f"{room_name} is {int(round(temp)) if temp else '?'}°, turning on {outlet_name}.",
+                    integration_auto=True,
+                )
+            st["auto_session_announced"] = True
+
+        async def _announce_heater_off() -> None:
+            if temp is not None:
+                await self._send_notification_to_room_person(
+                    room,
+                    "heater_auto_off",
+                    {
+                        "room_name": room_name,
+                        "outlet_name": outlet_name,
+                        "temperature": str(int(round(temp))),
+                        "comfort": str(int(round(comfort))),
+                    },
+                    "Heater Auto Off",
+                    f"{room_name} reached {int(round(temp))}°, turning off {outlet_name}.",
+                    integration_auto=True,
+                )
 
         if sw_on and not prev_sw and not internal:
             st["mode"] = "manual"
             st["run_until"] = now + stay_delta
+            smart_st["smart_mode"] = "manual"
 
-        if not sw_on:
+        if not sw_on and st.get("mode") == "manual":
             st["run_until"] = None
             st["mode"] = None
             st["auto_session_announced"] = False
+            smart_st["smart_mode"] = "idle"
+
+        mode = st.get("mode")
+
+        if mode == "manual":
+            if temp is not None and temp >= comfort:
+                await _turn_heater_off()
+                st["run_until"] = None
+                st["mode"] = None
+                smart_st["smart_mode"] = "idle"
+            elif st.get("run_until") and now >= st["run_until"]:
+                await _turn_heater_off()
+                st["run_until"] = None
+                st["mode"] = None
+                smart_st["smart_mode"] = "idle"
+            st["prev_sw_on"] = self._appliance_entity_is_on(switch)
+            st["prev_presence"] = pres_ok if pres_ent else False
+            return
 
         sw_on = self._appliance_entity_is_on(switch)
+        smart_mode = smart_st.get("smart_mode", "idle")
 
-        if auto_enabled and temp is not None and not sw_on:
-            can_steady = temp <= threshold
-            if need_presence:
-                if not pres_ent or not pres_ok:
-                    can_steady = False
-                elif _cooldown_blocks():
-                    can_steady = False
+        if not auto_enabled:
+            if sw_on and st.get("mode") == "auto":
+                await _turn_heater_off()
+                st["mode"] = None
+                st["auto_session_announced"] = False
+                smart_st["smart_mode"] = "idle"
+            st["prev_sw_on"] = sw_on
+            st["prev_presence"] = pres_ok if pres_ent else False
+            return
 
-            can_edge = (
-                pres_turn_on
-                and bool(pres_ent)
-                and pres_edge
-                and temp <= threshold
-            )
-            if need_presence:
-                if not pres_ent or not pres_ok:
-                    can_edge = False
-                elif _cooldown_blocks():
-                    can_edge = False
+        if temp is None:
+            if sw_on and st.get("mode") == "auto":
+                await _turn_heater_off()
+                st["mode"] = None
+                st["auto_session_announced"] = False
+                smart_st["smart_mode"] = "idle"
+            st["prev_sw_on"] = self._appliance_entity_is_on(switch)
+            st["prev_presence"] = pres_ok if pres_ent else False
+            return
 
-            if can_steady or can_edge:
-                await self._async_wall_heater_set_switch(switch_ent, True)
-                st["last_on"] = now
-                st["run_until"] = now + stay_delta
+        turn_on_temp = comfort - hysteresis if optimization_enabled else comfort - 1.0
+        turn_off_temp = comfort
+
+        if smart_mode == "idle":
+            should_heat = False
+            if int(temp) < int(turn_on_temp):
+                if _presence_allows() or not need_presence:
+                    should_heat = True
+            elif pres_turn_on and pres_edge and int(temp) < int(turn_off_temp):
+                if _presence_allows():
+                    should_heat = True
+            elif optimization_enabled and preheat_mins > 0:
+                if self._forecast_needs_preheat(forecast, outdoor_temp, temp, comfort, preheat_mins):
+                    if _presence_allows() or not need_presence:
+                        should_heat = True
+                        smart_st["smart_mode"] = "pre_heating"
+
+            if should_heat:
+                await _turn_heater_on()
                 st["mode"] = "auto"
-                tts_settings = (
-                    self.config_manager.energy_config.get("tts_settings") or {}
-                )
-                if not st.get("auto_session_announced") and self._tts_line_enabled(
-                    tts_settings, "heater_automation"
-                ):
-                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
-                    tmpl = (
-                        tts_settings.get("heater_automation_on_msg") or ""
-                    ).strip() or DEFAULT_HEATER_AUTOMATION_ON_MSG
-                    room_name = str(room.get("name") or room_id)
-                    outlet_name = str(outlet.get("name") or "heater")
-                    thr_spoken = spoken_cardinal(int(round(threshold)))
-                    temp_spoken = spoken_cardinal(int(round(temp)))
-                    try:
-                        msg = tmpl.format(
-                            prefix=prefix,
-                            room_name=room_name,
-                            outlet_name=outlet_name,
-                            threshold=thr_spoken,
-                            temperature=temp_spoken,
-                        )
-                        await self._async_speak_appliance_automation_tts(room, msg)
-                    except (KeyError, ValueError) as e:
-                        _LOGGER.warning("Heater automation TTS template failed: %s", e)
-                st["auto_session_announced"] = True
+                if smart_st.get("smart_mode") != "pre_heating":
+                    smart_st["smart_mode"] = "heating"
+                await _announce_heater_on()
+
+        elif smart_mode in ("heating", "pre_heating"):
+            if temp >= turn_off_temp:
+                await _turn_heater_off()
+                st["mode"] = None
+                st["auto_session_announced"] = False
+                smart_st["smart_mode"] = "idle"
+                await _announce_heater_off()
+            elif optimization_enabled and duty_enabled:
+                heating_since = smart_st.get("heating_since")
+                if heating_since and (now - heating_since).total_seconds() >= duty_on_mins * 60:
+                    await _turn_heater_off()
+                    smart_st["smart_mode"] = "duty_pause"
+                    smart_st["duty_pause_until"] = now + timedelta(minutes=duty_off_mins)
+            elif optimization_enabled and power_aware:
+                room_power = self.config_manager.get_room_current_watts(room_id)
+                heater_power = 0.0
+                if outlet.get("power_source") == "sensor":
+                    pe = outlet.get("power_sensor_entity")
+                    if pe:
+                        heater_power = self._parse_temperature_sensor(pe) or 0.0
+                else:
+                    heater_power = float(outlet.get("watts_when_on", 0) or 0)
+                other_power = room_power - heater_power
+                if other_power > power_threshold:
+                    await _turn_heater_off()
+                    smart_st["smart_mode"] = "power_pause"
+                    smart_st["power_pause_since"] = now
+
+        elif smart_mode == "duty_pause":
+            duty_until = smart_st.get("duty_pause_until")
+            if duty_until and now >= duty_until:
+                if temp < turn_off_temp:
+                    await _turn_heater_on()
+                    smart_st["smart_mode"] = "heating"
+                else:
+                    smart_st["smart_mode"] = "idle"
+                    st["mode"] = None
+                    st["auto_session_announced"] = False
+
+        elif smart_mode == "power_pause":
+            room_power = self.config_manager.get_room_current_watts(room_id)
+            heater_power = 0.0
+            if outlet.get("power_source") == "sensor":
+                pe = outlet.get("power_sensor_entity")
+                if pe:
+                    heater_power = self._parse_temperature_sensor(pe) or 0.0
+            other_power = room_power - heater_power
+            if other_power <= power_threshold * 0.8:
+                if temp < turn_off_temp:
+                    await _turn_heater_on()
+                    smart_st["smart_mode"] = "heating"
+                else:
+                    smart_st["smart_mode"] = "idle"
+                    st["mode"] = None
+                    st["auto_session_announced"] = False
 
         st["prev_sw_on"] = self._appliance_entity_is_on(switch)
         st["prev_presence"] = pres_ok if pres_ent else False

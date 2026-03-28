@@ -98,6 +98,16 @@ def _attach_wall_heater_dashboard_fields(
         _parse_temperature_sensor_state(hass, te) if te.startswith("sensor.") else None
     )
     outlet_data["heater_time_remaining_sec"] = 0
+    outlet_data["heater_weather_entity"] = outlet.get("heater_weather_entity", "")
+    outlet_data["heater_optimization_enabled"] = outlet.get("heater_optimization_enabled", True)
+    outlet_data["heater_hysteresis_band"] = outlet.get("heater_hysteresis_band", 2.0)
+    outlet_data["heater_duty_cycle_enabled"] = outlet.get("heater_duty_cycle_enabled", False)
+    outlet_data["heater_duty_on_minutes"] = outlet.get("heater_duty_on_minutes", 5)
+    outlet_data["heater_duty_off_minutes"] = outlet.get("heater_duty_off_minutes", 2)
+    outlet_data["heater_power_aware_enabled"] = outlet.get("heater_power_aware_enabled", False)
+    outlet_data["heater_power_threshold_watts"] = outlet.get("heater_power_threshold_watts", 500)
+    outlet_data["heater_learning_enabled"] = outlet.get("heater_learning_enabled", True)
+    outlet_data["heater_preheat_minutes"] = outlet.get("heater_preheat_minutes", 30)
     slug = (outlet.get("name") or "device").lower().replace(" ", "_")
     key = f"{room_id}|{slug}"
     if energy_monitor and hasattr(energy_monitor, "_heater_automation_state"):
@@ -110,6 +120,11 @@ def _attach_wall_heater_dashboard_fields(
                 outlet_data["heater_time_remaining_sec"] = int(max(0, sec))
             except TypeError:
                 pass
+    if energy_monitor and hasattr(energy_monitor, "_heater_smart_state"):
+        smart_st = energy_monitor._heater_smart_state.get(key) or {}
+        outlet_data["heater_smart_mode"] = smart_st.get("smart_mode", "idle")
+        outlet_data["heater_heating_rate"] = round(smart_st.get("heating_rate", 0.0), 3)
+        outlet_data["heater_cooling_rate"] = round(smart_st.get("cooling_rate", 0.0), 3)
 
 
 # Server-side cache for get_statistics to avoid heavy recorder queries
@@ -233,6 +248,7 @@ async def websocket_get_entities(
         "input_number": [],
         "persons": [],
         "zones": [],
+        "weather": [],
     }
 
     for state in hass.states.async_all():
@@ -316,6 +332,13 @@ async def websocket_get_entities(
         if entity_type is None or entity_type == "zone":
             if entity_id.startswith("zone."):
                 result["zones"].append({
+                    "entity_id": entity_id,
+                    "friendly_name": friendly_name,
+                })
+
+        if entity_type is None or entity_type == "weather":
+            if entity_id.startswith("weather."):
+                result["weather"].append({
                     "entity_id": entity_id,
                     "friendly_name": friendly_name,
                 })
@@ -1935,11 +1958,11 @@ async def websocket_toggle_switch(
                         if te.startswith("sensor.")
                         else None
                     )
-                    if temp is not None and temp > threshold:
+                    if temp is not None and int(temp) > int(threshold):
                         connection.send_error(
                             msg["id"],
                             "heater_too_warm",
-                            f"It's already {temp:.0f}° in here—the heater only turns on below {threshold:.0f}°.",
+                            f"It's already {int(temp)}° in here—the heater only turns on below {int(threshold)}°.",
                         )
                         return
                     break
@@ -2362,6 +2385,10 @@ async def websocket_send_test_notification(
         "ac_auto_off": ("notify_ac_auto_off_title", "notify_ac_auto_off_msg"),
         "ac_auto_on": ("notify_ac_auto_on_title", "notify_ac_auto_on_msg"),
         "manual_toggle": ("notify_manual_toggle_title", "notify_manual_toggle_msg"),
+        "heater_auto_on": ("notify_heater_auto_on_title", "notify_heater_auto_on_msg"),
+        "heater_auto_off": ("notify_heater_auto_off_title", "notify_heater_auto_off_msg"),
+        "vent_auto_on": ("notify_vent_auto_on_title", "notify_vent_auto_on_msg"),
+        "vent_auto_off": ("notify_vent_auto_off_title", "notify_vent_auto_off_msg"),
     }
 
     if notification_type not in type_map:
@@ -2377,6 +2404,10 @@ async def websocket_send_test_notification(
         "notify_ac_auto_off_title": "{notification_title} Air Conditioner Off",
         "notify_ac_auto_on_title": "{notification_title} Air Conditioner On",
         "notify_manual_toggle_title": "{notification_title} Appliance Toggled",
+        "notify_heater_auto_on_title": "{notification_title} Heater On",
+        "notify_heater_auto_off_title": "{notification_title} Heater Off",
+        "notify_vent_auto_on_title": "{notification_title} Vent On",
+        "notify_vent_auto_off_title": "{notification_title} Vent Off",
     }
     default_msgs = {
         "notify_budget_hit_msg": "{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh).",
@@ -2389,6 +2420,10 @@ async def websocket_send_test_notification(
             "{outlet_name} was turned back on because {person_name} is nearby."
         ),
         "notify_manual_toggle_msg": "{user_name} turned {action} {outlet_name} in {room_name}.",
+        "notify_heater_auto_on_msg": "{room_name} is {temperature}°, turning on {outlet_name}.",
+        "notify_heater_auto_off_msg": "{room_name} reached {temperature}°, turning off {outlet_name}.",
+        "notify_vent_auto_on_msg": "Motion detected in {room_name}, turning on {outlet_name}.",
+        "notify_vent_auto_off_msg": "No motion in {room_name}, turning off {outlet_name}.",
     }
 
     title_template = tts_settings.get(title_key) or default_titles.get(title_key, "Test Notification")
@@ -2405,6 +2440,9 @@ async def websocket_send_test_notification(
         "action": "on",
         "person_name": person_name,
         "person": person_name,
+        "temperature": "62",
+        "threshold": "65",
+        "comfort": "68",
     }
 
     try:
