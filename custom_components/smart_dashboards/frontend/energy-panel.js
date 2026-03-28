@@ -9031,16 +9031,21 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Comfort margin (°)</label>
+            <input type="number" class="form-input heater-duty-comfort-margin" value="${device.heater_duty_comfort_margin ?? 1.0}" min="0" max="10" step="0.5">
+            <div class="tts-msg-desc" style="margin-top: 4px;">Only use duty cycling within this margin of comfort temp; run continuously when colder</div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
             <label class="toggle-row">
               <input type="checkbox" class="form-checkbox heater-power-aware-enabled" ${device.heater_power_aware_enabled ? 'checked' : ''}>
               <span class="toggle-label">Power-aware heating</span>
             </label>
-            <div class="tts-msg-desc" style="margin-top: 4px;">Pause heating when other room appliances are running high</div>
+            <div class="tts-msg-desc" style="margin-top: 4px;">Pause heating when whole-home power draw is high</div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Pause heating above (watts)</label>
             <input type="number" class="form-input heater-power-threshold-watts" value="${device.heater_power_threshold_watts ?? 500}" min="100" max="5000" step="50">
-            <div class="tts-msg-desc" style="margin-top: 4px;">Room power threshold (excluding heater) that triggers pause</div>
+            <div class="tts-msg-desc" style="margin-top: 4px;">Whole-home power threshold (excluding this heater) that triggers pause</div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="toggle-row">
@@ -10428,6 +10433,7 @@ class EnergyPanel extends HTMLElement {
               device.heater_duty_cycle_enabled = item.querySelector('.heater-duty-cycle-enabled')?.checked === true;
               device.heater_duty_on_minutes = Math.max(1, Math.min(30, parseInt(item.querySelector('.heater-duty-on-minutes')?.value, 10) || 5));
               device.heater_duty_off_minutes = Math.max(1, Math.min(15, parseInt(item.querySelector('.heater-duty-off-minutes')?.value, 10) || 2));
+              device.heater_duty_comfort_margin = Math.max(0, Math.min(10, parseFloat(item.querySelector('.heater-duty-comfort-margin')?.value) || 1.0));
               device.heater_power_aware_enabled = item.querySelector('.heater-power-aware-enabled')?.checked === true;
               device.heater_power_threshold_watts = Math.max(100, Math.min(5000, parseInt(item.querySelector('.heater-power-threshold-watts')?.value, 10) || 500));
               device.heater_learning_enabled = item.querySelector('.heater-learning-enabled')?.checked !== false;
@@ -10871,6 +10877,7 @@ class EnergyPanel extends HTMLElement {
             device.heater_duty_cycle_enabled = item.querySelector('.heater-duty-cycle-enabled')?.checked === true;
             device.heater_duty_on_minutes = Math.max(1, Math.min(30, parseInt(item.querySelector('.heater-duty-on-minutes')?.value, 10) || 5));
             device.heater_duty_off_minutes = Math.max(1, Math.min(15, parseInt(item.querySelector('.heater-duty-off-minutes')?.value, 10) || 2));
+            device.heater_duty_comfort_margin = Math.max(0, Math.min(10, parseFloat(item.querySelector('.heater-duty-comfort-margin')?.value) || 1.0));
             device.heater_power_aware_enabled = item.querySelector('.heater-power-aware-enabled')?.checked === true;
             device.heater_power_threshold_watts = Math.max(100, Math.min(5000, parseInt(item.querySelector('.heater-power-threshold-watts')?.value, 10) || 500));
             device.heater_learning_enabled = item.querySelector('.heater-learning-enabled')?.checked !== false;

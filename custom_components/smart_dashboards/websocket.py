@@ -104,6 +104,7 @@ def _attach_wall_heater_dashboard_fields(
     outlet_data["heater_duty_cycle_enabled"] = outlet.get("heater_duty_cycle_enabled", False)
     outlet_data["heater_duty_on_minutes"] = outlet.get("heater_duty_on_minutes", 5)
     outlet_data["heater_duty_off_minutes"] = outlet.get("heater_duty_off_minutes", 2)
+    outlet_data["heater_duty_comfort_margin"] = outlet.get("heater_duty_comfort_margin", 1.0)
     outlet_data["heater_power_aware_enabled"] = outlet.get("heater_power_aware_enabled", False)
     outlet_data["heater_power_threshold_watts"] = outlet.get("heater_power_threshold_watts", 500)
     outlet_data["heater_learning_enabled"] = outlet.get("heater_learning_enabled", True)
