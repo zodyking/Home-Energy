@@ -109,6 +109,8 @@ def _attach_wall_heater_dashboard_fields(
     outlet_data["heater_power_threshold_watts"] = outlet.get("heater_power_threshold_watts", 500)
     outlet_data["heater_learning_enabled"] = outlet.get("heater_learning_enabled", True)
     outlet_data["heater_preheat_minutes"] = outlet.get("heater_preheat_minutes", 30)
+    outlet_data["heater_door_sensor_entity"] = outlet.get("heater_door_sensor_entity")
+    outlet_data["heater_window_sensor_entity"] = outlet.get("heater_window_sensor_entity")
     slug = (outlet.get("name") or "device").lower().replace(" ", "_")
     key = f"{room_id}|{slug}"
     if energy_monitor and hasattr(energy_monitor, "_heater_automation_state"):
@@ -1966,6 +1968,25 @@ async def websocket_toggle_switch(
                             msg["id"],
                             "heater_too_warm",
                             f"It's already {int(temp)}° in here—the heater only turns on below {int(threshold)}°.",
+                        )
+                        return
+                    door_ent = str(out.get("heater_door_sensor_entity") or "").strip()
+                    window_ent = str(out.get("heater_window_sensor_entity") or "").strip()
+                    blocker = None
+                    if door_ent.startswith("binary_sensor."):
+                        ds = hass.states.get(door_ent)
+                        if ds and ds.state == "on":
+                            blocker = "door"
+                    if not blocker and window_ent.startswith("binary_sensor."):
+                        ws = hass.states.get(window_ent)
+                        if ws and ws.state == "on":
+                            blocker = "window"
+                    if blocker:
+                        room_name = room_cfg.get("name", room_id)
+                        connection.send_error(
+                            msg["id"],
+                            "heater_blocked_open",
+                            f"{room_name} heater cannot turn on—the {blocker} is open.",
                         )
                         return
                     break

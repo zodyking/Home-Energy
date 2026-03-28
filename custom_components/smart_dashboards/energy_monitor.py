@@ -149,6 +149,13 @@ class EnergyMonitor:
         self._enforcement_power_cycle_depth: dict[str, int] = {}
         self._plug_shutoff_switch_entities: set[str] = set()
         self._manual_toggle_notify_last: dict[str, datetime] = {}
+        # Zone health tracking: 48-hour state history for each person
+        self._person_zone_state_history: dict[str, deque] = {}
+        self._person_zone_health_alerted: set[str] = set()
+        self._person_zone_health_listener_unsub: list = []
+        self._person_zone_health_last_check: datetime | None = None
+        self._person_zone_arrived_home_tts_count: dict[str, int] = {}
+        self._person_zone_hourly_reminder_last: dict[str, datetime] = {}
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -215,6 +222,207 @@ class EnergyMonitor:
                 seen.add(pe)
                 ordered.append(pe)
         return ordered
+
+    def _anyone_in_any_zone(self) -> bool:
+        """Return True if at least one configured person is in any zone (not 'not_home').
+
+        Used to pause heater/vent automation when the house is empty.
+        Returns True if no persons are configured (don't block automation).
+        """
+        all_persons = self._distinct_presence_person_entity_ids()
+        if not all_persons:
+            return True
+        for person_ent in all_persons:
+            ps = self.hass.states.get(person_ent)
+            if ps and ps.state not in ("not_home", "unknown", "unavailable", ""):
+                return True
+        return False
+
+    def _record_person_zone_state(self, person_ent: str, state: str, now: datetime) -> None:
+        """Record a person's zone state in history (48-hour rolling window)."""
+        if person_ent not in self._person_zone_state_history:
+            self._person_zone_state_history[person_ent] = deque(maxlen=2880)
+        self._person_zone_state_history[person_ent].append((now, state))
+
+    def _get_person_zone_states_in_window(self, person_ent: str, hours: int = 48) -> set[str]:
+        """Get unique zone states for a person within the specified time window."""
+        if person_ent not in self._person_zone_state_history:
+            return set()
+        now = dt_util.now()
+        cutoff = now - timedelta(hours=hours)
+        states: set[str] = set()
+        for timestamp, state in self._person_zone_state_history[person_ent]:
+            if timestamp >= cutoff:
+                states.add(state.lower())
+        return states
+
+    def _is_person_zone_setup_healthy(self, person_ent: str) -> bool:
+        """Check if a person has shown healthy zone states (home, nearby, or any custom zone).
+
+        Returns True if person has shown at least one valid zone state in the past 48 hours.
+        A "valid" zone state is anything other than just not_home/unknown/unavailable.
+        """
+        states = self._get_person_zone_states_in_window(person_ent, 48)
+        invalid_only = {"not_home", "unknown", "unavailable", ""}
+        valid_states = states - invalid_only
+        return len(valid_states) > 0
+
+    def _get_person_friendly_name(self, person_ent: str) -> str:
+        """Get friendly name for a person entity."""
+        ps = self.hass.states.get(person_ent)
+        if ps and ps.attributes.get("friendly_name"):
+            return str(ps.attributes["friendly_name"])
+        return person_ent.replace("person.", "").replace("_", " ").title()
+
+    def _setup_zone_health_listeners(self) -> None:
+        """Set up state change listeners for person entities to track zone health."""
+        for unsub in self._person_zone_health_listener_unsub:
+            unsub()
+        self._person_zone_health_listener_unsub.clear()
+
+        all_persons = self._distinct_presence_person_entity_ids()
+        if not all_persons:
+            return
+
+        @callback
+        def _on_person_state_change(event: Event) -> None:
+            entity_id = event.data.get("entity_id", "")
+            new_state = event.data.get("new_state")
+            if not new_state or not entity_id.startswith("person."):
+                return
+            state_val = (new_state.state or "").strip().lower()
+            now = dt_util.now()
+            self._record_person_zone_state(entity_id, state_val, now)
+            self.hass.async_create_task(
+                self._async_handle_zone_health_state_change(entity_id, state_val, now)
+            )
+
+        unsub = async_track_state_change_event(
+            self.hass, all_persons, _on_person_state_change
+        )
+        self._person_zone_health_listener_unsub.append(unsub)
+
+        now = dt_util.now()
+        for person_ent in all_persons:
+            ps = self.hass.states.get(person_ent)
+            if ps:
+                self._record_person_zone_state(person_ent, (ps.state or "").lower(), now)
+
+    async def _async_handle_zone_health_state_change(
+        self, person_ent: str, new_state: str, now: datetime
+    ) -> None:
+        """Handle zone health when a person's state changes (e.g., arrived home)."""
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        if not tts_settings.get("zone_health_check_enabled", True):
+            return
+
+        if person_ent in self._person_zone_health_alerted:
+            valid_zone_states = {"home", "nearby"}
+            if new_state in valid_zone_states:
+                name = self._get_person_friendly_name(person_ent)
+                count = self._person_zone_arrived_home_tts_count.get(person_ent, 0)
+                if count < 3:
+                    msg = f"{name}, your location changed to {new_state}."
+                    await self._async_speak_zone_health_tts(person_ent, msg)
+                    self._person_zone_arrived_home_tts_count[person_ent] = count + 1
+                    if count + 1 >= 3:
+                        self._person_zone_health_alerted.discard(person_ent)
+                        self._person_zone_arrived_home_tts_count.pop(person_ent, None)
+                        self._person_zone_hourly_reminder_last.pop(person_ent, None)
+                        _LOGGER.info(
+                            "Zone health: %s zone tracking confirmed working after 3 TTS confirmations",
+                            person_ent,
+                        )
+
+    async def _async_speak_zone_health_tts(self, person_ent: str, message: str) -> None:
+        """Speak a zone health TTS message to rooms associated with this person."""
+        for room in self.config_manager.energy_config.get("rooms", []):
+            if room.get("presence_person_entity") == person_ent:
+                media_player = (room.get("media_player") or "").strip()
+                if media_player.startswith("media_player."):
+                    tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+                    vol = float(room.get("volume", 0.7) or 0.7)
+                    try:
+                        await async_send_tts_or_queue(
+                            self.hass,
+                            media_player=media_player,
+                            message=message,
+                            language=tts_settings.get("language"),
+                            volume=vol,
+                            tts_settings=tts_settings,
+                            room=room,
+                        )
+                    except Exception as e:
+                        _LOGGER.warning("Zone health TTS failed: %s", e)
+                    return
+
+    async def _async_tick_zone_health_check(self, now: datetime) -> None:
+        """Periodic check for zone health issues (runs hourly)."""
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        if not tts_settings.get("zone_health_check_enabled", True):
+            return
+
+        if self._person_zone_health_last_check:
+            if (now - self._person_zone_health_last_check).total_seconds() < 3600:
+                return
+        self._person_zone_health_last_check = now
+
+        all_persons = self._distinct_presence_person_entity_ids()
+        for person_ent in all_persons:
+            if not self._is_person_zone_setup_healthy(person_ent):
+                name = self._get_person_friendly_name(person_ent)
+                if person_ent not in self._person_zone_health_alerted:
+                    self._person_zone_health_alerted.add(person_ent)
+                    _LOGGER.warning(
+                        "Zone health: %s has not shown valid zone states in 48 hours",
+                        person_ent,
+                    )
+                    await self._send_zone_health_push_notification(person_ent, name)
+                else:
+                    last_reminder = self._person_zone_hourly_reminder_last.get(person_ent)
+                    if not last_reminder or (now - last_reminder).total_seconds() >= 3600:
+                        self._person_zone_hourly_reminder_last[person_ent] = now
+                        msg = f"{name}, your zone-based location setup needs attention. Please check your Companion app settings."
+                        await self._async_speak_zone_health_tts(person_ent, msg)
+
+    async def _send_zone_health_push_notification(self, person_ent: str, name: str) -> None:
+        """Send push notification about zone tracking not working."""
+        title = "Zone Tracking Setup Issue"
+        message = (
+            f"Hi {name}, your Home Assistant Companion app location doesn't appear "
+            f"to be set up correctly. Zone-based presence (Home, Away, Nearby) "
+            f"isn't working. Please check your app and phone location settings."
+        )
+        await self._async_send_mobile_notification_to_person(person_ent, title, message)
+
+    def _heater_door_window_blocks(self, outlet: dict) -> str | None:
+        """Return 'door' or 'window' if sensor is open, else None."""
+        door_ent = str(outlet.get("heater_door_sensor_entity") or "").strip()
+        window_ent = str(outlet.get("heater_window_sensor_entity") or "").strip()
+        if door_ent.startswith("binary_sensor."):
+            ds = self.hass.states.get(door_ent)
+            if ds and ds.state == "on":
+                return "door"
+        if window_ent.startswith("binary_sensor."):
+            ws = self.hass.states.get(window_ent)
+            if ws and ws.state == "on":
+                return "window"
+        return None
+
+    async def _announce_heater_blocked(self, room: dict, room_name: str, blocker: str) -> None:
+        """TTS and push notification when heater blocked by open door/window."""
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        msg = f"{prefix} {room_name} heater cannot be turned on unless the {blocker} is closed."
+
+        await self._async_speak_appliance_automation_tts(room, msg)
+
+        for person_ent in self._distinct_presence_person_entity_ids():
+            await self._async_send_mobile_notification_to_person(
+                person_ent,
+                f"{room_name} Heater Blocked",
+                f"Heater cannot turn on—the {blocker} is open.",
+            )
 
     def _enforcement_cycle_enter(self, room_id: str) -> None:
         self._enforcement_power_cycle_depth[room_id] = (
@@ -799,12 +1007,32 @@ class EnergyMonitor:
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if integration_auto:
             if not tts_settings.get("notify_integration_auto", True):
+                _LOGGER.debug(
+                    "Notification blocked: notify_integration_auto is disabled for type=%s",
+                    notification_type,
+                )
                 return
         else:
             if not tts_settings.get("notifications_enabled"):
+                _LOGGER.debug(
+                    "Notification blocked: notifications_enabled is disabled for type=%s",
+                    notification_type,
+                )
                 return
         enable_key = self._notification_enable_key(notification_type)
-        if not tts_settings.get(enable_key, True):
+        enable_value = tts_settings.get(enable_key, True)
+        _LOGGER.debug(
+            "Notification check: type=%s, enable_key=%s, value=%s",
+            notification_type,
+            enable_key,
+            enable_value,
+        )
+        if not enable_value:
+            _LOGGER.debug(
+                "Notification blocked: %s is disabled (value=%s)",
+                enable_key,
+                enable_value,
+            )
             return
         person_ent = room.get("presence_person_entity")
         if not person_ent:
@@ -959,6 +1187,8 @@ class EnergyMonitor:
         if not outlet.get("vent_automation_enabled"):
             self._vent_automation_state.pop(key, None)
             return
+        if not self._anyone_in_any_zone():
+            return
         switch = outlet.get("switch_entity")
         pres_ent = str(outlet.get("vent_presence_entity") or "").strip()
         if not self._is_appliance_control_entity(switch) or not pres_ent:
@@ -1048,10 +1278,13 @@ class EnergyMonitor:
         if not self._is_appliance_control_entity(switch):
             return
 
+        auto_enabled = bool(outlet.get("heater_automation_enabled"))
+        if auto_enabled and not self._anyone_in_any_zone():
+            return
+
         switch_ent = str(switch)
         stay_min = max(1, min(240, int(outlet.get("heater_stay_on_minutes", 5))))
         stay_delta = timedelta(minutes=stay_min)
-        auto_enabled = bool(outlet.get("heater_automation_enabled"))
 
         st = self._heater_automation_state.setdefault(
             key,
@@ -1270,6 +1503,11 @@ class EnergyMonitor:
                         smart_st["smart_mode"] = "pre_heating"
 
             if should_heat:
+                blocker = self._heater_door_window_blocks(outlet)
+                if blocker:
+                    room_name = str(room.get("name") or room_id)
+                    await self._announce_heater_blocked(room, room_name, blocker)
+                    return
                 await _turn_heater_on()
                 st["mode"] = "auto"
                 if smart_st.get("smart_mode") != "pre_heating":
@@ -1616,6 +1854,7 @@ class EnergyMonitor:
         _LOGGER.info("Energy monitor started (poll-based accumulation for %d plug entities)", len(entity_ids))
         self._setup_presence_listeners()
         self._setup_manual_toggle_switch_listeners()
+        self._setup_zone_health_listeners()
 
     def _teardown_manual_toggle_switch_listeners(self) -> None:
         for unsub in self._manual_toggle_listener_unsub:
@@ -1737,6 +1976,12 @@ class EnergyMonitor:
         for unsub in self._power_listener_unsub:
             unsub()
         self._power_listener_unsub = []
+        for unsub in self._person_zone_health_listener_unsub:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._person_zone_health_listener_unsub = []
         if self._task:
             self._task.cancel()
             try:
@@ -2024,6 +2269,9 @@ class EnergyMonitor:
 
         # Check power enforcement phase resets and kWh warnings
         await self._check_power_enforcement(tts_settings)
+
+        # Check zone health (hourly)
+        await self._async_tick_zone_health_check(now)
 
         # Periodically save energy tracking data (every 15 seconds, survives restarts)
         self._save_counter += 1

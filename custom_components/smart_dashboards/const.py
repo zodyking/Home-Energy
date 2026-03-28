@@ -227,6 +227,7 @@ DEFAULT_CONFIG = {
             "notify_vent_auto_on_msg": DEFAULT_NOTIFY_VENT_AUTO_ON_MSG,
             "notify_vent_auto_off_title": DEFAULT_NOTIFY_VENT_AUTO_OFF_TITLE,
             "notify_vent_auto_off_msg": DEFAULT_NOTIFY_VENT_AUTO_OFF_MSG,
+            "zone_health_check_enabled": True,
         },
         "power_enforcement": {
             "enabled": False,
