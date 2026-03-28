@@ -2032,7 +2032,7 @@ class EnergyMonitor:
             await self.config_manager.async_save_persistent_data()
 
     def _get_power_value(self, entity_id: str) -> float:
-        """Get power value from an entity."""
+        """Get power value from an entity in Watts."""
         state = self.hass.states.get(entity_id)
         if state is None:
             return 0.0
@@ -2041,12 +2041,18 @@ class EnergyMonitor:
         if entity_id.startswith("sensor."):
             try:
                 if state.state not in ("unknown", "unavailable", ""):
-                    return float(state.state)
+                    val = float(state.state)
+                    unit = state.attributes.get("unit_of_measurement")
+                    if unit == "kW":
+                        return val * 1000.0
+                    if unit == "mW":
+                        return val / 1000.0
+                    return val  # W or default
             except (ValueError, TypeError):
                 pass
             return 0.0
 
-        # Switch entity - power is an attribute
+        # Switch entity - power is an attribute (already in W)
         if entity_id.startswith("switch."):
             power = state.attributes.get("current_power_w", 0)
             try:
