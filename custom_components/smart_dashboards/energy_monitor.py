@@ -259,10 +259,12 @@ class EnergyMonitor:
     def _is_person_zone_setup_healthy(self, person_ent: str) -> bool:
         """Check if a person has shown healthy zone states (home, nearby, or any custom zone).
 
-        Returns True if person has shown at least one valid zone state in the past 48 hours.
+        Returns True if person has shown at least one valid zone state in the configured window.
         A "valid" zone state is anything other than just not_home/unknown/unavailable.
         """
-        states = self._get_person_zone_states_in_window(person_ent, 48)
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        history_hours = int(tts_settings.get("zone_health_history_hours", 48) or 48)
+        states = self._get_person_zone_states_in_window(person_ent, history_hours)
         invalid_only = {"not_home", "unknown", "unavailable", ""}
         valid_states = states - invalid_only
         return len(valid_states) > 0
@@ -357,13 +359,17 @@ class EnergyMonitor:
                     return
 
     async def _async_tick_zone_health_check(self, now: datetime) -> None:
-        """Periodic check for zone health issues (runs hourly)."""
+        """Periodic check for zone health issues (runs based on configured interval)."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if not tts_settings.get("zone_health_check_enabled", True):
             return
 
+        reminder_hours = int(tts_settings.get("zone_health_reminder_hours", 1) or 1)
+        reminder_seconds = reminder_hours * 3600
+        history_hours = int(tts_settings.get("zone_health_history_hours", 48) or 48)
+
         if self._person_zone_health_last_check:
-            if (now - self._person_zone_health_last_check).total_seconds() < 3600:
+            if (now - self._person_zone_health_last_check).total_seconds() < reminder_seconds:
                 return
         self._person_zone_health_last_check = now
 
@@ -374,25 +380,37 @@ class EnergyMonitor:
                 if person_ent not in self._person_zone_health_alerted:
                     self._person_zone_health_alerted.add(person_ent)
                     _LOGGER.warning(
-                        "Zone health: %s has not shown valid zone states in 48 hours",
+                        "Zone health: %s has not shown valid zone states in %d hours",
                         person_ent,
+                        history_hours,
                     )
                     await self._send_zone_health_push_notification(person_ent, name)
                 else:
                     last_reminder = self._person_zone_hourly_reminder_last.get(person_ent)
-                    if not last_reminder or (now - last_reminder).total_seconds() >= 3600:
+                    if not last_reminder or (now - last_reminder).total_seconds() >= reminder_seconds:
                         self._person_zone_hourly_reminder_last[person_ent] = now
-                        msg = f"{name}, your zone-based location setup needs attention. Please check your Companion app settings."
+                        msg_template = str(
+                            tts_settings.get(
+                                "zone_health_reminder_tts_msg",
+                                "{name}, your zone-based location setup needs attention. Please check your Companion app settings.",
+                            )
+                            or "{name}, your zone-based location setup needs attention."
+                        )
+                        msg = msg_template.replace("{name}", name)
                         await self._async_speak_zone_health_tts(person_ent, msg)
 
     async def _send_zone_health_push_notification(self, person_ent: str, name: str) -> None:
         """Send push notification about zone tracking not working."""
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         title = "Zone Tracking Setup Issue"
-        message = (
-            f"Hi {name}, your Home Assistant Companion app location doesn't appear "
-            f"to be set up correctly. Zone-based presence (Home, Away, Nearby) "
-            f"isn't working. Please check your app and phone location settings."
+        msg_template = str(
+            tts_settings.get(
+                "zone_health_notification_msg",
+                "Hi {name}, your Home Assistant Companion app location doesn't appear to be set up correctly. Zone-based presence isn't working.",
+            )
+            or "Hi {name}, your zone tracking setup needs attention."
         )
+        message = msg_template.replace("{name}", name)
         await self._async_send_mobile_notification_to_person(person_ent, title, message)
 
     def _heater_door_window_blocks(self, outlet: dict) -> str | None:
