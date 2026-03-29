@@ -1417,6 +1417,17 @@ async def async_build_statistics_payload(
     start, end, is_narrowed = config_manager.get_statistics_date_range(
         date_start=ds, date_end=de
     )
+    # Defensive fallback: ensure we always have a valid date range
+    if not start or not end:
+        today = dt_util.now().strftime("%Y-%m-%d")
+        start = (dt_util.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        end = today
+        is_narrowed = False
+        _LOGGER.debug(
+            "Statistics date range was empty; using 31-day fallback: %s to %s",
+            start,
+            end,
+        )
     billing_a, billing_b = config_manager.get_billing_date_range()
     period_source = "billing" if (billing_a and billing_b) else "rolling"
 
