@@ -7516,6 +7516,39 @@ class EnergyPanel extends HTMLElement {
                   <span class="toggle-label">Zone tracking health check (alerts when app location setup isn't working)</span>
                 </div>
               </div>
+              <div class="form-group" style="margin-bottom: 12px; margin-left: 24px;">
+                <label class="form-label">Check history window</label>
+                <select class="form-input" id="zone-health-history-hours" style="width: 140px;">
+                  <option value="48" ${(ttsSettings.zone_health_history_hours || 48) == 48 ? 'selected' : ''}>48 hours</option>
+                  <option value="72" ${ttsSettings.zone_health_history_hours == 72 ? 'selected' : ''}>72 hours</option>
+                  <option value="96" ${ttsSettings.zone_health_history_hours == 96 ? 'selected' : ''}>96 hours</option>
+                </select>
+                <div class="tts-msg-desc" style="margin-top: 4px;">Alert if person hasn't shown "home" or "nearby" within this window</div>
+              </div>
+              <div class="form-group" style="margin-bottom: 12px; margin-left: 24px;">
+                <label class="form-label">Reminder frequency (hours)</label>
+                <input type="number" class="form-input" id="zone-health-reminder-hours" 
+                  value="${ttsSettings.zone_health_reminder_hours ?? 1}" min="1" max="24" style="width: 80px;"
+                  title="How often to send TTS reminders for unresolved zone health issues">
+                <div class="tts-msg-desc" style="margin-top: 4px;">Hours between TTS reminders (1-24)</div>
+              </div>
+              <details class="ac-safety-disclosure" style="margin-left: 24px; margin-bottom: 12px;">
+                <summary>Zone health message templates</summary>
+                <div class="tts-msg-group" style="margin-top: 8px;">
+                  <div class="tts-msg-title">Push notification message</div>
+                  <input type="text" class="form-input" id="zone-health-notification-msg"
+                    value="${(ttsSettings.zone_health_notification_msg || "Hi {name}, your Home Assistant Companion app location doesn't appear to be set up correctly. Zone-based presence isn't working.").replace(/"/g, '&quot;')}"
+                    placeholder="Hi {name}, your zone tracking...">
+                  <div class="tts-var-help">Variables: <code>{name}</code></div>
+                </div>
+                <div class="tts-msg-group" style="margin-top: 8px;">
+                  <div class="tts-msg-title">TTS reminder message</div>
+                  <input type="text" class="form-input" id="zone-health-reminder-tts-msg"
+                    value="${(ttsSettings.zone_health_reminder_tts_msg || "{name}, your zone-based location setup needs attention. Please check your Companion app settings.").replace(/"/g, '&quot;')}"
+                    placeholder="{name}, your zone-based location...">
+                  <div class="tts-var-help">Variables: <code>{name}</code></div>
+                </div>
+              </details>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Person/External Toggle Title</div>
                 <input type="text" class="form-input" id="notify-toggle-title"
@@ -10884,6 +10917,10 @@ class EnergyPanel extends HTMLElement {
         notify_vent_auto: this.shadowRoot.querySelector('#tts-notify-vent-auto')?.checked !== false,
         notify_external_auto: this.shadowRoot.querySelector('#tts-notify-external-auto')?.checked !== false,
         zone_health_check_enabled: this.shadowRoot.querySelector('#tts-zone-health-check')?.checked !== false,
+        zone_health_history_hours: parseInt(this.shadowRoot.querySelector('#zone-health-history-hours')?.value, 10) || 48,
+        zone_health_reminder_hours: Math.max(1, Math.min(24, parseInt(this.shadowRoot.querySelector('#zone-health-reminder-hours')?.value, 10) || 1)),
+        zone_health_notification_msg: this.shadowRoot.querySelector('#zone-health-notification-msg')?.value ?? '',
+        zone_health_reminder_tts_msg: this.shadowRoot.querySelector('#zone-health-reminder-tts-msg')?.value ?? '',
         notify_budget_hit_title: this.shadowRoot.querySelector('#notify-budget-hit-title')?.value ?? '',
         notify_budget_hit_msg: this.shadowRoot.querySelector('#notify-budget-hit-msg')?.value ?? '',
         notify_enforcement_phase1_title: this.shadowRoot.querySelector('#notify-enforcement-phase1-title')?.value ?? '',
