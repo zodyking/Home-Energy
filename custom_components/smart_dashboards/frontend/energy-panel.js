@@ -158,9 +158,6 @@ class EnergyPanel extends HTMLElement {
     this._zoneHealthData = null;
     this._zoneHealthRefreshInterval = null;
     this._zoneHealthIconClickDelegation = false;
-    // Room name cycling (alternates between room name and person location)
-    this._roomNameCycleInterval = null;
-    this._roomNameShowPerson = false;
   }
 
   set hass(hass) {
@@ -180,9 +177,8 @@ class EnergyPanel extends HTMLElement {
   connectedCallback() {
     this._render();
     this._loadConfig();
-    // Start zone health refresh and room name cycling
+    // Start zone health refresh
     this._startZoneHealthRefresh();
-    this._startRoomNameCycling();
   }
 
   disconnectedCallback() {
@@ -220,9 +216,8 @@ class EnergyPanel extends HTMLElement {
       clearTimeout(this._presenceLiveThrottleTimer);
       this._presenceLiveThrottleTimer = null;
     }
-    // Stop zone health refresh and room name cycling
+    // Stop zone health refresh
     this._stopZoneHealthRefresh();
-    this._stopRoomNameCycling();
     this._teardownBillingBarChartNative();
     this._unsubscribeFromStatisticsUpdates();
   }
@@ -1438,7 +1433,7 @@ class EnergyPanel extends HTMLElement {
 
       .room-header-row {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
         gap: clamp(6px, 1.5vw, 10px);
       }
@@ -1526,6 +1521,37 @@ class EnergyPanel extends HTMLElement {
         display: none;
       }
 
+      .room-person-location {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        font-size: clamp(10px, 2.3vw, 12px);
+        color: var(--secondary-text-color);
+        flex-shrink: 0;
+        white-space: nowrap;
+      }
+
+      .room-person-location ha-icon {
+        color: var(--panel-accent);
+        flex-shrink: 0;
+      }
+
+      .room-person-location .person-name {
+        color: var(--primary-text-color);
+        font-weight: 500;
+      }
+
+      .room-person-location .person-state {
+        color: var(--secondary-text-color);
+      }
+
+      .room-footer {
+        padding: clamp(6px, 1.6vw, 10px) clamp(8px, 2vw, 12px);
+        background: linear-gradient(0deg, rgba(255, 255, 255, 0.04) 0%, transparent 100%);
+        border-top: 1px solid var(--card-border);
+        border-radius: 0 0 10px 10px;
+      }
+
       .room-threshold-pill {
         display: inline-flex;
         align-items: center;
@@ -1543,19 +1569,6 @@ class EnergyPanel extends HTMLElement {
         height: clamp(8px, 1.8vw, 10px);
         fill: currentColor;
         flex-shrink: 0;
-      }
-
-      .room-budget-lane {
-        flex: 1 1 160px;
-        min-width: 0;
-        overflow: visible;
-      }
-
-      @media (max-width: 520px) {
-        .room-budget-lane {
-          flex: 1 1 100%;
-          order: 10;
-        }
       }
 
       .room-budget-section {
@@ -6317,9 +6330,23 @@ class EnergyPanel extends HTMLElement {
     const iconClass = `room-icon${zoneHealthIssue ? ' zone-health-issue' : ''}`;
     const iconDataAttr = personEnt ? ` data-zone-health-person="${personEnt.replace(/"/g, '&quot;')}"` : '';
     const roomNameEsc = (room.name || '').replace(/</g, '&lt;');
-    const roomNameDataAttrs = personEnt
-      ? ` data-room-name="${roomNameEsc.replace(/"/g, '&quot;')}" data-presence-person="${personEnt.replace(/"/g, '&quot;')}"`
-      : '';
+
+    // Static person location display (no cycling)
+    let personLocationHtml = '';
+    if (personEnt) {
+      const personState = this._hass?.states?.[personEnt];
+      if (personState) {
+        const personName = personState.attributes?.friendly_name || personEnt.replace('person.', '').replace(/_/g, ' ');
+        const location = this._formatPresenceLocationDisplay(personState);
+        personLocationHtml = `
+          <span class="room-person-location" data-presence-person="${personEnt.replace(/"/g, '&quot;')}">
+            <ha-icon icon="mdi:account" style="--mdc-icon-size: 14px;"></ha-icon>
+            <span class="person-name">${personName.replace(/</g, '&lt;')}:</span>
+            <span class="person-state">${location.replace(/</g, '&lt;')}</span>
+          </span>
+        `;
+      }
+    }
 
     return `
       <div class="room-card" data-room-id="${roomId}">
@@ -6328,22 +6355,9 @@ class EnergyPanel extends HTMLElement {
             <div class="${iconClass}"${iconDataAttr} aria-hidden="true">
               <ha-icon icon="${roomCardIcon}"></ha-icon>
             </div>
-            <div class="room-header-title-col">
-              <h3 class="room-name"${roomNameDataAttrs}>${roomNameEsc}</h3>
-              ${badgesHtml}
-            </div>
-            <div class="room-budget-lane">
-              <div class="room-budget-section${budget.showBar ? '' : ' room-budget-section--na'}" role="group" aria-label="Daily kilowatt-hours, scale and budget markers">
-                <div class="room-budget-bar-track graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}" title="${trackTitle.replace(/"/g, '&quot;')}">
-                  <div class="${fillClass}" style="width: ${budget.showBar ? budget.fillPct : 0}%"></div>
-                  ${markersHtml}
-                  <div class="room-budget-bar-labels">
-                    <span class="room-budget-values">${budget.showBar ? `${budget.usedKwh.toFixed(2)} kWh` : '—'}</span>
-                    ${budgetSub ? `<span class="room-budget-sub">${budgetSub}</span>` : ''}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <h3 class="room-name">${roomNameEsc}</h3>
+            ${personLocationHtml}
+            ${badgesHtml}
             <div class="room-header-stats-inline">
               <div class="room-event-chips">
                 <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W ${warnings}</span>
@@ -6358,6 +6372,19 @@ class EnergyPanel extends HTMLElement {
         <div class="room-content">
           <div class="outlets-grid">
             ${(room.outlets || []).map((device, oi) => this._renderDeviceCard(device, oi, (roomData.outlets || [])[oi])).join('')}
+          </div>
+        </div>
+
+        <div class="room-footer">
+          <div class="room-budget-section${budget.showBar ? '' : ' room-budget-section--na'}" role="group" aria-label="Daily kilowatt-hours, scale and budget markers">
+            <div class="room-budget-bar-track graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}" title="${trackTitle.replace(/"/g, '&quot;')}">
+              <div class="${fillClass}" style="width: ${budget.showBar ? budget.fillPct : 0}%"></div>
+              ${markersHtml}
+              <div class="room-budget-bar-labels">
+                <span class="room-budget-values">${budget.showBar ? `${budget.usedKwh.toFixed(2)} kWh` : '—'}</span>
+                ${budgetSub ? `<span class="room-budget-sub">${budgetSub}</span>` : ''}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -9231,39 +9258,6 @@ class EnergyPanel extends HTMLElement {
       clearInterval(this._zoneHealthRefreshInterval);
       this._zoneHealthRefreshInterval = null;
     }
-  }
-
-  _startRoomNameCycling() {
-    if (this._roomNameCycleInterval) return;
-    this._roomNameCycleInterval = setInterval(() => {
-      this._cycleRoomNames();
-    }, 5000);
-  }
-
-  _stopRoomNameCycling() {
-    if (this._roomNameCycleInterval) {
-      clearInterval(this._roomNameCycleInterval);
-      this._roomNameCycleInterval = null;
-    }
-  }
-
-  _cycleRoomNames() {
-    if (this._showSettings) return;
-    this._roomNameShowPerson = !this._roomNameShowPerson;
-    this.shadowRoot.querySelectorAll('.room-name[data-presence-person]').forEach(el => {
-      const roomName = el.dataset.roomName || '';
-      const personEnt = el.dataset.presencePerson || '';
-      if (this._roomNameShowPerson && personEnt) {
-        const personState = this._hass?.states?.[personEnt];
-        if (personState) {
-          const name = personState.attributes?.friendly_name || personEnt.replace('person.', '').replace(/_/g, ' ');
-          const location = this._formatPresenceLocationDisplay(personState);
-          el.textContent = `${name} is ${location}`;
-        }
-      } else {
-        el.textContent = roomName;
-      }
-    });
   }
 
   _updateRoomCardZoneHealthIndicators() {
