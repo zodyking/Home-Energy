@@ -9,7 +9,8 @@ from collections import deque
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
@@ -47,7 +48,18 @@ from .const import (
     DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG,
     DEFAULT_NOTIFICATION_TITLE,
 )
-from .mobile_notify_target import async_send_notify_push
+from .mobile_notify_target import resolve_notify_target
+from .zone_health_storage import (
+    append_snapshot,
+    ensure_person_entry,
+    load_store,
+    prune_snapshots,
+    save_store,
+    union_states_from_snapshots,
+    warmup_complete,
+    warmup_complete_at_iso,
+    zone_health_store_path,
+)
 from .person_device_trackers import get_person_device_tracker_entity_ids
 from .tts_helper import async_send_tts
 from .tts_queue import async_send_tts_or_queue
@@ -166,6 +178,11 @@ class EnergyMonitor:
         self._zone_health_tts_lock = asyncio.Lock()
         # "Nearby" zone guidance: track whether we've already created/dismissed the persistent_notification
         self._nearby_zone_notification_shown: bool = False
+        # Zone health: defer TTS/push/recovery until HA has been up 10 minutes (recorder / mobile_app settle)
+        self._zone_health_ha_started_at: datetime | None = None
+        self._zone_health_earliest_alert_at: datetime | None = None
+        # In-memory copy of JSON store (kept in sync with disk after each recorder refresh)
+        self._zone_health_store_cache: dict | None = None
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -273,6 +290,52 @@ class EnergyMonitor:
                 return True
         return False
 
+    def _register_zone_health_startup_listener(self) -> None:
+        """Record when Home Assistant finished starting; zone-health alerts wait 10 minutes after that."""
+
+        @callback
+        def _mark_started(_event: Event | None = None) -> None:
+            if self._zone_health_ha_started_at is not None:
+                return
+            self._zone_health_ha_started_at = dt_util.now()
+            self._zone_health_earliest_alert_at = self._zone_health_ha_started_at + timedelta(
+                minutes=10
+            )
+
+        if self.hass.state is CoreState.running:
+            _mark_started()
+        else:
+            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _mark_started)
+
+    def _zone_health_post_startup_ready(self, now: datetime) -> bool:
+        if self._zone_health_earliest_alert_at is None:
+            return False
+        return now >= self._zone_health_earliest_alert_at
+
+    def _zone_health_ensure_store_loaded(self) -> dict:
+        if self._zone_health_store_cache is None:
+            self._zone_health_store_cache = load_store(zone_health_store_path(self.hass))
+        return self._zone_health_store_cache
+
+    def _zone_health_reload_store_from_disk(self) -> dict:
+        self._zone_health_store_cache = load_store(zone_health_store_path(self.hass))
+        return self._zone_health_store_cache
+
+    def _zone_health_append_snapshots_blocking(
+        self, now: datetime, history_days: int, person_keys: list[str]
+    ) -> None:
+        """Runs in executor: load JSON from disk, append snapshots, save (no shared cache mutation)."""
+        path = zone_health_store_path(self.hass)
+        data = load_store(path)
+        persons = data.setdefault("persons", {})
+        cutoff = now - timedelta(days=history_days)
+        for pk in person_keys:
+            pe = ensure_person_entry(persons, pk, now)
+            prune_snapshots(pe, cutoff)
+            states = self._zone_health_tracker_states_union(pk)
+            append_snapshot(pe, states, now)
+        save_store(path, data)
+
     def _build_zone_health_nearby_tokens(self) -> frozenset[str]:
         """Lowercase state strings that mean the Nearby zone (built once per recorder refresh).
 
@@ -336,19 +399,21 @@ class EnergyMonitor:
         """Get device_tracker.* entities linked to a person (Person integration config first)."""
         return get_person_device_tracker_entity_ids(self.hass, person_ent)
 
-    async def _async_refresh_zone_health_recorder_cache(self, force: bool = False) -> None:
+    async def _async_refresh_zone_health_recorder_cache(self, force: bool = False) -> bool:
         """Fetch zone states from the recorder for each person's linked device_trackers only.
 
         Health uses HA recorder history on those trackers (not ``person.*``, not in-memory).
         Throttled to run at most every ``_zone_health_recorder_refresh_interval`` unless
         ``force`` is True (used by the dashboard "Refresh Status" action).
+
+        Returns True if a full recorder pull ran (and JSON snapshots were appended).
         """
         now = dt_util.now()
         if not force and (
             self._zone_health_recorder_last_refresh
             and (now - self._zone_health_recorder_last_refresh) < self._zone_health_recorder_refresh_interval
         ):
-            return
+            return False
 
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
@@ -357,7 +422,7 @@ class EnergyMonitor:
         all_persons = self._distinct_presence_person_entity_ids()
         if not all_persons:
             self._zone_health_recorder_last_refresh = now
-            return
+            return False
 
         try:
             from homeassistant.components.recorder.history import (
@@ -368,7 +433,7 @@ class EnergyMonitor:
         except ImportError:
             _LOGGER.debug("Recorder not available for zone health history")
             self._zone_health_recorder_last_refresh = now
-            return
+            return False
 
         nearby_tokens = self._build_zone_health_nearby_tokens()
         for person_ent in all_persons:
@@ -484,25 +549,47 @@ class EnergyMonitor:
                 row_debug,
             )
 
+        person_keys = [str(p).strip().lower() for p in all_persons]
+        await self.hass.async_add_executor_job(
+            self._zone_health_append_snapshots_blocking, now, history_days, person_keys
+        )
+        self._zone_health_store_cache = None
+
         self._zone_health_recorder_last_refresh = now
         _LOGGER.debug(
             "Zone health recorder cache refreshed for %d persons",
             len(all_persons),
         )
+        return True
 
-    def _is_person_zone_setup_healthy(self, person_ent: str) -> bool:
-        """True if linked device_trackers show home, nearby, and away in the recorder window.
+    def _zone_health_person_entry(self, person_key: str) -> dict | None:
+        pk = str(person_key).strip().lower()
+        data = self._zone_health_ensure_store_loaded()
+        pe = (data.get("persons") or {}).get(pk)
+        return pe if isinstance(pe, dict) else None
 
-        Uses only HA recorder data on ``device_tracker.*`` linked to the person (not ``person.*``).
-        """
-        person_key = str(person_ent).strip().lower()
+    def _person_zone_health_warmup_complete(
+        self, person_key: str, now: datetime, history_days: int
+    ) -> bool:
+        pe = self._zone_health_person_entry(person_key)
+        if pe is None:
+            return False
+        return warmup_complete(pe, now, history_days)
+
+    def _is_person_zone_json_healthy(self, person_key: str) -> bool:
+        """True if persisted JSON snapshots (rolling window) include home, nearby, and away."""
         if not self._get_person_linked_device_trackers(person_key):
             return False
-        all_states = self._zone_health_tracker_states_union(person_key)
-        return "home" in all_states and "nearby" in all_states and "not_home" in all_states
+        pe = self._zone_health_person_entry(person_key)
+        if pe is None:
+            return False
+        union = union_states_from_snapshots(pe)
+        return "home" in union and "nearby" in union and "not_home" in union
 
     def get_zone_health_status(self) -> dict:
         """Return zone health status for all configured persons (for WebSocket API)."""
+        now = dt_util.now()
+        self._zone_health_reload_store_from_disk()
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
         all_persons = self._distinct_presence_person_entity_ids()
@@ -513,7 +600,12 @@ class EnergyMonitor:
             current_state = (ps.state if ps else "unknown") or "unknown"
             name = self._get_person_friendly_name(person_key)
             trackers = self._get_person_linked_device_trackers(person_key)
-            is_healthy = self._is_person_zone_setup_healthy(person_key)
+            pe = self._zone_health_person_entry(person_key)
+            warming_up = not (
+                pe is not None and warmup_complete(pe, now, history_days)
+            )
+            warmup_complete_at = warmup_complete_at_iso(pe, history_days) if pe else None
+            is_healthy = True if warming_up else self._is_person_zone_json_healthy(person_key)
             is_alerted = person_key in self._person_zone_health_alerted
             last_alert = self._person_zone_hourly_reminder_last.get(person_key)
             meta = self._zone_health_recorder_meta.get(person_key) or {}
@@ -527,6 +619,8 @@ class EnergyMonitor:
                 "device_trackers": trackers,
                 "current_state": current_state,
                 "is_healthy": is_healthy,
+                "warming_up": warming_up,
+                "warmup_complete_at": warmup_complete_at,
                 "is_alerted": is_alerted,
                 "last_home": last_home,
                 "last_nearby": last_nearby,
@@ -655,7 +749,14 @@ class EnergyMonitor:
         if not tts_settings.get("zone_health_check_enabled", True):
             return
 
-        if person_key in self._person_zone_health_alerted and self._is_person_zone_setup_healthy(
+        if not self._zone_health_post_startup_ready(now):
+            return
+        history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
+        pe = self._zone_health_person_entry(person_key)
+        if pe is None or not warmup_complete(pe, now, history_days):
+            return
+
+        if person_key in self._person_zone_health_alerted and self._is_person_zone_json_healthy(
             person_key
         ):
             name = self._get_person_friendly_name(person_key)
@@ -789,24 +890,30 @@ class EnergyMonitor:
         if not tts_settings.get("zone_health_check_enabled", True):
             return
 
-        # Refresh recorder-backed history cache (throttled internally)
+        # Refresh recorder-backed history cache (throttled internally); append JSON snapshots when it runs.
         await self._async_refresh_zone_health_recorder_cache()
 
         reminder_hours = int(tts_settings.get("zone_health_reminder_hours", 1) or 1)
         reminder_seconds = reminder_hours * 3600
         history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
 
+        post_ready = self._zone_health_post_startup_ready(now)
         all_persons = self._distinct_presence_person_entity_ids()
         for person_ent in all_persons:
-            if self._is_person_zone_setup_healthy(person_ent):
+            pk = str(person_ent).strip().lower()
+            if not self._person_zone_health_warmup_complete(pk, now, history_days):
                 continue
-            name = self._get_person_friendly_name(person_ent)
-            if person_ent not in self._person_zone_health_alerted:
-                self._person_zone_health_alerted.add(person_ent)
-                self._person_zone_hourly_reminder_last[person_ent] = now
+            if self._is_person_zone_json_healthy(pk):
+                continue
+            if not post_ready:
+                continue
+            name = self._get_person_friendly_name(pk)
+            if pk not in self._person_zone_health_alerted:
+                self._person_zone_health_alerted.add(pk)
+                self._person_zone_hourly_reminder_last[pk] = now
                 _LOGGER.warning(
-                    "Zone health: %s has not shown home, nearby, and away in %d days",
-                    person_ent,
+                    "Zone health: %s has not shown home, nearby, and away in %d days (JSON window)",
+                    pk,
                     history_days,
                 )
                 first_msg_template = str(
@@ -817,12 +924,12 @@ class EnergyMonitor:
                     or "Hi {name}, your zone tracking setup needs attention."
                 )
                 first_msg = first_msg_template.replace("{name}", name)
-                await self._async_speak_zone_health_tts(person_ent, first_msg)
-                await self._send_zone_health_push_notification(person_ent, name)
+                await self._async_speak_zone_health_tts(pk, first_msg)
+                await self._send_zone_health_push_notification(pk, name)
             else:
-                last_reminder = self._person_zone_hourly_reminder_last.get(person_ent)
+                last_reminder = self._person_zone_hourly_reminder_last.get(pk)
                 if not last_reminder or (now - last_reminder).total_seconds() >= reminder_seconds:
-                    self._person_zone_hourly_reminder_last[person_ent] = now
+                    self._person_zone_hourly_reminder_last[pk] = now
                     msg_template = str(
                         tts_settings.get(
                             "zone_health_reminder_tts_msg",
@@ -831,8 +938,8 @@ class EnergyMonitor:
                         or "{name}, your zone-based location setup needs attention."
                     )
                     msg = msg_template.replace("{name}", name)
-                    await self._async_speak_zone_health_tts(person_ent, msg)
-                    await self._send_zone_health_push_notification(person_ent, name)
+                    await self._async_speak_zone_health_tts(pk, msg)
+                    await self._send_zone_health_push_notification(pk, name)
 
     def _log_zone_health_event(
         self, person_ent: str, name: str, event_type: str, message: str = ""
@@ -859,15 +966,17 @@ class EnergyMonitor:
             or "Hi {name}, your zone tracking setup needs attention."
         )
         message = msg_template.replace("{name}", name)
-        result = await async_send_notify_push(self.hass, person_ent, title, message)
-        if result.ok:
+        sent = await self._async_send_mobile_notification_to_person(
+            person_ent, title, message
+        )
+        if sent:
             self._log_zone_health_event(person_ent, name, "push_sent", message)
         else:
             self._log_zone_health_event(
                 person_ent,
                 name,
                 "push_failed",
-                result.error or "Push notification failed",
+                "No mobile_app notify target resolved",
             )
 
     def _heater_door_window_blocks(self, outlet: dict) -> str | None:
@@ -1558,10 +1667,71 @@ class EnergyMonitor:
     ) -> bool:
         """Deliver a formatted push to one person's mobile_app notify target.
 
-        Uses shared ``async_send_notify_push`` (same path as dashboard test notification).
+        Uses inline ``resolve_notify_target`` + service calls (person id not lowercased before resolve).
+        Dashboard test notifications use ``async_send_notify_push`` instead.
         """
-        result = await async_send_notify_push(self.hass, person_ent, title, message)
-        return result.ok
+        target = resolve_notify_target(self.hass, person_ent)
+        if not target:
+            _LOGGER.warning(
+                "Cannot send push to %s: no mobile_app notify target resolved. "
+                "Ensure a phone is linked under Settings → People and the Companion app is registered.",
+                person_ent,
+            )
+            return False
+
+        try:
+            if target.mode == "legacy_service" and target.service_name:
+                await self.hass.services.async_call(
+                    "notify",
+                    target.service_name,
+                    {"title": title, "message": message},
+                    blocking=False,
+                )
+                _LOGGER.debug(
+                    "Sent notification via %s: %s - %s", target.service_name, title, message
+                )
+            elif target.mode == "notify_send" and target.entity_id:
+                if self.hass.services.has_service("notify", "send_message"):
+                    await self.hass.services.async_call(
+                        "notify",
+                        "send_message",
+                        {"entity_id": target.entity_id, "title": title, "message": message},
+                        blocking=False,
+                    )
+                elif self.hass.services.has_service("notify", "send"):
+                    await self.hass.services.async_call(
+                        "notify",
+                        "send",
+                        {
+                            "entity_id": target.entity_id,
+                            "title": title,
+                            "message": message,
+                        },
+                        blocking=False,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Cannot send push: neither notify.send_message nor notify.send for %s",
+                        target.entity_id,
+                    )
+                    return False
+                _LOGGER.debug(
+                    "Sent notification via notify entity %s: %s - %s",
+                    target.entity_id,
+                    title,
+                    message,
+                )
+            else:
+                _LOGGER.warning(
+                    "Unknown notify target mode for %s: %s", person_ent, target
+                )
+                return False
+            return True
+        except Exception as e:
+            _LOGGER.warning(
+                "Failed to send notification to %s (target=%s): %s", person_ent, target, e
+            )
+            return False
 
     async def _send_notification_broadcast(
         self,
@@ -2307,6 +2477,7 @@ class EnergyMonitor:
             return
 
         self._running = True
+        self._register_zone_health_startup_listener()
         await self._async_load_budget_boost_slots()
         self._task = asyncio.create_task(self._monitor_loop())
 
