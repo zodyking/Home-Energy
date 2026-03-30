@@ -270,9 +270,43 @@ class EnergyMonitor:
                 return True
         return False
 
+    def _classify_zone_health_state(self, raw_state: str) -> str | None:
+        """Classify a person/device_tracker state into canonical buckets: home, nearby, not_home.
+        
+        Returns None for unknown/unavailable states that shouldn't be tracked.
+        """
+        s = (raw_state or "").strip().lower()
+        if s in ("unknown", "unavailable", ""):
+            return None
+        if s == "home":
+            return "home"
+        if s in ("not_home", "away"):
+            return "not_home"
+        if s == "nearby":
+            return "nearby"
+        # Check if state matches the Nearby zone (entity_id or friendly_name)
+        for eid in self.hass.states.async_entity_ids("zone"):
+            if eid == "zone.nearby":
+                zone_slug = "nearby"
+            else:
+                zs = self.hass.states.get(eid)
+                if zs:
+                    fn = str(zs.attributes.get("friendly_name") or "").strip().lower()
+                    zone_slug = fn if fn else eid.replace("zone.", "")
+                else:
+                    zone_slug = eid.replace("zone.", "")
+            if s == zone_slug or s == eid:
+                if zone_slug == "nearby":
+                    return "nearby"
+        # Any other zone name (e.g. "work", "gym") is not home
+        return "not_home" if s else None
+
     @staticmethod
     def _normalize_zone_health_state(state: str) -> str:
-        """Normalize HA person / device_tracker states for health history (union of sources)."""
+        """Normalize HA person / device_tracker states for health history (union of sources).
+        
+        Legacy helper kept for backward compatibility with in-memory deque recording.
+        """
         s = (state or "").strip().lower()
         if s == "away":
             return "not_home"
@@ -327,8 +361,8 @@ class EnergyMonitor:
             return
 
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
-        history_hours = int(tts_settings.get("zone_health_history_hours", 24) or 24)
-        start_time = now - timedelta(hours=history_hours)
+        history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
+        start_time = now - timedelta(days=history_days)
 
         all_persons = self._distinct_presence_person_entity_ids()
         if not all_persons:
@@ -347,6 +381,7 @@ class EnergyMonitor:
             entity_ids = [person_ent] + self._get_person_linked_device_trackers(person_ent)
             states_union: set[str] = set()
             last_home_dt: datetime | None = None
+            last_nearby_dt: datetime | None = None
             last_away_dt: datetime | None = None
             try:
                 with session_scope(hass=self.hass, read_only=True) as session:
@@ -358,33 +393,37 @@ class EnergyMonitor:
                         entity_ids,
                         None,
                         include_start_time_state=True,
-                        significant_changes_only=True,
+                        significant_changes_only=False,
                         minimal_response=False,
                         no_attributes=False,
                     )
                 for eid in entity_ids:
                     for st in states_dict.get(eid) or []:
-                        if st.state and st.state.lower() not in ("unknown", "unavailable", ""):
-                            state_lower = st.state.lower()
-                            # Normalize device_tracker "away" to person-style "not_home"
-                            if state_lower == "away":
-                                state_lower = "not_home"
-                            states_union.add(state_lower)
-                            lc = getattr(st, "last_changed", None) or getattr(
-                                st, "last_updated", None
-                            )
-                            if lc is not None:
-                                if state_lower == "home":
-                                    if last_home_dt is None or lc > last_home_dt:
-                                        last_home_dt = lc
-                                elif state_lower == "not_home":
-                                    if last_away_dt is None or lc > last_away_dt:
-                                        last_away_dt = lc
+                        if not st.state:
+                            continue
+                        classified = self._classify_zone_health_state(st.state)
+                        if classified is None:
+                            continue
+                        states_union.add(classified)
+                        lc = getattr(st, "last_changed", None) or getattr(
+                            st, "last_updated", None
+                        )
+                        if lc is not None:
+                            if classified == "home":
+                                if last_home_dt is None or lc > last_home_dt:
+                                    last_home_dt = lc
+                            elif classified == "nearby":
+                                if last_nearby_dt is None or lc > last_nearby_dt:
+                                    last_nearby_dt = lc
+                            elif classified == "not_home":
+                                if last_away_dt is None or lc > last_away_dt:
+                                    last_away_dt = lc
             except Exception as e:
                 _LOGGER.warning("Zone health recorder fetch failed for %s: %s", person_ent, e)
             self._zone_health_recorder_cache[person_ent] = states_union
             self._zone_health_recorder_meta[person_ent] = {
                 "last_home": last_home_dt.isoformat() if last_home_dt else None,
+                "last_nearby": last_nearby_dt.isoformat() if last_nearby_dt else None,
                 "last_not_home": last_away_dt.isoformat() if last_away_dt else None,
             }
 
@@ -395,23 +434,23 @@ class EnergyMonitor:
         )
 
     def _is_person_zone_setup_healthy(self, person_ent: str) -> bool:
-        """True if Companion-style tracking is working: both home and away in the window.
+        """True if Companion-style tracking is working: home, nearby, and away in the window.
 
-        Merges recorder-backed history with in-memory deque. Requires both ``home`` and
-        ``not_home`` (HA's away) within ``zone_health_history_hours``.
+        Merges recorder-backed history with in-memory deque. Requires ``home``, ``nearby``,
+        and ``not_home`` (HA's away) within ``zone_health_history_days``.
         """
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
-        history_hours = int(tts_settings.get("zone_health_history_hours", 24) or 24)
-        # Merge in-memory deque with recorder cache
-        in_memory = self._get_person_zone_states_in_window(person_ent, history_hours)
+        history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
+        # Merge in-memory deque with recorder cache (convert days to hours for in-memory)
+        in_memory = self._get_person_zone_states_in_window(person_ent, history_days * 24)
         from_recorder = self._zone_health_recorder_cache.get(person_ent, set())
         all_states = in_memory | from_recorder
-        return "home" in all_states and "not_home" in all_states
+        return "home" in all_states and "nearby" in all_states and "not_home" in all_states
 
     def get_zone_health_status(self) -> dict:
         """Return zone health status for all configured persons (for WebSocket API)."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
-        history_hours = int(tts_settings.get("zone_health_history_hours", 24) or 24)
+        history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
         all_persons = self._distinct_presence_person_entity_ids()
         persons_data = []
         for person_ent in all_persons:
@@ -424,17 +463,25 @@ class EnergyMonitor:
             last_alert = self._person_zone_hourly_reminder_last.get(person_ent)
             history = list(self._person_zone_state_history.get(person_ent, []))
             mem_last_home = None
+            mem_last_nearby = None
             mem_last_not_home = None
             for ts, state in reversed(history):
                 if state == "home" and not mem_last_home:
                     mem_last_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                if state == "nearby" and not mem_last_nearby:
+                    mem_last_nearby = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
                 if state == "not_home" and not mem_last_not_home:
                     mem_last_not_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
-                if mem_last_home and mem_last_not_home:
+                if mem_last_home and mem_last_nearby and mem_last_not_home:
                     break
             meta = self._zone_health_recorder_meta.get(person_ent) or {}
             last_home = meta.get("last_home") or mem_last_home
+            last_nearby = meta.get("last_nearby") or mem_last_nearby
             last_not_home = meta.get("last_not_home") or mem_last_not_home
+            # Determine seen flags from merged data
+            in_memory = self._get_person_zone_states_in_window(person_ent, history_days * 24)
+            from_recorder = self._zone_health_recorder_cache.get(person_ent, set())
+            all_states = in_memory | from_recorder
             persons_data.append({
                 "entity_id": person_ent,
                 "friendly_name": name,
@@ -443,12 +490,16 @@ class EnergyMonitor:
                 "is_healthy": is_healthy,
                 "is_alerted": is_alerted,
                 "last_home": last_home,
+                "last_nearby": last_nearby,
                 "last_not_home": last_not_home,
+                "seen_home": "home" in all_states,
+                "seen_nearby": "nearby" in all_states,
+                "seen_away": "not_home" in all_states,
                 "last_alert_time": last_alert.isoformat() if last_alert else None,
             })
         event_log = list(self._zone_health_event_log)
         return {
-            "history_hours": history_hours,
+            "history_days": history_days,
             "persons": persons_data,
             "event_log": event_log,
             "recorder_refreshed_at": (
@@ -540,7 +591,7 @@ class EnergyMonitor:
     async def _async_handle_zone_health_state_change(
         self, person_ent: str, new_state: str, now: datetime
     ) -> None:
-        """Clear zone-health alert state when home and away both appear in history."""
+        """Clear zone-health alert state when home, nearby, and away all appear in history."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if not tts_settings.get("zone_health_check_enabled", True):
             return
@@ -552,13 +603,13 @@ class EnergyMonitor:
             self._person_zone_health_alerted.discard(person_ent)
             self._person_zone_hourly_reminder_last.pop(person_ent, None)
             _LOGGER.info(
-                "Zone health: %s tracking healthy (home and away seen in window)",
+                "Zone health: %s tracking healthy (home, nearby, and away seen in window)",
                 person_ent,
             )
-            self._log_zone_health_event(person_ent, name, "recovered", "Home and away both reporting")
+            self._log_zone_health_event(person_ent, name, "recovered", "Home, nearby, and away all reporting")
             await self._async_speak_zone_health_tts(
                 person_ent,
-                f"{name}, your location tracking looks good. Home and away are both reporting.",
+                f"{name}, your location tracking looks good. Home, nearby, and away are all reporting.",
             )
 
     async def _async_speak_zone_health_tts(self, person_ent: str, message: str) -> None:
@@ -684,7 +735,7 @@ class EnergyMonitor:
 
         reminder_hours = int(tts_settings.get("zone_health_reminder_hours", 1) or 1)
         reminder_seconds = reminder_hours * 3600
-        history_hours = int(tts_settings.get("zone_health_history_hours", 24) or 24)
+        history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
 
         all_persons = self._distinct_presence_person_entity_ids()
         for person_ent in all_persons:
@@ -695,9 +746,9 @@ class EnergyMonitor:
                 self._person_zone_health_alerted.add(person_ent)
                 self._person_zone_hourly_reminder_last[person_ent] = now
                 _LOGGER.warning(
-                    "Zone health: %s has not shown both home and away in %d hours",
+                    "Zone health: %s has not shown home, nearby, and away in %d days",
                     person_ent,
-                    history_hours,
+                    history_days,
                 )
                 first_msg_template = str(
                     tts_settings.get(
@@ -2515,7 +2566,7 @@ class EnergyMonitor:
                     room_total_watts += outlet_total_watts
                     continue
 
-                # Vent / wall heater: static watts_when_on or power_sensor_entity when switch on
+                # Vent / wall heater: power sensor reads directly (like AC), or static watts when switch on
                 if outlet.get("type") in ("vent", "wall_heater"):
                     switch_entity = outlet.get("switch_entity")
                     power_ent = (
@@ -2524,29 +2575,30 @@ class EnergyMonitor:
                         else None
                     )
                     watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
-                    if switch_entity:
+                    if power_ent:
+                        # Power sensor mode: read sensor directly (sensor reports 0W when off)
+                        outlet_total_watts = self._get_power_value(power_ent)
+                        await self.config_manager.async_add_energy_reading(
+                            power_ent, outlet_total_watts, elapsed_seconds=1.0
+                        )
+                        self.config_manager.record_intraday_power(
+                            power_ent, outlet_total_watts
+                        )
+                    elif switch_entity:
+                        # Fixed watts mode: use watts_when_on only when switch is on
                         state = self.hass.states.get(switch_entity)
                         is_on = state is not None and (state.state or "off").lower() in ("on",)
-                        if is_on:
-                            if power_ent:
-                                outlet_total_watts = self._get_power_value(power_ent)
-                                await self.config_manager.async_add_energy_reading(
-                                    power_ent, outlet_total_watts, elapsed_seconds=1.0
-                                )
-                                self.config_manager.record_intraday_power(
-                                    power_ent, outlet_total_watts
-                                )
-                            elif watts_when_on > 0:
-                                outlet_total_watts = watts_when_on
-                                tracking_key = vent_like_energy_tracking_key(
-                                    room_id, outlet
-                                )
-                                await self.config_manager.async_add_energy_reading(
-                                    tracking_key, outlet_total_watts
-                                )
-                                self.config_manager.record_intraday_power(
-                                    tracking_key, outlet_total_watts
-                                )
+                        if is_on and watts_when_on > 0:
+                            outlet_total_watts = watts_when_on
+                            tracking_key = vent_like_energy_tracking_key(
+                                room_id, outlet
+                            )
+                            await self.config_manager.async_add_energy_reading(
+                                tracking_key, outlet_total_watts
+                            )
+                            self.config_manager.record_intraday_power(
+                                tracking_key, outlet_total_watts
+                            )
                     room_total_watts += outlet_total_watts
                     await self._tick_vent_automation(room, room_id, outlet, now)
                     await self._tick_wall_heater_automation(room, room_id, outlet, now)

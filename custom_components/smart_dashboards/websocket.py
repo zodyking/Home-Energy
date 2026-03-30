@@ -227,6 +227,7 @@ async def websocket_save_energy(
         _reset_statistics_prime_clock()
         _clear_recorder_derived_caches()
         connection.send_result(msg["id"], {"success": True})
+        hass.async_create_task(_prime_statistics_cache(hass))
     except Exception as e:
         _LOGGER.exception("Failed to save energy config: %s", e)
         connection.send_error(msg["id"], "save_failed", str(e))
@@ -499,7 +500,7 @@ async def websocket_get_power_data(
                 else:
                     outlet_data["switch_state"] = False
             elif outlet_type in ("vent", "wall_heater"):
-                # Vent / wall heater: switch on + static watts or power sensor
+                # Vent / wall heater: power sensor reads directly (like AC), or static watts when switch on
                 switch_entity = outlet.get("switch_entity")
                 watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
                 power_ent = (
@@ -507,23 +508,21 @@ async def websocket_get_power_data(
                     if outlet.get("power_source") == "sensor"
                     else None
                 )
-                if switch_entity:
+                if power_ent:
+                    # Power sensor mode: read sensor directly (sensor reports 0W when off)
+                    watts = _get_power_value(hass, power_ent)
+                    day_wh = config_manager.get_day_energy(power_ent)
+                elif switch_entity:
+                    # Fixed watts mode: use watts_when_on only when switch is on
                     state = hass.states.get(switch_entity)
                     is_on = bool(state and (state.state or "off").lower() in ("on",))
-                    if power_ent:
-                        watts = _get_power_value(hass, power_ent) if is_on else 0.0
-                        day_wh = config_manager.get_day_energy(power_ent)
-                    else:
-                        watts = watts_when_on if is_on else 0.0
-                        tracking_key = vent_like_energy_tracking_key(room_id, outlet)
-                        day_wh = config_manager.get_day_energy(tracking_key)
+                    watts = watts_when_on if is_on else 0.0
+                    tracking_key = vent_like_energy_tracking_key(room_id, outlet)
+                    day_wh = config_manager.get_day_energy(tracking_key)
                 else:
                     watts = 0.0
-                    if power_ent:
-                        day_wh = config_manager.get_day_energy(power_ent)
-                    else:
-                        tracking_key = vent_like_energy_tracking_key(room_id, outlet)
-                        day_wh = config_manager.get_day_energy(tracking_key)
+                    tracking_key = vent_like_energy_tracking_key(room_id, outlet)
+                    day_wh = config_manager.get_day_energy(tracking_key)
                 outlet_data["plug1"] = {"watts": watts, "day_wh": round(day_wh, 2)}
                 room_data["total_watts"] += watts
                 room_data["total_day_wh"] += day_wh
@@ -1454,7 +1453,10 @@ async def async_build_statistics_payload(
             "projected_usage": None,
             "kwh_cost": None,
         },
-        "sensor_meta": {"supplier_last_updated": None},
+        "sensor_meta": {
+            "supplier_last_updated": None,
+            "sensor_states": {},
+        },
     }
 
     if billing_a and billing_b:
@@ -1470,10 +1472,14 @@ async def async_build_statistics_payload(
     ]:
         ent = (stats_settings.get(sensor_key) or "").strip()
         if not ent:
+            result["sensor_meta"]["sensor_states"][key] = {"entity": None, "raw": None}
             continue
         state = hass.states.get(ent)
         if state is None:
+            result["sensor_meta"]["sensor_states"][key] = {"entity": ent, "raw": "entity_not_found"}
             continue
+        raw_state = state.state
+        result["sensor_meta"]["sensor_states"][key] = {"entity": ent, "raw": raw_state}
         lc = state.last_changed
         if lc:
             if key == "current_usage":
@@ -1481,9 +1487,9 @@ async def async_build_statistics_payload(
             elif key in ("projected_usage", "kwh_cost"):
                 if fallback_last_changed is None or lc > fallback_last_changed:
                     fallback_last_changed = lc
-        if state.state not in ("unknown", "unavailable", ""):
+        if raw_state not in ("unknown", "unavailable", ""):
             try:
-                val = str(state.state).strip()
+                val = str(raw_state).strip()
                 if key == "kwh_cost":
                     val = val.replace("$", "").replace(",", "").strip()
                 result["sensor_values"][key] = float(val)
@@ -2413,7 +2419,7 @@ async def websocket_get_stove_data(
 
 
 def _get_power_value(hass: HomeAssistant, entity_id: str) -> float:
-    """Get power value from an entity."""
+    """Get power value from an entity in Watts."""
     state = hass.states.get(entity_id)
     if state is None:
         return 0.0
@@ -2422,12 +2428,18 @@ def _get_power_value(hass: HomeAssistant, entity_id: str) -> float:
     if entity_id.startswith("sensor."):
         try:
             if state.state not in ("unknown", "unavailable", ""):
-                return float(state.state)
+                val = float(state.state)
+                unit = state.attributes.get("unit_of_measurement")
+                if unit == "kW":
+                    return val * 1000.0
+                if unit == "mW":
+                    return val / 1000.0
+                return val
         except (ValueError, TypeError):
             pass
         return 0.0
 
-    # Switch entity - power is an attribute
+    # Switch entity - power is an attribute (already in W)
     if entity_id.startswith("switch."):
         power = state.attributes.get("current_power_w", 0)
         try:
