@@ -9361,8 +9361,13 @@ class EnergyPanel extends HTMLElement {
       event_log = [],
       history_days = 3,
       recorder_refreshed_at = null,
-      required_zones: requiredZones = {},
+      required_zones: requiredZonesSnake = {},
+      requiredZones: requiredZonesCamel = {},
     } = data;
+    const requiredZones = {
+      ...requiredZonesCamel,
+      ...requiredZonesSnake,
+    };
     if (persons.length === 0) {
       contentEl.innerHTML = `
         <p style="color: var(--secondary-text-color); font-size: 12px;">
@@ -9381,8 +9386,20 @@ class EnergyPanel extends HTMLElement {
       : '';
     const checkIcon = '<span style="color: var(--success-color, #4caf50);">&#10003;</span>';
     const xIcon = '<span style="color: var(--error-color, #f44336);">&#10007;</span>';
-    const zh = requiredZones.zone_home || {};
-    const zn = requiredZones.zone_nearby || {};
+    const zh = {
+      entity_id: 'zone.home',
+      exists: false,
+      setup_hint:
+        'Add or restore the default Home zone: Settings → Areas & zones → Zones. The entity should be zone.home.',
+      ...(requiredZones.zone_home || requiredZones.zoneHome || {}),
+    };
+    const zn = {
+      entity_id: 'zone.nearby',
+      exists: false,
+      setup_hint:
+        'Create a zone named Nearby so the entity id is zone.nearby: Settings → Areas & zones → Zones → Add zone. See https://www.home-assistant.io/integrations/zone/',
+      ...(requiredZones.zone_nearby || requiredZones.zoneNearby || {}),
+    };
     const zoneHomeRow = `
       <tr>
         <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
@@ -9403,14 +9420,11 @@ class EnergyPanel extends HTMLElement {
           ${zn.exists ? 'Present' : (zn.setup_hint || 'Create this zone in Home Assistant.')}
         </td>
       </tr>`;
-    const hasRequiredZonesApi =
-      requiredZones.zone_home != null && requiredZones.zone_nearby != null;
-    const requiredZonesBlock = hasRequiredZonesApi
-      ? `
+    const requiredZonesBlock = `
       <div style="margin-bottom: 16px;">
         <h3 style="margin: 0 0 8px 0; font-size: 14px;">Required zones</h3>
         <p style="font-size: 11px; color: var(--secondary-text-color); margin: 0 0 8px 0;">
-          Zone health and Companion “nearby” reporting expect these entities to exist.
+          Companion zone reporting expects <code>zone.home</code> and a dedicated <code>zone.nearby</code>. Green = entity exists in Home Assistant.
         </p>
         <div style="overflow-x: auto;">
           <table style="width: 100%; max-width: 640px; border-collapse: collapse; font-size: 12px;">
@@ -9424,8 +9438,7 @@ class EnergyPanel extends HTMLElement {
             <tbody>${zoneHomeRow}${zoneNearbyRow}</tbody>
           </table>
         </div>
-      </div>`
-      : '';
+      </div>`;
     const personsHtml = persons.map(p => {
       const statusColor = p.is_healthy ? 'var(--success-color, #4caf50)' : 'var(--error-color, #f44336)';
       const statusText = p.is_healthy ? 'Healthy' : 'Unhealthy';
