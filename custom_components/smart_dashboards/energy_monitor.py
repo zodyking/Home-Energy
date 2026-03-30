@@ -348,7 +348,11 @@ class EnergyMonitor:
                 for eid in entity_ids:
                     for st in states_dict.get(eid) or []:
                         if st.state and st.state.lower() not in ("unknown", "unavailable", ""):
-                            states_union.add(st.state.lower())
+                            state_lower = st.state.lower()
+                            # Normalize device_tracker "away" to person-style "not_home"
+                            if state_lower == "away":
+                                state_lower = "not_home"
+                            states_union.add(state_lower)
             except Exception as e:
                 _LOGGER.warning("Zone health recorder fetch failed for %s: %s", person_ent, e)
             self._zone_health_recorder_cache[person_ent] = states_union
