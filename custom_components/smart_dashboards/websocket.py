@@ -181,6 +181,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_send_test_notification)
     websocket_api.async_register_command(hass, websocket_clear_statistics_cache)
     websocket_api.async_register_command(hass, websocket_get_statistics_sources)
+    websocket_api.async_register_command(hass, websocket_get_zone_health_status)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -1411,8 +1412,13 @@ async def async_build_statistics_payload(
     *,
     date_start: str | None,
     date_end: str | None,
+    skip_recorder: bool = False,
 ) -> dict[str, Any]:
-    """Build statistics payload (shared by WebSocket and background cache priming)."""
+    """Build statistics payload (shared by WebSocket and background cache priming).
+
+    When skip_recorder is True, skip recorder/history integration and supplier plateau
+    queries (fast shell for instant UI while JSON cache is filled in background).
+    """
     ds = (date_start or "").strip() or None
     de = (date_end or "").strip() or None
     start, end, is_narrowed = config_manager.get_statistics_date_range(
@@ -1515,15 +1521,20 @@ async def async_build_statistics_payload(
 
     today = dt_util.now().strftime("%Y-%m-%d")
 
-    try:
-        total_wh, room_wh_map, room_day_wh_map = await _compute_kwh_from_history(
-            hass, config_manager, start, end
-        )
-    except Exception as err:  # recorder not ready or history unavailable
-        _LOGGER.warning("Statistics kWh from history failed: %s", err)
+    if skip_recorder:
         total_wh = 0.0
-        room_wh_map = {}
-        room_day_wh_map = {}
+        room_wh_map: dict[str, float] = {}
+        room_day_wh_map: dict[str, dict[str, float]] = {}
+    else:
+        try:
+            total_wh, room_wh_map, room_day_wh_map = await _compute_kwh_from_history(
+                hass, config_manager, start, end
+            )
+        except Exception as err:  # recorder not ready or history unavailable
+            _LOGGER.warning("Statistics kWh from history failed: %s", err)
+            total_wh = 0.0
+            room_wh_map = {}
+            room_day_wh_map = {}
     total_kwh = total_wh / 1000.0 if total_wh else 0.0
     if start <= today:
         effective_end = min(end, today)
@@ -1653,10 +1664,22 @@ async def _prime_statistics_cache(hass: HomeAssistant) -> None:
     end = result.get("date_end") or ""
     if not start or not end:
         return
-    # Save to JSON for instant page load
-    await config_manager.async_save_statistics_cache(result)
+    # Save to JSON for instant page load (omit UI-only flags)
+    to_save = dict(result)
+    to_save.pop("statistics_pending", None)
+    try:
+        daily_history = await async_build_billing_daily_history_from_recorder(
+            hass, config_manager, start, end
+        )
+        to_save["daily_history"] = daily_history
+        to_save["daily_history_range"] = {"date_start": start, "date_end": end}
+    except Exception as err:
+        _LOGGER.warning("Statistics daily_history for cache failed: %s", err)
+        to_save.pop("daily_history", None)
+        to_save.pop("daily_history_range", None)
+    await config_manager.async_save_statistics_cache(to_save)
     # Fire event so frontend subscribers get live push
-    hass.bus.async_fire("smart_dashboards_statistics_updated", {"data": result})
+    hass.bus.async_fire("smart_dashboards_statistics_updated", {"data": to_save})
 
 
 async def _statistics_cache_prime_tick(hass: HomeAssistant, _now: datetime) -> None:
@@ -1715,6 +1738,20 @@ async def websocket_get_statistics(
                 msg["id"], {**json_cache, "period_source": period_source}
             )
             return
+        # No snapshot yet: return fast shell (no recorder) and prime full build in background
+        shell = await async_build_statistics_payload(
+            hass,
+            config_manager,
+            date_start=None,
+            date_end=None,
+            skip_recorder=True,
+        )
+        shell["statistics_pending"] = True
+        connection.send_result(
+            msg["id"], {**shell, "period_source": period_source}
+        )
+        hass.async_create_task(_prime_statistics_cache(hass))
+        return
 
     # Custom date range: compute fresh (no caching for custom ranges)
     result = await async_build_statistics_payload(
@@ -2593,3 +2630,21 @@ async def websocket_get_statistics_sources(
         "power_sensors": power_sensors,
         "switch_sources": switch_sources,
     })
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "smart_dashboards/get_zone_health_status"}
+)
+@websocket_api.async_response
+async def websocket_get_zone_health_status(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return zone health tracking status for all configured persons."""
+    energy_monitor = hass.data[DOMAIN].get("energy_monitor")
+    if not energy_monitor:
+        connection.send_error(msg["id"], "not_ready", "Energy monitor not initialized")
+        return
+    status = energy_monitor.get_zone_health_status()
+    connection.send_result(msg["id"], status)
