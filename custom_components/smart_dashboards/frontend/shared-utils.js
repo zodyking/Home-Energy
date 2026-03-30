@@ -29,6 +29,8 @@ export const sharedStyles = `
     --panel-warning: #ff9800;
     --panel-success: #4caf50;
     --card-bg: var(--card-background-color);
+    /* Top sticky bar (title + actions) = rgb(28,28,28) / #1c1c1c (same as card surface) */
+    --panel-header-background: rgb(28, 28, 28);
     --card-border: rgba(255, 255, 255, 0.08);
     --input-bg: #282828;
     --input-border: rgba(255, 255, 255, 0.12);
@@ -48,7 +50,7 @@ export const sharedStyles = `
     align-items: center;
     justify-content: space-between;
     padding: 10px 16px;
-    background: var(--secondary-background-color);
+    background: var(--panel-header-background);
     border-bottom: 1px solid var(--card-border);
     position: sticky;
     top: 0;
