@@ -1365,7 +1365,7 @@ class ConfigManager:
                 )
             ),
             "zone_health_history_hours": (
-                lambda v: v if v in (24, 48, 72, 96) else 24
+                lambda v: 72 if v == 96 else (v if v in (24, 48, 72) else 24)
             )(
                 int(
                     tts.get(

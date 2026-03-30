@@ -7790,33 +7790,6 @@ class EnergyPanel extends HTMLElement {
                   <span class="toggle-label">Notify when external automations toggle an appliance</span>
                 </div>
               </div>
-              <div class="form-group" style="margin-bottom: 12px;">
-                <div class="toggle-row">
-                  <label class="toggle-switch">
-                    <input type="checkbox" id="tts-zone-health-check" ${ttsSettings.zone_health_check_enabled !== false ? 'checked' : ''} />
-                    <span class="toggle-slider"></span>
-                  </label>
-                  <span class="toggle-label">Zone tracking health check (alerts when app location setup isn't working)</span>
-                </div>
-              </div>
-              <div class="form-group" style="margin-bottom: 12px; margin-left: 24px;">
-                <label class="form-label">Check history window</label>
-                <select class="form-input" id="zone-health-history-hours" style="width: 140px;">
-                  <option value="24" ${(ttsSettings.zone_health_history_hours ?? 24) == 24 ? 'selected' : ''}>24 hours</option>
-                  <option value="48" ${ttsSettings.zone_health_history_hours == 48 ? 'selected' : ''}>48 hours</option>
-                  <option value="72" ${ttsSettings.zone_health_history_hours == 72 ? 'selected' : ''}>72 hours</option>
-                  <option value="96" ${ttsSettings.zone_health_history_hours == 96 ? 'selected' : ''}>96 hours</option>
-                </select>
-                <div class="tts-msg-desc" style="margin-top: 4px;">Alert if <strong>both</strong> <code>home</code> and <code>away</code> (<code>not_home</code>) are not seen on the person within this window.</div>
-              </div>
-              <div class="form-group" style="margin-bottom: 12px; margin-left: 24px;">
-                <label class="form-label">Reminder frequency (hours)</label>
-                <input type="number" class="form-input" id="zone-health-reminder-hours" 
-                  value="${ttsSettings.zone_health_reminder_hours ?? 1}" min="1" max="24" style="width: 80px;"
-                  title="How often to send repeat TTS and push for unresolved zone health issues">
-                <div class="tts-msg-desc" style="margin-top: 4px;">Hours between repeat TTS and push reminders (1-24). First alert is immediate.</div>
-                <div class="tts-msg-desc" style="margin-top: 4px; font-style: italic;">Message templates have been moved to the <strong>TTS Settings</strong> tab under "Zone Health TTS".</div>
-              </div>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Person/External Toggle Title</div>
                 <input type="text" class="form-input" id="notify-toggle-title"
@@ -7943,15 +7916,49 @@ class EnergyPanel extends HTMLElement {
               <div class="card-header">
                 <h2 class="card-title">Zone Health Tracking</h2>
               </div>
-              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
-                Monitor zone-based presence tracking status for all configured persons.
-                Healthy tracking requires seeing both "home" and "away" states within the configured history window.
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
+                Monitor zone-based presence tracking for each room’s <strong>Presence person</strong>. History uses the
+                <strong>person entity</strong> plus linked <strong>device_tracker</strong> entities (Companion app) from recorder data.
+                Healthy means both <code>home</code> and <code>away</code> (<code>not_home</code>) appeared within the window.
               </p>
+              <details class="settings-fold" style="margin-bottom: 16px;">
+                <summary class="settings-fold-summary">Zone health settings</summary>
+                <div class="settings-fold-body">
+                  <div class="form-group" style="margin-bottom: 12px;">
+                    <div class="toggle-row">
+                      <label class="toggle-switch">
+                        <input type="checkbox" id="tts-zone-health-check" ${ttsSettings.zone_health_check_enabled !== false ? 'checked' : ''} />
+                        <span class="toggle-slider"></span>
+                      </label>
+                      <span class="toggle-label">Enable zone tracking health check (TTS + push when setup looks wrong)</span>
+                    </div>
+                  </div>
+                  <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Check history window</label>
+                    <select class="form-input" id="zone-health-history-hours" style="max-width: 200px;">
+                      <option value="24" ${(() => { let z = Number(ttsSettings.zone_health_history_hours); if (!Number.isFinite(z)) z = 24; if (z === 96) z = 72; if (![24, 48, 72].includes(z)) z = 24; return z === 24 ? 'selected' : ''; })()}>1 day</option>
+                      <option value="48" ${(() => { let z = Number(ttsSettings.zone_health_history_hours); if (!Number.isFinite(z)) z = 24; if (z === 96) z = 72; if (![24, 48, 72].includes(z)) z = 24; return z === 48 ? 'selected' : ''; })()}>2 days</option>
+                      <option value="72" ${(() => { let z = Number(ttsSettings.zone_health_history_hours); if (!Number.isFinite(z)) z = 24; if (z === 96) z = 72; if (![24, 48, 72].includes(z)) z = 24; return z === 72 ? 'selected' : ''; })()}>3 days</option>
+                    </select>
+                    <div class="tts-msg-desc" style="margin-top: 4px;">Alert if <strong>both</strong> home and away are not seen on the person or their linked device trackers within this window.</div>
+                  </div>
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label class="form-label">Reminder frequency (hours)</label>
+                    <input type="number" class="form-input" id="zone-health-reminder-hours"
+                      value="${ttsSettings.zone_health_reminder_hours ?? 1}" min="1" max="24" style="width: 80px;"
+                      title="How often to send repeat TTS and push for unresolved zone health issues">
+                    <div class="tts-msg-desc" style="margin-top: 4px;">Hours between repeat TTS and push reminders (1–24). First alert is immediate.</div>
+                  </div>
+                  <p style="color: var(--secondary-text-color); font-size: 10px; font-style: italic; margin: 0;">
+                    Message templates: <strong>TTS Settings</strong> tab → Zone Health TTS.
+                  </p>
+                </div>
+              </details>
               <div id="zone-health-content">
                 <p style="color: var(--secondary-text-color); font-size: 12px;">Loading zone health status...</p>
               </div>
               <button type="button" class="btn btn-secondary" id="zone-health-refresh" style="margin-top: 12px;">
-                Refresh Status
+                Refresh status (recheck recorder + device trackers)
               </button>
             </div>
           </div>
@@ -9245,6 +9252,29 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  async _forceRefreshZoneHealth() {
+    const contentEl = this.shadowRoot.querySelector('#zone-health-content');
+    const btn = this.shadowRoot.querySelector('#zone-health-refresh');
+    if (contentEl) {
+      contentEl.innerHTML = '<p style="color: var(--secondary-text-color); font-size: 12px;">Refreshing from recorder (person + device trackers)…</p>';
+    }
+    if (btn) btn.disabled = true;
+    try {
+      const data = await this._hass.callWS({ type: 'smart_dashboards/refresh_zone_health' });
+      this._zoneHealthData = data;
+      if (contentEl) {
+        this._renderZoneHealthStatus(data);
+      }
+      this._updateRoomCardZoneHealthIndicators();
+    } catch (err) {
+      if (contentEl) {
+        contentEl.innerHTML = `<p style="color: var(--error-color, #f44336);">Refresh failed: ${err.message || err}</p>`;
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   _startZoneHealthRefresh() {
     if (this._zoneHealthRefreshInterval) return;
     this._loadZoneHealthStatus(false);
@@ -9278,7 +9308,7 @@ class EnergyPanel extends HTMLElement {
   _renderZoneHealthStatus(data) {
     const contentEl = this.shadowRoot.querySelector('#zone-health-content');
     if (!contentEl) return;
-    const { persons = [], event_log = [], history_hours = 24 } = data;
+    const { persons = [], event_log = [], history_hours = 24, recorder_refreshed_at = null } = data;
     if (persons.length === 0) {
       contentEl.innerHTML = `
         <p style="color: var(--secondary-text-color); font-size: 12px;">
@@ -9291,15 +9321,24 @@ class EnergyPanel extends HTMLElement {
       const d = new Date(iso);
       return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     };
+    const windowLabel = history_hours === 48 ? '2 days' : history_hours === 72 ? '3 days' : '1 day';
+    const refreshedLine = recorder_refreshed_at
+      ? `<p style="font-size: 10px; color: var(--secondary-text-color); margin: 0 0 8px 0;">Last recorder pull: ${new Date(recorder_refreshed_at).toLocaleString()}</p>`
+      : '';
     const personsHtml = persons.map(p => {
       const statusColor = p.is_healthy ? 'var(--success-color, #4caf50)' : 'var(--error-color, #f44336)';
       const statusText = p.is_healthy ? 'Healthy' : 'Unhealthy';
       const alertBadge = p.is_alerted ? '<span style="background: var(--warning-color, #ff9800); color: #000; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;">ALERTED</span>' : '';
+      const trackers = Array.isArray(p.device_trackers) ? p.device_trackers : [];
+      const trackersLine = trackers.length
+        ? `<div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Trackers: ${trackers.map(t => `<code style="font-size: 9px;">${String(t).replace(/</g, '&lt;')}</code>`).join(', ')}</div>`
+        : '<div style="font-size: 10px; color: var(--warning-color, #ff9800); margin-top: 4px;">No linked device_tracker on person — link the Companion device under People.</div>';
       return `
         <tr>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
             <strong>${p.friendly_name}</strong>
             <div style="font-size: 10px; color: var(--secondary-text-color);">${p.entity_id}</div>
+            ${trackersLine}
           </td>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); text-transform: capitalize;">${p.current_state}</td>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
@@ -9346,8 +9385,9 @@ class EnergyPanel extends HTMLElement {
     contentEl.innerHTML = `
       <div style="margin-bottom: 16px;">
         <h3 style="margin: 0 0 8px 0; font-size: 14px;">Person Status</h3>
+        ${refreshedLine}
         <p style="font-size: 11px; color: var(--secondary-text-color); margin-bottom: 8px;">
-          History window: <strong>${history_hours} hours</strong>. Healthy = both "home" and "away" seen in this window.
+          History window: <strong>${windowLabel}</strong> (${history_hours} h). Healthy = both <code>home</code> and <code>away</code> (<code>not_home</code>) seen on person or linked trackers in this window.
         </p>
         <div style="overflow-x: auto;">
           <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
@@ -10473,7 +10513,7 @@ class EnergyPanel extends HTMLElement {
     // Zone health refresh button
     const zoneHealthRefreshBtn = this.shadowRoot.querySelector('#zone-health-refresh');
     if (zoneHealthRefreshBtn) {
-      zoneHealthRefreshBtn.addEventListener('click', () => this._loadZoneHealthStatus());
+      zoneHealthRefreshBtn.addEventListener('click', () => this._forceRefreshZoneHealth());
     }
     // Auto-load zone health when tab is visible
     if (this._settingsTab === 'zone-health') {
@@ -11545,7 +11585,7 @@ class EnergyPanel extends HTMLElement {
         zone_health_check_enabled: this.shadowRoot.querySelector('#tts-zone-health-check')?.checked !== false,
         zone_health_history_hours: (() => {
           const zh = parseInt(this.shadowRoot.querySelector('#zone-health-history-hours')?.value, 10);
-          return [24, 48, 72, 96].includes(zh) ? zh : 24;
+          return [24, 48, 72].includes(zh) ? zh : 24;
         })(),
         zone_health_reminder_hours: Math.max(1, Math.min(24, parseInt(this.shadowRoot.querySelector('#zone-health-reminder-hours')?.value, 10) || 1)),
         zone_health_notification_msg: this.shadowRoot.querySelector('#zone-health-notification-msg')?.value ?? '',
