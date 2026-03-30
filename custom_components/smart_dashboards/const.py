@@ -228,7 +228,7 @@ DEFAULT_CONFIG = {
             "notify_vent_auto_off_title": DEFAULT_NOTIFY_VENT_AUTO_OFF_TITLE,
             "notify_vent_auto_off_msg": DEFAULT_NOTIFY_VENT_AUTO_OFF_MSG,
             "zone_health_check_enabled": True,
-            "zone_health_history_hours": 48,
+            "zone_health_history_hours": 24,
             "zone_health_reminder_hours": 1,
             "zone_health_notification_msg": "Hi {name}, your Home Assistant Companion app location doesn't appear to be set up correctly. Zone-based presence isn't working.",
             "zone_health_reminder_tts_msg": "{name}, your zone-based location setup needs attention. Please check your Companion app settings.",

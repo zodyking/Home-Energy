@@ -4530,6 +4530,34 @@ class EnergyPanel extends HTMLElement {
       .ac-safety-disclosure[open] summary {
         border-bottom: 1px solid var(--divider-color, rgba(255, 255, 255, 0.1));
       }
+      .settings-fold {
+        margin-bottom: 14px;
+        border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
+        border-radius: 8px;
+        overflow: hidden;
+        background: rgba(0, 0, 0, 0.08);
+      }
+      .settings-fold-summary {
+        cursor: pointer;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        list-style: none;
+        user-select: none;
+      }
+      .settings-fold-summary::-webkit-details-marker {
+        display: none;
+      }
+      .settings-fold-summary::marker {
+        content: '';
+      }
+      .settings-fold[open] > .settings-fold-summary {
+        border-bottom: 1px solid var(--divider-color, rgba(255, 255, 255, 0.1));
+      }
+      .settings-fold-body {
+        padding: 10px 14px 14px;
+      }
       .ac-safety-screenshot {
         display: block;
         width: 100%;
@@ -6917,7 +6945,9 @@ class EnergyPanel extends HTMLElement {
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
                 Customize how alert messages are spoken. All messages are prefixed and can be customized below.
               </p>
-              
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">General</summary>
+                <div class="settings-fold-body">
               <div class="grid-2" style="margin-bottom: 16px;">
                 <div class="form-group">
                   <label class="form-label">Language</label>
@@ -6948,7 +6978,11 @@ class EnergyPanel extends HTMLElement {
                   value="${ttsSettings.prefix || TTS_DEFAULTS.prefix}" 
                   placeholder="Message from Home Energy.">
               </div>
-              
+                </div>
+              </details>
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">Thresholds, budget, and overload</summary>
+                <div class="settings-fold-body">
               <div class="tts-msg-group">
                 <div class="tts-msg-header-row">
                   <div>
@@ -7035,7 +7069,11 @@ class EnergyPanel extends HTMLElement {
                   Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{plug}</code>
                 </div>
               </div>
-              
+                </div>
+              </details>
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">Stove</summary>
+                <div class="settings-fold-body">
               <div class="tts-msg-group">
                 <div class="tts-msg-header-row">
                   <div>
@@ -7143,8 +7181,11 @@ class EnergyPanel extends HTMLElement {
                   Variables: <code>{prefix}</code>
                 </div>
               </div>
-              
-              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Vent and heater automation</h3>
+                </div>
+              </details>
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">Vent and heater automation</summary>
+                <div class="settings-fold-body">
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
                 Spoken when presence or temperature automation turns on the vent or wall heater switch from the appliance card. Uses each room's media player and volume. Heater TTS is off by default.
               </p>
@@ -7178,8 +7219,11 @@ class EnergyPanel extends HTMLElement {
                   value="${(ttsSettings.heater_automation_on_msg || TTS_DEFAULTS.heater_automation_on_msg).replace(/"/g, '&quot;')}" />
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{outlet_name}</code> <code>{threshold}</code> <code>{temperature}</code> (spoken whole numbers)</div>
               </div>
-
-              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Power Enforcement Messages</h3>
+                </div>
+              </details>
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">Power enforcement and daily kWh</summary>
+                <div class="settings-fold-body">
               <div class="tts-msg-group">
                 <div class="tts-msg-header-row">
                   <div>
@@ -7297,6 +7341,8 @@ class EnergyPanel extends HTMLElement {
                   placeholder="Home over {kwh_limit} kWh today — reduce consumption.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{kwh_limit}</code></div>
               </div>
+                </div>
+              </details>
             </div>
           </div>
 
@@ -7308,6 +7354,9 @@ class EnergyPanel extends HTMLElement {
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
                 Assign a <strong>Presence person</strong> per room to enable mobile alerts. <strong>Personal</strong> alerts (room budget exceeded, enforcement phase changes, presence-based AC off/on) go only to that room’s person. <strong>Universal</strong> alerts (optional below) go to <em>every</em> person who is set as Presence person on <em>any</em> room when a monitored switch changes from the dashboard, Home Assistant UI, or an automation. Use <strong>Notification title</strong> as <code>{notification_title}</code> in title templates (separate from the TTS message prefix). Delivery uses each person’s <code>notify.mobile_app_*</code> target from devices linked under <strong>Settings → People</strong> (e.g. <code>Brandon’s Iphone</code> → <code>notify.mobile_app_brandons_iphone</code>).
               </p>
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">Global</summary>
+                <div class="settings-fold-body">
               <div class="form-group" style="margin-bottom: 16px;">
                 <div class="toggle-row">
                   <label class="toggle-switch">
@@ -7324,8 +7373,11 @@ class EnergyPanel extends HTMLElement {
                   value="${(ttsSettings.notification_title || TTS_DEFAULTS.notification_title).replace(/"/g, '&quot;')}"
                   placeholder="Home Energy">
               </div>
-
-              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Budget Exceeded Notification</h3>
+                </div>
+              </details>
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">Budget exceeded</summary>
+                <div class="settings-fold-body">
               <div class="form-group" style="margin-bottom: 12px;">
                 <div class="toggle-row">
                   <label class="toggle-switch">
@@ -7349,8 +7401,11 @@ class EnergyPanel extends HTMLElement {
                   placeholder="{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh).">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{kwh_budget}</code> <code>{kwh_used}</code></div>
               </div>
-
-              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Enforcement Phase Change Notifications</h3>
+                </div>
+              </details>
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">Enforcement phase changes</summary>
+                <div class="settings-fold-body">
               <div class="form-group" style="margin-bottom: 12px;">
                 <div class="toggle-row">
                   <label class="toggle-switch">
@@ -7388,8 +7443,11 @@ class EnergyPanel extends HTMLElement {
                   placeholder="{room_name} has entered enforcement phase 2 (power cycling). Please reduce power usage.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code></div>
               </div>
-
-              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Air Conditioner Presence Notifications</h3>
+                </div>
+              </details>
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">Air conditioner presence</summary>
+                <div class="settings-fold-body">
               <div class="form-group" style="margin-bottom: 12px;">
                 <div class="toggle-row">
                   <label class="toggle-switch">
@@ -7436,8 +7494,11 @@ class EnergyPanel extends HTMLElement {
                   placeholder="{outlet_name} was turned back on because {person_name} is nearby.">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{outlet_name}</code> <code>{person_name}</code> <code>{person}</code> <code>{room_name}</code></div>
               </div>
-
-              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Appliance Toggle Notifications</h3>
+                </div>
+              </details>
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">Appliance toggles, zone health, and templates</summary>
+                <div class="settings-fold-body">
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
                 Control which appliance on/off changes trigger notifications.
               </p>
@@ -7479,24 +7540,7 @@ class EnergyPanel extends HTMLElement {
                     <span class="toggle-label" style="font-size: 12px;">Vent auto on/off</span>
                   </div>
                 </div>
-                <div class="form-group" style="margin-bottom: 6px;">
-                  <div class="toggle-row" style="padding: 4px 0;">
-                    <label class="toggle-switch" style="transform: scale(0.85);">
-                      <input type="checkbox" id="tts-notify-ac-auto-off" ${ttsSettings.notify_ac_auto_off !== false ? 'checked' : ''} />
-                      <span class="toggle-slider"></span>
-                    </label>
-                    <span class="toggle-label" style="font-size: 12px;">AC presence off</span>
-                  </div>
-                </div>
-                <div class="form-group" style="margin-bottom: 6px;">
-                  <div class="toggle-row" style="padding: 4px 0;">
-                    <label class="toggle-switch" style="transform: scale(0.85);">
-                      <input type="checkbox" id="tts-notify-ac-auto-on" ${ttsSettings.notify_ac_auto_on !== false ? 'checked' : ''} />
-                      <span class="toggle-slider"></span>
-                    </label>
-                    <span class="toggle-label" style="font-size: 12px;">AC presence on</span>
-                  </div>
-                </div>
+                <p class="tts-msg-desc" style="margin: 8px 0 0 0; font-size: 11px;">AC presence on/off notifications use the toggles in <strong>Air Conditioner Presence Notifications</strong> above (same settings; not duplicated here).</p>
               </div>
               <div class="form-group" style="margin-bottom: 12px;">
                 <div class="toggle-row">
@@ -7519,18 +7563,19 @@ class EnergyPanel extends HTMLElement {
               <div class="form-group" style="margin-bottom: 12px; margin-left: 24px;">
                 <label class="form-label">Check history window</label>
                 <select class="form-input" id="zone-health-history-hours" style="width: 140px;">
-                  <option value="48" ${(ttsSettings.zone_health_history_hours || 48) == 48 ? 'selected' : ''}>48 hours</option>
+                  <option value="24" ${(ttsSettings.zone_health_history_hours ?? 24) == 24 ? 'selected' : ''}>24 hours</option>
+                  <option value="48" ${ttsSettings.zone_health_history_hours == 48 ? 'selected' : ''}>48 hours</option>
                   <option value="72" ${ttsSettings.zone_health_history_hours == 72 ? 'selected' : ''}>72 hours</option>
                   <option value="96" ${ttsSettings.zone_health_history_hours == 96 ? 'selected' : ''}>96 hours</option>
                 </select>
-                <div class="tts-msg-desc" style="margin-top: 4px;">Alert if person hasn't shown "home" or "nearby" within this window</div>
+                <div class="tts-msg-desc" style="margin-top: 4px;">Alert if <strong>both</strong> <code>home</code> and <code>away</code> (<code>not_home</code>) are not seen on the person within this window.</div>
               </div>
               <div class="form-group" style="margin-bottom: 12px; margin-left: 24px;">
                 <label class="form-label">Reminder frequency (hours)</label>
                 <input type="number" class="form-input" id="zone-health-reminder-hours" 
                   value="${ttsSettings.zone_health_reminder_hours ?? 1}" min="1" max="24" style="width: 80px;"
-                  title="How often to send TTS reminders for unresolved zone health issues">
-                <div class="tts-msg-desc" style="margin-top: 4px;">Hours between TTS reminders (1-24)</div>
+                  title="How often to send repeat TTS and push for unresolved zone health issues">
+                <div class="tts-msg-desc" style="margin-top: 4px;">Hours between repeat TTS and push reminders (1-24). First alert is immediate.</div>
               </div>
               <details class="ac-safety-disclosure" style="margin-left: 24px; margin-bottom: 12px;">
                 <summary>Zone health message templates</summary>
@@ -7626,8 +7671,12 @@ class EnergyPanel extends HTMLElement {
                   </div>
                 </div>
               </details>
+                </div>
+              </details>
 
-              <h3 style="margin: 24px 0 12px 0; border-top: 1px solid var(--card-border); padding-top: 16px;">Test Notification</h3>
+              <details class="settings-fold" open>
+                <summary class="settings-fold-summary">Test notification</summary>
+                <div class="settings-fold-body">
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
                 Send a test notification to verify your setup. Select a person and notification type, then click Send Test.
               </p>
@@ -7661,6 +7710,8 @@ class EnergyPanel extends HTMLElement {
               <button type="button" class="btn btn-secondary" id="notify-send-test" style="margin-top: 8px;">
                 Send Test Notification
               </button>
+                </div>
+              </details>
             </div>
           </div>
           
@@ -10917,7 +10968,10 @@ class EnergyPanel extends HTMLElement {
         notify_vent_auto: this.shadowRoot.querySelector('#tts-notify-vent-auto')?.checked !== false,
         notify_external_auto: this.shadowRoot.querySelector('#tts-notify-external-auto')?.checked !== false,
         zone_health_check_enabled: this.shadowRoot.querySelector('#tts-zone-health-check')?.checked !== false,
-        zone_health_history_hours: parseInt(this.shadowRoot.querySelector('#zone-health-history-hours')?.value, 10) || 48,
+        zone_health_history_hours: (() => {
+          const zh = parseInt(this.shadowRoot.querySelector('#zone-health-history-hours')?.value, 10);
+          return [24, 48, 72, 96].includes(zh) ? zh : 24;
+        })(),
         zone_health_reminder_hours: Math.max(1, Math.min(24, parseInt(this.shadowRoot.querySelector('#zone-health-reminder-hours')?.value, 10) || 1)),
         zone_health_notification_msg: this.shadowRoot.querySelector('#zone-health-notification-msg')?.value ?? '',
         zone_health_reminder_tts_msg: this.shadowRoot.querySelector('#zone-health-reminder-tts-msg')?.value ?? '',
