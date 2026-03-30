@@ -22,10 +22,19 @@ from .room_ratings import (
     ratings_payload_for_ws,
     ratings_store_path,
     record_dashboard_heartbeat,
+    recompute_room_ratings,
     save_ratings,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _dashboard_ws_user_key(connection: websocket_api.ActiveConnection) -> str:
+    """Stable key for engagement heartbeats (per HA user)."""
+    user = connection.user
+    if user is None:
+        return "anonymous"
+    return str(user.id)
 
 
 def _ws_connection_user_is_admin(connection: websocket_api.ActiveConnection) -> bool:
@@ -190,6 +199,8 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_statistics_sources)
     websocket_api.async_register_command(hass, websocket_get_zone_health_status)
     websocket_api.async_register_command(hass, websocket_refresh_zone_health)
+    websocket_api.async_register_command(hass, websocket_get_room_ratings)
+    websocket_api.async_register_command(hass, websocket_dashboard_heartbeat)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -2700,19 +2711,18 @@ async def websocket_get_room_ratings(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Return cached room efficiency ratings (JSON under config/data, updated hourly)."""
-    domain_data = hass.data.get(DOMAIN) or {}
-    cached = domain_data.get("room_ratings_cache")
-    if isinstance(cached, dict) and cached.get("rooms") is not None:
-        connection.send_result(msg["id"], cached)
+    """Recompute room ratings from current daily history, update cache, return payload."""
+    config_manager = hass.data.get(DOMAIN, {}).get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
         return
 
-    path = ratings_store_path(hass)
+    def _recompute_and_payload() -> dict[str, Any]:
+        full = recompute_room_ratings(hass, config_manager)
+        return ratings_payload_for_ws(full)
 
-    def _load() -> dict[str, Any]:
-        return ratings_payload_for_ws(load_ratings(path))
-
-    payload = await hass.async_add_executor_job(_load)
+    payload = await hass.async_add_executor_job(_recompute_and_payload)
+    hass.data.setdefault(DOMAIN, {})["room_ratings_cache"] = payload
     connection.send_result(msg["id"], payload)
 
 
