@@ -154,6 +154,13 @@ class EnergyPanel extends HTMLElement {
     this._roomIconModalEscapeHandler = null;
     this._presenceLiveLastRun = 0;
     this._presenceLiveThrottleTimer = null;
+    // Zone health data for room card indicators
+    this._zoneHealthData = null;
+    this._zoneHealthRefreshInterval = null;
+    this._zoneHealthIconClickDelegation = false;
+    // Room name cycling (alternates between room name and person location)
+    this._roomNameCycleInterval = null;
+    this._roomNameShowPerson = false;
   }
 
   set hass(hass) {
@@ -173,6 +180,9 @@ class EnergyPanel extends HTMLElement {
   connectedCallback() {
     this._render();
     this._loadConfig();
+    // Start zone health refresh and room name cycling
+    this._startZoneHealthRefresh();
+    this._startRoomNameCycling();
   }
 
   disconnectedCallback() {
@@ -210,6 +220,9 @@ class EnergyPanel extends HTMLElement {
       clearTimeout(this._presenceLiveThrottleTimer);
       this._presenceLiveThrottleTimer = null;
     }
+    // Stop zone health refresh and room name cycling
+    this._stopZoneHealthRefresh();
+    this._stopRoomNameCycling();
     this._teardownBillingBarChartNative();
     this._unsubscribeFromStatisticsUpdates();
   }
@@ -308,17 +321,11 @@ class EnergyPanel extends HTMLElement {
 
   async _loadStatistics() {
     if (!this._hass || this._showSettings) return;
-    
-    // Only show loading if no data exists yet (first load)
-    const isFirstLoad = !this._statsData;
-    if (isFirstLoad) {
-      this._statsLoading = true;
-      this._statsFetchError = null;
-      if (this._dashboardView === 'statistics') {
-        this._render();
-      }
-    }
-    
+
+    // Never block the Statistics UI with a full-screen loader; data comes from JSON or a fast shell.
+    this._statsLoading = false;
+    this._statsFetchError = null;
+
     try {
       const data = await this._hass.callWS({ type: 'smart_dashboards/get_statistics' });
       this._statsData = data;
@@ -1236,6 +1243,13 @@ class EnergyPanel extends HTMLElement {
         color: var(--primary-text-color);
       }
       .statistics-narrowed { font-size: 11px; opacity: 0.9; }
+      .statistics-pending-banner {
+        margin-top: 8px;
+        font-size: 12px;
+        line-height: 1.35;
+        color: var(--primary-color, #03a9f4);
+        opacity: 0.95;
+      }
       .statistics-cards {
         display: block;
         width: 100%;
@@ -1459,6 +1473,26 @@ class EnergyPanel extends HTMLElement {
         flex-shrink: 0;
         --mdc-icon-size: var(--room-card-icon-inner);
         --ha-icon-size: var(--room-card-icon-inner);
+      }
+
+      @keyframes zone-health-pulse {
+        0%, 100% { color: var(--panel-accent, #03a9f4); }
+        50% { color: #ff9800; }
+      }
+
+      .room-icon.zone-health-issue {
+        cursor: pointer;
+      }
+
+      .room-icon.zone-health-issue ha-icon {
+        animation: zone-health-pulse 2s ease-in-out infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .room-icon.zone-health-issue ha-icon {
+          animation: none;
+          color: #ff9800;
+        }
       }
 
       .room-header-title-col {
@@ -4441,6 +4475,85 @@ class EnergyPanel extends HTMLElement {
         transform: scale(0.97);
       }
 
+      /* Zone health popup */
+      .zone-health-popup-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10001;
+        padding: 16px;
+        box-sizing: border-box;
+        animation: fadeIn 0.15s ease;
+      }
+      .zone-health-popup {
+        background: var(--ha-card-background-color, var(--card-background-color, #1e1e1e));
+        color: var(--primary-text-color, #e1e1e1);
+        border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
+        border-radius: 12px;
+        width: 100%;
+        max-width: 420px;
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        animation: scaleIn 0.15s ease;
+        overflow: hidden;
+      }
+      .zone-health-popup-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--divider-color, rgba(255, 255, 255, 0.1));
+      }
+      .zone-health-popup-header h3 {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 600;
+      }
+      .zone-health-popup-body {
+        padding: 16px 20px;
+        overflow-y: auto;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .zone-health-popup-body p {
+        margin: 0 0 8px 0;
+      }
+      .zone-health-popup-fix {
+        margin-top: 16px;
+        padding: 12px;
+        background: rgba(255, 152, 0, 0.08);
+        border-radius: 8px;
+        border: 1px solid rgba(255, 152, 0, 0.2);
+      }
+      .zone-health-popup-fix h4 {
+        margin: 0 0 8px 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: #ff9800;
+      }
+      .zone-health-popup-fix ol {
+        margin: 0;
+        padding-left: 20px;
+        font-size: 12px;
+      }
+      .zone-health-popup-fix li {
+        margin-bottom: 6px;
+      }
+      .zone-health-popup-actions {
+        display: flex;
+        gap: 10px;
+        padding: 12px 20px 16px;
+        border-top: 1px solid var(--divider-color, rgba(255, 255, 255, 0.1));
+      }
+      .zone-health-popup-actions .btn {
+        flex: 1;
+      }
+
       /* Minisplit / AC zone automation safety (non-admin) */
       .ac-safety-overlay {
         position: fixed;
@@ -5146,11 +5259,22 @@ class EnergyPanel extends HTMLElement {
           billingRange?.date_start && billingRange?.date_end
             ? billingRange
             : this._statisticsGraphDateRange();
-        result = await this._hass.callWS({
-          type: 'smart_dashboards/get_daily_history',
-          date_start: br.date_start,
-          date_end: br.date_end,
-        });
+        const s = this._statsData;
+        const dhRange = s?.daily_history_range;
+        const cachedOk =
+          s?.daily_history &&
+          typeof s.daily_history === 'object' &&
+          ((s.date_start === br.date_start && s.date_end === br.date_end) ||
+            (dhRange?.date_start === br.date_start && dhRange?.date_end === br.date_end));
+        if (cachedOk) {
+          result = s.daily_history;
+        } else {
+          result = await this._hass.callWS({
+            type: 'smart_dashboards/get_daily_history',
+            date_start: br.date_start,
+            date_end: br.date_end,
+          });
+        }
         billingRange = br;
       } else if (isIntraday) {
         const payload = { type: 'smart_dashboards/get_intraday_history', minutes: 1440 };
@@ -5716,9 +5840,11 @@ class EnergyPanel extends HTMLElement {
 
     const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
     const showOverlay = this._statsLoading;
-    const staleLine = this._statsFetchedAt
-      ? `Showing last known values · updated ${this._statsDataAgeLabel()} · refreshing in background`
-      : 'Calculating from Home Assistant recorder — this can take a moment.';
+    const staleLine = s.statistics_pending
+      ? 'Full usage totals are building in the background — this page updates automatically when the snapshot is ready.'
+      : this._statsFetchedAt
+        ? `Showing last known values · updated ${this._statsDataAgeLabel()} · refreshing in background`
+        : 'Loading statistics…';
 
     return `
       <div class="statistics-view-shell">
@@ -5737,6 +5863,7 @@ class EnergyPanel extends HTMLElement {
             <span class="statistics-range" id="stat-range-banner">${rangeBanner}</span>
             <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Narrowed to dates you picked.</span>
           </div>
+          ${s.statistics_pending ? `<div class="statistics-pending-banner" id="stat-pending-banner">Full usage totals are building in the background — numbers update automatically when the snapshot is ready.</div>` : ''}
         </div>
         <div class="statistics-cards">
           <div class="statistics-overview-card card">
@@ -6183,15 +6310,26 @@ class EnergyPanel extends HTMLElement {
       : '';
     const roomCardIcon = this._effectiveRoomIcon(room).replace(/"/g, '&quot;');
 
+    const personEnt = (room.presence_person_entity || '').trim();
+    const zoneHealthIssue = personEnt && this._zoneHealthData?.persons?.some(
+      p => p.entity_id === personEnt && !p.is_healthy
+    );
+    const iconClass = `room-icon${zoneHealthIssue ? ' zone-health-issue' : ''}`;
+    const iconDataAttr = personEnt ? ` data-zone-health-person="${personEnt.replace(/"/g, '&quot;')}"` : '';
+    const roomNameEsc = (room.name || '').replace(/</g, '&lt;');
+    const roomNameDataAttrs = personEnt
+      ? ` data-room-name="${roomNameEsc.replace(/"/g, '&quot;')}" data-presence-person="${personEnt.replace(/"/g, '&quot;')}"`
+      : '';
+
     return `
       <div class="room-card" data-room-id="${roomId}">
         <div class="room-header">
           <div class="room-header-row">
-            <div class="room-icon" aria-hidden="true">
+            <div class="${iconClass}"${iconDataAttr} aria-hidden="true">
               <ha-icon icon="${roomCardIcon}"></ha-icon>
             </div>
             <div class="room-header-title-col">
-              <h3 class="room-name">${(room.name || '').replace(/</g, '&lt;')}</h3>
+              <h3 class="room-name"${roomNameDataAttrs}>${roomNameEsc}</h3>
               ${badgesHtml}
             </div>
             <div class="room-budget-lane">
@@ -6959,6 +7097,9 @@ class EnergyPanel extends HTMLElement {
             <button class="settings-tab ${this._settingsTab === 'notifications' ? 'active' : ''}" data-tab="notifications">
               Notifications
             </button>
+            <button class="settings-tab ${this._settingsTab === 'zone-health' ? 'active' : ''}" data-tab="zone-health">
+              Zone Health
+            </button>
             <button class="settings-tab ${this._settingsTab === 'statistics' ? 'active' : ''}" data-tab="statistics">
               Statistics
             </button>
@@ -6994,7 +7135,7 @@ class EnergyPanel extends HTMLElement {
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
                 Customize how alert messages are spoken. All messages are prefixed and can be customized below.
               </p>
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">General</summary>
                 <div class="settings-fold-body">
               <div class="grid-2" style="margin-bottom: 16px;">
@@ -7029,7 +7170,7 @@ class EnergyPanel extends HTMLElement {
               </div>
                 </div>
               </details>
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">Thresholds, budget, and overload</summary>
                 <div class="settings-fold-body">
               <div class="tts-msg-group">
@@ -7120,7 +7261,7 @@ class EnergyPanel extends HTMLElement {
               </div>
                 </div>
               </details>
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">Stove</summary>
                 <div class="settings-fold-body">
               <div class="tts-msg-group">
@@ -7232,7 +7373,7 @@ class EnergyPanel extends HTMLElement {
               </div>
                 </div>
               </details>
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">Vent and heater automation</summary>
                 <div class="settings-fold-body">
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
@@ -7270,7 +7411,7 @@ class EnergyPanel extends HTMLElement {
               </div>
                 </div>
               </details>
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">Power enforcement and daily kWh</summary>
                 <div class="settings-fold-body">
               <div class="tts-msg-group">
@@ -7403,7 +7544,7 @@ class EnergyPanel extends HTMLElement {
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
                 Assign a <strong>Presence person</strong> per room to enable mobile alerts. <strong>Personal</strong> alerts (room budget exceeded, enforcement phase changes, presence-based AC off/on) go only to that room’s person. <strong>Universal</strong> alerts (optional below) go to <em>every</em> person who is set as Presence person on <em>any</em> room when a monitored switch changes from the dashboard, Home Assistant UI, or an automation. Use <strong>Notification title</strong> as <code>{notification_title}</code> in title templates (separate from the TTS message prefix). Delivery uses each person’s <code>notify.mobile_app_*</code> target from devices linked under <strong>Settings → People</strong> (e.g. <code>Brandon’s Iphone</code> → <code>notify.mobile_app_brandons_iphone</code>).
               </p>
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">Global</summary>
                 <div class="settings-fold-body">
               <div class="form-group" style="margin-bottom: 16px;">
@@ -7424,7 +7565,7 @@ class EnergyPanel extends HTMLElement {
               </div>
                 </div>
               </details>
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">Budget exceeded</summary>
                 <div class="settings-fold-body">
               <div class="form-group" style="margin-bottom: 12px;">
@@ -7452,7 +7593,7 @@ class EnergyPanel extends HTMLElement {
               </div>
                 </div>
               </details>
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">Enforcement phase changes</summary>
                 <div class="settings-fold-body">
               <div class="form-group" style="margin-bottom: 12px;">
@@ -7494,7 +7635,7 @@ class EnergyPanel extends HTMLElement {
               </div>
                 </div>
               </details>
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">Air conditioner presence</summary>
                 <div class="settings-fold-body">
               <div class="form-group" style="margin-bottom: 12px;">
@@ -7545,7 +7686,7 @@ class EnergyPanel extends HTMLElement {
               </div>
                 </div>
               </details>
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">Appliance toggles, zone health, and templates</summary>
                 <div class="settings-fold-body">
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
@@ -7723,7 +7864,7 @@ class EnergyPanel extends HTMLElement {
                 </div>
               </details>
 
-              <details class="settings-fold" open>
+              <details class="settings-fold">
                 <summary class="settings-fold-summary">Test notification</summary>
                 <div class="settings-fold-body">
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
@@ -7761,6 +7902,24 @@ class EnergyPanel extends HTMLElement {
               </button>
                 </div>
               </details>
+            </div>
+          </div>
+          
+          <div class="settings-tab-content ${this._settingsTab === 'zone-health' ? 'active' : ''}" id="tab-zone-health">
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Zone Health Tracking</h2>
+              </div>
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
+                Monitor zone-based presence tracking status for all configured persons.
+                Healthy tracking requires seeing both "home" and "away" states within the configured history window.
+              </p>
+              <div id="zone-health-content">
+                <p style="color: var(--secondary-text-color); font-size: 12px;">Loading zone health status...</p>
+              </div>
+              <button type="button" class="btn btn-secondary" id="zone-health-refresh" style="margin-top: 12px;">
+                Refresh Status
+              </button>
             </div>
           </div>
           
@@ -8844,6 +9003,79 @@ class EnergyPanel extends HTMLElement {
     });
   }
 
+  _handleZoneHealthIconClick(e) {
+    const iconEl = e.target.closest('.room-icon.zone-health-issue');
+    if (!iconEl || !this.shadowRoot.contains(iconEl)) return;
+    const personEnt = iconEl.dataset.zoneHealthPerson;
+    if (!personEnt) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const personData = this._zoneHealthData?.persons?.find(p => p.entity_id === personEnt);
+    if (!personData) return;
+    this._showZoneHealthPopup(personData);
+  }
+
+  _showZoneHealthPopup(personData) {
+    const historyHours = this._zoneHealthData?.history_hours || 24;
+    const name = personData.friendly_name || personData.entity_id.replace('person.', '').replace(/_/g, ' ');
+    const escHtml = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'zone-health-popup-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.innerHTML = `
+      <div class="zone-health-popup">
+        <div class="zone-health-popup-header">
+          <svg viewBox="0 0 24 24" style="width: 24px; height: 24px; fill: #ff9800; flex-shrink: 0;">
+            <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+          </svg>
+          <h3>Zone Tracking Issue</h3>
+        </div>
+        <div class="zone-health-popup-body">
+          <p><strong>${escHtml(name)}'s</strong> location tracking isn't set up correctly.</p>
+          <p>The Home Assistant Companion app needs to report both <strong>"home"</strong> and <strong>"away"</strong> states within <strong>${historyHours} hours</strong> for zone-based automations to work properly.</p>
+          <p style="margin-top: 12px; color: var(--secondary-text-color); font-size: 12px;">
+            Current state: <strong>${escHtml(personData.current_state)}</strong><br>
+            Last home: ${personData.last_home ? new Date(personData.last_home).toLocaleString() : 'Never'}<br>
+            Last away: ${personData.last_not_home ? new Date(personData.last_not_home).toLocaleString() : 'Never'}
+          </p>
+          <div class="zone-health-popup-fix">
+            <h4>How to fix:</h4>
+            <ol>
+              <li>Open the <strong>Home Assistant Companion</strong> app on ${escHtml(name)}'s phone</li>
+              <li>Go to <strong>Settings → Companion App → Location</strong></li>
+              <li>Enable location tracking with <strong>"Full"</strong> accuracy</li>
+              <li>Ensure <strong>"Background App Refresh"</strong> is enabled in system settings</li>
+              <li>Move between home and away to trigger state updates</li>
+            </ol>
+          </div>
+        </div>
+        <div class="zone-health-popup-actions">
+          <button class="btn btn-primary zone-health-go-settings">Open Zone Health Settings</button>
+          <button class="btn btn-secondary zone-health-close">Close</button>
+        </div>
+      </div>
+    `;
+
+    const cleanup = () => {
+      overlay.remove();
+    };
+
+    overlay.querySelector('.zone-health-close').addEventListener('click', cleanup);
+    overlay.querySelector('.zone-health-go-settings').addEventListener('click', () => {
+      cleanup();
+      this._showSettings = true;
+      this._settingsTab = 'zone-health';
+      this._render();
+    });
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) cleanup();
+    });
+
+    this.shadowRoot.appendChild(overlay);
+  }
+
   async _sendTestNotification() {
     const personSelect = this.shadowRoot.querySelector('#notify-test-person');
     const typeSelect = this.shadowRoot.querySelector('#notify-test-type');
@@ -8865,6 +9097,186 @@ class EnergyPanel extends HTMLElement {
     } catch (err) {
       showToast(this.shadowRoot, `Failed to send notification: ${err.message || err}`, 'error');
     }
+  }
+
+  async _loadZoneHealthStatus(updateUiContent = true) {
+    const contentEl = this.shadowRoot.querySelector('#zone-health-content');
+    if (updateUiContent && contentEl) {
+      contentEl.innerHTML = '<p style="color: var(--secondary-text-color); font-size: 12px;">Loading...</p>';
+    }
+    try {
+      const data = await this._hass.callWS({ type: 'smart_dashboards/get_zone_health_status' });
+      this._zoneHealthData = data;
+      if (updateUiContent && contentEl) {
+        this._renderZoneHealthStatus(data);
+      }
+      this._updateRoomCardZoneHealthIndicators();
+    } catch (err) {
+      if (updateUiContent && contentEl) {
+        contentEl.innerHTML = `<p style="color: var(--error-color, #f44336);">Error loading zone health: ${err.message || err}</p>`;
+      }
+    }
+  }
+
+  _startZoneHealthRefresh() {
+    if (this._zoneHealthRefreshInterval) return;
+    this._loadZoneHealthStatus(false);
+    this._zoneHealthRefreshInterval = setInterval(() => {
+      this._loadZoneHealthStatus(false);
+    }, 60000);
+  }
+
+  _stopZoneHealthRefresh() {
+    if (this._zoneHealthRefreshInterval) {
+      clearInterval(this._zoneHealthRefreshInterval);
+      this._zoneHealthRefreshInterval = null;
+    }
+  }
+
+  _startRoomNameCycling() {
+    if (this._roomNameCycleInterval) return;
+    this._roomNameCycleInterval = setInterval(() => {
+      this._cycleRoomNames();
+    }, 5000);
+  }
+
+  _stopRoomNameCycling() {
+    if (this._roomNameCycleInterval) {
+      clearInterval(this._roomNameCycleInterval);
+      this._roomNameCycleInterval = null;
+    }
+  }
+
+  _cycleRoomNames() {
+    if (this._showSettings) return;
+    this._roomNameShowPerson = !this._roomNameShowPerson;
+    this.shadowRoot.querySelectorAll('.room-name[data-presence-person]').forEach(el => {
+      const roomName = el.dataset.roomName || '';
+      const personEnt = el.dataset.presencePerson || '';
+      if (this._roomNameShowPerson && personEnt) {
+        const personState = this._hass?.states?.[personEnt];
+        if (personState) {
+          const name = personState.attributes?.friendly_name || personEnt.replace('person.', '').replace(/_/g, ' ');
+          const location = this._formatPresenceLocationDisplay(personState);
+          el.textContent = `${name} is ${location}`;
+        }
+      } else {
+        el.textContent = roomName;
+      }
+    });
+  }
+
+  _updateRoomCardZoneHealthIndicators() {
+    if (!this._zoneHealthData?.persons) return;
+    const unhealthyPersons = new Set(
+      this._zoneHealthData.persons.filter(p => !p.is_healthy).map(p => p.entity_id)
+    );
+    this.shadowRoot.querySelectorAll('.room-icon[data-zone-health-person]').forEach(el => {
+      const personEnt = el.dataset.zoneHealthPerson;
+      if (unhealthyPersons.has(personEnt)) {
+        el.classList.add('zone-health-issue');
+      } else {
+        el.classList.remove('zone-health-issue');
+      }
+    });
+  }
+
+  _renderZoneHealthStatus(data) {
+    const contentEl = this.shadowRoot.querySelector('#zone-health-content');
+    if (!contentEl) return;
+    const { persons = [], event_log = [], history_hours = 24 } = data;
+    if (persons.length === 0) {
+      contentEl.innerHTML = `
+        <p style="color: var(--secondary-text-color); font-size: 12px;">
+          No persons are configured for presence tracking. Assign a <strong>Presence person</strong> to rooms to enable zone health monitoring.
+        </p>`;
+      return;
+    }
+    const formatTime = (iso) => {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    };
+    const personsHtml = persons.map(p => {
+      const statusColor = p.is_healthy ? 'var(--success-color, #4caf50)' : 'var(--error-color, #f44336)';
+      const statusText = p.is_healthy ? 'Healthy' : 'Unhealthy';
+      const alertBadge = p.is_alerted ? '<span style="background: var(--warning-color, #ff9800); color: #000; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;">ALERTED</span>' : '';
+      return `
+        <tr>
+          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
+            <strong>${p.friendly_name}</strong>
+            <div style="font-size: 10px; color: var(--secondary-text-color);">${p.entity_id}</div>
+          </td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); text-transform: capitalize;">${p.current_state}</td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
+            <span style="color: ${statusColor}; font-weight: 500;">${statusText}</span>${alertBadge}
+          </td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px;">${formatTime(p.last_home)}</td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px;">${formatTime(p.last_not_home)}</td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px;">${formatTime(p.last_alert_time)}</td>
+        </tr>`;
+    }).join('');
+    const eventsHtml = event_log.length === 0
+      ? '<p style="color: var(--secondary-text-color); font-size: 12px;">No zone health events recorded yet.</p>'
+      : `<table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+          <thead>
+            <tr style="text-align: left;">
+              <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Time</th>
+              <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Person</th>
+              <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Event</th>
+              <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${event_log.slice().reverse().slice(0, 50).map(e => {
+              const eventLabel = {
+                push_sent: 'Push Sent',
+                tts_sent: 'TTS Sent',
+                tts_failed: 'TTS Failed',
+                tts_skipped: 'TTS Skipped',
+                recovered: 'Recovered',
+              }[e.event] || e.event;
+              const eventColor = e.event === 'recovered' ? 'var(--success-color, #4caf50)'
+                : e.event.includes('failed') || e.event.includes('skipped') ? 'var(--error-color, #f44336)'
+                : 'var(--primary-text-color)';
+              return `
+                <tr>
+                  <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">${formatTime(e.ts)}</td>
+                  <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">${e.person_name || e.person_entity || '?'}</td>
+                  <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); color: ${eventColor};">${eventLabel}</td>
+                  <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${e.message || ''}</td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>`;
+    contentEl.innerHTML = `
+      <div style="margin-bottom: 16px;">
+        <h3 style="margin: 0 0 8px 0; font-size: 14px;">Person Status</h3>
+        <p style="font-size: 11px; color: var(--secondary-text-color); margin-bottom: 8px;">
+          History window: <strong>${history_hours} hours</strong>. Healthy = both "home" and "away" seen in this window.
+        </p>
+        <div style="overflow-x: auto;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            <thead>
+              <tr style="text-align: left;">
+                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Person</th>
+                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Current</th>
+                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Health</th>
+                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Last Home</th>
+                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Last Away</th>
+                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Last Alert</th>
+              </tr>
+            </thead>
+            <tbody>${personsHtml}</tbody>
+          </table>
+        </div>
+      </div>
+      <details class="settings-fold">
+        <summary class="settings-fold-summary">Event Log (${event_log.length} events)</summary>
+        <div class="settings-fold-body" style="padding-top: 12px;">
+          ${eventsHtml}
+        </div>
+      </details>`;
   }
 
   _renderRoomSettings(room, index, mediaPlayers, powerSensors) {
@@ -9742,6 +10154,11 @@ class EnergyPanel extends HTMLElement {
       this.shadowRoot.addEventListener('click', (e) => this._handleApplianceToggleClick(e));
     }
 
+    if (!this._zoneHealthIconClickDelegation) {
+      this._zoneHealthIconClickDelegation = true;
+      this.shadowRoot.addEventListener('click', (e) => this._handleZoneHealthIconClick(e));
+    }
+
     if (!this._statPieBillingDelegation) {
       this._statPieBillingDelegation = true;
       this.shadowRoot.addEventListener('click', (e) => {
@@ -9945,6 +10362,11 @@ class EnergyPanel extends HTMLElement {
         this.shadowRoot.querySelectorAll('.settings-tab-content').forEach(content => {
           content.classList.toggle('active', content.id === `tab-${tabId}`);
         });
+
+        // Load zone health data when that tab becomes active
+        if (tabId === 'zone-health') {
+          this._loadZoneHealthStatus();
+        }
       });
     });
 
@@ -9952,6 +10374,16 @@ class EnergyPanel extends HTMLElement {
     const notifyTestBtn = this.shadowRoot.querySelector('#notify-send-test');
     if (notifyTestBtn) {
       notifyTestBtn.addEventListener('click', () => this._sendTestNotification());
+    }
+
+    // Zone health refresh button
+    const zoneHealthRefreshBtn = this.shadowRoot.querySelector('#zone-health-refresh');
+    if (zoneHealthRefreshBtn) {
+      zoneHealthRefreshBtn.addEventListener('click', () => this._loadZoneHealthStatus());
+    }
+    // Auto-load zone health when tab is visible
+    if (this._settingsTab === 'zone-health') {
+      this._loadZoneHealthStatus();
     }
 
     // Integration automation sub-toggles visibility

@@ -154,6 +154,8 @@ class EnergyMonitor:
         self._person_zone_health_alerted: set[str] = set()
         self._person_zone_health_listener_unsub: list = []
         self._person_zone_hourly_reminder_last: dict[str, datetime] = {}
+        # Zone health event log for UI display (recent alerts/TTS/recoveries)
+        self._zone_health_event_log: deque = deque(maxlen=100)
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -265,6 +267,46 @@ class EnergyMonitor:
         states = self._get_person_zone_states_in_window(person_ent, history_hours)
         return "home" in states and "not_home" in states
 
+    def get_zone_health_status(self) -> dict:
+        """Return zone health status for all configured persons (for WebSocket API)."""
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        history_hours = int(tts_settings.get("zone_health_history_hours", 24) or 24)
+        all_persons = self._distinct_presence_person_entity_ids()
+        persons_data = []
+        for person_ent in all_persons:
+            ps = self.hass.states.get(person_ent)
+            current_state = (ps.state if ps else "unknown") or "unknown"
+            name = self._get_person_friendly_name(person_ent)
+            is_healthy = self._is_person_zone_setup_healthy(person_ent)
+            is_alerted = person_ent in self._person_zone_health_alerted
+            last_alert = self._person_zone_hourly_reminder_last.get(person_ent)
+            history = list(self._person_zone_state_history.get(person_ent, []))
+            last_home = None
+            last_not_home = None
+            for ts, state in reversed(history):
+                if state == "home" and not last_home:
+                    last_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                if state == "not_home" and not last_not_home:
+                    last_not_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                if last_home and last_not_home:
+                    break
+            persons_data.append({
+                "entity_id": person_ent,
+                "friendly_name": name,
+                "current_state": current_state,
+                "is_healthy": is_healthy,
+                "is_alerted": is_alerted,
+                "last_home": last_home,
+                "last_not_home": last_not_home,
+                "last_alert_time": last_alert.isoformat() if last_alert else None,
+            })
+        event_log = list(self._zone_health_event_log)
+        return {
+            "history_hours": history_hours,
+            "persons": persons_data,
+            "event_log": event_log,
+        }
+
     def _get_person_friendly_name(self, person_ent: str) -> str:
         """Get friendly name for a person entity."""
         ps = self.hass.states.get(person_ent)
@@ -324,6 +366,7 @@ class EnergyMonitor:
                 "Zone health: %s tracking healthy (home and away seen in window)",
                 person_ent,
             )
+            self._log_zone_health_event(person_ent, name, "recovered", "Home and away both reporting")
             await self._async_speak_zone_health_tts(
                 person_ent,
                 f"{name}, your location tracking looks good. Home and away are both reporting.",
@@ -332,6 +375,8 @@ class EnergyMonitor:
     async def _async_speak_zone_health_tts(self, person_ent: str, message: str) -> None:
         """Speak a zone health TTS message to a room media player or default TTS player."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        name = self._get_person_friendly_name(person_ent)
+        tts_sent = False
         for room in self.config_manager.energy_config.get("rooms", []):
             if room.get("presence_person_entity") == person_ent:
                 media_player = (room.get("media_player") or "").strip()
@@ -347,8 +392,11 @@ class EnergyMonitor:
                             tts_settings=tts_settings,
                             room=room,
                         )
+                        tts_sent = True
+                        self._log_zone_health_event(person_ent, name, "tts_sent", message)
                     except Exception as e:
                         _LOGGER.warning("Zone health TTS failed: %s", e)
+                        self._log_zone_health_event(person_ent, name, "tts_failed", str(e))
                     return
         default_mp = str(tts_settings.get("tts_default_media_player") or "").strip()
         if default_mp.startswith("media_player."):
@@ -363,8 +411,14 @@ class EnergyMonitor:
                     tts_settings=tts_settings,
                     room=None,
                 )
+                tts_sent = True
+                self._log_zone_health_event(person_ent, name, "tts_sent", message)
             except Exception as e:
                 _LOGGER.warning("Zone health TTS (default player) failed: %s", e)
+                self._log_zone_health_event(person_ent, name, "tts_failed", str(e))
+        if not tts_sent and not default_mp:
+            _LOGGER.warning("Zone health TTS skipped: no media player configured for %s", person_ent)
+            self._log_zone_health_event(person_ent, name, "tts_skipped", "No media player configured")
 
     async def _async_tick_zone_health_check(self, now: datetime) -> None:
         """Detect unhealthy zone tracking; repeat TTS/push spaced by zone_health_reminder_hours."""
@@ -389,6 +443,15 @@ class EnergyMonitor:
                     person_ent,
                     history_hours,
                 )
+                first_msg_template = str(
+                    tts_settings.get(
+                        "zone_health_notification_msg",
+                        "Hi {name}, your Home Assistant Companion app location doesn't appear to be set up correctly.",
+                    )
+                    or "Hi {name}, your zone tracking setup needs attention."
+                )
+                first_msg = first_msg_template.replace("{name}", name)
+                await self._async_speak_zone_health_tts(person_ent, first_msg)
                 await self._send_zone_health_push_notification(person_ent, name)
             else:
                 last_reminder = self._person_zone_hourly_reminder_last.get(person_ent)
@@ -405,6 +468,19 @@ class EnergyMonitor:
                     await self._async_speak_zone_health_tts(person_ent, msg)
                     await self._send_zone_health_push_notification(person_ent, name)
 
+    def _log_zone_health_event(
+        self, person_ent: str, name: str, event_type: str, message: str = ""
+    ) -> None:
+        """Log a zone health event for UI display."""
+        from homeassistant.util import dt as dt_util
+        self._zone_health_event_log.append({
+            "ts": dt_util.now().isoformat(),
+            "person_entity": person_ent,
+            "person_name": name,
+            "event": event_type,
+            "message": message,
+        })
+
     async def _send_zone_health_push_notification(self, person_ent: str, name: str) -> None:
         """Send push notification about zone tracking not working."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
@@ -418,6 +494,7 @@ class EnergyMonitor:
         )
         message = msg_template.replace("{name}", name)
         await self._async_send_mobile_notification_to_person(person_ent, title, message)
+        self._log_zone_health_event(person_ent, name, "push_sent", message)
 
     def _heater_door_window_blocks(self, outlet: dict) -> str | None:
         """Return 'door' or 'window' if sensor is open, else None."""
@@ -527,7 +604,7 @@ class EnergyMonitor:
         return str(mult).rstrip("0").rstrip(".")
 
     def _budget_boost_slots_path(self) -> str:
-        return self.hass.config.path("smart_dashboards_budget_boost_slots.json")
+        return self.config_manager._data_path("budget_boost_slots.json")
 
     async def _async_load_budget_boost_slots(self) -> None:
         path = self._budget_boost_slots_path()

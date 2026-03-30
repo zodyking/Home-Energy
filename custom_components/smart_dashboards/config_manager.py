@@ -220,7 +220,8 @@ class ConfigManager:
         """Initialize the config manager."""
         self.hass = hass
         self._config: dict[str, Any] = deepcopy(DEFAULT_CONFIG)
-        self._config_path = hass.config.path(CONFIG_FILE)
+        self._data_dir = os.path.join(os.path.dirname(__file__), "data")
+        self._config_path = self._data_path("config.json")
         self._day_energy_data: dict[str, dict[str, float]] = {}
         self._last_reset_date: str | None = None
         self._event_counts_reset_date: str | None = None
@@ -256,6 +257,17 @@ class ConfigManager:
         self._event_archive_days: dict[str, list[dict[str, Any]]] = {}
         # Statistics cache: pre-computed statistics for instant page load
         self._statistics_cache_data: dict[str, Any] = {}
+
+    def _ensure_data_dir(self) -> str:
+        """Ensure data directory exists and return its path."""
+        if not os.path.exists(self._data_dir):
+            os.makedirs(self._data_dir, exist_ok=True)
+        return self._data_dir
+
+    def _data_path(self, filename: str) -> str:
+        """Return full path for a data file in the integration data directory."""
+        self._ensure_data_dir()
+        return os.path.join(self._data_dir, filename)
 
     @property
     def config(self) -> dict[str, Any]:
@@ -388,8 +400,38 @@ class ConfigManager:
         )
         return (base, eff)
 
+    async def _migrate_data_files(self) -> None:
+        """Move data files from config root to integration data directory."""
+        import shutil
+        migrations = [
+            ("smart_dashboards.json", "config.json"),
+            ("smart_dashboards_energy_tracking.json", "energy_tracking.json"),
+            ("smart_dashboards_event_counts.json", "event_counts.json"),
+            ("smart_dashboards_event_log.json", "event_log.json"),
+            ("smart_dashboards_event_archive.json", "event_archive.json"),
+            ("smart_dashboards_daily_totals.json", "daily_totals.json"),
+            ("smart_dashboards_statistics_cache.json", "statistics_cache.json"),
+            ("smart_dashboards_billing_history.json", "billing_history.json"),
+            ("smart_dashboards_enforcement_state.json", "enforcement_state.json"),
+            ("smart_dashboards_intraday_history.json", "intraday_history.json"),
+            ("smart_dashboards_budget_boost_slots.json", "budget_boost_slots.json"),
+        ]
+        self._ensure_data_dir()
+        for old_name, new_name in migrations:
+            old_path = self.hass.config.path(old_name)
+            new_path = self._data_path(new_name)
+            if os.path.exists(old_path) and not os.path.exists(new_path):
+                try:
+                    await self.hass.async_add_executor_job(shutil.move, old_path, new_path)
+                    _LOGGER.info("Migrated %s to data/%s", old_name, new_name)
+                except Exception as err:
+                    _LOGGER.warning("Failed to migrate %s: %s", old_name, err)
+
     async def async_load(self) -> None:
         """Load configuration from file."""
+        # Migrate old data files from config root to integration data directory
+        await self._migrate_data_files()
+
         try:
             loaded_config = await self.hass.async_add_executor_job(
                 _load_json_file, self._config_path
@@ -1114,17 +1156,15 @@ class ConfigManager:
                     default_tts.get("notify_integration_auto", True),
                 )
             ),
-            "notify_heater_auto": bool(
-                tts.get(
-                    "notify_heater_auto",
-                    tts.get("notify_integration_auto", default_tts.get("notify_heater_auto", True)),
-                )
+            "notify_heater_auto": (
+                bool(tts.get("notify_heater_auto"))
+                if "notify_heater_auto" in tts
+                else bool(tts.get("notify_integration_auto", True))
             ),
-            "notify_vent_auto": bool(
-                tts.get(
-                    "notify_vent_auto",
-                    tts.get("notify_integration_auto", default_tts.get("notify_vent_auto", True)),
-                )
+            "notify_vent_auto": (
+                bool(tts.get("notify_vent_auto"))
+                if "notify_vent_auto" in tts
+                else bool(tts.get("notify_integration_auto", True))
             ),
             "notify_external_auto": bool(
                 tts.get(
@@ -1369,7 +1409,7 @@ class ConfigManager:
     # Day energy tracking
     async def _async_load_energy_tracking(self) -> None:
         """Load day energy tracking data."""
-        tracking_path = self.hass.config.path("smart_dashboards_energy_tracking.json")
+        tracking_path = self._data_path("energy_tracking.json")
         try:
             data = await self.hass.async_add_executor_job(
                 _load_json_file, tracking_path
@@ -1396,7 +1436,7 @@ class ConfigManager:
 
     async def _async_save_energy_tracking(self) -> None:
         """Save day energy tracking data."""
-        tracking_path = self.hass.config.path("smart_dashboards_energy_tracking.json")
+        tracking_path = self._data_path("energy_tracking.json")
         payload = {
             "last_reset_date": self._last_reset_date,
             "outlets": self._day_energy_data,
@@ -1579,7 +1619,7 @@ class ConfigManager:
 
     async def _async_load_event_counts(self) -> None:
         """Load event counts (warnings and shutoffs). Reset if new day."""
-        counts_path = self.hass.config.path("smart_dashboards_event_counts.json")
+        counts_path = self._data_path("event_counts.json")
         try:
             data = await self.hass.async_add_executor_job(
                 _load_json_file, counts_path
@@ -1602,7 +1642,7 @@ class ConfigManager:
 
     async def _async_save_event_counts(self) -> None:
         """Save event counts with current date."""
-        counts_path = self.hass.config.path("smart_dashboards_event_counts.json")
+        counts_path = self._data_path("event_counts.json")
         payload = {
             "last_reset_date": self._event_counts_reset_date or dt_util.now().strftime("%Y-%m-%d"),
             "total_warnings": self._event_counts.get("total_warnings", 0),
@@ -1665,15 +1705,15 @@ class ConfigManager:
         return self._event_counts.copy()
 
     # Event log (24h warnings/shutoffs with TTS success/fail)
-    EVENT_LOG_FILE = "smart_dashboards_event_log.json"
-    EVENT_ARCHIVE_FILE = "smart_dashboards_event_archive.json"
+    EVENT_LOG_FILE = "event_log.json"
+    EVENT_ARCHIVE_FILE = "event_archive.json"
     EVENT_ARCHIVE_RETENTION_DAYS = 120
     EVENT_ARCHIVE_MAX_PER_DAY = 2000
     EVENT_LOG_API_MAX_ENTRIES = 5000
 
     async def _async_load_event_log(self) -> None:
         """Load event log from file."""
-        path = self.hass.config.path(self.EVENT_LOG_FILE)
+        path = self._data_path(self.EVENT_LOG_FILE)
         try:
             data = await self.hass.async_add_executor_job(_load_json_file, path)
             self._event_log = data.get("events", []) if data else []
@@ -1682,7 +1722,7 @@ class ConfigManager:
 
     async def _async_save_event_log(self) -> None:
         """Save event log to file (keep last N entries)."""
-        path = self.hass.config.path(self.EVENT_LOG_FILE)
+        path = self._data_path(self.EVENT_LOG_FILE)
         payload = {"events": self._event_log[-self._event_log_max_entries :]}
         try:
             await self.hass.async_add_executor_job(_write_json_file, path, payload)
@@ -1708,7 +1748,7 @@ class ConfigManager:
 
     async def _async_load_event_archive(self) -> None:
         """Load per-day event archive; merge rolling log for same-day recovery."""
-        path = self.hass.config.path(self.EVENT_ARCHIVE_FILE)
+        path = self._data_path(self.EVENT_ARCHIVE_FILE)
         try:
             data = await self.hass.async_add_executor_job(_load_json_file, path)
             raw = (data or {}).get("days") or {}
@@ -1733,7 +1773,7 @@ class ConfigManager:
     async def _async_save_event_archive(self) -> None:
         """Persist event archive after pruning old days."""
         self._prune_event_archive_days()
-        path = self.hass.config.path(self.EVENT_ARCHIVE_FILE)
+        path = self._data_path(self.EVENT_ARCHIVE_FILE)
         try:
             await self.hass.async_add_executor_job(
                 _write_json_file, path, {"days": self._event_archive_days}
@@ -1873,7 +1913,7 @@ class ConfigManager:
     # Daily totals history (end-of-day snapshots for 30-day graphs)
     async def _async_load_daily_totals(self) -> None:
         """Load daily totals history from file."""
-        path = self.hass.config.path("smart_dashboards_daily_totals.json")
+        path = self._data_path("daily_totals.json")
         try:
             data = await self.hass.async_add_executor_job(_load_json_file, path)
             self._daily_totals = data.get("days", {}) if data else {}
@@ -1886,7 +1926,7 @@ class ConfigManager:
         if len(dates_sorted) > 45:
             for d in dates_sorted[45:]:
                 del self._daily_totals[d]
-        path = self.hass.config.path("smart_dashboards_daily_totals.json")
+        path = self._data_path("daily_totals.json")
         try:
             await self.hass.async_add_executor_job(
                 _write_json_file, path, {"days": self._daily_totals}
@@ -1896,7 +1936,7 @@ class ConfigManager:
 
     async def _async_load_statistics_cache(self) -> None:
         """Load pre-computed statistics cache from file for instant page load."""
-        path = self.hass.config.path("smart_dashboards_statistics_cache.json")
+        path = self._data_path("statistics_cache.json")
         try:
             data = await self.hass.async_add_executor_job(_load_json_file, path)
             self._statistics_cache_data = data if data else {}
@@ -1906,7 +1946,7 @@ class ConfigManager:
     async def async_save_statistics_cache(self, data: dict[str, Any]) -> None:
         """Save pre-computed statistics to file for instant page load."""
         self._statistics_cache_data = data
-        path = self.hass.config.path("smart_dashboards_statistics_cache.json")
+        path = self._data_path("statistics_cache.json")
         try:
             await self.hass.async_add_executor_job(_write_json_file, path, data)
         except IOError as err:
@@ -2132,7 +2172,7 @@ class ConfigManager:
     # Billing history (for new-cycle alerts)
     async def _async_load_billing_history(self) -> None:
         """Load billing history from file."""
-        path = self.hass.config.path("smart_dashboards_billing_history.json")
+        path = self._data_path("billing_history.json")
         try:
             data = await self.hass.async_add_executor_job(_load_json_file, path)
             if data:
@@ -2146,7 +2186,7 @@ class ConfigManager:
 
     async def _async_save_billing_history(self) -> None:
         """Save billing history to file."""
-        path = self.hass.config.path("smart_dashboards_billing_history.json")
+        path = self._data_path("billing_history.json")
         try:
             await self.hass.async_add_executor_job(
                 _write_json_file, path, self._billing_history
@@ -2441,7 +2481,7 @@ class ConfigManager:
     # Enforcement state persistence
     async def _async_load_enforcement_state(self) -> None:
         """Load enforcement state from file."""
-        path = self.hass.config.path("smart_dashboards_enforcement_state.json")
+        path = self._data_path("enforcement_state.json")
         try:
             data = await self.hass.async_add_executor_job(_load_json_file, path)
             if data is not None:
@@ -2455,7 +2495,7 @@ class ConfigManager:
 
     async def _async_save_enforcement_state(self) -> None:
         """Save enforcement state to file."""
-        path = self.hass.config.path("smart_dashboards_enforcement_state.json")
+        path = self._data_path("enforcement_state.json")
         payload = {
             "reset_date": self._enforcement_reset_date,
             "rooms": self._enforcement_state,
@@ -2469,7 +2509,7 @@ class ConfigManager:
     # Intraday history persistence
     async def _async_load_intraday_history(self) -> None:
         """Load intraday power history from file."""
-        path = self.hass.config.path("smart_dashboards_intraday_history.json")
+        path = self._data_path("intraday_history.json")
         try:
             data = await self.hass.async_add_executor_job(_load_json_file, path)
             if data is not None:
@@ -2488,7 +2528,7 @@ class ConfigManager:
 
     async def _async_save_intraday_history(self) -> None:
         """Save intraday power history to file."""
-        path = self.hass.config.path("smart_dashboards_intraday_history.json")
+        path = self._data_path("intraday_history.json")
         today = dt_util.now().strftime("%Y-%m-%d")
         payload = {
             "date": today,

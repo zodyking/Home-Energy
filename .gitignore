@@ -56,6 +56,5 @@ htmlcov/
 secrets.yaml
 .HA_VERSION
 
-# Runtime data
-smart_dashboards.json
-smart_dashboards_energy_tracking.json
+# Integration data files (user-specific, not tracked)
+custom_components/smart_dashboards/data/*.json
