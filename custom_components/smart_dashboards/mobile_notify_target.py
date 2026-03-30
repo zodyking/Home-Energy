@@ -1,13 +1,30 @@
-"""Resolve notify.mobile_app_* service suffix from a Home Assistant person entity."""
+"""Resolve mobile_app notify target from a Home Assistant person entity.
+
+Supports three resolution strategies:
+1. Legacy service: notify.mobile_app_<device_tracker_suffix>
+2. Slugified friendly_name: notify.mobile_app_<slugified_friendly_name>
+3. Registry-based: enumerate notify entities sharing device with person's tracker(s)
+"""
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import re
 import unicodedata
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er, device_registry as dr
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class NotifyTarget:
+    """Result of notify resolution: how to send a push to one person."""
+
+    mode: str  # "legacy_service" | "notify_send"
+    service_name: str | None = None  # e.g. "mobile_app_brandons_iphone" for legacy
+    entity_id: str | None = None  # e.g. "notify.mobile_app_brandons_iphone" for notify.send
 
 
 def slugify_device_name_for_mobile_app(name: str) -> str:
@@ -21,37 +38,34 @@ def slugify_device_name_for_mobile_app(name: str) -> str:
 
 
 def _notify_slug_registered(hass: HomeAssistant, slug: str) -> bool:
+    """True when notify.mobile_app_<slug> is a registered service."""
     return bool(slug) and hass.services.has_service("notify", f"mobile_app_{slug}")
 
 
-def resolve_mobile_app_notify_slug(hass: HomeAssistant, person_entity_id: str) -> str | None:
-    """Pick notify.mobile_app_<slug> for a person using linked device_tracker entities.
-
-    Uses each tracker's entity_id suffix first (matches Companion app + HA naming), then
-    slugified friendly_name of that tracker. Does not use the person's own name/username.
-    """
+def _get_person_trackers(hass: HomeAssistant, person_entity_id: str) -> list[str]:
+    """Return device_tracker.* entity ids linked to a person."""
     state = hass.states.get(person_entity_id)
     if not state:
-        return None
-
+        return []
     raw = state.attributes.get("device_trackers")
     if raw is None:
-        trackers: list[str] = []
-    elif isinstance(raw, str):
-        trackers = [raw] if raw.strip() else []
-    else:
-        try:
-            trackers = [str(t).strip() for t in raw if str(t).strip()]
-        except TypeError:
-            trackers = []
+        return []
+    if isinstance(raw, str):
+        return [raw.strip()] if raw.strip() else []
+    try:
+        return [str(t).strip() for t in raw if str(t).strip()]
+    except TypeError:
+        return []
 
+
+def _find_legacy_slug(hass: HomeAssistant, trackers: list[str]) -> str | None:
+    """Try tracker entity id suffix then slugified friendly_name, return first working slug."""
     for tid in trackers:
         if not tid.startswith("device_tracker."):
             continue
         slug = tid.split(".", 1)[1].lower()
         if _notify_slug_registered(hass, slug):
             return slug
-
     for tid in trackers:
         if not tid.startswith("device_tracker."):
             continue
@@ -59,23 +73,97 @@ def resolve_mobile_app_notify_slug(hass: HomeAssistant, person_entity_id: str) -
         if not ts:
             continue
         fn = ts.attributes.get("friendly_name")
-        if not fn:
-            continue
-        slug = slugify_device_name_for_mobile_app(str(fn))
-        if _notify_slug_registered(hass, slug):
-            return slug
+        if fn:
+            slug = slugify_device_name_for_mobile_app(str(fn))
+            if _notify_slug_registered(hass, slug):
+                return slug
+    return None
 
+
+def _find_notify_entity_via_registry(hass: HomeAssistant, trackers: list[str]) -> str | None:
+    """Use entity/device registries to find a notify.* entity on the same device as a tracker."""
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    device_ids: set[str] = set()
+    for tid in trackers:
+        if not tid.startswith("device_tracker."):
+            continue
+        entry = ent_reg.async_get(tid)
+        if entry and entry.device_id:
+            device_ids.add(entry.device_id)
+    if not device_ids:
+        return None
+    # Scan for notify entities linked to same device(s)
+    for entry in ent_reg.entities.values():
+        if entry.domain != "notify":
+            continue
+        if entry.device_id and entry.device_id in device_ids:
+            # Prefer mobile_app flavors
+            if "mobile_app" in entry.entity_id:
+                return entry.entity_id
+    # Second pass: any notify entity
+    for entry in ent_reg.entities.values():
+        if entry.domain != "notify":
+            continue
+        if entry.device_id and entry.device_id in device_ids:
+            return entry.entity_id
+    return None
+
+
+def resolve_notify_target(hass: HomeAssistant, person_entity_id: str) -> NotifyTarget | None:
+    """Return the best NotifyTarget for a person or None if unavailable.
+
+    Tries:
+    1. Legacy notify.mobile_app_<slug> service
+    2. Entity-based notify if HA exposes notify.send service
+    """
+    trackers = _get_person_trackers(hass, person_entity_id)
+    # 1. Legacy service path
+    slug = _find_legacy_slug(hass, trackers)
+    if slug:
+        return NotifyTarget(mode="legacy_service", service_name=f"mobile_app_{slug}")
+
+    # 2. Entity-based fallback via registry
+    entity_id = _find_notify_entity_via_registry(hass, trackers)
+    if entity_id and hass.services.has_service("notify", "send_message"):
+        return NotifyTarget(mode="notify_send", entity_id=entity_id)
+
+    # Log diagnostic info
+    candidate = entity_id or "(none found via registry)"
+    has_send = hass.services.has_service("notify", "send_message")
     if trackers:
         _LOGGER.warning(
-            "No notify.mobile_app_* service found for %s (device_trackers=%s). "
+            "No notify target resolved for %s (trackers=%s, registry_candidate=%s, notify.send_message=%s). "
             "Link the phone in Settings → People and ensure the Companion app is registered.",
             person_entity_id,
             trackers,
+            candidate,
+            has_send,
         )
     else:
         _LOGGER.warning(
             "No device_trackers on %s; cannot resolve mobile_app notify target. "
             "Link a device in Settings → People.",
             person_entity_id,
+        )
+    return None
+
+
+def resolve_mobile_app_notify_slug(hass: HomeAssistant, person_entity_id: str) -> str | None:
+    """Legacy helper: return slug for notify.mobile_app_<slug> or None.
+
+    Kept for backward compatibility; callers wanting full resolution should use
+    resolve_notify_target() instead.
+    """
+    trackers = _get_person_trackers(hass, person_entity_id)
+    slug = _find_legacy_slug(hass, trackers)
+    if slug:
+        return slug
+    # Log once
+    if trackers:
+        _LOGGER.debug(
+            "Legacy resolve_mobile_app_notify_slug returned None for %s (trackers=%s).",
+            person_entity_id,
+            trackers,
         )
     return None

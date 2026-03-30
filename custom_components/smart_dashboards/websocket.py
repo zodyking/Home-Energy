@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from .config_manager import vent_like_energy_tracking_key
 from .const import DEFAULT_NOTIFICATION_TITLE, DOMAIN
-from .mobile_notify_target import resolve_mobile_app_notify_slug
+from .mobile_notify_target import resolve_notify_target
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -182,6 +182,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_clear_statistics_cache)
     websocket_api.async_register_command(hass, websocket_get_statistics_sources)
     websocket_api.async_register_command(hass, websocket_get_zone_health_status)
+    websocket_api.async_register_command(hass, websocket_refresh_zone_health)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -2550,28 +2551,38 @@ async def websocket_send_test_notification(
         title = f"{notification_title} Test Notification"
         message = "This is a test notification from Smart Dashboards."
 
-    slug = resolve_mobile_app_notify_slug(hass, target_person)
-    if not slug:
+    target = resolve_notify_target(hass, target_person)
+    if not target:
         connection.send_error(
             msg["id"],
             "no_notify_target",
-            "Could not find notify.mobile_app_* for this person. Link a phone under "
+            "Could not find a notify target for this person. Link a phone under "
             "Settings → People (device must appear under the person), and ensure the "
             "Home Assistant Companion app is logged in.",
         )
         return
-    notify_target = f"mobile_app_{slug}"
 
     try:
-        await hass.services.async_call(
-            "notify",
-            notify_target,
-            {"title": title, "message": message},
-            blocking=False,
-        )
-        connection.send_result(msg["id"], {"success": True, "target": notify_target})
+        if target.mode == "legacy_service" and target.service_name:
+            await hass.services.async_call(
+                "notify",
+                target.service_name,
+                {"title": title, "message": message},
+                blocking=False,
+            )
+            connection.send_result(msg["id"], {"success": True, "target": target.service_name})
+        elif target.mode == "notify_send" and target.entity_id:
+            await hass.services.async_call(
+                "notify",
+                "send_message",
+                {"entity_id": target.entity_id, "title": title, "message": message},
+                blocking=False,
+            )
+            connection.send_result(msg["id"], {"success": True, "target": target.entity_id})
+        else:
+            connection.send_error(msg["id"], "unknown_mode", f"Unknown notify mode: {target.mode}")
     except Exception as e:
-        _LOGGER.warning("Failed to send test notification to %s: %s", notify_target, e)
+        _LOGGER.warning("Failed to send test notification via %s: %s", target, e)
         connection.send_error(msg["id"], "send_failed", f"Failed to send notification: {e}")
 
 
@@ -2647,4 +2658,22 @@ async def websocket_get_zone_health_status(
         connection.send_error(msg["id"], "not_ready", "Energy monitor not initialized")
         return
     status = energy_monitor.get_zone_health_status()
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "smart_dashboards/refresh_zone_health"}
+)
+@websocket_api.async_response
+async def websocket_refresh_zone_health(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Force recorder refresh for all persons + device_trackers and re-run zone health logic."""
+    energy_monitor = hass.data[DOMAIN].get("energy_monitor")
+    if not energy_monitor:
+        connection.send_error(msg["id"], "not_ready", "Energy monitor not initialized")
+        return
+    status = await energy_monitor.async_force_zone_health_refresh()
     connection.send_result(msg["id"], status)

@@ -47,7 +47,7 @@ from .const import (
     DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG,
     DEFAULT_NOTIFICATION_TITLE,
 )
-from .mobile_notify_target import resolve_mobile_app_notify_slug
+from .mobile_notify_target import resolve_notify_target
 from .tts_helper import async_send_tts
 from .tts_queue import async_send_tts_or_queue
 from .tts_numbers import spoken_cardinal
@@ -158,9 +158,14 @@ class EnergyMonitor:
         self._zone_health_event_log: deque = deque(maxlen=100)
         # Zone health recorder-backed history (refreshed periodically)
         self._zone_health_recorder_cache: dict[str, set[str]] = {}
+        self._zone_health_recorder_meta: dict[str, dict[str, str | None]] = {}
         self._zone_health_recorder_last_refresh: datetime | None = None
-        self._zone_health_recorder_refresh_interval = timedelta(minutes=15)
+        # Recorder queries are heavy; automatic refresh at most this often. Real-time path uses
+        # person + linked device_tracker state listeners; "Refresh Status" forces an immediate pull.
+        self._zone_health_recorder_refresh_interval = timedelta(hours=1)
         self._zone_health_tts_lock = asyncio.Lock()
+        # "Nearby" zone guidance: track whether we've already created/dismissed the persistent_notification
+        self._nearby_zone_notification_shown: bool = False
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -265,11 +270,20 @@ class EnergyMonitor:
                 return True
         return False
 
+    @staticmethod
+    def _normalize_zone_health_state(state: str) -> str:
+        """Normalize HA person / device_tracker states for health history (union of sources)."""
+        s = (state or "").strip().lower()
+        if s == "away":
+            return "not_home"
+        return s
+
     def _record_person_zone_state(self, person_ent: str, state: str, now: datetime) -> None:
         """Record a person's zone state in history (48-hour rolling window)."""
+        norm = self._normalize_zone_health_state(state)
         if person_ent not in self._person_zone_state_history:
             self._person_zone_state_history[person_ent] = deque(maxlen=2880)
-        self._person_zone_state_history[person_ent].append((now, state))
+        self._person_zone_state_history[person_ent].append((now, norm))
 
     def _get_person_zone_states_in_window(self, person_ent: str, hours: int = 48) -> set[str]:
         """Get unique zone states for a person within the specified time window (in-memory only)."""
@@ -298,14 +312,15 @@ class EnergyMonitor:
         except TypeError:
             return []
 
-    async def _async_refresh_zone_health_recorder_cache(self) -> None:
+    async def _async_refresh_zone_health_recorder_cache(self, force: bool = False) -> None:
         """Fetch zone states from recorder for all persons + their device_trackers.
 
         Populates ``_zone_health_recorder_cache`` with a set of lowercased states per person.
-        Throttled to run at most every ``_zone_health_recorder_refresh_interval``.
+        Throttled to run at most every ``_zone_health_recorder_refresh_interval`` unless
+        ``force`` is True (used by the dashboard "Refresh Status" action).
         """
         now = dt_util.now()
-        if (
+        if not force and (
             self._zone_health_recorder_last_refresh
             and (now - self._zone_health_recorder_last_refresh) < self._zone_health_recorder_refresh_interval
         ):
@@ -331,6 +346,8 @@ class EnergyMonitor:
         for person_ent in all_persons:
             entity_ids = [person_ent] + self._get_person_linked_device_trackers(person_ent)
             states_union: set[str] = set()
+            last_home_dt: datetime | None = None
+            last_away_dt: datetime | None = None
             try:
                 with session_scope(hass=self.hass, read_only=True) as session:
                     states_dict = get_significant_states_with_session(
@@ -353,9 +370,23 @@ class EnergyMonitor:
                             if state_lower == "away":
                                 state_lower = "not_home"
                             states_union.add(state_lower)
+                            lc = getattr(st, "last_changed", None) or getattr(
+                                st, "last_updated", None
+                            )
+                            if lc is not None:
+                                if state_lower == "home":
+                                    if last_home_dt is None or lc > last_home_dt:
+                                        last_home_dt = lc
+                                elif state_lower == "not_home":
+                                    if last_away_dt is None or lc > last_away_dt:
+                                        last_away_dt = lc
             except Exception as e:
                 _LOGGER.warning("Zone health recorder fetch failed for %s: %s", person_ent, e)
             self._zone_health_recorder_cache[person_ent] = states_union
+            self._zone_health_recorder_meta[person_ent] = {
+                "last_home": last_home_dt.isoformat() if last_home_dt else None,
+                "last_not_home": last_away_dt.isoformat() if last_away_dt else None,
+            }
 
         self._zone_health_recorder_last_refresh = now
         _LOGGER.debug(
@@ -387,22 +418,27 @@ class EnergyMonitor:
             ps = self.hass.states.get(person_ent)
             current_state = (ps.state if ps else "unknown") or "unknown"
             name = self._get_person_friendly_name(person_ent)
+            trackers = self._get_person_linked_device_trackers(person_ent)
             is_healthy = self._is_person_zone_setup_healthy(person_ent)
             is_alerted = person_ent in self._person_zone_health_alerted
             last_alert = self._person_zone_hourly_reminder_last.get(person_ent)
             history = list(self._person_zone_state_history.get(person_ent, []))
-            last_home = None
-            last_not_home = None
+            mem_last_home = None
+            mem_last_not_home = None
             for ts, state in reversed(history):
-                if state == "home" and not last_home:
-                    last_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
-                if state == "not_home" and not last_not_home:
-                    last_not_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
-                if last_home and last_not_home:
+                if state == "home" and not mem_last_home:
+                    mem_last_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                if state == "not_home" and not mem_last_not_home:
+                    mem_last_not_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                if mem_last_home and mem_last_not_home:
                     break
+            meta = self._zone_health_recorder_meta.get(person_ent) or {}
+            last_home = meta.get("last_home") or mem_last_home
+            last_not_home = meta.get("last_not_home") or mem_last_not_home
             persons_data.append({
                 "entity_id": person_ent,
                 "friendly_name": name,
+                "device_trackers": trackers,
                 "current_state": current_state,
                 "is_healthy": is_healthy,
                 "is_alerted": is_alerted,
@@ -415,7 +451,18 @@ class EnergyMonitor:
             "history_hours": history_hours,
             "persons": persons_data,
             "event_log": event_log,
+            "recorder_refreshed_at": (
+                self._zone_health_recorder_last_refresh.isoformat()
+                if self._zone_health_recorder_last_refresh
+                else None
+            ),
         }
+
+    async def async_force_zone_health_refresh(self) -> dict:
+        """Re-query recorder for all persons + device_trackers, then run one health evaluation tick."""
+        await self._async_refresh_zone_health_recorder_cache(force=True)
+        await self._async_tick_zone_health_check(dt_util.now())
+        return self.get_zone_health_status()
 
     def _get_person_friendly_name(self, person_ent: str) -> str:
         """Get friendly name for a person entity."""
@@ -443,8 +490,9 @@ class EnergyMonitor:
             state_val = (new_state.state or "").strip().lower()
             now = dt_util.now()
             self._record_person_zone_state(entity_id, state_val, now)
+            norm = self._normalize_zone_health_state(state_val)
             self.hass.async_create_task(
-                self._async_handle_zone_health_state_change(entity_id, state_val, now)
+                self._async_handle_zone_health_state_change(entity_id, norm, now)
             )
 
         unsub = async_track_state_change_event(
@@ -452,11 +500,42 @@ class EnergyMonitor:
         )
         self._person_zone_health_listener_unsub.append(unsub)
 
+        tracker_owner: dict[str, str] = {}
+        for person_ent in all_persons:
+            for tid in self._get_person_linked_device_trackers(person_ent):
+                if tid.startswith("device_tracker.") and tid not in tracker_owner:
+                    tracker_owner[tid] = person_ent
+
+        @callback
+        def _on_tracker_state_change(event: Event) -> None:
+            entity_id = event.data.get("entity_id", "")
+            new_state = event.data.get("new_state")
+            person_ent = tracker_owner.get(entity_id)
+            if not person_ent or not new_state:
+                return
+            state_val = (new_state.state or "").strip().lower()
+            now = dt_util.now()
+            self._record_person_zone_state(person_ent, state_val, now)
+            norm = self._normalize_zone_health_state(state_val)
+            self.hass.async_create_task(
+                self._async_handle_zone_health_state_change(person_ent, norm, now)
+            )
+
+        if tracker_owner:
+            unsub_tr = async_track_state_change_event(
+                self.hass, list(tracker_owner.keys()), _on_tracker_state_change
+            )
+            self._person_zone_health_listener_unsub.append(unsub_tr)
+
         now = dt_util.now()
         for person_ent in all_persons:
             ps = self.hass.states.get(person_ent)
             if ps:
-                self._record_person_zone_state(person_ent, (ps.state or "").lower(), now)
+                self._record_person_zone_state(person_ent, ps.state or "", now)
+            for tid in self._get_person_linked_device_trackers(person_ent):
+                ts = self.hass.states.get(tid)
+                if ts and ts.state:
+                    self._record_person_zone_state(person_ent, ts.state or "", now)
 
     async def _async_handle_zone_health_state_change(
         self, person_ent: str, new_state: str, now: datetime
@@ -539,8 +618,63 @@ class EnergyMonitor:
             _LOGGER.warning("Zone health TTS skipped: no media player configured for %s", person_ent)
             self._log_zone_health_event(person_ent, name, "tts_skipped", "No media player configured")
 
+    def _nearby_zone_exists(self) -> bool:
+        """True if a zone named 'Nearby' (entity_id or friendly_name) exists."""
+        for eid in self.hass.states.async_entity_ids("zone"):
+            if eid == "zone.nearby":
+                return True
+            zs = self.hass.states.get(eid)
+            if zs:
+                fn = str(zs.attributes.get("friendly_name") or "").strip()
+                if fn.lower() == "nearby":
+                    return True
+        return False
+
+    async def _check_nearby_zone_notification(self) -> None:
+        """Show or dismiss a persistent_notification about the missing Nearby zone."""
+        notification_id = "smart_dashboards_nearby_zone_missing"
+        exists = self._nearby_zone_exists()
+        if exists:
+            if self._nearby_zone_notification_shown:
+                try:
+                    await self.hass.services.async_call(
+                        "persistent_notification",
+                        "dismiss",
+                        {"notification_id": notification_id},
+                        blocking=False,
+                    )
+                except Exception:
+                    pass
+                self._nearby_zone_notification_shown = False
+        else:
+            if not self._nearby_zone_notification_shown:
+                try:
+                    await self.hass.services.async_call(
+                        "persistent_notification",
+                        "create",
+                        {
+                            "notification_id": notification_id,
+                            "title": "Home Energy: Nearby zone not found",
+                            "message": (
+                                "Zone-based automations (e.g., AC presence) use a **Nearby** zone to detect when "
+                                "someone is close to home but not inside. To enable this feature, create a zone "
+                                "named **Nearby** with a radius of approximately **1 mile (1609 m)** centered on your home.\n\n"
+                                "Go to **Settings → Areas & zones → Zones** → **Add Zone**, set the name to `Nearby`, "
+                                "place the marker on your home address, and set the radius to ~1609 m.\n\n"
+                                "This notification will auto-dismiss once the zone is created."
+                            ),
+                        },
+                        blocking=False,
+                    )
+                    self._nearby_zone_notification_shown = True
+                except Exception as e:
+                    _LOGGER.warning("Failed to create Nearby zone persistent notification: %s", e)
+
     async def _async_tick_zone_health_check(self, now: datetime) -> None:
         """Detect unhealthy zone tracking; repeat TTS/push spaced by zone_health_reminder_hours."""
+        # Check Nearby zone existence once per pass
+        await self._check_nearby_zone_notification()
+
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if not tts_settings.get("zone_health_check_enabled", True):
             return
@@ -1309,31 +1443,54 @@ class EnergyMonitor:
     ) -> bool:
         """Deliver a formatted push to one person's mobile_app notify target.
 
+        Supports:
+        1. Legacy notify.mobile_app_<slug> service
+        2. Entity-based notify.send_message with entity_id
+
         Returns True if notification was sent, False if no target could be resolved.
         """
-        slug = resolve_mobile_app_notify_slug(self.hass, person_ent)
-        if not slug:
+        target = resolve_notify_target(self.hass, person_ent)
+        if not target:
             _LOGGER.warning(
-                "Cannot send push to %s: no mobile_app slug resolved. "
+                "Cannot send push to %s: no mobile_app notify target resolved. "
                 "Ensure a phone is linked under Settings → People and the Companion app is registered.",
                 person_ent,
             )
             return False
-        notify_target = f"mobile_app_{slug}"
+
         try:
-            await self.hass.services.async_call(
-                "notify",
-                notify_target,
-                {"title": title, "message": message},
-                blocking=False,
-            )
-            _LOGGER.debug(
-                "Sent notification to %s: %s - %s", notify_target, title, message
-            )
+            if target.mode == "legacy_service" and target.service_name:
+                await self.hass.services.async_call(
+                    "notify",
+                    target.service_name,
+                    {"title": title, "message": message},
+                    blocking=False,
+                )
+                _LOGGER.debug(
+                    "Sent notification via %s: %s - %s", target.service_name, title, message
+                )
+            elif target.mode == "notify_send" and target.entity_id:
+                await self.hass.services.async_call(
+                    "notify",
+                    "send_message",
+                    {"entity_id": target.entity_id, "title": title, "message": message},
+                    blocking=False,
+                )
+                _LOGGER.debug(
+                    "Sent notification via notify.send_message (entity=%s): %s - %s",
+                    target.entity_id,
+                    title,
+                    message,
+                )
+            else:
+                _LOGGER.warning(
+                    "Unknown notify target mode for %s: %s", person_ent, target
+                )
+                return False
             return True
         except Exception as e:
             _LOGGER.warning(
-                "Failed to send notification to %s: %s", notify_target, e
+                "Failed to send notification to %s (target=%s): %s", person_ent, target, e
             )
             return False
 
