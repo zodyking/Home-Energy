@@ -504,7 +504,7 @@ class EnergyPanel extends HTMLElement {
           return `
           <tr>
             <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
-            <td>${(r.kwh ?? 0).toFixed(2)}</td>
+            <td>${(r.kwh ?? 0).toFixed(2)} kWh</td>
             <td>${(r.pct ?? 0).toFixed(1)}%</td>
             <td>${warnCell}</td>
             <td>${shutCell}</td>
@@ -1294,6 +1294,12 @@ class EnergyPanel extends HTMLElement {
         margin: 10px 0 0;
         line-height: 1.35;
         opacity: 0.92;
+      }
+      .sensor-diagnostic {
+        font-size: 10px;
+        color: var(--warning-color, #f0a30a);
+        font-weight: 400;
+        margin-left: 4px;
       }
       .statistics-card-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--primary-text-color); }
       .statistics-card-sub { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--panel-accent); margin: 0 0 8px; }
@@ -5846,12 +5852,23 @@ class EnergyPanel extends HTMLElement {
     const rooms = s.rooms || [];
     const roomsPieView = this._statsRoomsView === 'pie';
     const sensorMeta = s.sensor_meta || {};
+    const sensorStates = sensorMeta.sensor_states || {};
     const showSupplier = this._statisticsSupplierConfigured();
     const supplierUpdLine = sensorMeta.supplier_last_updated
       ? `Bill cycle usage last changed · ${this._formatSupplierLastUpdated(sensorMeta.supplier_last_updated)}`
       : 'Configure supplier sensors in Settings to show live utility reads.';
 
     const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
+    const sensorDiagnostic = (key, parsedVal) => {
+      if (parsedVal != null) return '';
+      const info = sensorStates[key];
+      if (!info) return '';
+      if (!info.entity) return '<span class="sensor-diagnostic">(not configured)</span>';
+      if (info.raw === 'entity_not_found') return '<span class="sensor-diagnostic">(entity not found)</span>';
+      if (info.raw === 'unknown' || info.raw === 'unavailable') return `<span class="sensor-diagnostic">(${info.raw})</span>`;
+      if (info.raw) return `<span class="sensor-diagnostic">(raw: ${String(info.raw).replace(/</g, '&lt;').substring(0, 20)})</span>`;
+      return '<span class="sensor-diagnostic">(empty)</span>';
+    };
     const showOverlay = this._statsLoading;
     const staleLine = s.statistics_pending
       ? 'Full usage totals are building in the background — this page updates automatically when the snapshot is ready.'
@@ -5887,16 +5904,16 @@ class EnergyPanel extends HTMLElement {
                 <h3 class="statistics-card-title">Utility read</h3>
                 <div class="statistics-kpi-big">
                   <span class="lbl">So far <span style="font-weight:500;opacity:0.85">(bill cycle)</span></span>
-                  <span class="val"><span id="stat-current-usage">${fmt(currentUsage)}</span> <span style="font-size:0.55em;font-weight:600;opacity:0.85">kWh</span></span>
+                  <span class="val"><span id="stat-current-usage">${fmt(currentUsage)}</span> <span style="font-size:0.55em;font-weight:600;opacity:0.85">kWh</span> ${sensorDiagnostic('current_usage', currentUsage)}</span>
                 </div>
                 <div class="statistics-totals-grid">
                   <div class="statistics-total-item">
                     <span class="statistics-total-label">Estimate end <span style="font-weight:500;opacity:0.8;font-size:10px">(cycle)</span></span>
-                    <span class="statistics-total-value" id="stat-projected-usage">${fmt(projectedUsage)} kWh</span>
+                    <span class="statistics-total-value" id="stat-projected-usage">${fmt(projectedUsage)} kWh ${sensorDiagnostic('projected_usage', projectedUsage)}</span>
                   </div>
                   <div class="statistics-total-item">
                     <span class="statistics-total-label">$/kWh</span>
-                    <span class="statistics-total-value" id="stat-kwh-cost">$${fmt(kwhCost)}</span>
+                    <span class="statistics-total-value" id="stat-kwh-cost">$${fmt(kwhCost)} ${sensorDiagnostic('kwh_cost', kwhCost)}</span>
                   </div>
                 </div>
                 <p class="statistics-supplier-updated" id="stat-supplier-updated">${supplierUpdLine.replace(/</g, '&lt;')}</p>
@@ -5924,7 +5941,6 @@ class EnergyPanel extends HTMLElement {
                 </div>
                 <div class="statistics-chart-actions">
                   ${dateStart && dateEnd ? `<button type="button" class="btn-stat-chart" id="stat-chart-billing-home" title="Daily kWh per day for the date range at the top">Open usage graph (whole home)</button>` : ''}
-                  <button type="button" class="btn-stat-chart btn-stat-refresh" id="stat-refresh-cache" title="Clear cache and recalculate all statistics from Home Assistant recorder">Refresh Statistics</button>
                 </div>
               </div>
             </div>
@@ -5984,7 +6000,7 @@ class EnergyPanel extends HTMLElement {
                   return `
                   <tr>
                     <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
-                    <td>${(r.kwh ?? 0).toFixed(2)}</td>
+                    <td>${(r.kwh ?? 0).toFixed(2)} kWh</td>
                     <td>${(r.pct ?? 0).toFixed(1)}%</td>
                     <td>${warnCell}</td>
                     <td>${shutCell}</td>
@@ -7741,6 +7757,16 @@ class EnergyPanel extends HTMLElement {
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
                 Control which appliance on/off changes trigger notifications.
               </p>
+              <div class="form-group" style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-zone-health-check" ${ttsSettings.zone_health_check_enabled !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Zone tracking health check (TTS + push when setup looks wrong)</span>
+                </div>
+                <p style="color: var(--secondary-text-color); font-size: 10px; margin: 4px 0 0 0;">Settings for this feature are on the <strong>Zone Health</strong> tab.</p>
+              </div>
               <div class="form-group" style="margin-bottom: 8px;">
                 <div class="toggle-row">
                   <label class="toggle-switch">
@@ -7919,28 +7945,19 @@ class EnergyPanel extends HTMLElement {
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
                 Monitor zone-based presence tracking for each room’s <strong>Presence person</strong>. History uses the
                 <strong>person entity</strong> plus linked <strong>device_tracker</strong> entities (Companion app) from recorder data.
-                Healthy means both <code>home</code> and <code>away</code> (<code>not_home</code>) appeared within the window.
+                Healthy means <code>home</code>, <code>nearby</code>, and <code>away</code> all appeared within the window.
               </p>
               <details class="settings-fold" style="margin-bottom: 16px;">
                 <summary class="settings-fold-summary">Zone health settings</summary>
                 <div class="settings-fold-body">
                   <div class="form-group" style="margin-bottom: 12px;">
-                    <div class="toggle-row">
-                      <label class="toggle-switch">
-                        <input type="checkbox" id="tts-zone-health-check" ${ttsSettings.zone_health_check_enabled !== false ? 'checked' : ''} />
-                        <span class="toggle-slider"></span>
-                      </label>
-                      <span class="toggle-label">Enable zone tracking health check (TTS + push when setup looks wrong)</span>
-                    </div>
-                  </div>
-                  <div class="form-group" style="margin-bottom: 12px;">
                     <label class="form-label">Check history window</label>
-                    <select class="form-input" id="zone-health-history-hours" style="max-width: 200px;">
-                      <option value="24" ${(() => { let z = Number(ttsSettings.zone_health_history_hours); if (!Number.isFinite(z)) z = 24; if (z === 96) z = 72; if (![24, 48, 72].includes(z)) z = 24; return z === 24 ? 'selected' : ''; })()}>1 day</option>
-                      <option value="48" ${(() => { let z = Number(ttsSettings.zone_health_history_hours); if (!Number.isFinite(z)) z = 24; if (z === 96) z = 72; if (![24, 48, 72].includes(z)) z = 24; return z === 48 ? 'selected' : ''; })()}>2 days</option>
-                      <option value="72" ${(() => { let z = Number(ttsSettings.zone_health_history_hours); if (!Number.isFinite(z)) z = 24; if (z === 96) z = 72; if (![24, 48, 72].includes(z)) z = 24; return z === 72 ? 'selected' : ''; })()}>3 days</option>
+                    <select class="form-input" id="zone-health-history-days" style="max-width: 200px;">
+                      <option value="1" ${(() => { let d = Number(ttsSettings.zone_health_history_days); if (!Number.isFinite(d) || d < 1 || d > 3) d = 3; return d === 1 ? 'selected' : ''; })()}>1 day</option>
+                      <option value="2" ${(() => { let d = Number(ttsSettings.zone_health_history_days); if (!Number.isFinite(d) || d < 1 || d > 3) d = 3; return d === 2 ? 'selected' : ''; })()}>2 days</option>
+                      <option value="3" ${(() => { let d = Number(ttsSettings.zone_health_history_days); if (!Number.isFinite(d) || d < 1 || d > 3) d = 3; return d === 3 ? 'selected' : ''; })()}>3 days</option>
                     </select>
-                    <div class="tts-msg-desc" style="margin-top: 4px;">Alert if <strong>both</strong> home and away are not seen on the person or their linked device trackers within this window.</div>
+                    <div class="tts-msg-desc" style="margin-top: 4px;">Alert if <strong>home</strong>, <strong>nearby</strong>, and <strong>away</strong> are not all seen on the person or their linked device trackers within this window.</div>
                   </div>
                   <div class="form-group" style="margin-bottom: 8px;">
                     <label class="form-label">Reminder frequency (hours)</label>
@@ -7950,7 +7967,7 @@ class EnergyPanel extends HTMLElement {
                     <div class="tts-msg-desc" style="margin-top: 4px;">Hours between repeat TTS and push reminders (1–24). First alert is immediate.</div>
                   </div>
                   <p style="color: var(--secondary-text-color); font-size: 10px; font-style: italic; margin: 0;">
-                    Message templates: <strong>TTS Settings</strong> tab → Zone Health TTS.
+                    Enable/disable the health check on the <strong>Notifications</strong> tab. Message templates: <strong>TTS Settings</strong> tab → Zone Health TTS.
                   </p>
                 </div>
               </details>
@@ -8011,6 +8028,14 @@ class EnergyPanel extends HTMLElement {
                     </p>
                   </div>
                 </div>
+              </div>
+              <div style="margin-top: 16px;">
+                <button type="button" class="btn btn-secondary" id="stat-refresh-cache" title="Clear cache and recalculate all statistics from Home Assistant recorder">
+                  Refresh Statistics
+                </button>
+                <p style="color: var(--secondary-text-color); font-size: 10px; margin: 8px 0 0;">
+                  Clears the statistics cache and forces a full recalculation from Home Assistant's recorder. Use this after changing sensor settings.
+                </p>
               </div>
             </div>
           </div>
@@ -9056,9 +9081,16 @@ class EnergyPanel extends HTMLElement {
   }
 
   _showZoneHealthPopup(personData) {
-    const historyHours = this._zoneHealthData?.history_hours || 24;
+    const historyDays = this._zoneHealthData?.history_days || 3;
+    const windowLabel = historyDays === 1 ? '1 day' : `${historyDays} days`;
     const name = personData.friendly_name || personData.entity_id.replace('person.', '').replace(/_/g, ' ');
     const escHtml = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const checkIcon = '<span style="color: var(--success-color, #4caf50); font-size: 16px;">&#10003;</span>';
+    const xIcon = '<span style="color: var(--error-color, #f44336); font-size: 16px;">&#10007;</span>';
+    const formatTime = (iso) => iso ? new Date(iso).toLocaleString() : 'Not seen in window';
+    const homeIcon = personData.seen_home ? checkIcon : xIcon;
+    const nearbyIcon = personData.seen_nearby ? checkIcon : xIcon;
+    const awayIcon = personData.seen_away ? checkIcon : xIcon;
 
     let currentStep = 0;
     const steps = [
@@ -9066,11 +9098,26 @@ class EnergyPanel extends HTMLElement {
         title: 'Zone Tracking Issue',
         content: `
           <p><strong>${escHtml(name)}'s</strong> location tracking isn't set up correctly.</p>
-          <p>The Home Assistant Companion app needs to report both <strong>"home"</strong> and <strong>"away"</strong> states within <strong>${historyHours} hours</strong> for zone-based automations to work properly.</p>
+          <p>The Home Assistant Companion app needs to report <strong>home</strong>, <strong>nearby</strong>, and <strong>away</strong> states within the last <strong>${windowLabel}</strong> for zone-based automations to work properly.</p>
+          <table style="margin-top: 12px; border-collapse: collapse; width: 100%;">
+            <tr>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">${homeIcon}</td>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));"><strong>Home</strong></td>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; color: var(--secondary-text-color);">${formatTime(personData.last_home)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">${nearbyIcon}</td>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));"><strong>Nearby</strong></td>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; color: var(--secondary-text-color);">${formatTime(personData.last_nearby)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 8px;">${awayIcon}</td>
+              <td style="padding: 6px 8px;"><strong>Away</strong></td>
+              <td style="padding: 6px 8px; font-size: 11px; color: var(--secondary-text-color);">${formatTime(personData.last_not_home)}</td>
+            </tr>
+          </table>
           <p style="margin-top: 12px; color: var(--secondary-text-color); font-size: 12px;">
-            Current state: <strong>${escHtml(personData.current_state)}</strong><br>
-            Last home: ${personData.last_home ? new Date(personData.last_home).toLocaleString() : 'Never'}<br>
-            Last away: ${personData.last_not_home ? new Date(personData.last_not_home).toLocaleString() : 'Never'}
+            Current state: <strong>${escHtml(personData.current_state)}</strong>
           </p>
         `,
       },
@@ -9136,13 +9183,14 @@ class EnergyPanel extends HTMLElement {
           <p>Once configured, <strong>test</strong> the setup:</p>
           <div class="zone-health-popup-fix">
             <ol>
-              <li>Leave your home zone and wait a minute</li>
+              <li>Leave your home zone completely and wait a minute</li>
               <li>Check that the person's state changes to <strong>"away"</strong> or <strong>"not_home"</strong></li>
-              <li>Return home and verify the state becomes <strong>"home"</strong></li>
+              <li>Return toward home and verify the state becomes <strong>"nearby"</strong> when approaching</li>
+              <li>Enter home and verify the state becomes <strong>"home"</strong></li>
             </ol>
           </div>
           <p style="margin-top: 12px; color: var(--secondary-text-color); font-size: 12px;">
-            After both states are reported, the zone health alert will clear automatically (within ${historyHours} hours).
+            After all three states are reported, the zone health alert will clear automatically (within ${windowLabel}).
           </p>
         `,
       },
@@ -9308,7 +9356,7 @@ class EnergyPanel extends HTMLElement {
   _renderZoneHealthStatus(data) {
     const contentEl = this.shadowRoot.querySelector('#zone-health-content');
     if (!contentEl) return;
-    const { persons = [], event_log = [], history_hours = 24, recorder_refreshed_at = null } = data;
+    const { persons = [], event_log = [], history_days = 3, recorder_refreshed_at = null } = data;
     if (persons.length === 0) {
       contentEl.innerHTML = `
         <p style="color: var(--secondary-text-color); font-size: 12px;">
@@ -9321,10 +9369,12 @@ class EnergyPanel extends HTMLElement {
       const d = new Date(iso);
       return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     };
-    const windowLabel = history_hours === 48 ? '2 days' : history_hours === 72 ? '3 days' : '1 day';
+    const windowLabel = history_days === 1 ? '1 day' : `${history_days} days`;
     const refreshedLine = recorder_refreshed_at
       ? `<p style="font-size: 10px; color: var(--secondary-text-color); margin: 0 0 8px 0;">Last recorder pull: ${new Date(recorder_refreshed_at).toLocaleString()}</p>`
       : '';
+    const checkIcon = '<span style="color: var(--success-color, #4caf50);">&#10003;</span>';
+    const xIcon = '<span style="color: var(--error-color, #f44336);">&#10007;</span>';
     const personsHtml = persons.map(p => {
       const statusColor = p.is_healthy ? 'var(--success-color, #4caf50)' : 'var(--error-color, #f44336)';
       const statusText = p.is_healthy ? 'Healthy' : 'Unhealthy';
@@ -9333,6 +9383,9 @@ class EnergyPanel extends HTMLElement {
       const trackersLine = trackers.length
         ? `<div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Trackers: ${trackers.map(t => `<code style="font-size: 9px;">${String(t).replace(/</g, '&lt;')}</code>`).join(', ')}</div>`
         : '<div style="font-size: 10px; color: var(--warning-color, #ff9800); margin-top: 4px;">No linked device_tracker on person — link the Companion device under People.</div>';
+      const homeCheck = p.seen_home ? checkIcon : xIcon;
+      const nearbyCheck = p.seen_nearby ? checkIcon : xIcon;
+      const awayCheck = p.seen_away ? checkIcon : xIcon;
       return `
         <tr>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
@@ -9344,8 +9397,9 @@ class EnergyPanel extends HTMLElement {
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
             <span style="color: ${statusColor}; font-weight: 500;">${statusText}</span>${alertBadge}
           </td>
-          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px;">${formatTime(p.last_home)}</td>
-          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px;">${formatTime(p.last_not_home)}</td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; text-align: center;">${homeCheck}<div style="font-size: 10px; color: var(--secondary-text-color);">${formatTime(p.last_home)}</div></td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; text-align: center;">${nearbyCheck}<div style="font-size: 10px; color: var(--secondary-text-color);">${formatTime(p.last_nearby)}</div></td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; text-align: center;">${awayCheck}<div style="font-size: 10px; color: var(--secondary-text-color);">${formatTime(p.last_not_home)}</div></td>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px;">${formatTime(p.last_alert_time)}</td>
         </tr>`;
     }).join('');
@@ -9387,7 +9441,7 @@ class EnergyPanel extends HTMLElement {
         <h3 style="margin: 0 0 8px 0; font-size: 14px;">Person Status</h3>
         ${refreshedLine}
         <p style="font-size: 11px; color: var(--secondary-text-color); margin-bottom: 8px;">
-          History window: <strong>${windowLabel}</strong> (${history_hours} h). Healthy = both <code>home</code> and <code>away</code> (<code>not_home</code>) seen on person or linked trackers in this window.
+          History window: <strong>${windowLabel}</strong>. Healthy = <code>home</code>, <code>nearby</code>, and <code>away</code> all seen on person or linked trackers in this window.
         </p>
         <div style="overflow-x: auto;">
           <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
@@ -9396,8 +9450,9 @@ class EnergyPanel extends HTMLElement {
                 <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Person</th>
                 <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Current</th>
                 <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Health</th>
-                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Last Home</th>
-                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Last Away</th>
+                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2)); text-align: center;">Home</th>
+                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2)); text-align: center;">Nearby</th>
+                <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2)); text-align: center;">Away</th>
                 <th style="padding: 8px; border-bottom: 2px solid var(--divider-color, rgba(255,255,255,0.2));">Last Alert</th>
               </tr>
             </thead>
@@ -9637,7 +9692,7 @@ class EnergyPanel extends HTMLElement {
                 <label class="form-label">How to measure power</label>
                 <select class="form-input light-power-source">
                   <option value="configured" ${lightPowerSource === 'configured' ? 'selected' : ''}>Configured wattage (per light below)</option>
-                  <option value="sensor" ${lightPowerSource === 'sensor' ? 'selected' : ''}>Power sensor (when switch is on)</option>
+                  <option value="sensor" ${lightPowerSource === 'sensor' ? 'selected' : ''}>Power sensor</option>
                 </select>
                 <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Sensor mode uses one entity for live watts (like outlets). Mapped lights below stay available for WRGB responsive warnings.</div>
               </div>
@@ -9998,7 +10053,7 @@ class EnergyPanel extends HTMLElement {
                 <label class="form-label">How to measure power</label>
                 <select class="form-input ceiling-vent-power-source">
                   <option value="configured" ${ventPowerSource === 'configured' ? 'selected' : ''}>Fixed watts when on</option>
-                  <option value="sensor" ${ventPowerSource === 'sensor' ? 'selected' : ''}>Power sensor (when switch is on)</option>
+                  <option value="sensor" ${ventPowerSource === 'sensor' ? 'selected' : ''}>Power sensor</option>
                 </select>
               </div>
               <div class="ceiling-vent-power-sensor-block" style="display: ${ventPowerSource === 'sensor' ? 'block' : 'none'};">
@@ -11583,9 +11638,9 @@ class EnergyPanel extends HTMLElement {
         notify_vent_auto: this.shadowRoot.querySelector('#tts-notify-vent-auto')?.checked !== false,
         notify_external_auto: this.shadowRoot.querySelector('#tts-notify-external-auto')?.checked !== false,
         zone_health_check_enabled: this.shadowRoot.querySelector('#tts-zone-health-check')?.checked !== false,
-        zone_health_history_hours: (() => {
-          const zh = parseInt(this.shadowRoot.querySelector('#zone-health-history-hours')?.value, 10);
-          return [24, 48, 72].includes(zh) ? zh : 24;
+        zone_health_history_days: (() => {
+          const d = parseInt(this.shadowRoot.querySelector('#zone-health-history-days')?.value, 10);
+          return [1, 2, 3].includes(d) ? d : 3;
         })(),
         zone_health_reminder_hours: Math.max(1, Math.min(24, parseInt(this.shadowRoot.querySelector('#zone-health-reminder-hours')?.value, 10) || 1)),
         zone_health_notification_msg: this.shadowRoot.querySelector('#zone-health-notification-msg')?.value ?? '',

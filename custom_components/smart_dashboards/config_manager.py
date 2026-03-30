@@ -1364,17 +1364,21 @@ class ConfigManager:
                     default_tts.get("zone_health_check_enabled", True),
                 )
             ),
-            "zone_health_history_hours": (
-                lambda v: 72 if v == 96 else (v if v in (24, 48, 72) else 24)
-            )(
-                int(
-                    tts.get(
-                        "zone_health_history_hours",
-                        default_tts.get("zone_health_history_hours", 24),
+            "zone_health_history_days": (
+                lambda: (
+                    # Prefer days if present; migrate from hours if not
+                    max(1, min(3, int(tts.get("zone_health_history_days") or 0)))
+                    if tts.get("zone_health_history_days")
+                    else (
+                        # Migrate hours -> days: 24->1, 48->2, 72->3, else 3
+                        {24: 1, 48: 2, 72: 3, 96: 3}.get(
+                            int(tts.get("zone_health_history_hours") or 0), 3
+                        )
+                        if tts.get("zone_health_history_hours")
+                        else default_tts.get("zone_health_history_days", 3)
                     )
-                    or 24
                 )
-            ),
+            )(),
             "zone_health_reminder_hours": max(
                 1,
                 min(
