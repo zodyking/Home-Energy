@@ -150,8 +150,6 @@ class EnergyMonitor:
         self._enforcement_power_cycle_depth: dict[str, int] = {}
         self._plug_shutoff_switch_entities: set[str] = set()
         self._manual_toggle_notify_last: dict[str, datetime] = {}
-        # Zone health tracking: rolling state history per person (deque maxlen)
-        self._person_zone_state_history: dict[str, deque] = {}
         self._person_zone_health_alerted: set[str] = set()
         self._person_zone_health_listener_unsub: list = []
         self._person_zone_hourly_reminder_last: dict[str, datetime] = {}
@@ -163,7 +161,7 @@ class EnergyMonitor:
         self._zone_health_recorder_meta: dict[str, dict[str, str | None]] = {}
         self._zone_health_recorder_last_refresh: datetime | None = None
         # Recorder queries are heavy; automatic refresh at most this often. Real-time path uses
-        # person + linked device_tracker state listeners; "Refresh Status" forces an immediate pull.
+        # Zone-health state listeners (recovery TTS); recorder pull uses device_trackers only. "Refresh Status" forces pull.
         self._zone_health_recorder_refresh_interval = timedelta(hours=1)
         self._zone_health_tts_lock = asyncio.Lock()
         # "Nearby" zone guidance: track whether we've already created/dismissed the persistent_notification
@@ -321,53 +319,27 @@ class EnergyMonitor:
 
     @staticmethod
     def _normalize_zone_health_state(state: str) -> str:
-        """Normalize HA person / device_tracker states for health history (union of sources).
-        
-        Legacy helper kept for backward compatibility with in-memory deque recording.
-        """
+        """Normalize HA person / device_tracker states for zone-health listener callbacks."""
         s = (state or "").strip().lower()
         if s == "away":
             return "not_home"
         return s
 
-    def _record_person_zone_state(self, person_ent: str, state: str, now: datetime) -> None:
-        """Record a person's zone state in history (48-hour rolling window).
-
-        Uses the same classifier as the recorder path so zone slugs (e.g. Nearby)
-        map to home / nearby / not_home consistently.
-        """
-        person_key = str(person_ent).strip().lower()
-        nearby_tokens = self._build_zone_health_nearby_tokens()
-        classified = self._classify_zone_health_state_with_nearby_tokens(
-            state, nearby_tokens
-        )
-        if classified is None:
-            return
-        if person_key not in self._person_zone_state_history:
-            self._person_zone_state_history[person_key] = deque(maxlen=2880)
-        self._person_zone_state_history[person_key].append((now, classified))
-
-    def _get_person_zone_states_in_window(self, person_ent: str, hours: int = 48) -> set[str]:
-        """Get unique zone states for a person within the specified time window (in-memory only)."""
-        person_key = str(person_ent).strip().lower()
-        if person_key not in self._person_zone_state_history:
-            return set()
-        now = dt_util.now()
-        cutoff = now - timedelta(hours=hours)
-        states: set[str] = set()
-        for timestamp, state in self._person_zone_state_history[person_key]:
-            if timestamp >= cutoff:
-                states.add(state.lower())
-        return states
+    def _zone_health_tracker_states_union(self, person_key: str) -> set[str]:
+        """Union of classified zone-health states from recorder (linked device_trackers only)."""
+        out: set[str] = set()
+        for bucket in (self._zone_health_tracker_recorder_cache.get(person_key) or {}).values():
+            out |= set(bucket)
+        return out
 
     def _get_person_linked_device_trackers(self, person_ent: str) -> list[str]:
         """Get device_tracker.* entities linked to a person (Person integration config first)."""
         return get_person_device_tracker_entity_ids(self.hass, person_ent)
 
     async def _async_refresh_zone_health_recorder_cache(self, force: bool = False) -> None:
-        """Fetch zone states from recorder for all persons + their device_trackers.
+        """Fetch zone states from the recorder for each person's linked device_trackers only.
 
-        Populates ``_zone_health_recorder_cache`` with a set of lowercased states per person.
+        Health uses HA recorder history on those trackers (not ``person.*``, not in-memory).
         Throttled to run at most every ``_zone_health_recorder_refresh_interval`` unless
         ``force`` is True (used by the dashboard "Refresh Status" action).
         """
@@ -402,14 +374,23 @@ class EnergyMonitor:
         for person_ent in all_persons:
             person_key = str(person_ent).strip().lower()
             trackers = self._get_person_linked_device_trackers(person_key)
-            entity_ids = list(
-                dict.fromkeys([person_key, *[str(t).strip().lower() for t in trackers]])
-            )
+            entity_ids = list(dict.fromkeys([str(t).strip().lower() for t in trackers]))
+            empty_meta = {
+                "last_home": None,
+                "last_nearby": None,
+                "last_not_home": None,
+            }
+            if not entity_ids:
+                self._zone_health_tracker_recorder_cache[person_key] = {}
+                self._zone_health_recorder_cache[person_key] = set()
+                self._zone_health_recorder_meta[person_key] = empty_meta
+                _LOGGER.debug("Zone health recorder: %s has no linked device_trackers", person_key)
+                continue
+
             _LOGGER.debug(
-                "Zone health recorder: %s querying %d entities (%d device_trackers)",
+                "Zone health recorder: %s querying %d device_tracker entities",
                 person_key,
                 len(entity_ids),
-                len(trackers),
             )
             states_union: set[str] = set()
             tracker_classified: dict[str, set[str]] = {}
@@ -434,8 +415,7 @@ class EnergyMonitor:
                     if classified is None:
                         return
                     states_union.add(classified)
-                    if source_eid.startswith("device_tracker."):
-                        tracker_classified.setdefault(source_eid, set()).add(classified)
+                    tracker_classified.setdefault(source_eid, set()).add(classified)
                     lc = getattr(st, "last_changed", None) or getattr(
                         st, "last_updated", None
                     )
@@ -489,10 +469,10 @@ class EnergyMonitor:
                         _consume_state_row(st, eid_lower)
             except Exception as e:
                 _LOGGER.warning("Zone health recorder fetch failed for %s: %s", person_key, e)
-            self._zone_health_recorder_cache[person_key] = states_union
             self._zone_health_tracker_recorder_cache[person_key] = {
                 tid: set(states) for tid, states in tracker_classified.items()
             }
+            self._zone_health_recorder_cache[person_key] = set(states_union)
             self._zone_health_recorder_meta[person_key] = {
                 "last_home": last_home_dt.isoformat() if last_home_dt else None,
                 "last_nearby": last_nearby_dt.isoformat() if last_nearby_dt else None,
@@ -511,18 +491,14 @@ class EnergyMonitor:
         )
 
     def _is_person_zone_setup_healthy(self, person_ent: str) -> bool:
-        """True if Companion-style tracking is working: home, nearby, and away in the window.
+        """True if linked device_trackers show home, nearby, and away in the recorder window.
 
-        Merges recorder-backed history with in-memory deque. Requires ``home``, ``nearby``,
-        and ``not_home`` (HA's away) within ``zone_health_history_days``.
+        Uses only HA recorder data on ``device_tracker.*`` linked to the person (not ``person.*``).
         """
-        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
-        history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
-        # Merge in-memory deque with recorder cache (convert days to hours for in-memory)
         person_key = str(person_ent).strip().lower()
-        in_memory = self._get_person_zone_states_in_window(person_key, history_days * 24)
-        from_recorder = self._zone_health_recorder_cache.get(person_key, set())
-        all_states = in_memory | from_recorder
+        if not self._get_person_linked_device_trackers(person_key):
+            return False
+        all_states = self._zone_health_tracker_states_union(person_key)
         return "home" in all_states and "nearby" in all_states and "not_home" in all_states
 
     def get_zone_health_status(self) -> dict:
@@ -530,7 +506,6 @@ class EnergyMonitor:
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
         all_persons = self._distinct_presence_person_entity_ids()
-        nearby_tokens_status = self._build_zone_health_nearby_tokens()
         persons_data = []
         for person_ent in all_persons:
             person_key = str(person_ent).strip().lower()
@@ -541,50 +516,15 @@ class EnergyMonitor:
             is_healthy = self._is_person_zone_setup_healthy(person_key)
             is_alerted = person_key in self._person_zone_health_alerted
             last_alert = self._person_zone_hourly_reminder_last.get(person_key)
-            history = list(self._person_zone_state_history.get(person_key, []))
-            mem_last_home = None
-            mem_last_nearby = None
-            mem_last_not_home = None
-            for ts, state in reversed(history):
-                if state == "home" and not mem_last_home:
-                    mem_last_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
-                if state == "nearby" and not mem_last_nearby:
-                    mem_last_nearby = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
-                if state == "not_home" and not mem_last_not_home:
-                    mem_last_not_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
-                if mem_last_home and mem_last_nearby and mem_last_not_home:
-                    break
             meta = self._zone_health_recorder_meta.get(person_key) or {}
-            last_home = meta.get("last_home") or mem_last_home
-            last_nearby = meta.get("last_nearby") or mem_last_nearby
-            last_not_home = meta.get("last_not_home") or mem_last_not_home
-            # Determine seen flags from merged data
-            in_memory = self._get_person_zone_states_in_window(person_key, history_days * 24)
-            from_recorder = self._zone_health_recorder_cache.get(person_key, set())
-            all_states = in_memory | from_recorder
-            tr_rec = self._zone_health_tracker_recorder_cache.get(person_key, {})
-            tracker_details: list[dict] = []
-            for tid in trackers:
-                ts = self.hass.states.get(tid)
-                raw_st = (ts.state if ts else None) or "unknown"
-                cur_cls = self._classify_zone_health_state_with_nearby_tokens(
-                    raw_st, nearby_tokens_status
-                )
-                merged_cls = set(tr_rec.get(tid, ()))
-                if cur_cls:
-                    merged_cls.add(cur_cls)
-                tracker_details.append({
-                    "entity_id": tid,
-                    "current_state": raw_st,
-                    "seen_home": "home" in merged_cls,
-                    "seen_nearby": "nearby" in merged_cls,
-                    "seen_away": "not_home" in merged_cls,
-                })
+            last_home = meta.get("last_home")
+            last_nearby = meta.get("last_nearby")
+            last_not_home = meta.get("last_not_home")
+            all_states = self._zone_health_tracker_states_union(person_key)
             persons_data.append({
                 "entity_id": person_key,
                 "friendly_name": name,
                 "device_trackers": trackers,
-                "tracker_details": tracker_details,
                 "current_state": current_state,
                 "is_healthy": is_healthy,
                 "is_alerted": is_alerted,
@@ -670,7 +610,6 @@ class EnergyMonitor:
                 return
             state_val = (new_state.state or "").strip().lower()
             now = dt_util.now()
-            self._record_person_zone_state(entity_id, state_val, now)
             norm = self._normalize_zone_health_state(state_val)
             self.hass.async_create_task(
                 self._async_handle_zone_health_state_change(entity_id, norm, now)
@@ -696,7 +635,6 @@ class EnergyMonitor:
                 return
             state_val = (new_state.state or "").strip().lower()
             now = dt_util.now()
-            self._record_person_zone_state(person_ent, state_val, now)
             norm = self._normalize_zone_health_state(state_val)
             self.hass.async_create_task(
                 self._async_handle_zone_health_state_change(person_ent, norm, now)
@@ -707,16 +645,6 @@ class EnergyMonitor:
                 self.hass, list(tracker_owner.keys()), _on_tracker_state_change
             )
             self._person_zone_health_listener_unsub.append(unsub_tr)
-
-        now = dt_util.now()
-        for person_ent in all_persons:
-            ps = self.hass.states.get(person_ent)
-            if ps:
-                self._record_person_zone_state(person_ent, ps.state or "", now)
-            for tid in self._get_person_linked_device_trackers(person_ent):
-                ts = self.hass.states.get(tid)
-                if ts and ts.state:
-                    self._record_person_zone_state(person_ent, ts.state or "", now)
 
     async def _async_handle_zone_health_state_change(
         self, person_ent: str, new_state: str, now: datetime

@@ -45,6 +45,7 @@ async def async_send_notify_push(
     message: str,
 ) -> NotifyPushResult:
     """Resolve mobile_app target and send push — single code path for all dashboard notifies."""
+    person_entity_id = str(person_entity_id).strip().lower()
     target = resolve_notify_target(hass, person_entity_id)
     if not target:
         return NotifyPushResult(
@@ -206,6 +207,46 @@ def _find_notify_entity_from_tracker_ids(
     return None
 
 
+def _collect_tracker_notify_slugs(hass: HomeAssistant, trackers: list[str]) -> set[str]:
+    """Slugs to match against notify.mobile_app_<slug> entity ids (object_id + slugified friendly_name)."""
+    want: set[str] = set()
+    for tid in trackers:
+        if not tid.startswith("device_tracker."):
+            continue
+        want.add(tid.split(".", 1)[1].lower())
+        ts = hass.states.get(tid)
+        if ts:
+            fn = ts.attributes.get("friendly_name")
+            if fn:
+                slug = slugify_device_name_for_mobile_app(str(fn))
+                if slug:
+                    want.add(slug.lower())
+    return want
+
+
+def _find_mobile_app_notify_entity_by_slug_scan(
+    hass: HomeAssistant, trackers: list[str]
+) -> str | None:
+    """When legacy services are missing, find notify.mobile_app_* by suffix match in the entity registry."""
+    want = _collect_tracker_notify_slugs(hass, trackers)
+    if not want:
+        return None
+    ent_reg = er.async_get(hass)
+    for entry in ent_reg.entities.values():
+        if entry.domain != "notify":
+            continue
+        eid = entry.entity_id
+        if not eid.startswith("notify.mobile_app_"):
+            continue
+        suf = eid.replace("notify.mobile_app_", "", 1).lower()
+        if suf in want:
+            _LOGGER.debug(
+                "Resolved notify entity %s via mobile_app slug scan (person trackers)", eid
+            )
+            return eid
+    return None
+
+
 def resolve_notify_target(hass: HomeAssistant, person_entity_id: str) -> NotifyTarget | None:
     """Return the best NotifyTarget for a person or None if unavailable.
 
@@ -213,16 +254,19 @@ def resolve_notify_target(hass: HomeAssistant, person_entity_id: str) -> NotifyT
     1. Legacy notify.mobile_app_<slug> service
     2. Entity-based notify via notify.send_message or notify.send
     """
+    person_entity_id = str(person_entity_id).strip().lower()
     trackers = _get_person_trackers(hass, person_entity_id)
     # 1. Legacy service path
     slug = _find_legacy_slug(hass, trackers)
     if slug:
         return NotifyTarget(mode="legacy_service", service_name=f"mobile_app_{slug}")
 
-    # 2. Entity-based: registry (device-linked), then notify.mobile_app_<tracker> state
+    # 2. Entity-based: device-linked, exact notify.mobile_app_<tracker>, then slug scan
     entity_id = _find_notify_entity_via_registry(hass, trackers)
     if not entity_id:
         entity_id = _find_notify_entity_from_tracker_ids(hass, trackers)
+    if not entity_id:
+        entity_id = _find_mobile_app_notify_entity_by_slug_scan(hass, trackers)
     if entity_id and (
         hass.services.has_service("notify", "send_message")
         or hass.services.has_service("notify", "send")
@@ -258,6 +302,7 @@ def resolve_mobile_app_notify_slug(hass: HomeAssistant, person_entity_id: str) -
     Kept for backward compatibility; callers wanting full resolution should use
     resolve_notify_target() instead.
     """
+    person_entity_id = str(person_entity_id).strip().lower()
     trackers = _get_person_trackers(hass, person_entity_id)
     slug = _find_legacy_slug(hass, trackers)
     if slug:
