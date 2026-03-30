@@ -160,6 +160,8 @@ class EnergyPanel extends HTMLElement {
     this._zoneHealthIconClickDelegation = false;
     /** @type {object|null} smart_dashboards/get_room_ratings payload */
     this._roomRatingsData = null;
+    /** @type {'idle'|'loading'|'ok'|'error'} */
+    this._roomRatingsLoadState = 'idle';
     this._roomRatingsRefreshInterval = null;
     this._dashboardHeartbeatInterval = null;
     this._roomRatingModalDelegation = false;
@@ -730,10 +732,16 @@ class EnergyPanel extends HTMLElement {
     if (totalPowerCyclesEl) totalPowerCyclesEl.textContent = `${this._powerData.total_power_cycles || 0}`;
     
     rooms.forEach(room => {
-      const roomCard = this.shadowRoot.querySelector(`.room-card[data-room-id="${room.id}"]`);
+      const pid = String(room.id || '');
+      const cfgRoom = (this._config?.rooms || []).find(
+        (r) =>
+          (r.id != null && String(r.id) === pid) || this._canonicalRoomId(r) === pid,
+      );
+      const cardId = cfgRoom ? this._canonicalRoomId(cfgRoom) : pid;
+      const roomCard = this.shadowRoot.querySelector(`.room-card[data-room-id="${cardId}"]`);
       if (!roomCard) return;
 
-      const roomConfig = this._getRoomConfig(room.id);
+      const roomConfig = this._getRoomConfig(cardId);
       const threshold = roomConfig?.threshold || 0;
 
       // Update room totals (watts only in header; kWh is in the bar)
@@ -1048,7 +1056,22 @@ class EnergyPanel extends HTMLElement {
 
   _getRoomConfig(roomId) {
     const rooms = this._config?.rooms || [];
-    return rooms.find(r => r.id === roomId);
+    return rooms.find(
+      (r) => r.id === roomId || this._canonicalRoomId(r) === roomId,
+    );
+  }
+
+  /** Matches server `canonical_room_id` in room_ratings.py */
+  _canonicalRoomId(room) {
+    if (!room || typeof room !== 'object') return '';
+    const id = room.id;
+    if (id != null && String(id).trim() !== '') {
+      return String(id).trim();
+    }
+    return String(room.name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '_');
   }
 
   _render() {
@@ -1455,16 +1478,53 @@ class EnergyPanel extends HTMLElement {
       .room-header-inner {
         display: flex;
         flex-direction: column;
+        gap: clamp(6px, 1.2vw, 10px);
+        min-width: 0;
+      }
+
+      .room-header-row--primary {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: clamp(6px, 1.5vw, 10px);
+        min-width: 0;
+      }
+
+      .room-header-primary-center {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: clamp(2px, 0.5vw, 4px);
+      }
+
+      .room-header-row--secondary {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: clamp(6px, 1.2vw, 10px);
+        min-width: 0;
+      }
+
+      .room-header-secondary-left {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
         gap: clamp(4px, 1vw, 8px);
+        flex: 1 1 auto;
         min-width: 0;
       }
 
       .room-header-rating {
-        display: flex;
+        display: inline-flex;
         align-items: center;
         gap: clamp(4px, 1vw, 8px);
-        padding: 0;
-        margin: 0;
+        padding: 2px 4px;
+        margin: 0 0 0 auto;
         border: none;
         background: transparent;
         cursor: pointer;
@@ -1472,11 +1532,13 @@ class EnergyPanel extends HTMLElement {
         color: var(--primary-text-color);
         text-align: left;
         min-width: 0;
-        width: 100%;
+        width: auto;
+        max-width: 100%;
+        flex-shrink: 0;
         border-radius: 6px;
       }
 
-      .room-header-rating:hover {
+      .room-header-rating:hover:not(:disabled) {
         background: rgba(255, 255, 255, 0.04);
       }
 
@@ -1485,11 +1547,48 @@ class EnergyPanel extends HTMLElement {
         outline-offset: 2px;
       }
 
+      .room-header-rating:disabled {
+        cursor: default;
+        opacity: 0.85;
+      }
+
+      .room-header-rating--error .room-efficiency-placeholder {
+        color: var(--secondary-text-color);
+        font-size: clamp(9px, 2vw, 11px);
+        font-weight: 600;
+        max-width: 7rem;
+        text-align: right;
+        line-height: 1.2;
+      }
+
+      .room-header-rating--loading .room-efficiency-placeholder {
+        color: var(--secondary-text-color);
+        font-size: clamp(14px, 3vw, 18px);
+        letter-spacing: 0.12em;
+        font-weight: 700;
+        opacity: 0.55;
+        animation: room-rating-dots 1.1s ease-in-out infinite;
+      }
+
+      @keyframes room-rating-dots {
+        0%, 100% { opacity: 0.35; }
+        50% { opacity: 0.85; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .room-header-rating--loading .room-efficiency-placeholder {
+          animation: none;
+          opacity: 0.65;
+        }
+      }
+
       .room-rating-modal-overlay {
         position: fixed;
         inset: 0;
         z-index: 10050;
-        background: rgba(0, 0, 0, 0.55);
+        background: rgba(0, 0, 0, 0.62);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1498,104 +1597,218 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-rating-modal-dialog {
-        background: var(--card-bg, #1e1e1e);
-        border: 1px solid var(--card-border);
-        border-radius: 12px;
-        max-width: min(420px, 100%);
-        max-height: min(90vh, 640px);
+        background: linear-gradient(
+          165deg,
+          rgba(255, 255, 255, 0.07) 0%,
+          var(--card-bg, #1a1d24) 42%,
+          var(--card-bg, #16181e) 100%
+        );
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: clamp(14px, 3vw, 20px);
+        max-width: min(440px, 100%);
+        max-height: min(92vh, 720px);
         overflow: auto;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
-        padding: clamp(12px, 3vw, 18px);
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.35),
+          0 24px 64px rgba(0, 0, 0, 0.55),
+          0 0 80px rgba(3, 169, 244, 0.06);
+        padding: 0;
       }
 
       .room-rating-modal-header {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 8px;
-        margin-bottom: 8px;
+        gap: 12px;
+        padding: clamp(18px, 4vw, 24px) clamp(18px, 4vw, 24px) clamp(10px, 2vw, 14px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
       }
 
-      .room-rating-modal-header h3 {
+      .room-rating-modal-header-text {
+        min-width: 0;
+        flex: 1;
+      }
+
+      .room-rating-modal-eyebrow {
+        margin: 0 0 6px 0;
+        font-size: clamp(10px, 2.2vw, 11px);
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--panel-accent, #29b6f6);
+        opacity: 0.95;
+      }
+
+      .room-rating-modal-room {
         margin: 0;
-        font-size: clamp(14px, 3.2vw, 17px);
-        line-height: 1.25;
+        font-size: clamp(20px, 4.8vw, 26px);
+        font-weight: 800;
+        line-height: 1.15;
+        letter-spacing: -0.03em;
+        color: var(--primary-text-color);
+        word-break: break-word;
       }
 
       .room-rating-modal-close {
         border: none;
-        background: transparent;
+        background: rgba(255, 255, 255, 0.06);
         color: var(--secondary-text-color);
-        font-size: 22px;
+        font-size: 20px;
         line-height: 1;
         cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 6px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        flex-shrink: 0;
+        margin: -4px -4px 0 0;
+        transition: background 0.15s ease, color 0.15s ease;
       }
 
       .room-rating-modal-close:hover {
-        background: rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.12);
         color: var(--primary-text-color);
+      }
+
+      .room-rating-modal-close:focus-visible {
+        outline: 2px solid var(--panel-accent);
+        outline-offset: 2px;
+      }
+
+      .room-rating-modal-hero {
+        text-align: center;
+        padding: clamp(16px, 3.5vw, 22px) clamp(18px, 4vw, 24px) clamp(18px, 3.5vw, 22px);
+        background: radial-gradient(
+          ellipse 85% 80% at 50% 0%,
+          rgba(3, 169, 244, 0.12) 0%,
+          transparent 65%
+        );
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       }
 
       .room-rating-modal-stars {
         display: flex;
         align-items: center;
-        gap: clamp(2px, 0.5vw, 6px);
-        margin-bottom: 12px;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: clamp(4px, 1.2vw, 10px);
+        margin: 0 0 clamp(10px, 2vw, 14px) 0;
       }
 
       .room-rating-modal-stars .room-efficiency-star {
-        width: clamp(18px, 4.5vw, 26px);
-        height: clamp(18px, 4.5vw, 26px);
+        width: clamp(28px, 7vw, 36px);
+        height: clamp(28px, 7vw, 36px);
+        filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.35));
+      }
+
+      .room-rating-modal-index {
+        display: flex;
+        align-items: baseline;
+        justify-content: center;
+        gap: 4px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .room-rating-modal-index-value {
+        font-size: clamp(26px, 6vw, 34px);
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        color: var(--primary-text-color);
+        line-height: 1;
+      }
+
+      .room-rating-modal-index-suffix {
+        font-size: clamp(13px, 3vw, 15px);
+        font-weight: 600;
+        color: var(--secondary-text-color);
+        opacity: 0.85;
+      }
+
+      .room-rating-modal-index-caption {
+        margin: 6px 0 0 0;
+        font-size: clamp(11px, 2.4vw, 12px);
+        color: var(--secondary-text-color);
+        font-weight: 500;
+        letter-spacing: 0.02em;
       }
 
       .room-rating-modal-body {
         display: flex;
         flex-direction: column;
-        gap: clamp(10px, 2vw, 14px);
+        gap: clamp(10px, 2vw, 12px);
+        padding: clamp(14px, 3vw, 18px) clamp(18px, 4vw, 24px) clamp(6px, 1.5vw, 10px);
       }
 
-      .room-rating-modal-row-head {
+      .room-rating-modal-metric {
+        padding: clamp(12px, 2.5vw, 14px) clamp(14px, 3vw, 16px);
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.22);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+
+      .room-rating-modal-metric-top {
         display: flex;
+        flex-direction: row;
+        align-items: center;
         justify-content: space-between;
-        align-items: baseline;
-        gap: 8px;
-        font-size: clamp(12px, 2.6vw, 14px);
+        gap: 12px;
+        margin-bottom: 10px;
       }
 
-      .room-rating-modal-score {
-        font-variant-numeric: tabular-nums;
+      .room-rating-modal-metric-label {
+        font-size: clamp(11px, 2.4vw, 13px);
         font-weight: 700;
-        color: var(--panel-accent);
-      }
-
-      .room-rating-modal-desc {
-        font-size: clamp(10px, 2.2vw, 12px);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
         color: var(--secondary-text-color);
-        line-height: 1.35;
-        margin: 4px 0 6px 0;
+        min-width: 0;
       }
 
-      .room-rating-modal-bar {
-        height: clamp(5px, 1.2vw, 7px);
-        border-radius: 4px;
-        background: rgba(255, 255, 255, 0.08);
+      .room-rating-modal-metric-value {
+        font-size: clamp(22px, 5vw, 28px);
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+        color: var(--panel-accent, #29b6f6);
+        flex-shrink: 0;
+        text-shadow: 0 0 24px rgba(3, 169, 244, 0.25);
+      }
+
+      .room-rating-modal-metric-bar {
+        height: clamp(11px, 2.4vw, 14px);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.07);
         overflow: hidden;
+        box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
       }
 
-      .room-rating-modal-bar-fill {
+      .room-rating-modal-metric-fill {
         height: 100%;
-        background: linear-gradient(90deg, #0288d1, var(--panel-accent));
         border-radius: inherit;
-        transition: width 0.25s ease;
+        background: linear-gradient(
+          90deg,
+          rgba(2, 136, 209, 0.95) 0%,
+          var(--panel-accent, #29b6f6) 55%,
+          rgba(129, 212, 250, 0.9) 100%
+        );
+        transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+        box-shadow: 0 0 16px rgba(3, 169, 244, 0.35);
       }
 
       .room-rating-modal-footnote {
-        margin: 14px 0 0 0;
-        font-size: clamp(9px, 2vw, 11px);
+        margin: 0;
+        padding: clamp(12px, 2.5vw, 16px) clamp(18px, 4vw, 24px) clamp(16px, 3vw, 20px);
+        font-size: clamp(10px, 2.2vw, 11px);
         color: var(--secondary-text-color);
-        line-height: 1.35;
+        line-height: 1.4;
+        text-align: center;
+        opacity: 0.75;
+        border-top: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .room-rating-modal-metric-fill {
+          transition: none;
+        }
       }
 
       .room-efficiency-label {
@@ -1618,39 +1831,17 @@ class EnergyPanel extends HTMLElement {
         flex-shrink: 0;
       }
 
-      .room-header-main {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        grid-template-rows: auto auto;
-        align-items: center;
-        column-gap: clamp(6px, 1.5vw, 10px);
-        row-gap: clamp(3px, 0.8vw, 6px);
-        min-width: 0;
-      }
-
-      .room-header-main > .room-icon {
-        grid-column: 1;
-        grid-row: 1 / -1;
+      .room-header-row--primary .room-icon {
+        flex-shrink: 0;
         align-self: center;
       }
 
-      .room-header-center {
-        grid-column: 2;
-        grid-row: 1 / -1;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        gap: clamp(2px, 0.6vw, 5px);
-        min-width: 0;
-      }
-
       .room-header-watts-col {
-        grid-column: 3;
-        grid-row: 1 / -1;
         display: flex;
         align-items: center;
         justify-content: flex-end;
         min-width: 0;
+        flex-shrink: 0;
       }
 
       .room-name-row {
@@ -1661,16 +1852,7 @@ class EnergyPanel extends HTMLElement {
         min-width: 0;
       }
 
-      .room-header-subrow {
-        display: flex;
-        flex-direction: row;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: clamp(4px, 1vw, 8px);
-        min-width: 0;
-      }
-
-      .room-header-subrow .room-person-location:empty {
+      .room-header-secondary-left .room-person-location:empty {
         display: none;
       }
 
@@ -2138,10 +2320,6 @@ class EnergyPanel extends HTMLElement {
         justify-content: flex-end;
         gap: clamp(6px, 1.5vw, 10px);
         flex-shrink: 0;
-        margin-left: auto;
-      }
-
-      .room-header-subrow .room-event-chips {
         margin-left: auto;
       }
 
@@ -6566,15 +6744,32 @@ class EnergyPanel extends HTMLElement {
   }
 
   _roomEfficiencyRatingRowHtml(roomId, idPrefix) {
+    const esc = (x) => String(x || '').replace(/"/g, '&quot;');
+    const st = this._roomRatingsLoadState;
+    const loadingLike = st === 'loading' || (st === 'idle' && this._roomRatingsData == null);
+    if (loadingLike) {
+      return `
+      <button type="button" class="room-header-rating room-header-rating--loading has-tooltip" data-room-rating="${esc(roomId)}"
+        title="Loading efficiency rating…" aria-label="Efficiency rating loading" disabled>
+        <span class="room-efficiency-label">Efficiency</span>
+        <span class="room-efficiency-placeholder" aria-hidden="true">…</span>
+      </button>`;
+    }
+    if (st === 'error') {
+      return `
+      <button type="button" class="room-header-rating room-header-rating--error has-tooltip" data-room-rating="${esc(roomId)}"
+        data-room-rating-retry="1"
+        title="Rating unavailable — tap to retry" aria-label="Efficiency rating unavailable, tap to retry">
+        <span class="room-efficiency-label">Efficiency</span>
+        <span class="room-efficiency-placeholder">Tap to retry</span>
+      </button>`;
+    }
     const r = this._roomRatingsData?.rooms?.[roomId];
     const starValue =
-      this._roomRatingsData == null
-        ? null
-        : r != null && r.stars != null
-          ? Number(r.stars)
-          : 0;
+      r != null && r.stars != null && Number.isFinite(Number(r.stars))
+        ? Number(r.stars)
+        : 0;
     const starsHtml = this._formatEfficiencyStarsSvg(starValue, idPrefix);
-    const esc = (x) => String(x || '').replace(/"/g, '&quot;');
     return `
       <button type="button" class="room-header-rating has-tooltip" data-room-rating="${esc(roomId)}"
         title="Efficiency rating — tap for details" aria-label="Efficiency rating for this room">
@@ -6584,14 +6779,15 @@ class EnergyPanel extends HTMLElement {
   }
 
   _startRoomRatingsAndHeartbeat() {
-    if (this._roomRatingsRefreshInterval != null || !this._hass?.callWS) return;
-    this._loadRoomRatings();
-    this._sendDashboardHeartbeat();
+    if (!this._hass?.callWS) return;
+    if (this._roomRatingsRefreshInterval != null) return;
     this._roomRatingsRefreshInterval = setInterval(() => this._loadRoomRatings(), 3600000);
     this._dashboardHeartbeatInterval = setInterval(
       () => this._sendDashboardHeartbeat(),
       30 * 60 * 1000,
     );
+    this._sendDashboardHeartbeat();
+    this._loadRoomRatings();
   }
 
   _stopRoomRatingsAndHeartbeat() {
@@ -6607,14 +6803,23 @@ class EnergyPanel extends HTMLElement {
 
   async _loadRoomRatings() {
     if (!this._hass?.callWS) return;
-    try {
-      const data = await this._hass.callWS({ type: 'smart_dashboards/get_room_ratings' });
-      this._roomRatingsData = data;
+    const isFirst = this._roomRatingsData == null;
+    if (isFirst) {
+      this._roomRatingsLoadState = 'loading';
       if (this._dashboardView === 'rooms' && !this._showSettings) {
         this._render();
       }
+    }
+    try {
+      const data = await this._hass.callWS({ type: 'smart_dashboards/get_room_ratings' });
+      this._roomRatingsData = data;
+      this._roomRatingsLoadState = 'ok';
     } catch (e) {
       console.warn('get_room_ratings failed', e);
+      this._roomRatingsLoadState = 'error';
+    }
+    if (this._dashboardView === 'rooms' && !this._showSettings) {
+      this._render();
     }
   }
 
@@ -6632,13 +6837,18 @@ class EnergyPanel extends HTMLElement {
     if (!btn || !this.shadowRoot.contains(btn)) return;
     e.preventDefault();
     e.stopPropagation();
+    if (btn.hasAttribute('data-room-rating-retry')) {
+      this._loadRoomRatings();
+      return;
+    }
+    if (btn.disabled) return;
     const roomId = btn.getAttribute('data-room-rating');
     if (roomId) this._openRoomRatingModal(roomId);
   }
 
   _openRoomRatingModal(roomId) {
     const room = this._config?.rooms?.find(
-      (r) => (r.id || (r.name || '').toLowerCase().replace(/\s+/g, '_')) === roomId,
+      (r) => this._canonicalRoomId(r) === roomId,
     );
     const titleName = room?.name || roomId;
     const r = this._roomRatingsData?.rooms?.[roomId] || {};
@@ -6651,63 +6861,66 @@ class EnergyPanel extends HTMLElement {
       r.stars != null && Number.isFinite(Number(r.stars)) ? Number(r.stars) : 0;
     const modalStarId = `m_${String(roomId).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
     const starsHtml = this._formatEfficiencyStarsSvg(starN, modalStarId);
-    const scoreRow = (label, desc, key) => {
+    const avgRounded =
+      r.average != null && Number.isFinite(Number(r.average))
+        ? Math.round(Number(r.average))
+        : null;
+    const scoreRow = (pillarNum, key) => {
       const raw = r[key];
       const v =
         raw != null && Number.isFinite(Number(raw)) ? Math.round(Number(raw)) : null;
       const pct = v != null ? Math.max(0, Math.min(100, v)) : 0;
       const show = v != null ? `${v}` : '—';
+      const barLabel =
+        v != null
+          ? `Pillar ${pillarNum}, ${v} out of 100`
+          : `Pillar ${pillarNum}, score not available`;
       return `
-        <div class="room-rating-modal-row">
-          <div class="room-rating-modal-row-head">
-            <strong>${esc(label)}</strong>
-            <span class="room-rating-modal-score">${show}</span>
+        <div class="room-rating-modal-metric">
+          <div class="room-rating-modal-metric-top">
+            <span class="room-rating-modal-metric-label">Pillar ${pillarNum}</span>
+            <span class="room-rating-modal-metric-value" aria-hidden="true">${show}</span>
           </div>
-          <div class="room-rating-modal-desc">${esc(desc)}</div>
-          <div class="room-rating-modal-bar" role="progressbar" aria-valuenow="${v != null ? v : 0}" aria-valuemin="0" aria-valuemax="100">
-            <div class="room-rating-modal-bar-fill" style="width: ${pct}%"></div>
+          <div class="room-rating-modal-metric-bar" role="progressbar" aria-valuenow="${v != null ? v : 0}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(barLabel)}">
+            <div class="room-rating-modal-metric-fill" style="width: ${pct}%"></div>
           </div>
         </div>`;
     };
+
+    const heroStarsLabel = `Overall efficiency, ${starN} out of 5 stars`;
 
     this.shadowRoot.querySelector('.room-rating-modal-overlay')?.remove();
     const overlay = document.createElement('div');
     overlay.className = 'room-rating-modal-overlay';
     overlay.innerHTML = `
-      <div class="room-rating-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="room-rating-modal-title">
+      <div class="room-rating-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="room-rating-modal-room">
         <div class="room-rating-modal-header">
-          <h3 id="room-rating-modal-title">${esc(titleName)} — Efficiency</h3>
+          <div class="room-rating-modal-header-text">
+            <p class="room-rating-modal-eyebrow">Efficiency</p>
+            <h2 id="room-rating-modal-room" class="room-rating-modal-room">${esc(titleName)}</h2>
+          </div>
           <button type="button" class="room-rating-modal-close" aria-label="Close">&times;</button>
         </div>
-        <div class="room-rating-modal-stars">${starsHtml}</div>
-        <div class="room-rating-modal-body">
-          ${scoreRow(
-            'Compliance',
-            'How well this room stayed within its daily energy budget (and boost budget on boost days). Higher means more days under budget.',
-            'compliance',
-          )}
-          ${scoreRow(
-            'Warning',
-            'How well the room avoided threshold warnings, safety shutoffs, and enforcement power cycles. Higher means fewer such events.',
-            'warning',
-          )}
-          ${scoreRow(
-            'Consumption',
-            'How low this room’s energy use has been compared to your other rooms over recent days. Lower relative use scores higher.',
-            'consumption',
-          )}
-          ${scoreRow(
-            'Load',
-            'How well the room limits time spent above 100 watts (recent activity). Less high-power time scores higher.',
-            'load',
-          )}
-          ${scoreRow(
-            'Engagement',
-            'How consistently the dashboard is opened across the day (household-wide). Used the same way on every room card.',
-            'engagement',
-          )}
+        <div class="room-rating-modal-hero">
+          <div class="room-rating-modal-stars" role="img" aria-label="${esc(heroStarsLabel)}">${starsHtml}</div>
+          ${
+            avgRounded != null
+              ? `<div class="room-rating-modal-index">
+            <span class="room-rating-modal-index-value">${avgRounded}</span>
+            <span class="room-rating-modal-index-suffix">/ 100</span>
+          </div>
+          <p class="room-rating-modal-index-caption">Composite index</p>`
+              : ''
+          }
         </div>
-        <p class="room-rating-modal-footnote">Scores are 0–100. Combined average maps to the star row (half-star steps). Updated about once per hour on the server.</p>
+        <div class="room-rating-modal-body">
+          ${scoreRow(1, 'compliance')}
+          ${scoreRow(2, 'warning')}
+          ${scoreRow(3, 'consumption')}
+          ${scoreRow(4, 'load')}
+          ${scoreRow(5, 'engagement')}
+        </div>
+        <p class="room-rating-modal-footnote">Refreshes about every hour.</p>
       </div>
     `;
     const close = () => {
@@ -6730,7 +6943,7 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderRoomCard(room) {
-    const roomId = room.id || (room.name || '').toLowerCase().replace(/\s+/g, '_');
+    const roomId = this._canonicalRoomId(room);
     const baseBudget = Number(room.kwh_budget);
     const fallbackBudget = Number.isFinite(baseBudget) ? baseBudget : 5;
     const roomData = this._resolvePowerRoomRow(roomId) || {
@@ -6811,17 +7024,22 @@ class EnergyPanel extends HTMLElement {
       <div class="room-card" data-room-id="${roomId}">
         <div class="room-header">
           <div class="room-header-inner">
-            ${starsRowHtml}
-            <div class="room-header-main">
-            <div class="${iconClass}"${iconDataAttr} aria-hidden="true">
-              <ha-icon icon="${roomCardIcon}"></ha-icon>
-            </div>
-            <div class="room-header-center">
-              <div class="room-name-row">
-                <h3 class="room-name">${roomNameEsc}</h3>
-                ${badgesHtml}
+            <div class="room-header-row room-header-row--primary">
+              <div class="${iconClass}"${iconDataAttr} aria-hidden="true">
+                <ha-icon icon="${roomCardIcon}"></ha-icon>
               </div>
-              <div class="room-header-subrow">
+              <div class="room-header-primary-center">
+                <div class="room-name-row">
+                  <h3 class="room-name">${roomNameEsc}</h3>
+                  ${badgesHtml}
+                </div>
+              </div>
+              <div class="room-header-watts-col">
+                <span class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</span>
+              </div>
+            </div>
+            <div class="room-header-row room-header-row--secondary">
+              <div class="room-header-secondary-left">
                 ${personLocationHtml}
                 <div class="room-event-chips">
                   <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W ${warnings}</span>
@@ -6829,10 +7047,7 @@ class EnergyPanel extends HTMLElement {
                   <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C ${powerCycles}</span>
                 </div>
               </div>
-            </div>
-            <div class="room-header-watts-col">
-              <span class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</span>
-            </div>
+              ${starsRowHtml}
             </div>
           </div>
         </div>
@@ -8635,7 +8850,7 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Rooms with Enforcement Enabled</div>
                 <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
                   ${rooms.map(room => {
-                    const roomId = room.id || (room.name || '').toLowerCase().replace(/\s+/g, '_');
+                    const roomId = this._canonicalRoomId(room);
                     const isEnabled = roomsEnabled.includes(roomId);
                     return `
                       <label style="display: flex; align-items: center; gap: 6px; background: var(--card-background-color); padding: 8px 12px; border-radius: 8px; cursor: pointer;">
@@ -8679,7 +8894,7 @@ class EnergyPanel extends HTMLElement {
     const rooms = this._config?.rooms || [];
     const outlets = [];
     rooms.forEach(room => {
-      const roomId = room.id || (room.name || '').toLowerCase().replace(/\s+/g, '_');
+      const roomId = this._canonicalRoomId(room);
       (room.outlets || []).forEach(outlet => {
         const outletId = `${roomId}_${(outlet.name || 'outlet').toLowerCase().replace(/\s+/g, '_')}`;
         outlets.push({
@@ -10957,7 +11172,7 @@ class EnergyPanel extends HTMLElement {
         const type = el.dataset.graphType;
         const roomId = el.dataset.roomId || null;
         const nameFromData = el.dataset.roomName || null;
-        const room = roomId ? this._config?.rooms?.find(r => r.id === roomId) : null;
+        const room = roomId ? this._getRoomConfig(roomId) : null;
         let billingRange = null;
         if (type && type.startsWith('stat_')) {
           billingRange = this._statisticsGraphDateRange();

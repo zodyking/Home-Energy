@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,15 @@ ENGAGEMENT_LOOKBACK_DAYS = 7
 
 def ratings_store_path(hass: HomeAssistant) -> Path:
     return Path(hass.config.path("data")) / FILENAME
+
+
+def canonical_room_id(room: dict[str, Any]) -> str:
+    """Stable room key aligned with the energy panel (non-empty id else slug from name)."""
+    raw_id = room.get("id")
+    if isinstance(raw_id, str) and raw_id.strip():
+        return raw_id.strip()
+    name = str(room.get("name") or "")
+    return re.sub(r"\s+", "_", name.strip().lower())
 
 
 def default_store() -> dict[str, Any]:
@@ -164,7 +174,7 @@ def recompute_room_ratings(hass: HomeAssistant, config_manager: Any) -> dict[str
     # Peer median of average daily Wh for consumption scoring
     room_avg_wh: dict[str, float] = {}
     for room in rooms_cfg:
-        rid = room.get("id", room["name"].lower().replace(" ", "_"))
+        rid = canonical_room_id(room)
         series = (history.get("rooms") or {}).get(rid, {}).get("wh") or []
         if not series:
             room_avg_wh[rid] = 0.0
@@ -177,7 +187,7 @@ def recompute_room_ratings(hass: HomeAssistant, config_manager: Any) -> dict[str
 
     rooms_out: dict[str, Any] = {}
     for room in rooms_cfg:
-        rid = room.get("id", room["name"].lower().replace(" ", "_"))
+        rid = canonical_room_id(room)
         try:
             budget_kwh = float(room.get("kwh_budget", 5) or 5)
         except (TypeError, ValueError):
