@@ -1468,7 +1468,7 @@ class EnergyPanel extends HTMLElement {
 
       /* ===== Room header: efficiency row + grid (icon | center | watts) ===== */
       .room-header {
-        padding: clamp(6px, 1.6vw, 10px) clamp(8px, 2vw, 12px);
+        padding: clamp(4px, 1vw, 7px) clamp(6px, 1.5vw, 10px);
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
         border-radius: 10px 10px 0 0;
@@ -1478,7 +1478,7 @@ class EnergyPanel extends HTMLElement {
       .room-header-inner {
         display: flex;
         flex-direction: column;
-        gap: clamp(6px, 1.2vw, 10px);
+        gap: clamp(3px, 0.75vw, 6px);
         min-width: 0;
       }
 
@@ -1487,7 +1487,7 @@ class EnergyPanel extends HTMLElement {
         flex-direction: row;
         flex-wrap: nowrap;
         align-items: center;
-        gap: clamp(6px, 1.5vw, 10px);
+        gap: clamp(5px, 1.2vw, 8px);
         min-width: 0;
       }
 
@@ -1497,7 +1497,7 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         justify-content: center;
-        gap: clamp(2px, 0.5vw, 4px);
+        gap: clamp(1px, 0.35vw, 3px);
       }
 
       .room-header-row--secondary {
@@ -1505,7 +1505,7 @@ class EnergyPanel extends HTMLElement {
         flex-direction: row;
         flex-wrap: wrap;
         align-items: center;
-        gap: clamp(6px, 1.2vw, 10px);
+        gap: clamp(4px, 1vw, 6px);
         min-width: 0;
       }
 
@@ -1514,7 +1514,7 @@ class EnergyPanel extends HTMLElement {
         flex-direction: row;
         flex-wrap: wrap;
         align-items: center;
-        gap: clamp(4px, 1vw, 8px);
+        gap: clamp(3px, 0.75vw, 6px);
         flex: 1 1 auto;
         min-width: 0;
       }
@@ -1522,8 +1522,8 @@ class EnergyPanel extends HTMLElement {
       .room-header-rating {
         display: inline-flex;
         align-items: center;
-        gap: clamp(4px, 1vw, 8px);
-        padding: 2px 4px;
+        gap: clamp(3px, 0.75vw, 6px);
+        padding: 1px 2px;
         margin: 0 0 0 auto;
         border: none;
         background: transparent;
@@ -1864,10 +1864,10 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-icon {
-        --room-card-icon-inner: clamp(15px, 3.8vw, 20px);
-        width: clamp(28px, 7vw, 40px);
-        height: clamp(28px, 7vw, 40px);
-        border-radius: clamp(6px, 1.5vw, 10px);
+        --room-card-icon-inner: clamp(13px, 3.2vw, 18px);
+        width: clamp(24px, 6vw, 34px);
+        height: clamp(24px, 6vw, 34px);
+        border-radius: clamp(5px, 1.2vw, 8px);
         background: rgba(255, 255, 255, 0.06);
         display: grid;
         place-items: center;

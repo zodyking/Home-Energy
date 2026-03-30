@@ -32,6 +32,36 @@ def canonical_room_id(room: dict[str, Any]) -> str:
     return re.sub(r"\s+", "_", name.strip().lower())
 
 
+def legacy_room_id_history(room: dict[str, Any]) -> str:
+    """Room id key used by config_manager daily/intraday history (single-space slug)."""
+    raw_id = room.get("id")
+    if isinstance(raw_id, str) and raw_id.strip():
+        return raw_id.strip()
+    name = str(room.get("name") or "room")
+    return name.lower().replace(" ", "_")
+
+
+def _room_history_row(
+    rooms: dict[str, Any], rid: str, legacy_id: str
+) -> dict[str, Any]:
+    """Prefer canonical history row; fall back to legacy key if that holds the Wh series."""
+    ca = rooms.get(rid) if isinstance(rooms.get(rid), dict) else {}
+    le: dict[str, Any] = (
+        rooms.get(legacy_id)
+        if legacy_id != rid and isinstance(rooms.get(legacy_id), dict)
+        else {}
+    )
+
+    def wh_sum(d: dict[str, Any]) -> float:
+        return sum(float(x) for x in (d.get("wh") or []))
+
+    if wh_sum(ca) > 0:
+        return ca
+    if wh_sum(le) > 0:
+        return le
+    return ca or le
+
+
 def default_store() -> dict[str, Any]:
     return {
         "version": SCHEMA_VERSION,
@@ -168,14 +198,16 @@ def recompute_room_ratings(hass: HomeAssistant, config_manager: Any) -> dict[str
     data = load_ratings(path)
     now = dt_util.now()
     history = config_manager.get_daily_history(days=WINDOW_DAYS, include_today=True)
-    dates = history.get("dates") or []
+    rooms_h = history.get("rooms") or {}
     rooms_cfg = config_manager.energy_config.get("rooms", [])
 
     # Peer median of average daily Wh for consumption scoring
     room_avg_wh: dict[str, float] = {}
     for room in rooms_cfg:
         rid = canonical_room_id(room)
-        series = (history.get("rooms") or {}).get(rid, {}).get("wh") or []
+        legacy_id = legacy_room_id_history(room)
+        rdata_hist = _room_history_row(rooms_h, rid, legacy_id)
+        series = rdata_hist.get("wh") or []
         if not series:
             room_avg_wh[rid] = 0.0
         else:
@@ -188,21 +220,21 @@ def recompute_room_ratings(hass: HomeAssistant, config_manager: Any) -> dict[str
     rooms_out: dict[str, Any] = {}
     for room in rooms_cfg:
         rid = canonical_room_id(room)
+        legacy_id = legacy_room_id_history(room)
         try:
             budget_kwh = float(room.get("kwh_budget", 5) or 5)
         except (TypeError, ValueError):
             budget_kwh = 5.0
-        rdata = (history.get("rooms") or {}).get(rid, {})
+        rdata = _room_history_row(rooms_h, rid, legacy_id)
         wh_list = [float(x) for x in (rdata.get("wh") or [])]
-        days_n = len(dates)
-        compliance = _score_compliance(wh_list, budget_kwh, days_n)
+        compliance = _score_compliance(wh_list, budget_kwh)
         warning = _score_warning(
             rdata.get("warnings") or [],
             rdata.get("shutoffs") or [],
             rdata.get("power_cycles") or [],
         )
         consumption = _score_consumption(room_avg_wh.get(rid, 0.0), median_peer)
-        load = _score_load(config_manager, rid)
+        load = _score_load(config_manager, legacy_id)
         engagement = engagement_score
         avg = (compliance + warning + consumption + load + engagement) / 5.0
         stars = _stars_from_average(avg)
