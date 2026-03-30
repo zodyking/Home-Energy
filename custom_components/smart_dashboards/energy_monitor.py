@@ -99,6 +99,35 @@ def person_in_any_configured_zone(
     return False
 
 
+def person_in_home_or_nearby(hass: HomeAssistant, person_entity_id: str) -> bool:
+    """True if person is in zone.home or zone.nearby (entities must exist in registry)."""
+    for zid in ("zone.home", "zone.nearby"):
+        zs = hass.states.get(zid)
+        if not zs or not str(zid).startswith("zone."):
+            continue
+        if person_in_any_configured_zone(hass, person_entity_id, [zid]):
+            return True
+    return False
+
+
+def person_truly_away_for_ac(hass: HomeAssistant, person_entity_id: str) -> bool:
+    """True when user left the comfort area: not in home or nearby (and not unknown).
+
+    Moving home→nearby stays in comfort so AC auto-off does not fire; only real departure does.
+    """
+    if not person_entity_id:
+        return False
+    ps = hass.states.get(person_entity_id)
+    if not ps or ps.state in ("unknown", "unavailable", ""):
+        return False
+    raw = (ps.state or "").strip().lower()
+    if raw == "not_home":
+        return True
+    if person_in_home_or_nearby(hass, person_entity_id):
+        return False
+    return True
+
+
 def vent_like_energy_tracking_key(room_id: str, outlet: dict) -> str:
     """Match config_manager.vent_like_energy_tracking_key for static-watt vent/heater loads."""
     name = (outlet.get("name") or "device").lower().replace(" ", "_")
@@ -145,8 +174,8 @@ class EnergyMonitor:
         self._stove_progress_last_boundary: dict[str, int] = {}
         # Phase-2 mini-split hold: room_id -> {switches: set[str], outlet_name, volume}
         self._minisplit_hold: dict[str, dict] = {}
-        # Presence / zone auto-off: last known "in any selected zone" per room_id
-        self._room_presence_was_in_zone: dict[str, bool | None] = {}
+        # Presence / AC comfort: last known "in home or nearby" per room_id (not raw configured zones)
+        self._room_presence_was_in_comfort: dict[str, bool | None] = {}
         # Switches we turned off due to leaving zones (restore on return if still allowed)
         self._presence_auto_turned_off: dict[str, set[str]] = {}
         # Vent / wall heater optional automations (key: room_id|outlet_name_slug)
@@ -1586,6 +1615,7 @@ class EnergyMonitor:
         fallback_message: str = "",
         *,
         integration_auto: bool = False,
+        also_speak_room_tts: bool = False,
     ) -> None:
         """Send HA notification to person assigned to room using configured templates."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
@@ -2274,15 +2304,16 @@ class EnergyMonitor:
         person_ent = room.get("presence_person_entity")
         zones = room.get("presence_zone_entities") or []
         if not person_ent or not zones:
-            self._room_presence_was_in_zone.pop(room_id, None)
+            self._room_presence_was_in_comfort.pop(room_id, None)
             self._presence_auto_turned_off.pop(room_id, None)
             return
-        in_zone = person_in_any_configured_zone(self.hass, person_ent, list(zones))
-        prev = self._room_presence_was_in_zone.get(room_id)
-        self._room_presence_was_in_zone[room_id] = in_zone
+        in_comfort = not person_truly_away_for_ac(self.hass, person_ent)
+        prev = self._room_presence_was_in_comfort.get(room_id)
+        self._room_presence_was_in_comfort[room_id] = in_comfort
+        truly_away = not in_comfort
 
-        # Turn off when: first detection with person outside zones, or transition out
-        should_turn_off = (prev is None and not in_zone) or (prev is True and not in_zone)
+        # Turn off when: first detection truly away, or transition from comfort to away
+        should_turn_off = (prev is None and truly_away) or (prev is True and truly_away)
         if should_turn_off:
             pending = self._presence_auto_turned_off.setdefault(room_id, set())
             for sw in self._presence_auto_off_switch_targets(room):
@@ -2313,7 +2344,7 @@ class EnergyMonitor:
                 except Exception as e:
                     _LOGGER.warning("Presence auto-off failed for %s: %s", sw, e)
 
-        if prev is False and in_zone:
+        if prev is False and in_comfort:
             allowed = set(self._presence_auto_off_configured_switch_ids(room))
             pending = self._presence_auto_turned_off.get(room_id)
             if not pending:
@@ -2332,7 +2363,7 @@ class EnergyMonitor:
                     )
                     pending.discard(sw)
                     _LOGGER.info(
-                        "Presence auto-restore: turned on %s (room %s entered zones)",
+                        "Presence auto-restore: turned on %s (room %s entered home/nearby)",
                         sw,
                         room_id,
                     )
@@ -2346,6 +2377,7 @@ class EnergyMonitor:
                             "Air Conditioner On",
                             DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
                             integration_auto=True,
+                            also_speak_room_tts=True,
                         )
                 except Exception as e:
                     _LOGGER.warning("Presence auto-restore failed for %s: %s", sw, e)
@@ -2436,8 +2468,7 @@ class EnergyMonitor:
             if entity_id not in configured_switches:
                 continue
 
-            in_zone = person_in_any_configured_zone(self.hass, person_ent, list(zones))
-            if in_zone:
+            if not person_truly_away_for_ac(self.hass, person_ent):
                 continue
 
             room_id = room.get("id", room["name"].lower().replace(" ", "_"))
@@ -2452,7 +2483,7 @@ class EnergyMonitor:
                 )
                 pending.add(entity_id)
                 _LOGGER.info(
-                    "Presence auto-off: immediately turned off %s (room %s, person outside zones)",
+                    "Presence auto-off: immediately turned off %s (room %s, person outside home/nearby)",
                     entity_id,
                     room_id,
                 )
@@ -2466,6 +2497,7 @@ class EnergyMonitor:
                         "Air Conditioner Off",
                         DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
                         integration_auto=True,
+                        also_speak_room_tts=True,
                     )
             except Exception as e:
                 _LOGGER.warning("Presence auto-off (switch listener) failed for %s: %s", entity_id, e)
