@@ -156,6 +156,11 @@ class EnergyMonitor:
         self._person_zone_hourly_reminder_last: dict[str, datetime] = {}
         # Zone health event log for UI display (recent alerts/TTS/recoveries)
         self._zone_health_event_log: deque = deque(maxlen=100)
+        # Zone health recorder-backed history (refreshed periodically)
+        self._zone_health_recorder_cache: dict[str, set[str]] = {}
+        self._zone_health_recorder_last_refresh: datetime | None = None
+        self._zone_health_recorder_refresh_interval = timedelta(minutes=15)
+        self._zone_health_tts_lock = asyncio.Lock()
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -210,6 +215,28 @@ class EnergyMonitor:
             return room_id, room_name, display, plug_slot
         return None
 
+    def _room_outlet_context_for_switch_with_type(
+        self, entity_id: str
+    ) -> tuple[str, str, str, str, str] | None:
+        """Return room_id, room_name, outlet_display_name, plug_slot, outlet_type for a switch.* or None."""
+        for room in self.config_manager.energy_config.get("rooms", []):
+            outlet = self._find_outlet_by_switch(room, entity_id)
+            if not outlet:
+                continue
+            room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+            room_name = str(room.get("name") or room_id)
+            outlet_name = str(outlet.get("name") or "Outlet")
+            outlet_type = str(outlet.get("type") or "outlet")
+            plug_slot = ""
+            if outlet.get("plug1_switch") == entity_id:
+                plug_slot = str(outlet.get("plug1_name") or "plug 1")
+            elif outlet.get("plug2_switch") == entity_id:
+                plug_slot = str(outlet.get("plug2_name") or "plug 2")
+            parts = [outlet_name, plug_slot] if plug_slot else [outlet_name]
+            display = " ".join(p for p in parts if p).strip()
+            return room_id, room_name, display, plug_slot, outlet_type
+        return None
+
     def _distinct_presence_person_entity_ids(self) -> list[str]:
         """Unique person.* from all rooms (targets for universal notifications)."""
         seen: set[str] = set()
@@ -245,7 +272,7 @@ class EnergyMonitor:
         self._person_zone_state_history[person_ent].append((now, state))
 
     def _get_person_zone_states_in_window(self, person_ent: str, hours: int = 48) -> set[str]:
-        """Get unique zone states for a person within the specified time window."""
+        """Get unique zone states for a person within the specified time window (in-memory only)."""
         if person_ent not in self._person_zone_state_history:
             return set()
         now = dt_util.now()
@@ -256,16 +283,95 @@ class EnergyMonitor:
                 states.add(state.lower())
         return states
 
+    def _get_person_linked_device_trackers(self, person_ent: str) -> list[str]:
+        """Get device_tracker.* entities linked to a person."""
+        ps = self.hass.states.get(person_ent)
+        if not ps:
+            return []
+        raw = ps.attributes.get("device_trackers")
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            return [raw] if raw.strip().startswith("device_tracker.") else []
+        try:
+            return [str(t).strip() for t in raw if str(t).strip().startswith("device_tracker.")]
+        except TypeError:
+            return []
+
+    async def _async_refresh_zone_health_recorder_cache(self) -> None:
+        """Fetch zone states from recorder for all persons + their device_trackers.
+
+        Populates ``_zone_health_recorder_cache`` with a set of lowercased states per person.
+        Throttled to run at most every ``_zone_health_recorder_refresh_interval``.
+        """
+        now = dt_util.now()
+        if (
+            self._zone_health_recorder_last_refresh
+            and (now - self._zone_health_recorder_last_refresh) < self._zone_health_recorder_refresh_interval
+        ):
+            return
+
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        history_hours = int(tts_settings.get("zone_health_history_hours", 24) or 24)
+        start_time = now - timedelta(hours=history_hours)
+
+        all_persons = self._distinct_presence_person_entity_ids()
+        if not all_persons:
+            self._zone_health_recorder_last_refresh = now
+            return
+
+        try:
+            from homeassistant.components.recorder.history import get_significant_states_with_session
+            from homeassistant.components.recorder.util import session_scope
+        except ImportError:
+            _LOGGER.debug("Recorder not available for zone health history")
+            self._zone_health_recorder_last_refresh = now
+            return
+
+        for person_ent in all_persons:
+            entity_ids = [person_ent] + self._get_person_linked_device_trackers(person_ent)
+            states_union: set[str] = set()
+            try:
+                with session_scope(hass=self.hass, read_only=True) as session:
+                    states_dict = get_significant_states_with_session(
+                        self.hass,
+                        session,
+                        start_time,
+                        now,
+                        entity_ids,
+                        None,
+                        include_start_time_state=True,
+                        significant_changes_only=True,
+                        minimal_response=False,
+                        no_attributes=False,
+                    )
+                for eid in entity_ids:
+                    for st in states_dict.get(eid) or []:
+                        if st.state and st.state.lower() not in ("unknown", "unavailable", ""):
+                            states_union.add(st.state.lower())
+            except Exception as e:
+                _LOGGER.warning("Zone health recorder fetch failed for %s: %s", person_ent, e)
+            self._zone_health_recorder_cache[person_ent] = states_union
+
+        self._zone_health_recorder_last_refresh = now
+        _LOGGER.debug(
+            "Zone health recorder cache refreshed for %d persons",
+            len(all_persons),
+        )
+
     def _is_person_zone_setup_healthy(self, person_ent: str) -> bool:
         """True if Companion-style tracking is working: both home and away in the window.
 
-        Requires recorded states ``home`` and ``not_home`` (HA's away) within
-        ``zone_health_history_hours``. Other states alone do not count as healthy.
+        Merges recorder-backed history with in-memory deque. Requires both ``home`` and
+        ``not_home`` (HA's away) within ``zone_health_history_hours``.
         """
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         history_hours = int(tts_settings.get("zone_health_history_hours", 24) or 24)
-        states = self._get_person_zone_states_in_window(person_ent, history_hours)
-        return "home" in states and "not_home" in states
+        # Merge in-memory deque with recorder cache
+        in_memory = self._get_person_zone_states_in_window(person_ent, history_hours)
+        from_recorder = self._zone_health_recorder_cache.get(person_ent, set())
+        all_states = in_memory | from_recorder
+        return "home" in all_states and "not_home" in all_states
 
     def get_zone_health_status(self) -> dict:
         """Return zone health status for all configured persons (for WebSocket API)."""
@@ -373,7 +479,16 @@ class EnergyMonitor:
             )
 
     async def _async_speak_zone_health_tts(self, person_ent: str, message: str) -> None:
-        """Speak a zone health TTS message to a room media player or default TTS player."""
+        """Speak a zone health TTS message to a room media player or default TTS player.
+
+        Uses ``_zone_health_tts_lock`` to serialize TTS across all persons so messages
+        do not overlap when multiple persons have zone health issues.
+        """
+        async with self._zone_health_tts_lock:
+            await self._async_speak_zone_health_tts_inner(person_ent, message)
+
+    async def _async_speak_zone_health_tts_inner(self, person_ent: str, message: str) -> None:
+        """Inner TTS logic (called with lock held)."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         name = self._get_person_friendly_name(person_ent)
         tts_sent = False
@@ -425,6 +540,9 @@ class EnergyMonitor:
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if not tts_settings.get("zone_health_check_enabled", True):
             return
+
+        # Refresh recorder-backed history cache (throttled internally)
+        await self._async_refresh_zone_health_recorder_cache()
 
         reminder_hours = int(tts_settings.get("zone_health_reminder_hours", 1) or 1)
         reminder_seconds = reminder_hours * 3600
@@ -493,8 +611,11 @@ class EnergyMonitor:
             or "Hi {name}, your zone tracking setup needs attention."
         )
         message = msg_template.replace("{name}", name)
-        await self._async_send_mobile_notification_to_person(person_ent, title, message)
-        self._log_zone_health_event(person_ent, name, "push_sent", message)
+        sent = await self._async_send_mobile_notification_to_person(person_ent, title, message)
+        if sent:
+            self._log_zone_health_event(person_ent, name, "push_sent", message)
+        else:
+            self._log_zone_health_event(person_ent, name, "push_failed", "No mobile_app notify target resolved")
 
     def _heater_door_window_blocks(self, outlet: dict) -> str | None:
         """Return 'door' or 'window' if sensor is open, else None."""
@@ -1181,11 +1302,19 @@ class EnergyMonitor:
 
     async def _async_send_mobile_notification_to_person(
         self, person_ent: str, title: str, message: str
-    ) -> None:
-        """Deliver a formatted push to one person's mobile_app notify target."""
+    ) -> bool:
+        """Deliver a formatted push to one person's mobile_app notify target.
+
+        Returns True if notification was sent, False if no target could be resolved.
+        """
         slug = resolve_mobile_app_notify_slug(self.hass, person_ent)
         if not slug:
-            return
+            _LOGGER.warning(
+                "Cannot send push to %s: no mobile_app slug resolved. "
+                "Ensure a phone is linked under Settings → People and the Companion app is registered.",
+                person_ent,
+            )
+            return False
         notify_target = f"mobile_app_{slug}"
         try:
             await self.hass.services.async_call(
@@ -1197,10 +1326,12 @@ class EnergyMonitor:
             _LOGGER.debug(
                 "Sent notification to %s: %s - %s", notify_target, title, message
             )
+            return True
         except Exception as e:
             _LOGGER.warning(
                 "Failed to send notification to %s: %s", notify_target, e
             )
+            return False
 
     async def _send_notification_broadcast(
         self,
@@ -2003,10 +2134,10 @@ class EnergyMonitor:
             return
         if entity_id in self._plug_shutoff_switch_entities:
             return
-        loc = self._room_outlet_context_for_switch(entity_id)
+        loc = self._room_outlet_context_for_switch_with_type(entity_id)
         if not loc:
             return
-        room_id, room_name, outlet_display, _plug_slot = loc
+        room_id, room_name, outlet_display, _plug_slot, outlet_type = loc
         if self._room_in_enforcement_power_cycle(room_id):
             return
 
@@ -2044,6 +2175,11 @@ class EnergyMonitor:
             actor = user_name
         elif is_integration:
             if not tts_settings.get("notify_integration_auto", True):
+                return
+            # Gate wall_heater and vent integration toggles on their specific flags
+            if outlet_type == "wall_heater" and not tts_settings.get("notify_heater_auto", True):
+                return
+            if outlet_type == "vent" and not tts_settings.get("notify_vent_auto", True):
                 return
             actor = "Automation"
         else:
