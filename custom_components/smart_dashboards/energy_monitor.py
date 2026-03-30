@@ -48,6 +48,7 @@ from .const import (
     DEFAULT_NOTIFICATION_TITLE,
 )
 from .mobile_notify_target import resolve_notify_target
+from .person_device_trackers import get_person_device_tracker_entity_ids
 from .tts_helper import async_send_tts
 from .tts_queue import async_send_tts_or_queue
 from .tts_numbers import spoken_cardinal
@@ -271,20 +272,27 @@ class EnergyMonitor:
         return False
 
     def _build_zone_health_nearby_tokens(self) -> frozenset[str]:
-        """Lowercase state strings that mean the Nearby zone (built once per recorder refresh)."""
+        """Lowercase state strings that mean the Nearby zone (built once per recorder refresh).
+
+        Includes each qualifying zone's object_id (e.g. brandons_nearby) because recorder
+        device_tracker states often use the zone slug, not the literal ``nearby``.
+        """
         tokens: set[str] = {"nearby"}
         for eid in self.hass.states.async_entity_ids("zone"):
             eid_l = eid.lower()
+            object_id = eid.replace("zone.", "").lower()
             zs = self.hass.states.get(eid)
             if zs:
                 fn = str(zs.attributes.get("friendly_name") or "").strip().lower()
                 zone_slug = (fn if fn else eid.replace("zone.", "")).strip().lower()
             else:
                 fn = ""
-                zone_slug = eid.replace("zone.", "").lower()
-            if eid == "zone.nearby" or zone_slug == "nearby":
+                zone_slug = object_id
+            is_nearby_zone = eid == "zone.nearby" or fn == "nearby" or zone_slug == "nearby"
+            if is_nearby_zone:
                 tokens.add(zone_slug)
                 tokens.add(eid_l)
+                tokens.add(object_id)
                 if fn:
                     tokens.add(fn)
         return frozenset(tokens)
@@ -337,34 +345,7 @@ class EnergyMonitor:
 
     def _get_person_linked_device_trackers(self, person_ent: str) -> list[str]:
         """Get device_tracker.* entities linked to a person (Person integration config first)."""
-        try:
-            from homeassistant.components.person import entities_in_person
-        except ImportError:
-            entities_in_person = None
-
-        if entities_in_person is not None:
-            linked = entities_in_person(self.hass, person_ent)
-            if linked:
-                out = [
-                    str(t).strip()
-                    for t in linked
-                    if str(t).strip().startswith("device_tracker.")
-                ]
-                if out:
-                    return out
-
-        ps = self.hass.states.get(person_ent)
-        if not ps:
-            return []
-        raw = ps.attributes.get("device_trackers")
-        if raw is None:
-            return []
-        if isinstance(raw, str):
-            return [raw] if raw.strip().startswith("device_tracker.") else []
-        try:
-            return [str(t).strip() for t in raw if str(t).strip().startswith("device_tracker.")]
-        except TypeError:
-            return []
+        return get_person_device_tracker_entity_ids(self.hass, person_ent)
 
     async def _async_refresh_zone_health_recorder_cache(self, force: bool = False) -> None:
         """Fetch zone states from recorder for all persons + their device_trackers.
@@ -528,6 +509,9 @@ class EnergyMonitor:
                 "last_alert_time": last_alert.isoformat() if last_alert else None,
             })
         event_log = list(self._zone_health_event_log)
+        zone_entity_ids = set(self.hass.states.async_entity_ids("zone"))
+        zone_home_ok = "zone.home" in zone_entity_ids
+        zone_nearby_ok = "zone.nearby" in zone_entity_ids
         return {
             "history_days": history_days,
             "persons": persons_data,
@@ -537,6 +521,33 @@ class EnergyMonitor:
                 if self._zone_health_recorder_last_refresh
                 else None
             ),
+            "required_zones": {
+                "zone_home": {
+                    "entity_id": "zone.home",
+                    "exists": zone_home_ok,
+                    "setup_hint": (
+                        ""
+                        if zone_home_ok
+                        else (
+                            "Add or restore the default Home zone: Settings → Areas & zones → Zones. "
+                            "The entity should be zone.home."
+                        )
+                    ),
+                },
+                "zone_nearby": {
+                    "entity_id": "zone.nearby",
+                    "exists": zone_nearby_ok,
+                    "setup_hint": (
+                        ""
+                        if zone_nearby_ok
+                        else (
+                            "Create a zone named Nearby so the entity id is zone.nearby: "
+                            "Settings → Areas & zones → Zones → Add zone. "
+                            "See https://www.home-assistant.io/integrations/zone/"
+                        )
+                    ),
+                },
+            },
         }
 
     async def async_force_zone_health_refresh(self) -> dict:
