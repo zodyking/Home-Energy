@@ -242,7 +242,8 @@ class ConfigManager:
         """Initialize the config manager."""
         self.hass = hass
         self._config: dict[str, Any] = deepcopy(DEFAULT_CONFIG)
-        self._data_dir = os.path.join(os.path.dirname(__file__), "data")
+        # Store data in HA's config directory (survives integration updates)
+        self._data_dir = hass.config.path("smart_dashboards_data")
         self._config_path = self._data_path("config.json")
         self._day_energy_data: dict[str, dict[str, float]] = {}
         self._last_reset_date: str | None = None
@@ -423,7 +424,12 @@ class ConfigManager:
         return (base, eff)
 
     async def _migrate_data_files(self) -> None:
-        """Move data files from config root to integration data directory."""
+        """Move data files from old locations to smart_dashboards_data directory.
+        
+        Checks two old locations:
+        1. /config/smart_dashboards*.json (original location)
+        2. /config/custom_components/smart_dashboards/data/*.json (v1.0.51-1.0.55 location - bad, gets overwritten)
+        """
         import shutil
         migrations = [
             ("smart_dashboards.json", "config.json"),
@@ -438,16 +444,33 @@ class ConfigManager:
             ("smart_dashboards_intraday_history.json", "intraday_history.json"),
             ("smart_dashboards_budget_boost_slots.json", "budget_boost_slots.json"),
         ]
+        # Old integration data folder (v1.0.51-1.0.55, inside custom_components - gets overwritten!)
+        old_integration_data = os.path.join(os.path.dirname(__file__), "data")
+        
         self._ensure_data_dir()
         for old_name, new_name in migrations:
-            old_path = self.hass.config.path(old_name)
             new_path = self._data_path(new_name)
-            if os.path.exists(old_path) and not os.path.exists(new_path):
+            if os.path.exists(new_path):
+                continue  # Already migrated
+            
+            # Try original config root location first
+            old_path = self.hass.config.path(old_name)
+            if os.path.exists(old_path):
                 try:
                     await self.hass.async_add_executor_job(shutil.move, old_path, new_path)
-                    _LOGGER.info("Migrated %s to data/%s", old_name, new_name)
+                    _LOGGER.info("Migrated %s to smart_dashboards_data/%s", old_name, new_name)
+                    continue
                 except Exception as err:
                     _LOGGER.warning("Failed to migrate %s: %s", old_name, err)
+            
+            # Try old integration data folder (v1.0.51-1.0.55)
+            old_integration_path = os.path.join(old_integration_data, new_name)
+            if os.path.exists(old_integration_path):
+                try:
+                    await self.hass.async_add_executor_job(shutil.move, old_integration_path, new_path)
+                    _LOGGER.info("Migrated data/%s to smart_dashboards_data/%s", new_name, new_name)
+                except Exception as err:
+                    _LOGGER.warning("Failed to migrate data/%s: %s", new_name, err)
 
     async def async_load(self) -> None:
         """Load configuration from file."""
