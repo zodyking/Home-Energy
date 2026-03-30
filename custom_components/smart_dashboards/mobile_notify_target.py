@@ -29,6 +29,96 @@ class NotifyTarget:
     entity_id: str | None = None  # e.g. "notify.mobile_app_brandons_iphone" for notify.send
 
 
+@dataclass(frozen=True)
+class NotifyPushResult:
+    """Outcome of async_send_notify_push (test notification, zone health, room alerts)."""
+
+    ok: bool
+    target: str | None = None  # service name (legacy) or notify entity_id for callers / WS
+    error: str | None = None  # set when ok is False
+
+
+async def async_send_notify_push(
+    hass: HomeAssistant,
+    person_entity_id: str,
+    title: str,
+    message: str,
+) -> NotifyPushResult:
+    """Resolve mobile_app target and send push — single code path for all dashboard notifies."""
+    target = resolve_notify_target(hass, person_entity_id)
+    if not target:
+        return NotifyPushResult(
+            ok=False,
+            error="No mobile_app notify target resolved. Link a phone under Settings → People.",
+        )
+
+    target_summary: str | None
+    try:
+        if target.mode == "legacy_service" and target.service_name:
+            target_summary = target.service_name
+            await hass.services.async_call(
+                "notify",
+                target.service_name,
+                {"title": title, "message": message},
+                blocking=False,
+            )
+            _LOGGER.debug(
+                "Sent notification via %s: %s - %s", target.service_name, title, message
+            )
+            return NotifyPushResult(ok=True, target=target_summary)
+
+        if target.mode == "notify_send" and target.entity_id:
+            target_summary = target.entity_id
+            if hass.services.has_service("notify", "send_message"):
+                await hass.services.async_call(
+                    "notify",
+                    "send_message",
+                    {"entity_id": target.entity_id, "title": title, "message": message},
+                    blocking=False,
+                )
+            elif hass.services.has_service("notify", "send"):
+                await hass.services.async_call(
+                    "notify",
+                    "send",
+                    {
+                        "entity_id": target.entity_id,
+                        "title": title,
+                        "message": message,
+                    },
+                    blocking=False,
+                )
+            else:
+                err = (
+                    f"Neither notify.send_message nor notify.send available for {target.entity_id}"
+                )
+                _LOGGER.warning("Cannot send push: %s", err)
+                return NotifyPushResult(ok=False, target=target.entity_id, error=err)
+
+            _LOGGER.debug(
+                "Sent notification via notify entity %s: %s - %s",
+                target.entity_id,
+                title,
+                message,
+            )
+            return NotifyPushResult(ok=True, target=target_summary)
+
+        err = f"Unknown notify target mode for {person_entity_id}: {target!r}"
+        _LOGGER.warning(err)
+        return NotifyPushResult(ok=False, error=err)
+    except Exception as e:
+        _LOGGER.warning(
+            "Failed to send notification to %s (target=%s): %s",
+            person_entity_id,
+            target,
+            e,
+        )
+        return NotifyPushResult(
+            ok=False,
+            target=getattr(target, "entity_id", None) or getattr(target, "service_name", None),
+            error=str(e),
+        )
+
+
 def slugify_device_name_for_mobile_app(name: str) -> str:
     """Build mobile_app notify suffix from a device display name (e.g. Brandon's Iphone → brandons_iphone)."""
     if not name or not str(name).strip():

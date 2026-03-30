@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from .config_manager import vent_like_energy_tracking_key
 from .const import DEFAULT_NOTIFICATION_TITLE, DOMAIN
-from .mobile_notify_target import resolve_notify_target
+from .mobile_notify_target import async_send_notify_push
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -2563,8 +2563,15 @@ async def websocket_send_test_notification(
         title = f"{notification_title} Test Notification"
         message = "This is a test notification from Smart Dashboards."
 
-    target = resolve_notify_target(hass, target_person)
-    if not target:
+    result = await async_send_notify_push(hass, target_person, title, message)
+    if result.ok:
+        connection.send_result(
+            msg["id"],
+            {"success": True, "target": result.target},
+        )
+        return
+
+    if result.error and "No mobile_app notify target" in result.error:
         connection.send_error(
             msg["id"],
             "no_notify_target",
@@ -2573,44 +2580,15 @@ async def websocket_send_test_notification(
             "Home Assistant Companion app is logged in.",
         )
         return
+    if result.error and "Unknown notify target mode" in result.error:
+        connection.send_error(msg["id"], "unknown_mode", result.error)
+        return
 
-    try:
-        if target.mode == "legacy_service" and target.service_name:
-            await hass.services.async_call(
-                "notify",
-                target.service_name,
-                {"title": title, "message": message},
-                blocking=False,
-            )
-            connection.send_result(msg["id"], {"success": True, "target": target.service_name})
-        elif target.mode == "notify_send" and target.entity_id:
-            if hass.services.has_service("notify", "send_message"):
-                await hass.services.async_call(
-                    "notify",
-                    "send_message",
-                    {"entity_id": target.entity_id, "title": title, "message": message},
-                    blocking=False,
-                )
-            elif hass.services.has_service("notify", "send"):
-                await hass.services.async_call(
-                    "notify",
-                    "send",
-                    {"entity_id": target.entity_id, "title": title, "message": message},
-                    blocking=False,
-                )
-            else:
-                connection.send_error(
-                    msg["id"],
-                    "send_failed",
-                    "Neither notify.send_message nor notify.send is available.",
-                )
-                return
-            connection.send_result(msg["id"], {"success": True, "target": target.entity_id})
-        else:
-            connection.send_error(msg["id"], "unknown_mode", f"Unknown notify mode: {target.mode}")
-    except Exception as e:
-        _LOGGER.warning("Failed to send test notification via %s: %s", target, e)
-        connection.send_error(msg["id"], "send_failed", f"Failed to send notification: {e}")
+    connection.send_error(
+        msg["id"],
+        "send_failed",
+        result.error or "Failed to send notification.",
+    )
 
 
 @websocket_api.websocket_command(
