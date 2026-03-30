@@ -2320,19 +2320,29 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-start;
+        min-height: 200px;
       }
 
       .outlet-card.outlet-face.single-outlet .single-receptacle {
         flex: 0 0 auto;
+        margin-top: auto;
+        margin-bottom: auto;
+        max-width: calc(100% - 4px);
+        margin-left: auto;
+        margin-right: auto;
       }
 
       .outlet-card.outlet-face.single-outlet .plate-screw:first-of-type {
-        margin: 4px auto 8px;
+        margin: 4px auto 0;
       }
 
       .outlet-card.outlet-face.single-outlet .plate-screw:last-of-type {
-        margin: 8px auto 4px;
+        margin: 0 auto 4px;
+      }
+
+      .outlet-card.outlet-face.single-outlet .outlet-meta {
+        margin-top: auto;
       }
 
       .outlet-card.outlet-face.light-outlet {
