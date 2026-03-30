@@ -18,7 +18,7 @@ def get_person_device_tracker_entity_ids(
 
     def _add(ids: list[str]) -> None:
         for eid in ids:
-            s = str(eid).strip()
+            s = str(eid).strip().lower()
             if not s.startswith("device_tracker."):
                 continue
             if s not in seen:
@@ -30,12 +30,14 @@ def get_person_device_tracker_entity_ids(
     except ImportError:
         entities_in_person = None
 
+    person_key = str(person_entity_id).strip().lower()
+
     if entities_in_person is not None:
-        linked = entities_in_person(hass, person_entity_id)
+        linked = entities_in_person(hass, person_key)
         if linked:
             _add([str(t).strip() for t in linked])
 
-    ps = hass.states.get(person_entity_id)
+    ps = hass.states.get(person_key)
     if ps:
         raw = ps.attributes.get("device_trackers")
         if raw is not None:

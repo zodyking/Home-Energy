@@ -6339,23 +6339,29 @@ class EnergyPanel extends HTMLElement {
       : '';
     const roomCardIcon = this._effectiveRoomIcon(room).replace(/"/g, '&quot;');
 
-    const personEnt = (room.presence_person_entity || '').trim();
-    const zoneHealthIssue = personEnt && this._zoneHealthData?.persons?.some(
-      p => p.entity_id === personEnt && !p.is_healthy
-    );
+    const personEntRaw = (room.presence_person_entity || '').trim();
+    const personEntKey = personEntRaw.toLowerCase();
+    const zoneHealthIssue =
+      personEntKey &&
+      this._zoneHealthData?.persons?.some(p => p.entity_id === personEntKey && !p.is_healthy);
     const iconClass = `room-icon${zoneHealthIssue ? ' zone-health-issue' : ''}`;
-    const iconDataAttr = personEnt ? ` data-zone-health-person="${personEnt.replace(/"/g, '&quot;')}"` : '';
+    const iconDataAttr = personEntRaw
+      ? ` data-zone-health-person="${personEntKey.replace(/"/g, '&quot;')}"`
+      : '';
     const roomNameEsc = (room.name || '').replace(/</g, '&lt;');
 
     // Static person location display (no cycling)
     let personLocationHtml = '';
-    if (personEnt) {
-      const personState = this._hass?.states?.[personEnt];
+    if (personEntRaw) {
+      const personState =
+        this._hass?.states?.[personEntKey] || this._hass?.states?.[personEntRaw];
       if (personState) {
-        const personName = personState.attributes?.friendly_name || personEnt.replace('person.', '').replace(/_/g, ' ');
+        const personName =
+          personState.attributes?.friendly_name ||
+          personEntKey.replace('person.', '').replace(/_/g, ' ');
         const location = this._formatPresenceLocationDisplay(personState);
         personLocationHtml = `
-          <span class="room-person-location" data-presence-person="${personEnt.replace(/"/g, '&quot;')}">
+          <span class="room-person-location" data-presence-person="${personEntKey.replace(/"/g, '&quot;')}">
             <ha-icon icon="mdi:account" style="--mdc-icon-size: 14px;"></ha-icon>
             <span class="person-name">${personName.replace(/</g, '&lt;')}:</span>
             <span class="person-state">${location.replace(/</g, '&lt;')}</span>
@@ -9075,7 +9081,8 @@ class EnergyPanel extends HTMLElement {
     if (!personEnt) return;
     e.preventDefault();
     e.stopPropagation();
-    const personData = this._zoneHealthData?.persons?.find(p => p.entity_id === personEnt);
+    const personKey = (personEnt || '').toLowerCase();
+    const personData = this._zoneHealthData?.persons?.find(p => p.entity_id === personKey);
     if (!personData) return;
     this._showZoneHealthPopup(personData);
   }
@@ -9117,8 +9124,36 @@ class EnergyPanel extends HTMLElement {
             </tr>
           </table>
           <p style="margin-top: 12px; color: var(--secondary-text-color); font-size: 12px;">
-            Current state: <strong>${escHtml(personData.current_state)}</strong>
+            Person state: <strong>${escHtml(personData.current_state)}</strong> (merged <code>person.*</code> entity)
           </p>
+          ${
+            Array.isArray(personData.tracker_details) && personData.tracker_details.length
+              ? `<div style="margin-top: 12px;">
+            <p style="font-size: 12px; margin: 0 0 6px 0;"><strong>Linked device trackers</strong></p>
+            <table style="border-collapse: collapse; width: 100%; font-size: 11px;">
+              <tr style="color: var(--secondary-text-color); text-align: left;">
+                <th style="padding: 4px 6px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.15));">Entity</th>
+                <th style="padding: 4px 6px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.15));">Current</th>
+                <th style="padding: 4px 6px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.15)); text-align: center;">H</th>
+                <th style="padding: 4px 6px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.15)); text-align: center;">N</th>
+                <th style="padding: 4px 6px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.15)); text-align: center;">A</th>
+              </tr>
+              ${personData.tracker_details
+                .map(
+                  td => `<tr>
+                <td style="padding: 4px 6px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.08));"><code style="font-size: 10px;">${escHtml(td.entity_id)}</code></td>
+                <td style="padding: 4px 6px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.08)); text-transform: capitalize;">${escHtml(td.current_state)}</td>
+                <td style="padding: 4px 6px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.08)); text-align: center;">${td.seen_home ? checkIcon : xIcon}</td>
+                <td style="padding: 4px 6px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.08)); text-align: center;">${td.seen_nearby ? checkIcon : xIcon}</td>
+                <td style="padding: 4px 6px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.08)); text-align: center;">${td.seen_away ? checkIcon : xIcon}</td>
+              </tr>`
+                )
+                .join('')}
+            </table>
+            <p style="font-size: 10px; color: var(--secondary-text-color); margin: 6px 0 0 0;">H/N/A = home / nearby / away seen for that tracker (recorder window + current).</p>
+          </div>`
+              : ''
+          }
         `,
       },
       {
@@ -9439,25 +9474,67 @@ class EnergyPanel extends HTMLElement {
           </table>
         </div>
       </div>`;
-    const personsHtml = persons.map(p => {
-      const statusColor = p.is_healthy ? 'var(--success-color, #4caf50)' : 'var(--error-color, #f44336)';
-      const statusText = p.is_healthy ? 'Healthy' : 'Unhealthy';
-      const alertBadge = p.is_alerted ? '<span style="background: var(--warning-color, #ff9800); color: #000; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;">ALERTED</span>' : '';
-      const trackers = Array.isArray(p.device_trackers) ? p.device_trackers : [];
-      const trackersLine = trackers.length
-        ? `<div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Trackers: ${trackers.map(t => `<code style="font-size: 9px;">${String(t).replace(/</g, '&lt;')}</code>`).join(', ')}</div>`
-        : '<div style="font-size: 10px; color: var(--warning-color, #ff9800); margin-top: 4px;">No linked device_tracker on person — link the Companion device under People.</div>';
-      const homeCheck = p.seen_home ? checkIcon : xIcon;
-      const nearbyCheck = p.seen_nearby ? checkIcon : xIcon;
-      const awayCheck = p.seen_away ? checkIcon : xIcon;
-      return `
+    const escTd = (s) => String(s || '').replace(/</g, '&lt;');
+    const personsHtml = persons
+      .map(p => {
+        const statusColor = p.is_healthy ? 'var(--success-color, #4caf50)' : 'var(--error-color, #f44336)';
+        const statusText = p.is_healthy ? 'Healthy' : 'Unhealthy';
+        const alertBadge = p.is_alerted
+          ? '<span style="background: var(--warning-color, #ff9800); color: #000; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;">ALERTED</span>'
+          : '';
+        const trackers = Array.isArray(p.device_trackers) ? p.device_trackers : [];
+        const trackerDetails = Array.isArray(p.tracker_details) ? p.tracker_details : [];
+        const trackersLine = trackers.length
+          ? `<div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Trackers: ${trackers.map(t => `<code style="font-size: 9px;">${String(t).replace(/</g, '&lt;')}</code>`).join(', ')}</div>`
+          : '<div style="font-size: 10px; color: var(--warning-color, #ff9800); margin-top: 4px;">No linked device_tracker on person — link the Companion device under People.</div>';
+        const homeCheck = p.seen_home ? checkIcon : xIcon;
+        const nearbyCheck = p.seen_nearby ? checkIcon : xIcon;
+        const awayCheck = p.seen_away ? checkIcon : xIcon;
+        const trackerBreakdown =
+          trackerDetails.length > 0
+            ? `<tr>
+          <td colspan="7" style="padding: 0 12px 10px 16px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); background: var(--card-background-color, rgba(127,127,127,0.06));">
+            <div style="font-size: 10px; color: var(--secondary-text-color); margin: 6px 0 4px 0;">Linked <code>device_tracker</code> (recorder window + current state)</div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 10px;">
+              <thead>
+                <tr style="text-align: left; color: var(--secondary-text-color);">
+                  <th style="padding: 4px 6px;">Entity</th>
+                  <th style="padding: 4px 6px;">Current</th>
+                  <th style="padding: 4px 6px; text-align: center;">Home</th>
+                  <th style="padding: 4px 6px; text-align: center;">Nearby</th>
+                  <th style="padding: 4px 6px; text-align: center;">Away</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${trackerDetails
+                  .map(td => {
+                    const th = td.seen_home ? checkIcon : xIcon;
+                    const tn = td.seen_nearby ? checkIcon : xIcon;
+                    const ta = td.seen_away ? checkIcon : xIcon;
+                    return `<tr>
+                  <td style="padding: 4px 6px;"><code style="font-size: 9px;">${escTd(td.entity_id)}</code></td>
+                  <td style="padding: 4px 6px; text-transform: capitalize;">${escTd(td.current_state)}</td>
+                  <td style="padding: 4px 6px; text-align: center;">${th}</td>
+                  <td style="padding: 4px 6px; text-align: center;">${tn}</td>
+                  <td style="padding: 4px 6px; text-align: center;">${ta}</td>
+                </tr>`;
+                  })
+                  .join('')}
+              </tbody>
+            </table>
+          </td>
+        </tr>`
+            : '';
+        return `
         <tr>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
             <strong>${p.friendly_name}</strong>
             <div style="font-size: 10px; color: var(--secondary-text-color);">${p.entity_id}</div>
             ${trackersLine}
           </td>
-          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); text-transform: capitalize;">${p.current_state}</td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); text-transform: capitalize;">${p.current_state}
+            <div style="font-size: 9px; color: var(--secondary-text-color); margin-top: 2px;">person entity</div>
+          </td>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
             <span style="color: ${statusColor}; font-weight: 500;">${statusText}</span>${alertBadge}
           </td>
@@ -9465,8 +9542,9 @@ class EnergyPanel extends HTMLElement {
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; text-align: center;">${nearbyCheck}<div style="font-size: 10px; color: var(--secondary-text-color);">${formatTime(p.last_nearby)}</div></td>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; text-align: center;">${awayCheck}<div style="font-size: 10px; color: var(--secondary-text-color);">${formatTime(p.last_not_home)}</div></td>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px;">${formatTime(p.last_alert_time)}</td>
-        </tr>`;
-    }).join('');
+        </tr>${trackerBreakdown}`;
+      })
+      .join('');
     const eventsHtml = event_log.length === 0
       ? '<p style="color: var(--secondary-text-color); font-size: 12px;">No zone health events recorded yet.</p>'
       : `<table style="width: 100%; border-collapse: collapse; font-size: 12px;">

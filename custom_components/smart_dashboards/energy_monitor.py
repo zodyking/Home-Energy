@@ -47,7 +47,7 @@ from .const import (
     DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG,
     DEFAULT_NOTIFICATION_TITLE,
 )
-from .mobile_notify_target import resolve_notify_target
+from .mobile_notify_target import async_send_notify_push
 from .person_device_trackers import get_person_device_tracker_entity_ids
 from .tts_helper import async_send_tts
 from .tts_queue import async_send_tts_or_queue
@@ -159,6 +159,7 @@ class EnergyMonitor:
         self._zone_health_event_log: deque = deque(maxlen=100)
         # Zone health recorder-backed history (refreshed periodically)
         self._zone_health_recorder_cache: dict[str, set[str]] = {}
+        self._zone_health_tracker_recorder_cache: dict[str, dict[str, set[str]]] = {}
         self._zone_health_recorder_meta: dict[str, dict[str, str | None]] = {}
         self._zone_health_recorder_last_refresh: datetime | None = None
         # Recorder queries are heavy; automatic refresh at most this often. Real-time path uses
@@ -249,11 +250,14 @@ class EnergyMonitor:
         ordered: list[str] = []
         for room in self.config_manager.energy_config.get("rooms", []):
             pe = room.get("presence_person_entity")
-            if not pe or not str(pe).startswith("person."):
+            if not pe:
                 continue
-            if pe not in seen:
-                seen.add(pe)
-                ordered.append(pe)
+            pe_norm = str(pe).strip().lower()
+            if not pe_norm.startswith("person."):
+                continue
+            if pe_norm not in seen:
+                seen.add(pe_norm)
+                ordered.append(pe_norm)
         return ordered
 
     def _anyone_in_any_zone(self) -> bool:
@@ -327,20 +331,31 @@ class EnergyMonitor:
         return s
 
     def _record_person_zone_state(self, person_ent: str, state: str, now: datetime) -> None:
-        """Record a person's zone state in history (48-hour rolling window)."""
-        norm = self._normalize_zone_health_state(state)
-        if person_ent not in self._person_zone_state_history:
-            self._person_zone_state_history[person_ent] = deque(maxlen=2880)
-        self._person_zone_state_history[person_ent].append((now, norm))
+        """Record a person's zone state in history (48-hour rolling window).
+
+        Uses the same classifier as the recorder path so zone slugs (e.g. Nearby)
+        map to home / nearby / not_home consistently.
+        """
+        person_key = str(person_ent).strip().lower()
+        nearby_tokens = self._build_zone_health_nearby_tokens()
+        classified = self._classify_zone_health_state_with_nearby_tokens(
+            state, nearby_tokens
+        )
+        if classified is None:
+            return
+        if person_key not in self._person_zone_state_history:
+            self._person_zone_state_history[person_key] = deque(maxlen=2880)
+        self._person_zone_state_history[person_key].append((now, classified))
 
     def _get_person_zone_states_in_window(self, person_ent: str, hours: int = 48) -> set[str]:
         """Get unique zone states for a person within the specified time window (in-memory only)."""
-        if person_ent not in self._person_zone_state_history:
+        person_key = str(person_ent).strip().lower()
+        if person_key not in self._person_zone_state_history:
             return set()
         now = dt_util.now()
         cutoff = now - timedelta(hours=hours)
         states: set[str] = set()
-        for timestamp, state in self._person_zone_state_history[person_ent]:
+        for timestamp, state in self._person_zone_state_history[person_key]:
             if timestamp >= cutoff:
                 states.add(state.lower())
         return states
@@ -385,21 +400,28 @@ class EnergyMonitor:
 
         nearby_tokens = self._build_zone_health_nearby_tokens()
         for person_ent in all_persons:
-            trackers = self._get_person_linked_device_trackers(person_ent)
-            entity_ids = list(dict.fromkeys([person_ent, *trackers]))
+            person_key = str(person_ent).strip().lower()
+            trackers = self._get_person_linked_device_trackers(person_key)
+            entity_ids = list(
+                dict.fromkeys([person_key, *[str(t).strip().lower() for t in trackers]])
+            )
             _LOGGER.debug(
                 "Zone health recorder: %s querying %d entities (%d device_trackers)",
-                person_ent,
+                person_key,
                 len(entity_ids),
                 len(trackers),
             )
             states_union: set[str] = set()
+            tracker_classified: dict[str, set[str]] = {}
+            row_debug: dict[str, dict[str, int]] = {
+                eid: {"state_changes": 0, "significant": 0} for eid in entity_ids
+            }
             last_home_dt: datetime | None = None
             last_nearby_dt: datetime | None = None
             last_away_dt: datetime | None = None
             try:
 
-                def _consume_state_row(st) -> None:
+                def _consume_state_row(st, source_eid: str) -> None:
                     nonlocal last_home_dt, last_nearby_dt, last_away_dt
                     raw = getattr(st, "state", None) or (
                         st.get("state") if isinstance(st, dict) else None
@@ -412,6 +434,8 @@ class EnergyMonitor:
                     if classified is None:
                         return
                     states_union.add(classified)
+                    if source_eid.startswith("device_tracker."):
+                        tracker_classified.setdefault(source_eid, set()).add(classified)
                     lc = getattr(st, "last_changed", None) or getattr(
                         st, "last_updated", None
                     )
@@ -440,8 +464,9 @@ class EnergyMonitor:
                         include_start_time_state=True,
                     )
                     rows = per_ent.get(eid_lower) or per_ent.get(eid) or []
+                    row_debug[eid]["state_changes"] = len(rows)
                     for st in rows:
-                        _consume_state_row(st)
+                        _consume_state_row(st, eid_lower)
                 # Merge broader recorder rows so we still catch edge cases either API might miss.
                 with session_scope(hass=self.hass, read_only=True) as session:
                     states_dict = get_significant_states_with_session(
@@ -457,16 +482,27 @@ class EnergyMonitor:
                         no_attributes=False,
                     )
                 for eid in entity_ids:
-                    for st in states_dict.get(eid) or []:
-                        _consume_state_row(st)
+                    sig_list = states_dict.get(eid) or []
+                    row_debug[eid]["significant"] = len(sig_list)
+                    eid_lower = eid.lower()
+                    for st in sig_list:
+                        _consume_state_row(st, eid_lower)
             except Exception as e:
-                _LOGGER.warning("Zone health recorder fetch failed for %s: %s", person_ent, e)
-            self._zone_health_recorder_cache[person_ent] = states_union
-            self._zone_health_recorder_meta[person_ent] = {
+                _LOGGER.warning("Zone health recorder fetch failed for %s: %s", person_key, e)
+            self._zone_health_recorder_cache[person_key] = states_union
+            self._zone_health_tracker_recorder_cache[person_key] = {
+                tid: set(states) for tid, states in tracker_classified.items()
+            }
+            self._zone_health_recorder_meta[person_key] = {
                 "last_home": last_home_dt.isoformat() if last_home_dt else None,
                 "last_nearby": last_nearby_dt.isoformat() if last_nearby_dt else None,
                 "last_not_home": last_away_dt.isoformat() if last_away_dt else None,
             }
+            _LOGGER.debug(
+                "Zone health recorder row counts for %s: %s",
+                person_key,
+                row_debug,
+            )
 
         self._zone_health_recorder_last_refresh = now
         _LOGGER.debug(
@@ -483,8 +519,9 @@ class EnergyMonitor:
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
         # Merge in-memory deque with recorder cache (convert days to hours for in-memory)
-        in_memory = self._get_person_zone_states_in_window(person_ent, history_days * 24)
-        from_recorder = self._zone_health_recorder_cache.get(person_ent, set())
+        person_key = str(person_ent).strip().lower()
+        in_memory = self._get_person_zone_states_in_window(person_key, history_days * 24)
+        from_recorder = self._zone_health_recorder_cache.get(person_key, set())
         all_states = in_memory | from_recorder
         return "home" in all_states and "nearby" in all_states and "not_home" in all_states
 
@@ -493,16 +530,18 @@ class EnergyMonitor:
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
         all_persons = self._distinct_presence_person_entity_ids()
+        nearby_tokens_status = self._build_zone_health_nearby_tokens()
         persons_data = []
         for person_ent in all_persons:
-            ps = self.hass.states.get(person_ent)
+            person_key = str(person_ent).strip().lower()
+            ps = self.hass.states.get(person_key)
             current_state = (ps.state if ps else "unknown") or "unknown"
-            name = self._get_person_friendly_name(person_ent)
-            trackers = self._get_person_linked_device_trackers(person_ent)
-            is_healthy = self._is_person_zone_setup_healthy(person_ent)
-            is_alerted = person_ent in self._person_zone_health_alerted
-            last_alert = self._person_zone_hourly_reminder_last.get(person_ent)
-            history = list(self._person_zone_state_history.get(person_ent, []))
+            name = self._get_person_friendly_name(person_key)
+            trackers = self._get_person_linked_device_trackers(person_key)
+            is_healthy = self._is_person_zone_setup_healthy(person_key)
+            is_alerted = person_key in self._person_zone_health_alerted
+            last_alert = self._person_zone_hourly_reminder_last.get(person_key)
+            history = list(self._person_zone_state_history.get(person_key, []))
             mem_last_home = None
             mem_last_nearby = None
             mem_last_not_home = None
@@ -515,18 +554,37 @@ class EnergyMonitor:
                     mem_last_not_home = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
                 if mem_last_home and mem_last_nearby and mem_last_not_home:
                     break
-            meta = self._zone_health_recorder_meta.get(person_ent) or {}
+            meta = self._zone_health_recorder_meta.get(person_key) or {}
             last_home = meta.get("last_home") or mem_last_home
             last_nearby = meta.get("last_nearby") or mem_last_nearby
             last_not_home = meta.get("last_not_home") or mem_last_not_home
             # Determine seen flags from merged data
-            in_memory = self._get_person_zone_states_in_window(person_ent, history_days * 24)
-            from_recorder = self._zone_health_recorder_cache.get(person_ent, set())
+            in_memory = self._get_person_zone_states_in_window(person_key, history_days * 24)
+            from_recorder = self._zone_health_recorder_cache.get(person_key, set())
             all_states = in_memory | from_recorder
+            tr_rec = self._zone_health_tracker_recorder_cache.get(person_key, {})
+            tracker_details: list[dict] = []
+            for tid in trackers:
+                ts = self.hass.states.get(tid)
+                raw_st = (ts.state if ts else None) or "unknown"
+                cur_cls = self._classify_zone_health_state_with_nearby_tokens(
+                    raw_st, nearby_tokens_status
+                )
+                merged_cls = set(tr_rec.get(tid, ()))
+                if cur_cls:
+                    merged_cls.add(cur_cls)
+                tracker_details.append({
+                    "entity_id": tid,
+                    "current_state": raw_st,
+                    "seen_home": "home" in merged_cls,
+                    "seen_nearby": "nearby" in merged_cls,
+                    "seen_away": "not_home" in merged_cls,
+                })
             persons_data.append({
-                "entity_id": person_ent,
+                "entity_id": person_key,
                 "friendly_name": name,
                 "device_trackers": trackers,
+                "tracker_details": tracker_details,
                 "current_state": current_state,
                 "is_healthy": is_healthy,
                 "is_alerted": is_alerted,
@@ -588,10 +646,11 @@ class EnergyMonitor:
 
     def _get_person_friendly_name(self, person_ent: str) -> str:
         """Get friendly name for a person entity."""
-        ps = self.hass.states.get(person_ent)
+        person_key = str(person_ent).strip().lower()
+        ps = self.hass.states.get(person_key)
         if ps and ps.attributes.get("friendly_name"):
             return str(ps.attributes["friendly_name"])
-        return person_ent.replace("person.", "").replace("_", " ").title()
+        return person_key.replace("person.", "").replace("_", " ").title()
 
     def _setup_zone_health_listeners(self) -> None:
         """Set up state change listeners for person entities to track zone health."""
@@ -605,7 +664,7 @@ class EnergyMonitor:
 
         @callback
         def _on_person_state_change(event: Event) -> None:
-            entity_id = event.data.get("entity_id", "")
+            entity_id = str(event.data.get("entity_id", "")).strip().lower()
             new_state = event.data.get("new_state")
             if not new_state or not entity_id.startswith("person."):
                 return
@@ -630,7 +689,7 @@ class EnergyMonitor:
 
         @callback
         def _on_tracker_state_change(event: Event) -> None:
-            entity_id = event.data.get("entity_id", "")
+            entity_id = str(event.data.get("entity_id", "")).strip().lower()
             new_state = event.data.get("new_state")
             person_ent = tracker_owner.get(entity_id)
             if not person_ent or not new_state:
@@ -663,23 +722,24 @@ class EnergyMonitor:
         self, person_ent: str, new_state: str, now: datetime
     ) -> None:
         """Clear zone-health alert state when home, nearby, and away all appear in history."""
+        person_key = str(person_ent).strip().lower()
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if not tts_settings.get("zone_health_check_enabled", True):
             return
 
-        if person_ent in self._person_zone_health_alerted and self._is_person_zone_setup_healthy(
-            person_ent
+        if person_key in self._person_zone_health_alerted and self._is_person_zone_setup_healthy(
+            person_key
         ):
-            name = self._get_person_friendly_name(person_ent)
-            self._person_zone_health_alerted.discard(person_ent)
-            self._person_zone_hourly_reminder_last.pop(person_ent, None)
+            name = self._get_person_friendly_name(person_key)
+            self._person_zone_health_alerted.discard(person_key)
+            self._person_zone_hourly_reminder_last.pop(person_key, None)
             _LOGGER.info(
                 "Zone health: %s tracking healthy (home, nearby, and away seen in window)",
-                person_ent,
+                person_key,
             )
-            self._log_zone_health_event(person_ent, name, "recovered", "Home, nearby, and away all reporting")
+            self._log_zone_health_event(person_key, name, "recovered", "Home, nearby, and away all reporting")
             await self._async_speak_zone_health_tts(
-                person_ent,
+                person_key,
                 f"{name}, your location tracking looks good. Home, nearby, and away are all reporting.",
             )
 
@@ -871,11 +931,16 @@ class EnergyMonitor:
             or "Hi {name}, your zone tracking setup needs attention."
         )
         message = msg_template.replace("{name}", name)
-        sent = await self._async_send_mobile_notification_to_person(person_ent, title, message)
-        if sent:
+        result = await async_send_notify_push(self.hass, person_ent, title, message)
+        if result.ok:
             self._log_zone_health_event(person_ent, name, "push_sent", message)
         else:
-            self._log_zone_health_event(person_ent, name, "push_failed", "No mobile_app notify target resolved")
+            self._log_zone_health_event(
+                person_ent,
+                name,
+                "push_failed",
+                result.error or "Push notification failed",
+            )
 
     def _heater_door_window_blocks(self, outlet: dict) -> str | None:
         """Return 'door' or 'window' if sensor is open, else None."""
@@ -1565,74 +1630,10 @@ class EnergyMonitor:
     ) -> bool:
         """Deliver a formatted push to one person's mobile_app notify target.
 
-        Supports:
-        1. Legacy notify.mobile_app_<slug> service
-        2. Entity-based notify.send_message or notify.send with entity_id
-
-        Returns True if notification was sent, False if no target could be resolved.
+        Uses shared ``async_send_notify_push`` (same path as dashboard test notification).
         """
-        target = resolve_notify_target(self.hass, person_ent)
-        if not target:
-            _LOGGER.warning(
-                "Cannot send push to %s: no mobile_app notify target resolved. "
-                "Ensure a phone is linked under Settings → People and the Companion app is registered.",
-                person_ent,
-            )
-            return False
-
-        try:
-            if target.mode == "legacy_service" and target.service_name:
-                await self.hass.services.async_call(
-                    "notify",
-                    target.service_name,
-                    {"title": title, "message": message},
-                    blocking=False,
-                )
-                _LOGGER.debug(
-                    "Sent notification via %s: %s - %s", target.service_name, title, message
-                )
-            elif target.mode == "notify_send" and target.entity_id:
-                if self.hass.services.has_service("notify", "send_message"):
-                    await self.hass.services.async_call(
-                        "notify",
-                        "send_message",
-                        {"entity_id": target.entity_id, "title": title, "message": message},
-                        blocking=False,
-                    )
-                elif self.hass.services.has_service("notify", "send"):
-                    await self.hass.services.async_call(
-                        "notify",
-                        "send",
-                        {
-                            "entity_id": target.entity_id,
-                            "title": title,
-                            "message": message,
-                        },
-                        blocking=False,
-                    )
-                else:
-                    _LOGGER.warning(
-                        "Cannot send push: neither notify.send_message nor notify.send for %s",
-                        target.entity_id,
-                    )
-                    return False
-                _LOGGER.debug(
-                    "Sent notification via notify entity %s: %s - %s",
-                    target.entity_id,
-                    title,
-                    message,
-                )
-            else:
-                _LOGGER.warning(
-                    "Unknown notify target mode for %s: %s", person_ent, target
-                )
-                return False
-            return True
-        except Exception as e:
-            _LOGGER.warning(
-                "Failed to send notification to %s (target=%s): %s", person_ent, target, e
-            )
-            return False
+        result = await async_send_notify_push(self.hass, person_ent, title, message)
+        return result.ok
 
     async def _send_notification_broadcast(
         self,
