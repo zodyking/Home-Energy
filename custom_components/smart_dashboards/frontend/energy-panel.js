@@ -7949,9 +7949,9 @@ class EnergyPanel extends HTMLElement {
                 <h2 class="card-title">Zone Health Tracking</h2>
               </div>
               <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
-                Monitor zone-based presence for each room’s <strong>Presence person</strong>. Health uses <strong>Home Assistant recorder</strong>
-                history on that person’s linked <strong>device_tracker</strong> entities only (Companion), not the <code>person.*</code> state and not data stored inside this integration.
-                Healthy means <code>home</code>, <code>nearby</code>, and <code>away</code> all appeared in that recorder window.
+                Monitor zone-based presence for each room’s <strong>Presence person</strong>. Snapshots from recorder pulls are saved under <code>config/data/smart_dashboards_zone_health.json</code>.
+                For each person, <strong>no TTS or push alerts</strong> run until <strong>Home Assistant has been up for 10 minutes</strong> and a <strong>warm-up period</strong> (same length as the history window, 1–3 days) has finished.
+                After warm-up, <strong>healthy</strong> means <code>home</code>, <code>nearby</code>, and <code>away</code> all appear in that saved snapshot window. Live <code>person.*</code> and recorder columns below are for reference only.
               </p>
               <details class="settings-fold" style="margin-bottom: 16px;">
                 <summary class="settings-fold-summary">Zone health settings</summary>
@@ -9098,12 +9098,38 @@ class EnergyPanel extends HTMLElement {
     const homeIcon = personData.seen_home ? checkIcon : xIcon;
     const nearbyIcon = personData.seen_nearby ? checkIcon : xIcon;
     const awayIcon = personData.seen_away ? checkIcon : xIcon;
+    const warmingUp = personData.warming_up === true;
+    const warmupEta = personData.warmup_complete_at
+      ? new Date(personData.warmup_complete_at).toLocaleString()
+      : '';
 
     let currentStep = 0;
     const steps = [
       {
-        title: 'Zone Tracking Issue',
-        content: `
+        title: warmingUp ? 'Zone health warm-up' : 'Zone Tracking Issue',
+        content: warmingUp
+          ? `
+          <p><strong>${escHtml(name)}'s</strong> zone health is still in the <strong>warm-up</strong> period (${escHtml(String(this._zoneHealthData?.history_days || 3))} day window). No alerts are sent until warm-up finishes and Home Assistant has been running for at least 10 minutes.</p>
+          ${warmupEta ? `<p style="color: var(--secondary-text-color); font-size: 12px;">Warm-up completes about: <strong>${escHtml(warmupEta)}</strong></p>` : ''}
+          <table style="margin-top: 12px; border-collapse: collapse; width: 100%;">
+            <tr>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">${homeIcon}</td>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));"><strong>Home</strong> (recorder ref.)</td>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; color: var(--secondary-text-color);">${formatTime(personData.last_home)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">${nearbyIcon}</td>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));"><strong>Nearby</strong></td>
+              <td style="padding: 6px 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; color: var(--secondary-text-color);">${formatTime(personData.last_nearby)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 8px;">${awayIcon}</td>
+              <td style="padding: 6px 8px;"><strong>Away</strong></td>
+              <td style="padding: 6px 8px; font-size: 11px; color: var(--secondary-text-color);">${formatTime(personData.last_not_home)}</td>
+            </tr>
+          </table>
+        `
+          : `
           <p><strong>${escHtml(name)}'s</strong> location tracking isn't set up correctly.</p>
           <p>Within the last <strong>${windowLabel}</strong>, your linked <strong>device_tracker</strong> must show <strong>home</strong>, <strong>nearby</strong>, and <strong>away</strong> in <strong>Home Assistant recorder</strong> (same idea as history for a sensor).</p>
           <table style="margin-top: 12px; border-collapse: collapse; width: 100%;">
@@ -9448,8 +9474,24 @@ class EnergyPanel extends HTMLElement {
       </div>`;
     const personsHtml = persons
       .map(p => {
-        const statusColor = p.is_healthy ? 'var(--success-color, #4caf50)' : 'var(--error-color, #f44336)';
-        const statusText = p.is_healthy ? 'Healthy' : 'Unhealthy';
+        const warmingUp = p.warming_up === true;
+        const etaRaw = p.warmup_complete_at;
+        const etaLine =
+          warmingUp && etaRaw
+            ? `<div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Alerts start after: ${formatTime(etaRaw)}</div>`
+            : warmingUp
+              ? '<div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Collecting history — alerts disabled during warm-up.</div>'
+              : '';
+        const statusColor = warmingUp
+          ? 'var(--warning-color, #ff9800)'
+          : p.is_healthy
+            ? 'var(--success-color, #4caf50)'
+            : 'var(--error-color, #f44336)';
+        const statusText = warmingUp
+          ? 'Warming up'
+          : p.is_healthy
+            ? 'Healthy'
+            : 'Unhealthy';
         const alertBadge = p.is_alerted
           ? '<span style="background: var(--warning-color, #ff9800); color: #000; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;">ALERTED</span>'
           : '';
@@ -9471,7 +9513,7 @@ class EnergyPanel extends HTMLElement {
             <div style="font-size: 9px; color: var(--secondary-text-color); margin-top: 2px;">person entity</div>
           </td>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
-            <span style="color: ${statusColor}; font-weight: 500;">${statusText}</span>${alertBadge}
+            <span style="color: ${statusColor}; font-weight: 500;">${statusText}</span>${alertBadge}${etaLine}
           </td>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; text-align: center;">${homeCheck}<div style="font-size: 10px; color: var(--secondary-text-color);">${formatTime(p.last_home)}</div></td>
           <td style="padding: 8px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1)); font-size: 11px; text-align: center;">${nearbyCheck}<div style="font-size: 10px; color: var(--secondary-text-color);">${formatTime(p.last_nearby)}</div></td>
@@ -9519,7 +9561,7 @@ class EnergyPanel extends HTMLElement {
         <h3 style="margin: 0 0 8px 0; font-size: 14px;">Person Status</h3>
         ${refreshedLine}
         <p style="font-size: 11px; color: var(--secondary-text-color); margin-bottom: 8px;">
-          History window: <strong>${windowLabel}</strong>. <strong>Home / Nearby / Away</strong> columns = HA <strong>recorder</strong> on linked <code>device_tracker.*</code> only. <strong>Current</strong> = live <code>person.*</code> (reference).
+          History window: <strong>${windowLabel}</strong>. <strong>Home / Nearby / Away</strong> columns = latest HA <strong>recorder</strong> pull on linked <code>device_tracker.*</code> (reference). After warm-up, the <strong>Health</strong> column follows the <strong>JSON snapshot</strong> file, not these cells alone.
         </p>
         <div style="overflow-x: auto;">
           <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
