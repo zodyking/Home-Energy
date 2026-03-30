@@ -145,8 +145,8 @@ _KWH_HISTORY_CACHE: dict[
 _last_stats_prime_at: float = 0.0
 
 
-async def _async_register_statistics_cache_primer(hass: HomeAssistant) -> None:
-    """Periodic background prime of default-range statistics cache."""
+async def async_register_statistics_cache_primer(hass: HomeAssistant) -> None:
+    """Periodic background prime of default-range statistics cache and save to JSON."""
 
     async def _tick(_now: datetime) -> None:
         await _statistics_cache_prime_tick(hass, _now)
@@ -168,6 +168,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_intraday_events)
     websocket_api.async_register_command(hass, websocket_get_event_log)
     websocket_api.async_register_command(hass, websocket_get_statistics)
+    websocket_api.async_register_command(hass, websocket_subscribe_statistics)
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
     websocket_api.async_register_command(hass, websocket_get_areas)
     websocket_api.async_register_command(hass, websocket_get_switches)
@@ -1637,7 +1638,7 @@ async def async_build_statistics_payload(
 
 
 async def _prime_statistics_cache(hass: HomeAssistant) -> None:
-    """Fill _STATISTICS_CACHE for the default statistics date range (same as WS without dates)."""
+    """Build statistics, save to JSON, and fire event for live UI push."""
     config_manager = hass.data[DOMAIN].get("config_manager")
     if not config_manager:
         return
@@ -1652,9 +1653,10 @@ async def _prime_statistics_cache(hass: HomeAssistant) -> None:
     end = result.get("date_end") or ""
     if not start or not end:
         return
-    cache_key = (start, end)
-    now = time.monotonic()
-    _STATISTICS_CACHE[cache_key] = (now, result)
+    # Save to JSON for instant page load
+    await config_manager.async_save_statistics_cache(result)
+    # Fire event so frontend subscribers get live push
+    hass.bus.async_fire("smart_dashboards_statistics_updated", {"data": result})
 
 
 async def _statistics_cache_prime_tick(hass: HomeAssistant, _now: datetime) -> None:
@@ -1690,7 +1692,11 @@ async def websocket_get_statistics(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Get aggregated statistics for a date range."""
+    """Get aggregated statistics for a date range.
+    
+    For default date range (no date_start/date_end), always load from JSON file
+    for instant response. Background task keeps JSON updated.
+    """
     config_manager = hass.data[DOMAIN].get("config_manager")
     if not config_manager:
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
@@ -1698,39 +1704,58 @@ async def websocket_get_statistics(
 
     date_start = (msg.get("date_start") or "").strip() or None
     date_end = (msg.get("date_end") or "").strip() or None
-    start, end, _is_narrowed = config_manager.get_statistics_date_range(
-        date_start=date_start, date_end=date_end
-    )
     billing_a, billing_b = config_manager.get_billing_date_range()
     period_source = "billing" if (billing_a and billing_b) else "rolling"
 
-    cache_key = (start or "", end or "")
-    now = time.monotonic()
-    cache_ttl = _statistics_cache_ttl_seconds(end or "", config_manager)
-    if cache_key[0] and cache_key[1]:
-        entry = _STATISTICS_CACHE.get(cache_key)
-        if entry:
-            cached_at, cached_result = entry
-            if now - cached_at < cache_ttl:
-                connection.send_result(
-                    msg["id"], {**cached_result, "period_source": period_source}
-                )
-                return
+    # For default date range, always load from JSON file (instant, no computation)
+    if date_start is None and date_end is None:
+        json_cache = config_manager.statistics_cache_data
+        if json_cache:
+            connection.send_result(
+                msg["id"], {**json_cache, "period_source": period_source}
+            )
+            return
 
+    # Custom date range: compute fresh (no caching for custom ranges)
     result = await async_build_statistics_payload(
         hass, config_manager, date_start=date_start, date_end=date_end
     )
-    start_r = result.get("date_start") or ""
-    end_r = result.get("date_end") or ""
-    if not start_r or not end_r:
-        connection.send_result(msg["id"], result)
-        return
-
-    cache_key2 = (start_r, end_r)
-    if cache_key2[0] and cache_key2[1]:
-        _STATISTICS_CACHE[cache_key2] = (time.monotonic(), result)
-
     connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/subscribe_statistics",
+    }
+)
+@callback
+def websocket_subscribe_statistics(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Subscribe to statistics updates for live push to frontend."""
+
+    @callback
+    def forward_statistics_update(event) -> None:
+        """Forward statistics update event to WebSocket."""
+        data = event.data.get("data", {})
+        billing_a, billing_b = None, None
+        config_manager = hass.data.get(DOMAIN, {}).get("config_manager")
+        if config_manager:
+            billing_a, billing_b = config_manager.get_billing_date_range()
+        period_source = "billing" if (billing_a and billing_b) else "rolling"
+        connection.send_message(
+            websocket_api.event_message(
+                msg["id"], {**data, "period_source": period_source}
+            )
+        )
+
+    unsub = hass.bus.async_listen(
+        "smart_dashboards_statistics_updated", forward_statistics_update
+    )
+    connection.subscriptions[msg["id"]] = unsub
+    connection.send_result(msg["id"])
 
 
 @websocket_api.websocket_command(

@@ -133,6 +133,7 @@ class EnergyPanel extends HTMLElement {
     this._statsLoading = false;
     this._statsFetchedAt = null; // ms — last successful get_statistics
     this._statsFetchError = null;
+    this._statsSubscription = null; // WebSocket subscription for live statistics updates
     this._statsRoomsView = 'pie'; // 'table' | 'pie' — statistics rooms card only
     this._statsRoomsPieInstance = null;
     this._statsPieRoomRows = null; // aligned with pie series for tooltips / selection
@@ -210,6 +211,7 @@ class EnergyPanel extends HTMLElement {
       this._presenceLiveThrottleTimer = null;
     }
     this._teardownBillingBarChartNative();
+    this._unsubscribeFromStatisticsUpdates();
   }
 
   _statisticsRefreshMs() {
@@ -306,11 +308,17 @@ class EnergyPanel extends HTMLElement {
 
   async _loadStatistics() {
     if (!this._hass || this._showSettings) return;
-    this._statsLoading = true;
-    this._statsFetchError = null;
-    if (this._dashboardView === 'statistics') {
-      this._render();
+    
+    // Only show loading if no data exists yet (first load)
+    const isFirstLoad = !this._statsData;
+    if (isFirstLoad) {
+      this._statsLoading = true;
+      this._statsFetchError = null;
+      if (this._dashboardView === 'statistics') {
+        this._render();
+      }
     }
+    
     try {
       const data = await this._hass.callWS({ type: 'smart_dashboards/get_statistics' });
       this._statsData = data;
@@ -323,6 +331,37 @@ class EnergyPanel extends HTMLElement {
       if (this._dashboardView === 'statistics') {
         this._render();
       }
+    }
+    
+    // Subscribe to live updates (only once)
+    this._subscribeToStatisticsUpdates();
+  }
+  
+  async _subscribeToStatisticsUpdates() {
+    if (this._statsSubscription || !this._hass) return;
+    
+    try {
+      this._statsSubscription = await this._hass.connection.subscribeMessage(
+        (event) => {
+          // Live push from backend when statistics JSON updates
+          this._statsData = event;
+          this._statsFetchedAt = Date.now();
+          this._statsFetchError = null;
+          if (this._dashboardView === 'statistics') {
+            this._render();
+          }
+        },
+        { type: 'smart_dashboards/subscribe_statistics' }
+      );
+    } catch (e) {
+      console.error('Failed to subscribe to statistics updates:', e);
+    }
+  }
+  
+  _unsubscribeFromStatisticsUpdates() {
+    if (this._statsSubscription) {
+      this._statsSubscription();
+      this._statsSubscription = null;
     }
   }
 
