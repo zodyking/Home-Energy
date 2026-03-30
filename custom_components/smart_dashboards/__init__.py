@@ -45,6 +45,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         from .energy_monitor import async_start_energy_monitor
         await async_start_energy_monitor(hass, config_manager)
 
+    # Start background statistics cache primer for instant page loads
+    from .websocket import async_register_statistics_cache_primer
+    await async_register_statistics_cache_primer(hass)
+
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(async_options_update_listener))
 

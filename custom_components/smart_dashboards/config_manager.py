@@ -254,6 +254,8 @@ class ConfigManager:
         self._event_log_max_entries = 500
         # Per-calendar-day archive for billing/statistics (full detail, longer retention)
         self._event_archive_days: dict[str, list[dict[str, Any]]] = {}
+        # Statistics cache: pre-computed statistics for instant page load
+        self._statistics_cache_data: dict[str, Any] = {}
 
     @property
     def config(self) -> dict[str, Any]:
@@ -269,6 +271,11 @@ class ConfigManager:
     def daily_totals(self) -> dict[str, Any]:
         """Return daily totals history (read-only)."""
         return self._daily_totals
+
+    @property
+    def statistics_cache_data(self) -> dict[str, Any]:
+        """Return cached statistics data (read-only)."""
+        return self._statistics_cache_data
 
     def is_room_enforcement_enabled(self, room_id: str) -> bool:
         """Return True if power enforcement is enabled and this room is in rooms_enabled."""
@@ -412,6 +419,8 @@ class ConfigManager:
         await self._async_load_enforcement_state()
         # Load intraday history
         await self._async_load_intraday_history()
+        # Load statistics cache for instant page load
+        await self._async_load_statistics_cache()
 
     async def async_save(self) -> None:
         """Save configuration to file."""
@@ -1884,6 +1893,24 @@ class ConfigManager:
             )
         except IOError as err:
             _LOGGER.error("Error saving daily totals: %s", err)
+
+    async def _async_load_statistics_cache(self) -> None:
+        """Load pre-computed statistics cache from file for instant page load."""
+        path = self.hass.config.path("smart_dashboards_statistics_cache.json")
+        try:
+            data = await self.hass.async_add_executor_job(_load_json_file, path)
+            self._statistics_cache_data = data if data else {}
+        except (json.JSONDecodeError, IOError):
+            self._statistics_cache_data = {}
+
+    async def async_save_statistics_cache(self, data: dict[str, Any]) -> None:
+        """Save pre-computed statistics to file for instant page load."""
+        self._statistics_cache_data = data
+        path = self.hass.config.path("smart_dashboards_statistics_cache.json")
+        try:
+            await self.hass.async_add_executor_job(_write_json_file, path, data)
+        except IOError as err:
+            _LOGGER.error("Error saving statistics cache: %s", err)
 
     async def async_snapshot_day_and_reset_if_rolled_over(self) -> None:
         """If date rolled over, snapshot previous day's totals to history, then reset."""
