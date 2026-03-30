@@ -17,6 +17,13 @@ from homeassistant.util import dt as dt_util
 from .config_manager import vent_like_energy_tracking_key
 from .const import DEFAULT_NOTIFICATION_TITLE, DOMAIN
 from .mobile_notify_target import async_send_notify_push
+from .room_ratings import (
+    load_ratings,
+    ratings_payload_for_ws,
+    ratings_store_path,
+    record_dashboard_heartbeat,
+    save_ratings,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -2682,3 +2689,50 @@ async def websocket_refresh_zone_health(
         return
     status = await energy_monitor.async_force_zone_health_refresh()
     connection.send_result(msg["id"], status)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "smart_dashboards/get_room_ratings"}
+)
+@websocket_api.async_response
+async def websocket_get_room_ratings(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return cached room efficiency ratings (JSON under config/data, updated hourly)."""
+    domain_data = hass.data.get(DOMAIN) or {}
+    cached = domain_data.get("room_ratings_cache")
+    if isinstance(cached, dict) and cached.get("rooms") is not None:
+        connection.send_result(msg["id"], cached)
+        return
+
+    path = ratings_store_path(hass)
+
+    def _load() -> dict[str, Any]:
+        return ratings_payload_for_ws(load_ratings(path))
+
+    payload = await hass.async_add_executor_job(_load)
+    connection.send_result(msg["id"], payload)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "smart_dashboards/dashboard_heartbeat"}
+)
+@websocket_api.async_response
+async def websocket_dashboard_heartbeat(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Record a dashboard visit for engagement scoring (throttled server-side)."""
+    path = ratings_store_path(hass)
+    user_key = _dashboard_ws_user_key(connection)
+
+    def _beat() -> None:
+        data = load_ratings(path)
+        record_dashboard_heartbeat(data, user_key)
+        save_ratings(path, data)
+
+    await hass.async_add_executor_job(_beat)
+    connection.send_result(msg["id"], {"success": True})

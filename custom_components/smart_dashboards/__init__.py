@@ -6,10 +6,13 @@ import logging
 import os
 import time
 
+from datetime import datetime, timedelta
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
     DOMAIN,
@@ -49,6 +52,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .websocket import async_register_statistics_cache_primer
     await async_register_statistics_cache_primer(hass)
 
+    # Room efficiency ratings: hourly recompute + JSON under config/data
+    from .room_ratings import ratings_payload_for_ws, recompute_room_ratings
+
+    cm_ratings = hass.data[DOMAIN]["config_manager"]
+
+    def _room_ratings_run_sync() -> None:
+        full = recompute_room_ratings(hass, cm_ratings)
+        hass.data[DOMAIN]["room_ratings_cache"] = ratings_payload_for_ws(full)
+
+    async def _room_ratings_tick(_now: datetime) -> None:
+        await hass.async_add_executor_job(_room_ratings_run_sync)
+
+    await hass.async_add_executor_job(_room_ratings_run_sync)
+    hass.data[DOMAIN]["room_ratings_unsub"] = async_track_time_interval(
+        hass, _room_ratings_tick, timedelta(hours=1)
+    )
+
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(async_options_update_listener))
 
@@ -65,6 +85,10 @@ async def async_options_update_listener(hass: HomeAssistant, entry: ConfigEntry)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    ratings_unsub = hass.data.get(DOMAIN, {}).get("room_ratings_unsub")
+    if ratings_unsub:
+        ratings_unsub()
+
     # Stop energy monitor (unregister listeners, cancel task)
     energy_monitor = hass.data.get(DOMAIN, {}).get("energy_monitor")
     if energy_monitor:
