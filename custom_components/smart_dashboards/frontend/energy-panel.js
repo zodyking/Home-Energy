@@ -158,6 +158,12 @@ class EnergyPanel extends HTMLElement {
     this._zoneHealthData = null;
     this._zoneHealthRefreshInterval = null;
     this._zoneHealthIconClickDelegation = false;
+    /** @type {object|null} smart_dashboards/get_room_ratings payload */
+    this._roomRatingsData = null;
+    this._roomRatingsRefreshInterval = null;
+    this._dashboardHeartbeatInterval = null;
+    this._roomRatingModalDelegation = false;
+    this._roomRatingModalEsc = null;
   }
 
   set hass(hass) {
@@ -167,6 +173,9 @@ class EnergyPanel extends HTMLElement {
     }
     if (this._showSettings && hass?.states) {
       this._scheduleUpdateRoomPresenceLiveLabels();
+    }
+    if (hass) {
+      this._startRoomRatingsAndHeartbeat();
     }
   }
 
@@ -218,6 +227,12 @@ class EnergyPanel extends HTMLElement {
     }
     // Stop zone health refresh
     this._stopZoneHealthRefresh();
+    this._stopRoomRatingsAndHeartbeat();
+    if (this._roomRatingModalEsc) {
+      window.removeEventListener('keydown', this._roomRatingModalEsc);
+      this._roomRatingModalEsc = null;
+    }
+    this.shadowRoot?.querySelector('.room-rating-modal-overlay')?.remove();
     this._teardownBillingBarChartNative();
     this._unsubscribeFromStatisticsUpdates();
   }
@@ -1428,13 +1443,235 @@ class EnergyPanel extends HTMLElement {
         width: 100%;
       }
 
-      /* ===== Room header: single row + thick in-bar budget (compact) ===== */
+      /* ===== Room header: efficiency row + grid (icon | center | watts) ===== */
       .room-header {
         padding: clamp(6px, 1.6vw, 10px) clamp(8px, 2vw, 12px);
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 100%);
         border-bottom: 1px solid var(--card-border);
         border-radius: 10px 10px 0 0;
         overflow: visible;
+      }
+
+      .room-header-inner {
+        display: flex;
+        flex-direction: column;
+        gap: clamp(4px, 1vw, 8px);
+        min-width: 0;
+      }
+
+      .room-header-rating {
+        display: flex;
+        align-items: center;
+        gap: clamp(4px, 1vw, 8px);
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        font: inherit;
+        color: var(--primary-text-color);
+        text-align: left;
+        min-width: 0;
+        width: 100%;
+        border-radius: 6px;
+      }
+
+      .room-header-rating:hover {
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .room-header-rating:focus-visible {
+        outline: 2px solid var(--panel-accent);
+        outline-offset: 2px;
+      }
+
+      .room-rating-modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10050;
+        background: rgba(0, 0, 0, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(8px, 3vw, 20px);
+        box-sizing: border-box;
+      }
+
+      .room-rating-modal-dialog {
+        background: var(--card-bg, #1e1e1e);
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+        max-width: min(420px, 100%);
+        max-height: min(90vh, 640px);
+        overflow: auto;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+        padding: clamp(12px, 3vw, 18px);
+      }
+
+      .room-rating-modal-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      .room-rating-modal-header h3 {
+        margin: 0;
+        font-size: clamp(14px, 3.2vw, 17px);
+        line-height: 1.25;
+      }
+
+      .room-rating-modal-close {
+        border: none;
+        background: transparent;
+        color: var(--secondary-text-color);
+        font-size: 22px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 6px;
+      }
+
+      .room-rating-modal-close:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--primary-text-color);
+      }
+
+      .room-rating-modal-stars {
+        display: flex;
+        align-items: center;
+        gap: clamp(2px, 0.5vw, 6px);
+        margin-bottom: 12px;
+      }
+
+      .room-rating-modal-stars .room-efficiency-star {
+        width: clamp(18px, 4.5vw, 26px);
+        height: clamp(18px, 4.5vw, 26px);
+      }
+
+      .room-rating-modal-body {
+        display: flex;
+        flex-direction: column;
+        gap: clamp(10px, 2vw, 14px);
+      }
+
+      .room-rating-modal-row-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 8px;
+        font-size: clamp(12px, 2.6vw, 14px);
+      }
+
+      .room-rating-modal-score {
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        color: var(--panel-accent);
+      }
+
+      .room-rating-modal-desc {
+        font-size: clamp(10px, 2.2vw, 12px);
+        color: var(--secondary-text-color);
+        line-height: 1.35;
+        margin: 4px 0 6px 0;
+      }
+
+      .room-rating-modal-bar {
+        height: clamp(5px, 1.2vw, 7px);
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+
+      .room-rating-modal-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #0288d1, var(--panel-accent));
+        border-radius: inherit;
+        transition: width 0.25s ease;
+      }
+
+      .room-rating-modal-footnote {
+        margin: 14px 0 0 0;
+        font-size: clamp(9px, 2vw, 11px);
+        color: var(--secondary-text-color);
+        line-height: 1.35;
+      }
+
+      .room-efficiency-label {
+        font-size: clamp(9px, 2vw, 11px);
+        font-weight: 600;
+        color: var(--secondary-text-color);
+        flex-shrink: 0;
+      }
+
+      .room-efficiency-stars {
+        display: inline-flex;
+        align-items: center;
+        gap: clamp(1px, 0.35vw, 3px);
+        flex-shrink: 0;
+      }
+
+      .room-efficiency-star {
+        width: clamp(12px, 3vw, 16px);
+        height: clamp(12px, 3vw, 16px);
+        flex-shrink: 0;
+      }
+
+      .room-header-main {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-rows: auto auto;
+        align-items: center;
+        column-gap: clamp(6px, 1.5vw, 10px);
+        row-gap: clamp(3px, 0.8vw, 6px);
+        min-width: 0;
+      }
+
+      .room-header-main > .room-icon {
+        grid-column: 1;
+        grid-row: 1 / -1;
+        align-self: center;
+      }
+
+      .room-header-center {
+        grid-column: 2;
+        grid-row: 1 / -1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: clamp(2px, 0.6vw, 5px);
+        min-width: 0;
+      }
+
+      .room-header-watts-col {
+        grid-column: 3;
+        grid-row: 1 / -1;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        min-width: 0;
+      }
+
+      .room-name-row {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: clamp(4px, 1vw, 8px);
+        min-width: 0;
+      }
+
+      .room-header-subrow {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: clamp(4px, 1vw, 8px);
+        min-width: 0;
+      }
+
+      .room-header-subrow .room-person-location:empty {
+        display: none;
       }
 
       .room-header-row {
@@ -1506,13 +1743,15 @@ class EnergyPanel extends HTMLElement {
 
       .room-name {
         margin: 0;
-        font-size: clamp(12px, 2.9vw, 16px);
+        font-size: clamp(11px, 2.6vw, 16px);
         font-weight: 700;
         line-height: 1.2;
-        word-break: break-word;
-        overflow-wrap: anywhere;
-        hyphens: auto;
         letter-spacing: -0.01em;
+        min-width: 0;
+        flex: 1 1 auto;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .room-header-badges {
@@ -1899,6 +2138,10 @@ class EnergyPanel extends HTMLElement {
         justify-content: flex-end;
         gap: clamp(6px, 1.5vw, 10px);
         flex-shrink: 0;
+        margin-left: auto;
+      }
+
+      .room-header-subrow .room-event-chips {
         margin-left: auto;
       }
 
@@ -6295,6 +6538,197 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  /** Material-style star path (24x24). */
+  _efficiencyStarPath() {
+    return 'M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z';
+  }
+
+  _formatEfficiencyStarsSvg(stars, idPrefix) {
+    let s = 0;
+    if (stars !== null && stars !== undefined && Number.isFinite(Number(stars))) {
+      s = Math.max(0, Math.min(5, Number(stars)));
+    }
+    const path = this._efficiencyStarPath();
+    const gold = '#ffb300';
+    const dim = 'rgba(255,255,255,0.22)';
+    let html = '';
+    for (let i = 0; i < 5; i++) {
+      const gid = `effg_${idPrefix}_${i}`;
+      if (s >= i + 1) {
+        html += `<svg class="room-efficiency-star" viewBox="0 0 24 24" aria-hidden="true"><path fill="${gold}" d="${path}"/></svg>`;
+      } else if (s >= i + 0.5) {
+        html += `<svg class="room-efficiency-star" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="${gid}"><stop offset="50%" stop-color="${gold}"/><stop offset="50%" stop-color="${dim}"/></linearGradient></defs><path fill="url(#${gid})" stroke="${dim}" stroke-width="0.6" d="${path}"/></svg>`;
+      } else {
+        html += `<svg class="room-efficiency-star" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="${dim}" stroke-width="1.2" d="${path}"/></svg>`;
+      }
+    }
+    return html;
+  }
+
+  _roomEfficiencyRatingRowHtml(roomId, idPrefix) {
+    const r = this._roomRatingsData?.rooms?.[roomId];
+    const starValue =
+      this._roomRatingsData == null
+        ? null
+        : r != null && r.stars != null
+          ? Number(r.stars)
+          : 0;
+    const starsHtml = this._formatEfficiencyStarsSvg(starValue, idPrefix);
+    const esc = (x) => String(x || '').replace(/"/g, '&quot;');
+    return `
+      <button type="button" class="room-header-rating has-tooltip" data-room-rating="${esc(roomId)}"
+        title="Efficiency rating — tap for details" aria-label="Efficiency rating for this room">
+        <span class="room-efficiency-label">Efficiency</span>
+        <span class="room-efficiency-stars">${starsHtml}</span>
+      </button>`;
+  }
+
+  _startRoomRatingsAndHeartbeat() {
+    if (this._roomRatingsRefreshInterval != null || !this._hass?.callWS) return;
+    this._loadRoomRatings();
+    this._sendDashboardHeartbeat();
+    this._roomRatingsRefreshInterval = setInterval(() => this._loadRoomRatings(), 3600000);
+    this._dashboardHeartbeatInterval = setInterval(
+      () => this._sendDashboardHeartbeat(),
+      30 * 60 * 1000,
+    );
+  }
+
+  _stopRoomRatingsAndHeartbeat() {
+    if (this._roomRatingsRefreshInterval) {
+      clearInterval(this._roomRatingsRefreshInterval);
+      this._roomRatingsRefreshInterval = null;
+    }
+    if (this._dashboardHeartbeatInterval) {
+      clearInterval(this._dashboardHeartbeatInterval);
+      this._dashboardHeartbeatInterval = null;
+    }
+  }
+
+  async _loadRoomRatings() {
+    if (!this._hass?.callWS) return;
+    try {
+      const data = await this._hass.callWS({ type: 'smart_dashboards/get_room_ratings' });
+      this._roomRatingsData = data;
+      if (this._dashboardView === 'rooms' && !this._showSettings) {
+        this._render();
+      }
+    } catch (e) {
+      console.warn('get_room_ratings failed', e);
+    }
+  }
+
+  async _sendDashboardHeartbeat() {
+    if (!this._hass?.callWS) return;
+    try {
+      await this._hass.callWS({ type: 'smart_dashboards/dashboard_heartbeat' });
+    } catch (e) {
+      /* non-fatal */
+    }
+  }
+
+  _handleRoomRatingClick(e) {
+    const btn = e.target?.closest?.('[data-room-rating]');
+    if (!btn || !this.shadowRoot.contains(btn)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const roomId = btn.getAttribute('data-room-rating');
+    if (roomId) this._openRoomRatingModal(roomId);
+  }
+
+  _openRoomRatingModal(roomId) {
+    const room = this._config?.rooms?.find(
+      (r) => (r.id || (r.name || '').toLowerCase().replace(/\s+/g, '_')) === roomId,
+    );
+    const titleName = room?.name || roomId;
+    const r = this._roomRatingsData?.rooms?.[roomId] || {};
+    const esc = (s) =>
+      String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/"/g, '&quot;');
+    const starN =
+      r.stars != null && Number.isFinite(Number(r.stars)) ? Number(r.stars) : 0;
+    const modalStarId = `m_${String(roomId).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    const starsHtml = this._formatEfficiencyStarsSvg(starN, modalStarId);
+    const scoreRow = (label, desc, key) => {
+      const raw = r[key];
+      const v =
+        raw != null && Number.isFinite(Number(raw)) ? Math.round(Number(raw)) : null;
+      const pct = v != null ? Math.max(0, Math.min(100, v)) : 0;
+      const show = v != null ? `${v}` : '—';
+      return `
+        <div class="room-rating-modal-row">
+          <div class="room-rating-modal-row-head">
+            <strong>${esc(label)}</strong>
+            <span class="room-rating-modal-score">${show}</span>
+          </div>
+          <div class="room-rating-modal-desc">${esc(desc)}</div>
+          <div class="room-rating-modal-bar" role="progressbar" aria-valuenow="${v != null ? v : 0}" aria-valuemin="0" aria-valuemax="100">
+            <div class="room-rating-modal-bar-fill" style="width: ${pct}%"></div>
+          </div>
+        </div>`;
+    };
+
+    this.shadowRoot.querySelector('.room-rating-modal-overlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'room-rating-modal-overlay';
+    overlay.innerHTML = `
+      <div class="room-rating-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="room-rating-modal-title">
+        <div class="room-rating-modal-header">
+          <h3 id="room-rating-modal-title">${esc(titleName)} — Efficiency</h3>
+          <button type="button" class="room-rating-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="room-rating-modal-stars">${starsHtml}</div>
+        <div class="room-rating-modal-body">
+          ${scoreRow(
+            'Compliance',
+            'How well this room stayed within its daily energy budget (and boost budget on boost days). Higher means more days under budget.',
+            'compliance',
+          )}
+          ${scoreRow(
+            'Warning',
+            'How well the room avoided threshold warnings, safety shutoffs, and enforcement power cycles. Higher means fewer such events.',
+            'warning',
+          )}
+          ${scoreRow(
+            'Consumption',
+            'How low this room’s energy use has been compared to your other rooms over recent days. Lower relative use scores higher.',
+            'consumption',
+          )}
+          ${scoreRow(
+            'Load',
+            'How well the room limits time spent above 100 watts (recent activity). Less high-power time scores higher.',
+            'load',
+          )}
+          ${scoreRow(
+            'Engagement',
+            'How consistently the dashboard is opened across the day (household-wide). Used the same way on every room card.',
+            'engagement',
+          )}
+        </div>
+        <p class="room-rating-modal-footnote">Scores are 0–100. Combined average maps to the star row (half-star steps). Updated about once per hour on the server.</p>
+      </div>
+    `;
+    const close = () => {
+      overlay.remove();
+      if (this._roomRatingModalEsc) {
+        window.removeEventListener('keydown', this._roomRatingModalEsc);
+        this._roomRatingModalEsc = null;
+      }
+    };
+    overlay.addEventListener('click', (ev) => {
+      if (ev.target === overlay) close();
+    });
+    overlay.querySelector('.room-rating-modal-close')?.addEventListener('click', close);
+    this._roomRatingModalEsc = (kev) => {
+      if (kev.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', this._roomRatingModalEsc);
+    this.shadowRoot.appendChild(overlay);
+    overlay.querySelector('.room-rating-modal-close')?.focus();
+  }
+
   _renderRoomCard(room) {
     const roomId = room.id || (room.name || '').toLowerCase().replace(/\s+/g, '_');
     const baseBudget = Number(room.kwh_budget);
@@ -6370,23 +6804,35 @@ class EnergyPanel extends HTMLElement {
       }
     }
 
+    const ratingIdSafe = String(roomId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const starsRowHtml = this._roomEfficiencyRatingRowHtml(roomId, ratingIdSafe);
+
     return `
       <div class="room-card" data-room-id="${roomId}">
         <div class="room-header">
-          <div class="room-header-row">
+          <div class="room-header-inner">
+            ${starsRowHtml}
+            <div class="room-header-main">
             <div class="${iconClass}"${iconDataAttr} aria-hidden="true">
               <ha-icon icon="${roomCardIcon}"></ha-icon>
             </div>
-            <h3 class="room-name">${roomNameEsc}</h3>
-            ${personLocationHtml}
-            ${badgesHtml}
-            <div class="room-header-stats-inline">
-              <div class="room-event-chips">
-                <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W ${warnings}</span>
-                <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S ${shutoffs}</span>
-                <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C ${powerCycles}</span>
+            <div class="room-header-center">
+              <div class="room-name-row">
+                <h3 class="room-name">${roomNameEsc}</h3>
+                ${badgesHtml}
               </div>
+              <div class="room-header-subrow">
+                ${personLocationHtml}
+                <div class="room-event-chips">
+                  <span class="event-count graph-clickable has-tooltip" data-event="warnings" data-graph-type="room_warnings" data-room-id="${roomId}" title="Threshold warnings today (tap for log)">W ${warnings}</span>
+                  <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S ${shutoffs}</span>
+                  <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C ${powerCycles}</span>
+                </div>
+              </div>
+            </div>
+            <div class="room-header-watts-col">
               <span class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</span>
+            </div>
             </div>
           </div>
         </div>
@@ -10466,6 +10912,11 @@ class EnergyPanel extends HTMLElement {
     if (!this._zoneHealthIconClickDelegation) {
       this._zoneHealthIconClickDelegation = true;
       this.shadowRoot.addEventListener('click', (e) => this._handleZoneHealthIconClick(e));
+    }
+
+    if (!this._roomRatingModalDelegation) {
+      this._roomRatingModalDelegation = true;
+      this.shadowRoot.addEventListener('click', (e) => this._handleRoomRatingClick(e));
     }
 
     if (!this._statPieBillingDelegation) {
