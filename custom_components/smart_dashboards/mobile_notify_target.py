@@ -15,6 +15,8 @@ import unicodedata
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er, device_registry as dr
 
+from .person_device_trackers import get_person_device_tracker_entity_ids
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -44,18 +46,7 @@ def _notify_slug_registered(hass: HomeAssistant, slug: str) -> bool:
 
 def _get_person_trackers(hass: HomeAssistant, person_entity_id: str) -> list[str]:
     """Return device_tracker.* entity ids linked to a person."""
-    state = hass.states.get(person_entity_id)
-    if not state:
-        return []
-    raw = state.attributes.get("device_trackers")
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        return [raw.strip()] if raw.strip() else []
-    try:
-        return [str(t).strip() for t in raw if str(t).strip()]
-    except TypeError:
-        return []
+    return get_person_device_tracker_entity_ids(hass, person_entity_id)
 
 
 def _find_legacy_slug(hass: HomeAssistant, trackers: list[str]) -> str | None:
