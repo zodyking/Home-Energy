@@ -7,6 +7,13 @@
         "data": {
           "settings_passcode": "Settings Passcode (4 digits)"
         }
+      },
+      "reconfigure": {
+        "title": "Change Settings Passcode",
+        "description": "Enter a new 4-digit passcode for settings access in the Home Energy dashboard.",
+        "data": {
+          "settings_passcode": "New Settings Passcode (4 digits)"
+        }
       }
     },
     "error": {
