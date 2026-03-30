@@ -149,12 +149,10 @@ class EnergyMonitor:
         self._enforcement_power_cycle_depth: dict[str, int] = {}
         self._plug_shutoff_switch_entities: set[str] = set()
         self._manual_toggle_notify_last: dict[str, datetime] = {}
-        # Zone health tracking: 48-hour state history for each person
+        # Zone health tracking: rolling state history per person (deque maxlen)
         self._person_zone_state_history: dict[str, deque] = {}
         self._person_zone_health_alerted: set[str] = set()
         self._person_zone_health_listener_unsub: list = []
-        self._person_zone_health_last_check: datetime | None = None
-        self._person_zone_arrived_home_tts_count: dict[str, int] = {}
         self._person_zone_hourly_reminder_last: dict[str, datetime] = {}
 
     @staticmethod
@@ -257,17 +255,15 @@ class EnergyMonitor:
         return states
 
     def _is_person_zone_setup_healthy(self, person_ent: str) -> bool:
-        """Check if a person has shown healthy zone states (home, nearby, or any custom zone).
+        """True if Companion-style tracking is working: both home and away in the window.
 
-        Returns True if person has shown at least one valid zone state in the configured window.
-        A "valid" zone state is anything other than just not_home/unknown/unavailable.
+        Requires recorded states ``home`` and ``not_home`` (HA's away) within
+        ``zone_health_history_hours``. Other states alone do not count as healthy.
         """
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
-        history_hours = int(tts_settings.get("zone_health_history_hours", 48) or 48)
+        history_hours = int(tts_settings.get("zone_health_history_hours", 24) or 24)
         states = self._get_person_zone_states_in_window(person_ent, history_hours)
-        invalid_only = {"not_home", "unknown", "unavailable", ""}
-        valid_states = states - invalid_only
-        return len(valid_states) > 0
+        return "home" in states and "not_home" in states
 
     def _get_person_friendly_name(self, person_ent: str) -> str:
         """Get friendly name for a person entity."""
@@ -313,36 +309,33 @@ class EnergyMonitor:
     async def _async_handle_zone_health_state_change(
         self, person_ent: str, new_state: str, now: datetime
     ) -> None:
-        """Handle zone health when a person's state changes (e.g., arrived home)."""
+        """Clear zone-health alert state when home and away both appear in history."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if not tts_settings.get("zone_health_check_enabled", True):
             return
 
-        if person_ent in self._person_zone_health_alerted:
-            valid_zone_states = {"home", "nearby"}
-            if new_state in valid_zone_states:
-                name = self._get_person_friendly_name(person_ent)
-                count = self._person_zone_arrived_home_tts_count.get(person_ent, 0)
-                if count < 3:
-                    msg = f"{name}, your location changed to {new_state}."
-                    await self._async_speak_zone_health_tts(person_ent, msg)
-                    self._person_zone_arrived_home_tts_count[person_ent] = count + 1
-                    if count + 1 >= 3:
-                        self._person_zone_health_alerted.discard(person_ent)
-                        self._person_zone_arrived_home_tts_count.pop(person_ent, None)
-                        self._person_zone_hourly_reminder_last.pop(person_ent, None)
-                        _LOGGER.info(
-                            "Zone health: %s zone tracking confirmed working after 3 TTS confirmations",
-                            person_ent,
-                        )
+        if person_ent in self._person_zone_health_alerted and self._is_person_zone_setup_healthy(
+            person_ent
+        ):
+            name = self._get_person_friendly_name(person_ent)
+            self._person_zone_health_alerted.discard(person_ent)
+            self._person_zone_hourly_reminder_last.pop(person_ent, None)
+            _LOGGER.info(
+                "Zone health: %s tracking healthy (home and away seen in window)",
+                person_ent,
+            )
+            await self._async_speak_zone_health_tts(
+                person_ent,
+                f"{name}, your location tracking looks good. Home and away are both reporting.",
+            )
 
     async def _async_speak_zone_health_tts(self, person_ent: str, message: str) -> None:
-        """Speak a zone health TTS message to rooms associated with this person."""
+        """Speak a zone health TTS message to a room media player or default TTS player."""
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         for room in self.config_manager.energy_config.get("rooms", []):
             if room.get("presence_person_entity") == person_ent:
                 media_player = (room.get("media_player") or "").strip()
                 if media_player.startswith("media_player."):
-                    tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
                     vol = float(room.get("volume", 0.7) or 0.7)
                     try:
                         await async_send_tts_or_queue(
@@ -357,47 +350,60 @@ class EnergyMonitor:
                     except Exception as e:
                         _LOGGER.warning("Zone health TTS failed: %s", e)
                     return
+        default_mp = str(tts_settings.get("tts_default_media_player") or "").strip()
+        if default_mp.startswith("media_player."):
+            vol = float(tts_settings.get("volume", 0.7) or 0.7)
+            try:
+                await async_send_tts_or_queue(
+                    self.hass,
+                    media_player=default_mp,
+                    message=message,
+                    language=tts_settings.get("language"),
+                    volume=vol,
+                    tts_settings=tts_settings,
+                    room=None,
+                )
+            except Exception as e:
+                _LOGGER.warning("Zone health TTS (default player) failed: %s", e)
 
     async def _async_tick_zone_health_check(self, now: datetime) -> None:
-        """Periodic check for zone health issues (runs based on configured interval)."""
+        """Detect unhealthy zone tracking; repeat TTS/push spaced by zone_health_reminder_hours."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         if not tts_settings.get("zone_health_check_enabled", True):
             return
 
         reminder_hours = int(tts_settings.get("zone_health_reminder_hours", 1) or 1)
         reminder_seconds = reminder_hours * 3600
-        history_hours = int(tts_settings.get("zone_health_history_hours", 48) or 48)
-
-        if self._person_zone_health_last_check:
-            if (now - self._person_zone_health_last_check).total_seconds() < reminder_seconds:
-                return
-        self._person_zone_health_last_check = now
+        history_hours = int(tts_settings.get("zone_health_history_hours", 24) or 24)
 
         all_persons = self._distinct_presence_person_entity_ids()
         for person_ent in all_persons:
-            if not self._is_person_zone_setup_healthy(person_ent):
-                name = self._get_person_friendly_name(person_ent)
-                if person_ent not in self._person_zone_health_alerted:
-                    self._person_zone_health_alerted.add(person_ent)
-                    _LOGGER.warning(
-                        "Zone health: %s has not shown valid zone states in %d hours",
-                        person_ent,
-                        history_hours,
-                    )
-                    await self._send_zone_health_push_notification(person_ent, name)
-                else:
-                    last_reminder = self._person_zone_hourly_reminder_last.get(person_ent)
-                    if not last_reminder or (now - last_reminder).total_seconds() >= reminder_seconds:
-                        self._person_zone_hourly_reminder_last[person_ent] = now
-                        msg_template = str(
-                            tts_settings.get(
-                                "zone_health_reminder_tts_msg",
-                                "{name}, your zone-based location setup needs attention. Please check your Companion app settings.",
-                            )
-                            or "{name}, your zone-based location setup needs attention."
+            if self._is_person_zone_setup_healthy(person_ent):
+                continue
+            name = self._get_person_friendly_name(person_ent)
+            if person_ent not in self._person_zone_health_alerted:
+                self._person_zone_health_alerted.add(person_ent)
+                self._person_zone_hourly_reminder_last[person_ent] = now
+                _LOGGER.warning(
+                    "Zone health: %s has not shown both home and away in %d hours",
+                    person_ent,
+                    history_hours,
+                )
+                await self._send_zone_health_push_notification(person_ent, name)
+            else:
+                last_reminder = self._person_zone_hourly_reminder_last.get(person_ent)
+                if not last_reminder or (now - last_reminder).total_seconds() >= reminder_seconds:
+                    self._person_zone_hourly_reminder_last[person_ent] = now
+                    msg_template = str(
+                        tts_settings.get(
+                            "zone_health_reminder_tts_msg",
+                            "{name}, your zone-based location setup needs attention. Please check your Companion app settings.",
                         )
-                        msg = msg_template.replace("{name}", name)
-                        await self._async_speak_zone_health_tts(person_ent, msg)
+                        or "{name}, your zone-based location setup needs attention."
+                    )
+                    msg = msg_template.replace("{name}", name)
+                    await self._async_speak_zone_health_tts(person_ent, msg)
+                    await self._send_zone_health_push_notification(person_ent, name)
 
     async def _send_zone_health_push_notification(self, person_ent: str, name: str) -> None:
         """Send push notification about zone tracking not working."""

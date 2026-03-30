@@ -1271,14 +1271,14 @@ class ConfigManager:
                 )
             ),
             "zone_health_history_hours": (
-                lambda v: v if v in (48, 72, 96) else 48
+                lambda v: v if v in (24, 48, 72, 96) else 24
             )(
                 int(
                     tts.get(
                         "zone_health_history_hours",
-                        default_tts.get("zone_health_history_hours", 48),
+                        default_tts.get("zone_health_history_hours", 24),
                     )
-                    or 48
+                    or 24
                 )
             ),
             "zone_health_reminder_hours": max(
