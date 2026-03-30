@@ -2584,12 +2584,27 @@ async def websocket_send_test_notification(
             )
             connection.send_result(msg["id"], {"success": True, "target": target.service_name})
         elif target.mode == "notify_send" and target.entity_id:
-            await hass.services.async_call(
-                "notify",
-                "send_message",
-                {"entity_id": target.entity_id, "title": title, "message": message},
-                blocking=False,
-            )
+            if hass.services.has_service("notify", "send_message"):
+                await hass.services.async_call(
+                    "notify",
+                    "send_message",
+                    {"entity_id": target.entity_id, "title": title, "message": message},
+                    blocking=False,
+                )
+            elif hass.services.has_service("notify", "send"):
+                await hass.services.async_call(
+                    "notify",
+                    "send",
+                    {"entity_id": target.entity_id, "title": title, "message": message},
+                    blocking=False,
+                )
+            else:
+                connection.send_error(
+                    msg["id"],
+                    "send_failed",
+                    "Neither notify.send_message nor notify.send is available.",
+                )
+                return
             connection.send_result(msg["id"], {"success": True, "target": target.entity_id})
         else:
             connection.send_error(msg["id"], "unknown_mode", f"Unknown notify mode: {target.mode}")

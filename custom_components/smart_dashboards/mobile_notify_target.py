@@ -101,12 +101,27 @@ def _find_notify_entity_via_registry(hass: HomeAssistant, trackers: list[str]) -
     return None
 
 
+def _find_notify_entity_from_tracker_ids(
+    hass: HomeAssistant, trackers: list[str]
+) -> str | None:
+    """Match notify.mobile_app_<device_tracker_object_id> when registry has no device link."""
+    ent_reg = er.async_get(hass)
+    for tid in trackers:
+        if not tid.startswith("device_tracker."):
+            continue
+        suffix = tid.split(".", 1)[1].lower()
+        nid = f"notify.mobile_app_{suffix}"
+        if ent_reg.async_get(nid) is not None or hass.states.get(nid) is not None:
+            return nid
+    return None
+
+
 def resolve_notify_target(hass: HomeAssistant, person_entity_id: str) -> NotifyTarget | None:
     """Return the best NotifyTarget for a person or None if unavailable.
 
     Tries:
     1. Legacy notify.mobile_app_<slug> service
-    2. Entity-based notify if HA exposes notify.send service
+    2. Entity-based notify via notify.send_message or notify.send
     """
     trackers = _get_person_trackers(hass, person_entity_id)
     # 1. Legacy service path
@@ -114,14 +129,21 @@ def resolve_notify_target(hass: HomeAssistant, person_entity_id: str) -> NotifyT
     if slug:
         return NotifyTarget(mode="legacy_service", service_name=f"mobile_app_{slug}")
 
-    # 2. Entity-based fallback via registry
+    # 2. Entity-based: registry (device-linked), then notify.mobile_app_<tracker> state
     entity_id = _find_notify_entity_via_registry(hass, trackers)
-    if entity_id and hass.services.has_service("notify", "send_message"):
+    if not entity_id:
+        entity_id = _find_notify_entity_from_tracker_ids(hass, trackers)
+    if entity_id and (
+        hass.services.has_service("notify", "send_message")
+        or hass.services.has_service("notify", "send")
+    ):
         return NotifyTarget(mode="notify_send", entity_id=entity_id)
 
     # Log diagnostic info
     candidate = entity_id or "(none found via registry)"
-    has_send = hass.services.has_service("notify", "send_message")
+    has_send = hass.services.has_service("notify", "send_message") or hass.services.has_service(
+        "notify", "send"
+    )
     if trackers:
         _LOGGER.warning(
             "No notify target resolved for %s (trackers=%s, registry_candidate=%s, notify.send_message=%s). "

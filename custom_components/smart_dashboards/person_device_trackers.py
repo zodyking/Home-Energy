@@ -9,9 +9,22 @@ def get_person_device_tracker_entity_ids(
 ) -> list[str]:
     """Return device_tracker.* linked to a person.
 
-    Uses homeassistant.components.person.entities_in_person when available (same as HA UI),
-    then falls back to person state attributes device_trackers.
+    Merges homeassistant.components.person.entities_in_person (config source) with
+    person state attributes ``device_trackers`` so we never drop trackers when one
+    source is empty, lagging, or out of sync (fixes intermittent notify resolution).
     """
+    seen: set[str] = set()
+    ordered: list[str] = []
+
+    def _add(ids: list[str]) -> None:
+        for eid in ids:
+            s = str(eid).strip()
+            if not s.startswith("device_tracker."):
+                continue
+            if s not in seen:
+                seen.add(s)
+                ordered.append(s)
+
     try:
         from homeassistant.components.person import entities_in_person
     except ImportError:
@@ -20,28 +33,18 @@ def get_person_device_tracker_entity_ids(
     if entities_in_person is not None:
         linked = entities_in_person(hass, person_entity_id)
         if linked:
-            out = [
-                str(t).strip()
-                for t in linked
-                if str(t).strip().startswith("device_tracker.")
-            ]
-            if out:
-                return out
+            _add([str(t).strip() for t in linked])
 
     ps = hass.states.get(person_entity_id)
-    if not ps:
-        return []
-    raw = ps.attributes.get("device_trackers")
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        s = raw.strip()
-        return [s] if s.startswith("device_tracker.") else []
-    try:
-        return [
-            str(t).strip()
-            for t in raw
-            if str(t).strip().startswith("device_tracker.")
-        ]
-    except TypeError:
-        return []
+    if ps:
+        raw = ps.attributes.get("device_trackers")
+        if raw is not None:
+            if isinstance(raw, str):
+                _add([raw.strip()])
+            else:
+                try:
+                    _add([str(t).strip() for t in raw])
+                except TypeError:
+                    pass
+
+    return ordered

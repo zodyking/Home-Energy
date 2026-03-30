@@ -303,6 +303,8 @@ class EnergyMonitor:
     ) -> str | None:
         """Classify recorder/device_tracker state using precomputed Nearby zone tokens."""
         s = (raw_state or "").strip().lower()
+        if s.startswith("at "):
+            s = s[3:].strip()
         if s in ("unknown", "unavailable", ""):
             return None
         if s == "home":
@@ -371,7 +373,10 @@ class EnergyMonitor:
             return
 
         try:
-            from homeassistant.components.recorder.history import get_significant_states_with_session
+            from homeassistant.components.recorder.history import (
+                get_significant_states_with_session,
+                state_changes_during_period,
+            )
             from homeassistant.components.recorder.util import session_scope
         except ImportError:
             _LOGGER.debug("Recorder not available for zone health history")
@@ -393,6 +398,51 @@ class EnergyMonitor:
             last_nearby_dt: datetime | None = None
             last_away_dt: datetime | None = None
             try:
+
+                def _consume_state_row(st) -> None:
+                    nonlocal last_home_dt, last_nearby_dt, last_away_dt
+                    raw = getattr(st, "state", None) or (
+                        st.get("state") if isinstance(st, dict) else None
+                    )
+                    if not raw:
+                        return
+                    classified = self._classify_zone_health_state_with_nearby_tokens(
+                        raw, nearby_tokens
+                    )
+                    if classified is None:
+                        return
+                    states_union.add(classified)
+                    lc = getattr(st, "last_changed", None) or getattr(
+                        st, "last_updated", None
+                    )
+                    if lc is None and isinstance(st, dict):
+                        lc = st.get("last_changed") or st.get("last_updated")
+                    if lc is not None:
+                        if classified == "home":
+                            if last_home_dt is None or lc > last_home_dt:
+                                last_home_dt = lc
+                        elif classified == "nearby":
+                            if last_nearby_dt is None or lc > last_nearby_dt:
+                                last_nearby_dt = lc
+                        elif classified == "not_home":
+                            if last_away_dt is None or lc > last_away_dt:
+                                last_away_dt = lc
+
+                # state_changes_during_period matches HA Activity (true state changes per entity).
+                for eid in entity_ids:
+                    eid_lower = eid.lower()
+                    per_ent = state_changes_during_period(
+                        self.hass,
+                        start_time,
+                        now,
+                        entity_id=eid_lower,
+                        no_attributes=True,
+                        include_start_time_state=True,
+                    )
+                    rows = per_ent.get(eid_lower) or per_ent.get(eid) or []
+                    for st in rows:
+                        _consume_state_row(st)
+                # Merge broader recorder rows so we still catch edge cases either API might miss.
                 with session_scope(hass=self.hass, read_only=True) as session:
                     states_dict = get_significant_states_with_session(
                         self.hass,
@@ -408,27 +458,7 @@ class EnergyMonitor:
                     )
                 for eid in entity_ids:
                     for st in states_dict.get(eid) or []:
-                        if not st.state:
-                            continue
-                        classified = self._classify_zone_health_state_with_nearby_tokens(
-                            st.state, nearby_tokens
-                        )
-                        if classified is None:
-                            continue
-                        states_union.add(classified)
-                        lc = getattr(st, "last_changed", None) or getattr(
-                            st, "last_updated", None
-                        )
-                        if lc is not None:
-                            if classified == "home":
-                                if last_home_dt is None or lc > last_home_dt:
-                                    last_home_dt = lc
-                            elif classified == "nearby":
-                                if last_nearby_dt is None or lc > last_nearby_dt:
-                                    last_nearby_dt = lc
-                            elif classified == "not_home":
-                                if last_away_dt is None or lc > last_away_dt:
-                                    last_away_dt = lc
+                        _consume_state_row(st)
             except Exception as e:
                 _LOGGER.warning("Zone health recorder fetch failed for %s: %s", person_ent, e)
             self._zone_health_recorder_cache[person_ent] = states_union
@@ -1537,7 +1567,7 @@ class EnergyMonitor:
 
         Supports:
         1. Legacy notify.mobile_app_<slug> service
-        2. Entity-based notify.send_message with entity_id
+        2. Entity-based notify.send_message or notify.send with entity_id
 
         Returns True if notification was sent, False if no target could be resolved.
         """
@@ -1562,14 +1592,32 @@ class EnergyMonitor:
                     "Sent notification via %s: %s - %s", target.service_name, title, message
                 )
             elif target.mode == "notify_send" and target.entity_id:
-                await self.hass.services.async_call(
-                    "notify",
-                    "send_message",
-                    {"entity_id": target.entity_id, "title": title, "message": message},
-                    blocking=False,
-                )
+                if self.hass.services.has_service("notify", "send_message"):
+                    await self.hass.services.async_call(
+                        "notify",
+                        "send_message",
+                        {"entity_id": target.entity_id, "title": title, "message": message},
+                        blocking=False,
+                    )
+                elif self.hass.services.has_service("notify", "send"):
+                    await self.hass.services.async_call(
+                        "notify",
+                        "send",
+                        {
+                            "entity_id": target.entity_id,
+                            "title": title,
+                            "message": message,
+                        },
+                        blocking=False,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Cannot send push: neither notify.send_message nor notify.send for %s",
+                        target.entity_id,
+                    )
+                    return False
                 _LOGGER.debug(
-                    "Sent notification via notify.send_message (entity=%s): %s - %s",
+                    "Sent notification via notify entity %s: %s - %s",
                     target.entity_id,
                     title,
                     message,
