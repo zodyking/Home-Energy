@@ -7533,6 +7533,28 @@ class EnergyPanel extends HTMLElement {
               </div>
                 </div>
               </details>
+              <details class="settings-fold">
+                <summary class="settings-fold-summary">Zone Health TTS</summary>
+                <div class="settings-fold-body">
+                  <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
+                    Customize the TTS and push notification messages for zone health alerts. Use <code>{name}</code> for the person's friendly name.
+                  </p>
+                  <div class="tts-msg-group" style="margin-bottom: 12px;">
+                    <div class="tts-msg-title">First alert / Push notification message</div>
+                    <input type="text" class="form-input" id="zone-health-notification-msg"
+                      value="${(ttsSettings.zone_health_notification_msg || "Hi {name}, your Home Assistant Companion app location doesn't appear to be set up correctly. Zone-based presence isn't working.").replace(/"/g, '&quot;')}"
+                      placeholder="Hi {name}, your zone tracking...">
+                    <div class="tts-var-help">Variables: <code>{name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Repeat reminder TTS message</div>
+                    <input type="text" class="form-input" id="zone-health-reminder-tts-msg"
+                      value="${(ttsSettings.zone_health_reminder_tts_msg || "{name}, your zone-based location setup needs attention. Please check your Companion app settings.").replace(/"/g, '&quot;')}"
+                      placeholder="{name}, your zone-based location...">
+                    <div class="tts-var-help">Variables: <code>{name}</code></div>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
 
@@ -7766,24 +7788,8 @@ class EnergyPanel extends HTMLElement {
                   value="${ttsSettings.zone_health_reminder_hours ?? 1}" min="1" max="24" style="width: 80px;"
                   title="How often to send repeat TTS and push for unresolved zone health issues">
                 <div class="tts-msg-desc" style="margin-top: 4px;">Hours between repeat TTS and push reminders (1-24). First alert is immediate.</div>
+                <div class="tts-msg-desc" style="margin-top: 4px; font-style: italic;">Message templates have been moved to the <strong>TTS Settings</strong> tab under "Zone Health TTS".</div>
               </div>
-              <details class="ac-safety-disclosure" style="margin-left: 24px; margin-bottom: 12px;">
-                <summary>Zone health message templates</summary>
-                <div class="tts-msg-group" style="margin-top: 8px;">
-                  <div class="tts-msg-title">Push notification message</div>
-                  <input type="text" class="form-input" id="zone-health-notification-msg"
-                    value="${(ttsSettings.zone_health_notification_msg || "Hi {name}, your Home Assistant Companion app location doesn't appear to be set up correctly. Zone-based presence isn't working.").replace(/"/g, '&quot;')}"
-                    placeholder="Hi {name}, your zone tracking...">
-                  <div class="tts-var-help">Variables: <code>{name}</code></div>
-                </div>
-                <div class="tts-msg-group" style="margin-top: 8px;">
-                  <div class="tts-msg-title">TTS reminder message</div>
-                  <input type="text" class="form-input" id="zone-health-reminder-tts-msg"
-                    value="${(ttsSettings.zone_health_reminder_tts_msg || "{name}, your zone-based location setup needs attention. Please check your Companion app settings.").replace(/"/g, '&quot;')}"
-                    placeholder="{name}, your zone-based location...">
-                  <div class="tts-var-help">Variables: <code>{name}</code></div>
-                </div>
-              </details>
               <div class="tts-msg-group">
                 <div class="tts-msg-title">Person/External Toggle Title</div>
                 <input type="text" class="form-input" id="notify-toggle-title"
@@ -9020,19 +9026,11 @@ class EnergyPanel extends HTMLElement {
     const name = personData.friendly_name || personData.entity_id.replace('person.', '').replace(/_/g, ' ');
     const escHtml = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-    const overlay = document.createElement('div');
-    overlay.className = 'zone-health-popup-overlay';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    overlay.innerHTML = `
-      <div class="zone-health-popup">
-        <div class="zone-health-popup-header">
-          <svg viewBox="0 0 24 24" style="width: 24px; height: 24px; fill: #ff9800; flex-shrink: 0;">
-            <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
-          </svg>
-          <h3>Zone Tracking Issue</h3>
-        </div>
-        <div class="zone-health-popup-body">
+    let currentStep = 0;
+    const steps = [
+      {
+        title: 'Zone Tracking Issue',
+        content: `
           <p><strong>${escHtml(name)}'s</strong> location tracking isn't set up correctly.</p>
           <p>The Home Assistant Companion app needs to report both <strong>"home"</strong> and <strong>"away"</strong> states within <strong>${historyHours} hours</strong> for zone-based automations to work properly.</p>
           <p style="margin-top: 12px; color: var(--secondary-text-color); font-size: 12px;">
@@ -9040,39 +9038,141 @@ class EnergyPanel extends HTMLElement {
             Last home: ${personData.last_home ? new Date(personData.last_home).toLocaleString() : 'Never'}<br>
             Last away: ${personData.last_not_home ? new Date(personData.last_not_home).toLocaleString() : 'Never'}
           </p>
+        `,
+      },
+      {
+        title: 'Step 1: Open Companion App',
+        content: `
+          <p>On <strong>${escHtml(name)}'s</strong> phone:</p>
           <div class="zone-health-popup-fix">
-            <h4>How to fix:</h4>
             <ol>
-              <li>Open the <strong>Home Assistant Companion</strong> app on ${escHtml(name)}'s phone</li>
-              <li>Go to <strong>Settings → Companion App → Location</strong></li>
-              <li>Enable location tracking with <strong>"Full"</strong> accuracy</li>
-              <li>Ensure <strong>"Background App Refresh"</strong> is enabled in system settings</li>
-              <li>Move between home and away to trigger state updates</li>
+              <li>Open the <strong>Home Assistant Companion</strong> app</li>
+              <li>Tap <strong>Settings</strong> (gear icon)</li>
+              <li>Select <strong>Companion App</strong></li>
+              <li>Tap <strong>Location</strong></li>
             </ol>
           </div>
+          <p style="margin-top: 12px; color: var(--secondary-text-color); font-size: 12px;">
+            Make sure you're logged into the correct Home Assistant instance.
+          </p>
+        `,
+      },
+      {
+        title: 'Step 2: Enable Location',
+        content: `
+          <p>In the <strong>Location</strong> settings:</p>
+          <div class="zone-health-popup-fix">
+            <ol>
+              <li>Enable <strong>Location Enabled</strong></li>
+              <li>Set <strong>Location Accuracy</strong> to "Full"</li>
+              <li>Enable <strong>Zone Based Tracking</strong></li>
+              <li>Enable <strong>Background Location</strong></li>
+            </ol>
+          </div>
+          <p style="margin-top: 12px; color: var(--secondary-text-color); font-size: 12px;">
+            "Full" accuracy ensures reliable zone detection.
+          </p>
+        `,
+      },
+      {
+        title: 'Step 3: System Permissions',
+        content: `
+          <p>Check the phone's <strong>system settings</strong>:</p>
+          <div class="zone-health-popup-fix">
+            <h4 style="margin-bottom: 6px;">iOS:</h4>
+            <ol style="margin-bottom: 10px;">
+              <li>Go to <strong>Settings → Privacy & Security → Location Services</strong></li>
+              <li>Find <strong>Home Assistant</strong> and set to "Always"</li>
+              <li>Enable <strong>Precise Location</strong></li>
+              <li>Go to <strong>Settings → General → Background App Refresh</strong> and enable it</li>
+            </ol>
+            <h4 style="margin-bottom: 6px;">Android:</h4>
+            <ol>
+              <li>Go to <strong>Settings → Apps → Home Assistant → Permissions</strong></li>
+              <li>Set <strong>Location</strong> to "Allow all the time"</li>
+              <li>Enable <strong>Use precise location</strong></li>
+              <li>Disable battery optimization for the app</li>
+            </ol>
+          </div>
+        `,
+      },
+      {
+        title: 'Step 4: Verify',
+        content: `
+          <p>Once configured, <strong>test</strong> the setup:</p>
+          <div class="zone-health-popup-fix">
+            <ol>
+              <li>Leave your home zone and wait a minute</li>
+              <li>Check that the person's state changes to <strong>"away"</strong> or <strong>"not_home"</strong></li>
+              <li>Return home and verify the state becomes <strong>"home"</strong></li>
+            </ol>
+          </div>
+          <p style="margin-top: 12px; color: var(--secondary-text-color); font-size: 12px;">
+            After both states are reported, the zone health alert will clear automatically (within ${historyHours} hours).
+          </p>
+        `,
+      },
+    ];
+
+    const overlay = document.createElement('div');
+    overlay.className = 'zone-health-popup-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+
+    const renderStep = () => {
+      const step = steps[currentStep];
+      const isFirst = currentStep === 0;
+      const isLast = currentStep === steps.length - 1;
+      overlay.innerHTML = `
+        <div class="zone-health-popup">
+          <div class="zone-health-popup-header">
+            <svg viewBox="0 0 24 24" style="width: 24px; height: 24px; fill: #ff9800; flex-shrink: 0;">
+              <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+            </svg>
+            <h3>${step.title}</h3>
+          </div>
+          <div class="zone-health-popup-body">
+            ${step.content}
+          </div>
+          <div class="zone-health-popup-actions" style="justify-content: space-between;">
+            <div style="display: flex; gap: 8px;">
+              ${!isFirst ? '<button class="btn btn-secondary zone-health-back">Back</button>' : ''}
+            </div>
+            <div style="display: flex; gap: 8px;">
+              ${!isLast ? '<button class="btn btn-primary zone-health-next">Next</button>' : ''}
+              <button class="btn ${isLast ? 'btn-primary' : 'btn-secondary'} zone-health-close">${isLast ? 'Done' : 'Close'}</button>
+            </div>
+          </div>
+          <div style="padding: 0 20px 12px; text-align: center;">
+            <span style="font-size: 11px; color: var(--secondary-text-color);">Step ${currentStep + 1} of ${steps.length}</span>
+          </div>
         </div>
-        <div class="zone-health-popup-actions">
-          <button class="btn btn-primary zone-health-go-settings">Open Zone Health Settings</button>
-          <button class="btn btn-secondary zone-health-close">Close</button>
-        </div>
-      </div>
-    `;
+      `;
+
+      overlay.querySelector('.zone-health-close')?.addEventListener('click', cleanup);
+      overlay.querySelector('.zone-health-back')?.addEventListener('click', () => {
+        if (currentStep > 0) {
+          currentStep--;
+          renderStep();
+        }
+      });
+      overlay.querySelector('.zone-health-next')?.addEventListener('click', () => {
+        if (currentStep < steps.length - 1) {
+          currentStep++;
+          renderStep();
+        }
+      });
+    };
 
     const cleanup = () => {
       overlay.remove();
     };
 
-    overlay.querySelector('.zone-health-close').addEventListener('click', cleanup);
-    overlay.querySelector('.zone-health-go-settings').addEventListener('click', () => {
-      cleanup();
-      this._showSettings = true;
-      this._settingsTab = 'zone-health';
-      this._render();
-    });
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) cleanup();
     });
 
+    renderStep();
     this.shadowRoot.appendChild(overlay);
   }
 

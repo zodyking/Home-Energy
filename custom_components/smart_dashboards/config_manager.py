@@ -38,6 +38,28 @@ def _safe_float(val: Any, default: float) -> float:
         return default
 
 
+def _coerce_bool(val: Any, default: bool = True) -> bool:
+    """Coerce a value to bool; handles string 'false'/'true'/etc. safely.
+
+    - bool(val) is True for non-empty strings like "false" in Python
+    - This helper treats "false", "no", "0", "" as False explicitly
+    """
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        lower = val.strip().lower()
+        if lower in ("false", "no", "0", "off", ""):
+            return False
+        if lower in ("true", "yes", "1", "on"):
+            return True
+        return default
+    return bool(val)
+
+
 _ROOM_KWH_INTERVALS_DEFAULT: list[int] = [5, 10, 15, 20]
 
 
@@ -1157,14 +1179,14 @@ class ConfigManager:
                 )
             ),
             "notify_heater_auto": (
-                bool(tts.get("notify_heater_auto"))
+                _coerce_bool(tts.get("notify_heater_auto"), default=True)
                 if "notify_heater_auto" in tts
-                else bool(tts.get("notify_integration_auto", True))
+                else _coerce_bool(tts.get("notify_integration_auto", True), default=True)
             ),
             "notify_vent_auto": (
-                bool(tts.get("notify_vent_auto"))
+                _coerce_bool(tts.get("notify_vent_auto"), default=True)
                 if "notify_vent_auto" in tts
-                else bool(tts.get("notify_integration_auto", True))
+                else _coerce_bool(tts.get("notify_integration_auto", True), default=True)
             ),
             "notify_external_auto": bool(
                 tts.get(
