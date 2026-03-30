@@ -270,11 +270,30 @@ class EnergyMonitor:
                 return True
         return False
 
-    def _classify_zone_health_state(self, raw_state: str) -> str | None:
-        """Classify a person/device_tracker state into canonical buckets: home, nearby, not_home.
-        
-        Returns None for unknown/unavailable states that shouldn't be tracked.
-        """
+    def _build_zone_health_nearby_tokens(self) -> frozenset[str]:
+        """Lowercase state strings that mean the Nearby zone (built once per recorder refresh)."""
+        tokens: set[str] = {"nearby"}
+        for eid in self.hass.states.async_entity_ids("zone"):
+            eid_l = eid.lower()
+            zs = self.hass.states.get(eid)
+            if zs:
+                fn = str(zs.attributes.get("friendly_name") or "").strip().lower()
+                zone_slug = (fn if fn else eid.replace("zone.", "")).strip().lower()
+            else:
+                fn = ""
+                zone_slug = eid.replace("zone.", "").lower()
+            if eid == "zone.nearby" or zone_slug == "nearby":
+                tokens.add(zone_slug)
+                tokens.add(eid_l)
+                if fn:
+                    tokens.add(fn)
+        return frozenset(tokens)
+
+    @staticmethod
+    def _classify_zone_health_state_with_nearby_tokens(
+        raw_state: str, nearby_tokens: frozenset[str]
+    ) -> str | None:
+        """Classify recorder/device_tracker state using precomputed Nearby zone tokens."""
         s = (raw_state or "").strip().lower()
         if s in ("unknown", "unavailable", ""):
             return None
@@ -282,23 +301,8 @@ class EnergyMonitor:
             return "home"
         if s in ("not_home", "away"):
             return "not_home"
-        if s == "nearby":
+        if s in nearby_tokens:
             return "nearby"
-        # Check if state matches the Nearby zone (entity_id or friendly_name)
-        for eid in self.hass.states.async_entity_ids("zone"):
-            if eid == "zone.nearby":
-                zone_slug = "nearby"
-            else:
-                zs = self.hass.states.get(eid)
-                if zs:
-                    fn = str(zs.attributes.get("friendly_name") or "").strip().lower()
-                    zone_slug = fn if fn else eid.replace("zone.", "")
-                else:
-                    zone_slug = eid.replace("zone.", "")
-            if s == zone_slug or s == eid:
-                if zone_slug == "nearby":
-                    return "nearby"
-        # Any other zone name (e.g. "work", "gym") is not home
         return "not_home" if s else None
 
     @staticmethod
@@ -332,7 +336,23 @@ class EnergyMonitor:
         return states
 
     def _get_person_linked_device_trackers(self, person_ent: str) -> list[str]:
-        """Get device_tracker.* entities linked to a person."""
+        """Get device_tracker.* entities linked to a person (Person integration config first)."""
+        try:
+            from homeassistant.components.person import entities_in_person
+        except ImportError:
+            entities_in_person = None
+
+        if entities_in_person is not None:
+            linked = entities_in_person(self.hass, person_ent)
+            if linked:
+                out = [
+                    str(t).strip()
+                    for t in linked
+                    if str(t).strip().startswith("device_tracker.")
+                ]
+                if out:
+                    return out
+
         ps = self.hass.states.get(person_ent)
         if not ps:
             return []
@@ -377,8 +397,16 @@ class EnergyMonitor:
             self._zone_health_recorder_last_refresh = now
             return
 
+        nearby_tokens = self._build_zone_health_nearby_tokens()
         for person_ent in all_persons:
-            entity_ids = [person_ent] + self._get_person_linked_device_trackers(person_ent)
+            trackers = self._get_person_linked_device_trackers(person_ent)
+            entity_ids = list(dict.fromkeys([person_ent, *trackers]))
+            _LOGGER.debug(
+                "Zone health recorder: %s querying %d entities (%d device_trackers)",
+                person_ent,
+                len(entity_ids),
+                len(trackers),
+            )
             states_union: set[str] = set()
             last_home_dt: datetime | None = None
             last_nearby_dt: datetime | None = None
@@ -401,7 +429,9 @@ class EnergyMonitor:
                     for st in states_dict.get(eid) or []:
                         if not st.state:
                             continue
-                        classified = self._classify_zone_health_state(st.state)
+                        classified = self._classify_zone_health_state_with_nearby_tokens(
+                            st.state, nearby_tokens
+                        )
                         if classified is None:
                             continue
                         states_union.add(classified)
