@@ -142,8 +142,6 @@ async def _run_efficiency_digest(hass: HomeAssistant) -> None:
         return
     es = cm.energy_config.get("efficiency_settings") or {}
     tts = cm.energy_config.get("tts_settings") or {}
-    if not _coerce_bool(tts.get("notifications_enabled"), False):
-        return
     if not _coerce_bool(es.get("efficiency_digest_enabled"), False):
         return
 
@@ -169,12 +167,15 @@ async def _run_efficiency_digest(hass: HomeAssistant) -> None:
     msg_tmpl = str(es.get("efficiency_digest_message") or "")
 
     rooms_cfg = cm.energy_config.get("rooms") or []
+    eligible_rooms = 0
+    successful_sends = 0
     for room in rooms_cfg:
         if not isinstance(room, dict):
             continue
         person_eid = _normalize_presence_person_entity(room.get("presence_person_entity"))
         if not person_eid:
             continue
+        eligible_rooms += 1
         rid = canonical_room_id(room)
         r = intraday.get(rid) if isinstance(intraday.get(rid), dict) else {}
         room_name = str(room.get("name") or rid)
@@ -190,18 +191,24 @@ async def _run_efficiency_digest(hass: HomeAssistant) -> None:
                 f"{vars_['worst_pillar_tip']}"
             )
         result = await async_send_notify_push(hass, person_eid, title, message)
-        if not result.ok:
-            _LOGGER.debug(
-                "Efficiency digest for %s (%s): %s",
+        if result.ok:
+            successful_sends += 1
+        else:
+            _LOGGER.warning(
+                "Efficiency digest push failed for %s (%s): %s",
                 rid,
                 person_eid,
                 result.error,
             )
 
-    def _write() -> None:
-        _save_digest_state(state_path, {"last_sent": today})
+    # Same send path as digest test; avoid marking the day "done" if every send failed
+    # (allows retry after restart). No eligible rooms → mark sent to skip repeat work.
+    if successful_sends > 0 or eligible_rooms == 0:
 
-    await hass.async_add_executor_job(_write)
+        def _write() -> None:
+            _save_digest_state(state_path, {"last_sent": today})
+
+        await hass.async_add_executor_job(_write)
 
 
 async def async_reschedule_efficiency_digest(hass: HomeAssistant) -> None:
@@ -217,10 +224,6 @@ async def async_reschedule_efficiency_digest(hass: HomeAssistant) -> None:
 
     es = cm.energy_config.get("efficiency_settings") or {}
     if not _coerce_bool(es.get("efficiency_digest_enabled"), False):
-        return
-
-    tts = cm.energy_config.get("tts_settings") or {}
-    if not _coerce_bool(tts.get("notifications_enabled"), False):
         return
 
     hour, minute = _parse_digest_hhmm(str(es.get("efficiency_digest_time") or "08:00"))

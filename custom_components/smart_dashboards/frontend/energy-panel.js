@@ -9483,8 +9483,7 @@ class EnergyPanel extends HTMLElement {
               <div class="tts-msg-group" style="margin-bottom: 16px;">
                 <div class="tts-msg-title">Daily digest (push)</div>
                 <p style="color: var(--secondary-text-color); font-size: 10px; margin: 0 0 10px;">
-                  Sends once per day at the chosen local time for each room that has a <strong>Presence person</strong> (<code>person.*</code>).
-                  Requires <strong>Notifications</strong> enabled and a mobile notify target for that person.
+                  Sends once per day at the chosen local time for each room that has a <strong>Presence person</strong> (<code>person.*</code>), using the same push path as <strong>Send digest test</strong> (mobile notify target per person from Settings → People).
                   Scores are <strong>today’s efficiency</strong> (same formula as the stars on each room card), not the rolling saved file or the Statistics billing-period rating. Engagement uses the assigned person’s linked HA user.
                 </p>
                 <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: pointer;">
