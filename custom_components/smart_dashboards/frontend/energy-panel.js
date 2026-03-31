@@ -172,6 +172,12 @@ class EnergyPanel extends HTMLElement {
     this._dashboardHeartbeatInterval = null;
     this._roomRatingModalDelegation = false;
     this._roomRatingModalEsc = null;
+    /** @type {ResizeObserver|null} */
+    this._roomsGridResizeObserver = null;
+    /** @type {number|null} */
+    this._roomTitleFitRaf = null;
+    /** @type {number} */
+    this._roomTitleFitGen = 0;
   }
 
   set hass(hass) {
@@ -239,6 +245,15 @@ class EnergyPanel extends HTMLElement {
     if (this._roomRatingModalEsc) {
       window.removeEventListener('keydown', this._roomRatingModalEsc);
       this._roomRatingModalEsc = null;
+    }
+    this._roomTitleFitGen += 1;
+    if (this._roomTitleFitRaf != null) {
+      cancelAnimationFrame(this._roomTitleFitRaf);
+      this._roomTitleFitRaf = null;
+    }
+    if (this._roomsGridResizeObserver) {
+      this._roomsGridResizeObserver.disconnect();
+      this._roomsGridResizeObserver = null;
     }
     this.shadowRoot?.querySelector('.room-rating-modal-overlay')?.remove();
     this._teardownBillingBarChartNative();
@@ -989,6 +1004,7 @@ class EnergyPanel extends HTMLElement {
     });
 
     this._scheduleSummaryStatFit();
+    this._scheduleRoomHeaderTitleFit();
   }
 
   _scheduleSummaryStatFit() {
@@ -1042,6 +1058,86 @@ class EnergyPanel extends HTMLElement {
       if (fits(px)) return;
     }
     applyPx(minPx);
+  }
+
+  _syncRoomsGridTitleFitObserver() {
+    if (this._roomsGridResizeObserver) {
+      this._roomsGridResizeObserver.disconnect();
+      this._roomsGridResizeObserver = null;
+    }
+    if (this._dashboardView !== 'rooms' || this._showSettings) return;
+    const grid = this.shadowRoot?.querySelector('.rooms-grid');
+    if (!grid) return;
+    this._roomsGridResizeObserver = new ResizeObserver(() => {
+      this._scheduleRoomHeaderTitleFit();
+    });
+    this._roomsGridResizeObserver.observe(grid);
+  }
+
+  _scheduleRoomHeaderTitleFit() {
+    if (this._dashboardView !== 'rooms' || this._showSettings) return;
+    if (this._roomTitleFitRaf != null) cancelAnimationFrame(this._roomTitleFitRaf);
+    this._roomTitleFitGen += 1;
+    const gen = this._roomTitleFitGen;
+    this._roomTitleFitRaf = requestAnimationFrame(() => {
+      this._roomTitleFitRaf = requestAnimationFrame(() => {
+        this._roomTitleFitRaf = null;
+        if (gen !== this._roomTitleFitGen) return;
+        this._fitRoomHeaderTitles();
+      });
+    });
+  }
+
+  _fitRoomHeaderTitles() {
+    const root = this.shadowRoot;
+    if (!root || this._dashboardView !== 'rooms' || this._showSettings) return;
+    const MIN_PX = 9;
+    const MAX_PX = 16;
+    const STEP = 0.5;
+    const PAD = 1;
+
+    root.querySelectorAll('.room-header-title-wrap').forEach((wrap) => {
+      const nameEl = wrap.querySelector('.room-name');
+      if (!nameEl || wrap.clientWidth <= 0) return;
+
+      nameEl.classList.remove('room-name--trunc-floor');
+      nameEl.style.fontSize = '';
+
+      const cycling = nameEl.classList.contains('room-name--cycling');
+      const textEl = nameEl.querySelector('.room-name-text');
+      const presEl = nameEl.querySelector('.room-name-presence');
+
+      const fitsAt = (px) => {
+        nameEl.style.fontSize = `${px}px`;
+        void wrap.offsetWidth;
+        const cw = nameEl.clientWidth;
+        if (cw <= 0) return true;
+        if (cycling && textEl && presEl) {
+          const need = Math.max(textEl.scrollWidth, presEl.scrollWidth);
+          return need <= cw + PAD;
+        }
+        return nameEl.scrollWidth <= cw + PAD;
+      };
+
+      let best = MIN_PX;
+      for (let px = MAX_PX; px >= MIN_PX - 1e-9; px -= STEP) {
+        const rounded = Math.round(px * 2) / 2;
+        if (fitsAt(rounded)) {
+          best = rounded;
+          break;
+        }
+      }
+
+      nameEl.style.fontSize = `${best}px`;
+      void nameEl.offsetWidth;
+      const cw = nameEl.clientWidth;
+      const overflow =
+        cw > 0 &&
+        (cycling && textEl && presEl
+          ? Math.max(textEl.scrollWidth, presEl.scrollWidth) > cw + PAD
+          : nameEl.scrollWidth > cw + PAD);
+      if (overflow) nameEl.classList.add('room-name--trunc-floor');
+    });
   }
 
   _attachSummaryStatsResize() {
@@ -1505,7 +1601,7 @@ class EnergyPanel extends HTMLElement {
         display: grid;
         grid-template-columns: auto minmax(0, 1fr) auto auto;
         align-items: center;
-        gap: clamp(4px, 1vw, 8px);
+        gap: clamp(3px, 0.9cqi + 0.2rem, 8px);
         min-width: 0;
         min-height: var(--room-card-rail-min-h);
         box-sizing: border-box;
@@ -1516,7 +1612,7 @@ class EnergyPanel extends HTMLElement {
         flex-direction: row;
         flex-wrap: nowrap;
         align-items: center;
-        gap: clamp(3px, 0.9vw, 6px);
+        gap: clamp(2px, 0.75cqi + 0.15rem, 6px);
         min-width: 0;
         overflow: hidden;
       }
@@ -1885,8 +1981,8 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-header-rating .room-efficiency-star {
-        width: clamp(10px, 2.4vw, 14px);
-        height: clamp(10px, 2.4vw, 14px);
+        width: clamp(8px, 2.2cqi + 0.2rem, 14px);
+        height: clamp(8px, 2.2cqi + 0.2rem, 14px);
         flex-shrink: 0;
       }
 
@@ -1918,9 +2014,9 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-icon {
-        --room-card-icon-inner: clamp(13px, 3.2vw, 18px);
-        width: clamp(24px, 6vw, 34px);
-        height: clamp(24px, 6vw, 34px);
+        --room-card-icon-inner: clamp(11px, 2.8cqi + 0.25rem, 18px);
+        width: clamp(22px, 5.5cqi + 0.5rem, 34px);
+        height: clamp(22px, 5.5cqi + 0.5rem, 34px);
         border-radius: clamp(5px, 1.2vw, 8px);
         background: rgba(255, 255, 255, 0.06);
         display: grid;
@@ -1979,7 +2075,7 @@ class EnergyPanel extends HTMLElement {
 
       .room-name {
         margin: 0;
-        font-size: clamp(11px, 2.6vw, 16px);
+        font-size: clamp(9px, 2.8cqi + 0.35rem, 16px);
         font-weight: 700;
         line-height: 1.15;
         letter-spacing: -0.01em;
@@ -1987,6 +2083,10 @@ class EnergyPanel extends HTMLElement {
         flex: 1 1 auto;
         white-space: nowrap;
         overflow: hidden;
+        text-overflow: clip;
+      }
+
+      .room-name.room-name--trunc-floor {
         text-overflow: ellipsis;
       }
 
@@ -1999,6 +2099,11 @@ class EnergyPanel extends HTMLElement {
         display: block;
         white-space: nowrap;
         overflow: hidden;
+        text-overflow: clip;
+      }
+
+      .room-name--cycling.room-name--trunc-floor .room-name-text,
+      .room-name--cycling.room-name--trunc-floor .room-name-presence {
         text-overflow: ellipsis;
       }
 
@@ -2038,36 +2143,39 @@ class EnergyPanel extends HTMLElement {
         }
       }
 
+      @container roomCard (max-width: 320px) {
+        .room-header-rail .room-header-badges .room-threshold-pill {
+          display: none;
+        }
+      }
+
       @container roomCard (max-width: 260px) {
         .room-header-rail {
-          gap: clamp(2px, 0.6vw, 5px);
-        }
-        .room-header-rail .room-name {
-          font-size: 9px;
+          gap: clamp(2px, 0.5cqi, 5px);
         }
         .room-header-rail .room-total-watts {
-          font-size: 10px;
+          font-size: clamp(8px, 2.4cqi, 10px);
         }
         .room-header-rail .event-count {
-          font-size: 6px;
-          padding: 1px clamp(2px, 0.6vw, 4px);
+          font-size: clamp(5px, 1.8cqi, 7px);
+          padding: 1px clamp(2px, 0.5cqi, 4px);
         }
         .room-header-rail .room-threshold-pill {
-          font-size: 6px;
-          padding: 1px clamp(2px, 0.6vw, 5px);
+          font-size: clamp(5px, 1.8cqi, 7px);
+          padding: 1px clamp(2px, 0.5cqi, 5px);
         }
         .room-header-rail .room-header-rating .room-efficiency-star {
-          width: 8px;
-          height: 8px;
+          width: clamp(6px, 2cqi, 9px);
+          height: clamp(6px, 2cqi, 9px);
         }
         .room-header-rail .enforcement-badge--inline {
-          font-size: 6px;
-          padding: 1px clamp(2px, 0.6vw, 4px);
+          font-size: clamp(5px, 1.8cqi, 7px);
+          padding: 1px clamp(2px, 0.5cqi, 4px);
           gap: 2px;
         }
         .room-header-rail .enforcement-badge--inline svg {
-          width: clamp(7px, 1.8vw, 9px);
-          height: clamp(7px, 1.8vw, 9px);
+          width: clamp(6px, 1.6cqi, 9px);
+          height: clamp(6px, 1.6cqi, 9px);
         }
       }
 
@@ -2075,46 +2183,37 @@ class EnergyPanel extends HTMLElement {
         .room-header-rail .room-threshold-pill {
           display: none;
         }
-        .room-header-rail .room-name {
-          font-size: 8px;
-        }
         .room-header-rail .room-total-watts {
-          font-size: 9px;
+          font-size: clamp(7px, 2.2cqi, 9px);
         }
         .room-header-rail .room-header-rating .room-efficiency-star {
-          width: 7px;
-          height: 7px;
+          width: clamp(5px, 1.8cqi, 8px);
+          height: clamp(5px, 1.8cqi, 8px);
         }
       }
 
       @container roomCard (min-width: 261px) and (max-width: 340px) {
-        .room-header-rail .room-name {
-          font-size: clamp(10px, 3.5cqi, 13px);
-        }
         .room-header-rail .room-total-watts {
-          font-size: clamp(11px, 4cqi, 15px);
+          font-size: clamp(10px, 3.6cqi, 15px);
         }
         .room-header-rail .event-count {
-          font-size: clamp(7px, 2.2cqi, 9px);
+          font-size: clamp(6px, 2cqi, 9px);
         }
         .room-header-rail .room-threshold-pill {
-          font-size: clamp(7px, 2cqi, 9px);
+          font-size: clamp(6px, 2cqi, 9px);
         }
         .room-header-rail .room-header-rating .room-efficiency-star {
-          width: clamp(9px, 2.5cqi, 13px);
-          height: clamp(9px, 2.5cqi, 13px);
+          width: clamp(8px, 2.4cqi, 13px);
+          height: clamp(8px, 2.4cqi, 13px);
         }
         .room-header-rail .enforcement-badge--inline {
-          font-size: clamp(7px, 2cqi, 9px);
+          font-size: clamp(6px, 2cqi, 9px);
         }
       }
 
       @container roomCard (min-width: 341px) {
-        .room-header-rail .room-name {
-          font-size: clamp(12px, 2.6vw, 16px);
-        }
         .room-header-rail .room-total-watts {
-          font-size: clamp(13px, 3vw, 17px);
+          font-size: clamp(12px, 2.8cqi + 0.2rem, 17px);
         }
       }
 
@@ -5647,6 +5746,10 @@ class EnergyPanel extends HTMLElement {
 
     this._attachEventListeners();
     this._syncGraphModalAfterRender();
+    this._syncRoomsGridTitleFitObserver();
+    if (this._dashboardView === 'rooms' && rooms.length > 0 && !showStatistics) {
+      queueMicrotask(() => this._scheduleRoomHeaderTitleFit());
+    }
     if (this._dashboardView === 'statistics' && this._statsRoomsView === 'pie') {
       queueMicrotask(() => void this._syncStatsRoomsPie());
     }
