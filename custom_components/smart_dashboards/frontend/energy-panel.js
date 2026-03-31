@@ -8095,7 +8095,7 @@ class EnergyPanel extends HTMLElement {
       <div class="outlet-card outlet-face" data-outlet-index="${index}">
         <div class="faceplate">
           <div class="outlet-name outlet-name-top" title="${(outlet.name || '').replace(/"/g, '&quot;')}">${outlet.name || ''}</div>
-          <div class="receptacle plug-receptacle ${plug1Active ? 'active' : ''}" data-plug-index="1" title="Click to toggle Plug 1">
+          <div class="receptacle plug-receptacle ${plug1Active ? 'active' : ''}" data-plug-index="1" title="Tap for usage graph and power">
             <div class="holes" aria-hidden="true">
               <span class="slot left"></span>
               <span class="slot right"></span>
@@ -8109,7 +8109,7 @@ class EnergyPanel extends HTMLElement {
 
           <div class="center-screw" aria-hidden="true"></div>
 
-          <div class="receptacle plug-receptacle ${plug2Active ? 'active' : ''}" data-plug-index="2" title="Click to toggle Plug 2">
+          <div class="receptacle plug-receptacle ${plug2Active ? 'active' : ''}" data-plug-index="2" title="Tap for usage graph and power">
             <div class="holes" aria-hidden="true">
               <span class="slot left"></span>
               <span class="slot right"></span>
@@ -10264,7 +10264,17 @@ class EnergyPanel extends HTMLElement {
     });
   }
 
-  _openApplianceContextMenu(e, { roomId, outletIndex, outlet }) {
+  /** Menu label: "Turn on" / "Turn off" (+ plug name when set) from live switch state. */
+  _applianceToggleMenuLabel(outlet, plugSlot) {
+    const t = this._resolveApplianceToggleTarget(outlet, plugSlot);
+    if (!t?.switchEntity || !this._hass?.states) return 'Turn on or off';
+    const st = String(this._hass.states[t.switchEntity]?.state || '').toLowerCase();
+    const on = st === 'on';
+    const plugBit = t.plugName ? ` ${t.plugName}` : '';
+    return on ? `Turn off${plugBit}` : `Turn on${plugBit}`;
+  }
+
+  _openApplianceContextMenu(e, { roomId, outletIndex, outlet, forcedPlugSlot = null }) {
     e.preventDefault();
     e.stopPropagation();
     this._closeApplianceMenu();
@@ -10280,45 +10290,54 @@ class EnergyPanel extends HTMLElement {
     menu.className = 'appliance-context-menu';
     menu.setAttribute('role', 'menu');
 
-    const addItem = (label, action, plugSlot) => {
+    const addItem = (label, action, slot) => {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'appliance-context-menu-item';
       b.setAttribute('role', 'menuitem');
       b.textContent = label;
       b.dataset.applianceAction = action;
-      if (plugSlot != null) b.dataset.plugSlot = String(plugSlot);
+      if (slot != null) b.dataset.plugSlot = String(slot);
       b.addEventListener('click', (ev) => {
         ev.stopPropagation();
         this._closeApplianceMenu();
         if (action === 'graph') {
-          this._openOutletUsageGraph(roomId, outletIndex, outlet, plugSlot);
+          this._openOutletUsageGraph(roomId, outletIndex, outlet, slot);
         } else {
-          void this._executeApplianceToggle({ roomId, outletIndex, plugSlot });
+          void this._executeApplianceToggle({ roomId, outletIndex, plugSlot: slot });
         }
       });
       menu.appendChild(b);
     };
 
-    if (dualReceptacle) {
+    if (
+      otype === 'outlet' &&
+      (forcedPlugSlot === 1 || forcedPlugSlot === 2)
+    ) {
+      const n = forcedPlugSlot;
+      addItem(`Open usage graph (Plug ${n})`, 'graph', n);
+      if (this._resolveApplianceToggleTarget(outlet, n)) {
+        addItem(this._applianceToggleMenuLabel(outlet, n), 'toggle', n);
+      }
+    } else if (dualReceptacle) {
       addItem('Open usage graph (Plug 1)', 'graph', 1);
       if (this._resolveApplianceToggleTarget(outlet, 1)) {
-        addItem('Turn Plug 1 on or off', 'toggle', 1);
+        addItem(this._applianceToggleMenuLabel(outlet, 1), 'toggle', 1);
       }
       addItem('Open usage graph (Plug 2)', 'graph', 2);
       if (this._resolveApplianceToggleTarget(outlet, 2)) {
-        addItem('Turn Plug 2 on or off', 'toggle', 2);
+        addItem(this._applianceToggleMenuLabel(outlet, 2), 'toggle', 2);
       }
     } else if (otype === 'outlet') {
       if (hasP1) {
         addItem('Open usage graph', 'graph', 1);
         if (this._resolveApplianceToggleTarget(outlet, 1)) {
-          addItem('Turn on or off', 'toggle', 1);
+          addItem(this._applianceToggleMenuLabel(outlet, 1), 'toggle', 1);
         }
       } else if (hasP2) {
         addItem('Open usage graph', 'graph', 2);
         if (this._resolveApplianceToggleTarget(outlet, 2)) {
-          addItem('Turn on or off', 'toggle', 2);
+          addItem(this._applianceToggleMenuLabel(outlet, 2), 'toggle', 2);
         }
       } else {
         addItem('Open usage graph', 'graph', 1);
@@ -10326,7 +10345,7 @@ class EnergyPanel extends HTMLElement {
     } else {
       addItem('Open usage graph', 'graph', null);
       if (this._resolveApplianceToggleTarget(outlet, null)) {
-        addItem('Turn on or off', 'toggle', null);
+        addItem(this._applianceToggleMenuLabel(outlet, null), 'toggle', null);
       }
     }
 
@@ -10534,6 +10553,26 @@ class EnergyPanel extends HTMLElement {
         otype === 'wall_heater'
       )
     ) {
+      return;
+    }
+
+    if (otype === 'outlet') {
+      const hasP1 = Boolean(String(outlet.plug1_entity || '').trim());
+      const hasP2 = Boolean(String(outlet.plug2_entity || '').trim());
+      const plugEl = e.target.closest('.plug-receptacle');
+      if (!plugEl) return;
+      const plugIdx = parseInt(plugEl.dataset.plugIndex, 10);
+      if (plugIdx !== 1 && plugIdx !== 2) return;
+      if (plugIdx === 1 && !hasP1) return;
+      if (plugIdx === 2 && !hasP2) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this._openApplianceContextMenu(e, {
+        roomId,
+        outletIndex,
+        outlet,
+        forcedPlugSlot: plugIdx,
+      });
       return;
     }
 
