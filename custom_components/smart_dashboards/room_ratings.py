@@ -227,7 +227,7 @@ def recompute_room_ratings(hass: HomeAssistant, config_manager: Any) -> dict[str
             budget_kwh = 5.0
         rdata = _room_history_row(rooms_h, rid, legacy_id)
         wh_list = [float(x) for x in (rdata.get("wh") or [])]
-        compliance = _score_compliance(wh_list, budget_kwh)
+        compliance = _score_compliance(wh_list, budget_kwh, len(wh_list))
         warning = _score_warning(
             rdata.get("warnings") or [],
             rdata.get("shutoffs") or [],
