@@ -7110,20 +7110,22 @@ class EnergyPanel extends HTMLElement {
       (personEnt.startsWith('person.')
         ? personEnt.slice(7).replace(/_/g, ' ')
         : 'This person');
-    const effEng = this._config?.efficiency_settings?.engagement_max_visits_per_hour;
-    const engagementCapN =
-      effEng != null && Number.isFinite(Number(effEng))
-        ? Math.max(1, Math.min(10, Math.round(Number(effEng))))
-        : 2;
+    const loadHighRaw = this._config?.efficiency_settings?.load_high_watts;
+    const loadHighW =
+      loadHighRaw != null && Number.isFinite(Number(loadHighRaw))
+        ? Math.max(1, Math.round(Number(loadHighRaw)))
+        : 100;
+    const loadPatternDesc = `Rewards steadier use; more time above about ${loadHighW} W (counted as hours in the window) lowers this score.`;
+
     const engMeta = pillarMeta.engagement || 'ok';
     let engagementDesc;
     if (engMeta === 'na') {
       engagementDesc =
-        'Engagement applies when this room has an assigned person; it measures that person’s dashboard opens, not yours.';
+        'Only applies when this room has an assigned person in settings.';
     } else if (engMeta === 'no_data') {
-      engagementDesc = `How often the assigned person opens this Home Energy dashboard (up to ${engagementCapN} visits per clock hour; spreading use across many hours scores higher). No recorded visits for them in the lookback window yet.`;
+      engagementDesc = `How often ${personNameRaw} opens this dashboard; steadier use over time scores higher. No recent activity yet.`;
     } else {
-      engagementDesc = `How often ${personNameRaw} opens this Home Energy dashboard (up to ${engagementCapN} visits per clock hour; spreading use across many hours of the day scores higher).`;
+      engagementDesc = `How often ${personNameRaw} opens this dashboard; steadier use over time scores higher.`;
     }
 
     this.shadowRoot.querySelector('.room-rating-modal-overlay')?.remove();
@@ -7156,26 +7158,21 @@ class EnergyPanel extends HTMLElement {
             1,
             'compliance',
             'Compliance',
-            'How often daily energy stayed within your kWh budget (with a small tolerance).',
+            'Daily energy vs your room kWh budget (with a small tolerance).',
           )}
           ${scoreRow(
             2,
             'warning',
             'Warnings & events',
-            'Fewer threshold warnings, safety shutoffs, and enforcement outlet cycles score higher.',
+            'Alerts, shutoffs, and enforcement cycles—fewer is better.',
           )}
           ${scoreRow(
             3,
             'consumption',
             'Consumption vs other rooms',
-            'Your room’s average daily energy compared to a peer median across configured rooms.',
+            'How this room’s average use compares to your other rooms.',
           )}
-          ${scoreRow(
-            4,
-            'load',
-            'Load pattern',
-            'Rewards steadier use; many minutes above about 100 W in the rolling window lowers this score.',
-          )}
+          ${scoreRow(4, 'load', 'Load pattern', loadPatternDesc)}
           ${scoreRow(5, 'engagement', 'Dashboard engagement', engagementDesc)}
         </div>
         <p class="room-rating-modal-footnote">Refreshes about every hour.</p>
@@ -12980,6 +12977,7 @@ class EnergyPanel extends HTMLElement {
 
       setTimeout(async () => {
         await this._loadPowerData({ force: true });
+        void this._loadRoomRatings();
         this._render();
         this._startRefresh();
         if (!this._showSettings) {
