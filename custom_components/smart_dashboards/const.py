@@ -258,5 +258,27 @@ DEFAULT_CONFIG = {
             "kwh_cost_sensor": "",
             "statistics_refresh_seconds": 60,
         },
+        "efficiency_settings": {
+            "history_window_days": 14,
+            "engagement_lookback_days": 7,
+            "compliance_tolerance": 1.02,
+            "warning_points_per_event": 4.0,
+            "consumption_peer_multiplier": 1.5,
+            "load_high_watts": 100.0,
+            "load_penalty_per_high_hour": 8.0,
+            "engagement_distinct_hours_target": 12,
+            "engagement_hours_weight": 70.0,
+            "engagement_visits_weight": 30.0,
+            "engagement_visits_daily_norm": 2,
+            "engagement_max_visits_per_hour": 2,
+            "efficiency_digest_enabled": False,
+            "efficiency_digest_time": "08:00",
+            "efficiency_digest_title": "{notification_title} {room_name} efficiency",
+            "efficiency_digest_message": (
+                "{room_name}: index {average}/100, {stars} stars. "
+                "Compliance {compliance}, warnings {warning}, consumption {consumption}, "
+                "load {load}, engagement {engagement}."
+            ),
+        },
     },
 }

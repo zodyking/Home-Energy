@@ -60,6 +60,12 @@ const TTS_DEFAULTS = {
   notify_vent_auto_off_msg: 'No motion in {room_name}, turning off {outlet_name}.',
 };
 
+const EFFICIENCY_UI_DEFAULTS = {
+  efficiency_digest_title: '{notification_title} {room_name} efficiency',
+  efficiency_digest_message:
+    '{room_name}: index {average}/100, {stars} stars. Compliance {compliance}, warnings {warning}, consumption {consumption}, load {load}, engagement {engagement}.',
+};
+
 /** Tooltip + visible label for room header enforcement badge (index = phase 0–2). */
 const ENFORCEMENT_PHASE_TITLES = [
   'Power enforcement Phase 0: monitoring on; volume may rise and outlets may cycle if limits are ignored.',
@@ -116,7 +122,7 @@ class EnergyPanel extends HTMLElement {
     this._entities = null;
     this._powerData = null;
     this._showSettings = false;
-    this._settingsTab = 'rooms'; // 'rooms' | 'tts' | 'notifications' | 'statistics' | 'enforcement'
+    this._settingsTab = 'rooms'; // 'rooms' | 'tts' | 'notifications' | 'statistics' | 'efficiency' | 'enforcement' | 'zone-health'
     this._dashboardView = 'rooms'; // 'rooms' | 'statistics' | 'stove'
     this._stoveData = null;
     this._refreshInterval = null;
@@ -1508,9 +1514,9 @@ class EnergyPanel extends HTMLElement {
       .room-header-title-wrap {
         display: flex;
         flex-direction: row;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
-        gap: clamp(4px, 1vw, 6px);
+        gap: clamp(3px, 0.9vw, 6px);
         min-width: 0;
         overflow: hidden;
       }
@@ -2033,32 +2039,51 @@ class EnergyPanel extends HTMLElement {
       }
 
       @container roomCard (max-width: 260px) {
+        .room-header-rail {
+          gap: clamp(2px, 0.6vw, 5px);
+        }
         .room-header-rail .room-name {
-          font-size: 10px;
+          font-size: 9px;
         }
         .room-header-rail .room-total-watts {
-          font-size: 11px;
+          font-size: 10px;
         }
         .room-header-rail .event-count {
-          font-size: 7px;
-          padding: 1px clamp(3px, 0.8vw, 5px);
+          font-size: 6px;
+          padding: 1px clamp(2px, 0.6vw, 4px);
         }
         .room-header-rail .room-threshold-pill {
-          font-size: 7px;
-          padding: 1px clamp(3px, 0.8vw, 6px);
+          font-size: 6px;
+          padding: 1px clamp(2px, 0.6vw, 5px);
         }
         .room-header-rail .room-header-rating .room-efficiency-star {
-          width: 9px;
-          height: 9px;
+          width: 8px;
+          height: 8px;
         }
         .room-header-rail .enforcement-badge--inline {
-          font-size: 7px;
-          padding: 1px clamp(3px, 0.8vw, 5px);
+          font-size: 6px;
+          padding: 1px clamp(2px, 0.6vw, 4px);
           gap: 2px;
         }
         .room-header-rail .enforcement-badge--inline svg {
-          width: clamp(8px, 2vw, 10px);
-          height: clamp(8px, 2vw, 10px);
+          width: clamp(7px, 1.8vw, 9px);
+          height: clamp(7px, 1.8vw, 9px);
+        }
+      }
+
+      @container roomCard (max-width: 220px) {
+        .room-header-rail .room-threshold-pill {
+          display: none;
+        }
+        .room-header-rail .room-name {
+          font-size: 8px;
+        }
+        .room-header-rail .room-total-watts {
+          font-size: 9px;
+        }
+        .room-header-rail .room-header-rating .room-efficiency-star {
+          width: 7px;
+          height: 7px;
         }
       }
 
@@ -2095,10 +2120,11 @@ class EnergyPanel extends HTMLElement {
 
       .room-header-badges {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
-        gap: clamp(4px, 1vw, 6px);
+        gap: clamp(3px, 0.9vw, 6px);
         min-height: 0;
+        min-width: 0;
       }
 
       .room-header-badges:empty {
@@ -7836,6 +7862,7 @@ class EnergyPanel extends HTMLElement {
     const sensors = this._entities?.sensors || this._entities?.power_sensors || [];
     const ttsSettings = this._config?.tts_settings || {};
     const statsSettings = this._config?.statistics_settings || {};
+    const effSettings = this._config?.efficiency_settings || {};
     const pe = this._config?.power_enforcement || {};
     const roomsEnabled = pe.rooms_enabled || [];
     const bbwRaw = ttsSettings.budget_boost_weekdays;
@@ -8038,6 +8065,9 @@ class EnergyPanel extends HTMLElement {
             </button>
             <button class="settings-tab ${this._settingsTab === 'statistics' ? 'active' : ''}" data-tab="statistics">
               Statistics
+            </button>
+            <button class="settings-tab ${this._settingsTab === 'efficiency' ? 'active' : ''}" data-tab="efficiency">
+              Efficiency
             </button>
             <button class="settings-tab ${this._settingsTab === 'enforcement' ? 'active' : ''}" data-tab="enforcement">
               Power Enforcement
@@ -8928,6 +8958,155 @@ class EnergyPanel extends HTMLElement {
                 </button>
                 <p style="color: var(--secondary-text-color); font-size: 10px; margin: 8px 0 0;">
                   Clears the statistics cache and forces a full recalculation from Home Assistant's recorder. Use this after changing sensor settings.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-tab-content ${this._settingsTab === 'efficiency' ? 'active' : ''}" id="tab-efficiency">
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Room efficiency ratings</h2>
+              </div>
+              <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 16px;">
+                Tune how the five efficiency pillars are scored (same formulas as the reference doc). Changes apply on the next recompute (hourly or when the panel loads ratings).
+              </p>
+              <div class="tts-msg-group" style="margin-bottom: 16px;">
+                <div class="tts-msg-title">Windows and compliance</div>
+                <div class="grid-2">
+                  <div class="form-group">
+                    <label class="form-label" for="eff-history-window-days">Daily history window (days)</label>
+                    <input type="number" id="eff-history-window-days" class="form-input" min="1" max="90" step="1"
+                      value="${effSettings.history_window_days ?? 14}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="eff-engagement-lookback">Engagement lookback (days)</label>
+                    <input type="number" id="eff-engagement-lookback" class="form-input" min="1" max="30" step="1"
+                      value="${effSettings.engagement_lookback_days ?? 7}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="eff-compliance-tol">Compliance budget multiplier</label>
+                    <input type="number" id="eff-compliance-tol" class="form-input" min="1" max="1.5" step="0.01"
+                      value="${effSettings.compliance_tolerance ?? 1.02}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="eff-warning-points">Warning points lost per event</label>
+                    <input type="number" id="eff-warning-points" class="form-input" min="0.25" max="25" step="0.25"
+                      value="${effSettings.warning_points_per_event ?? 4}">
+                  </div>
+                </div>
+              </div>
+              <div class="tts-msg-group" style="margin-bottom: 16px;">
+                <div class="tts-msg-title">Consumption and load</div>
+                <div class="grid-2">
+                  <div class="form-group">
+                    <label class="form-label" for="eff-peer-mult">Consumption peer divisor multiplier</label>
+                    <input type="number" id="eff-peer-mult" class="form-input" min="0.5" max="5" step="0.1"
+                      value="${effSettings.consumption_peer_multiplier ?? 1.5}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="eff-load-high-w">Load “high” threshold (watts per minute)</label>
+                    <input type="number" id="eff-load-high-w" class="form-input" min="1" max="5000" step="1"
+                      value="${effSettings.load_high_watts ?? 100}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="eff-load-penalty">Load penalty per high-load hour</label>
+                    <input type="number" id="eff-load-penalty" class="form-input" min="0" max="50" step="0.5"
+                      value="${effSettings.load_penalty_per_high_hour ?? 8}">
+                  </div>
+                </div>
+              </div>
+              <div class="tts-msg-group" style="margin-bottom: 16px;">
+                <div class="tts-msg-title">Engagement (dashboard visits)</div>
+                <div class="grid-2">
+                  <div class="form-group">
+                    <label class="form-label" for="eff-eng-distinct-hours">Distinct hours target (per day)</label>
+                    <input type="number" id="eff-eng-distinct-hours" class="form-input" min="1" max="24" step="1"
+                      value="${effSettings.engagement_distinct_hours_target ?? 12}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="eff-eng-hours-weight">Hours component weight (0–100)</label>
+                    <input type="number" id="eff-eng-hours-weight" class="form-input" min="0" max="100" step="1"
+                      value="${effSettings.engagement_hours_weight ?? 70}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="eff-eng-visits-weight">Visits component weight (0–100)</label>
+                    <input type="number" id="eff-eng-visits-weight" class="form-input" min="0" max="100" step="1"
+                      value="${effSettings.engagement_visits_weight ?? 30}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="eff-eng-daily-norm">Visits daily norm (score scale)</label>
+                    <input type="number" id="eff-eng-daily-norm" class="form-input" min="1" max="48" step="1"
+                      value="${effSettings.engagement_visits_daily_norm ?? 2}">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="eff-eng-max-hour">Max visits counted per clock hour</label>
+                    <input type="number" id="eff-eng-max-hour" class="form-input" min="1" max="10" step="1"
+                      value="${effSettings.engagement_max_visits_per_hour ?? 2}">
+                  </div>
+                </div>
+              </div>
+              <div class="tts-msg-group" style="margin-bottom: 16px;">
+                <div class="tts-msg-title">Daily digest (push)</div>
+                <p style="color: var(--secondary-text-color); font-size: 10px; margin: 0 0 10px;">
+                  Sends once per day at the chosen local time for each room that has a <strong>Presence person</strong> (<code>person.*</code>).
+                  Requires <strong>Notifications</strong> enabled and a mobile notify target for that person. Uses saved rating scores (household-mean engagement).
+                </p>
+                <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: pointer;">
+                  <input type="checkbox" id="eff-digest-enabled" ${effSettings.efficiency_digest_enabled ? 'checked' : ''} style="width: 18px; height: 18px;">
+                  <span>Enable daily efficiency digest</span>
+                </label>
+                <div class="form-group" style="margin-bottom: 12px;">
+                  <label class="form-label" for="eff-digest-time">Send time (local)</label>
+                  <input type="time" id="eff-digest-time" class="form-input" style="max-width: 160px;"
+                    value="${String(effSettings.efficiency_digest_time || '08:00').slice(0, 5)}">
+                </div>
+                <div class="tts-msg-group" style="margin-bottom: 10px;">
+                  <div class="tts-msg-title">Digest title template</div>
+                  <textarea class="tts-msg-textarea" id="eff-digest-title" rows="2">${this._escapeForSettingsTextarea(
+                    effSettings.efficiency_digest_title || EFFICIENCY_UI_DEFAULTS.efficiency_digest_title,
+                  )}</textarea>
+                  <div class="tts-var-help">Variables: <code>{notification_title}</code> <code>{room_name}</code> <code>{average}</code> <code>{stars}</code> <code>{compliance}</code> <code>{warning}</code> <code>{consumption}</code> <code>{load}</code> <code>{engagement}</code></div>
+                </div>
+                <div class="tts-msg-group" style="margin-bottom: 10px;">
+                  <div class="tts-msg-title">Digest message template</div>
+                  <textarea class="tts-msg-textarea" id="eff-digest-message" rows="4">${this._escapeForSettingsTextarea(
+                    effSettings.efficiency_digest_message || EFFICIENCY_UI_DEFAULTS.efficiency_digest_message,
+                  )}</textarea>
+                  <div class="tts-var-help">Same variables as title.</div>
+                </div>
+                <div class="grid-2" style="margin-bottom: 12px;">
+                  <div class="form-group">
+                    <label class="form-label">Test target person</label>
+                    <select class="form-select" id="eff-digest-test-person">
+                      <option value="">Select a person...</option>
+                      ${(Array.isArray(this._entities?.persons) ? this._entities.persons : [])
+                        .filter((p) => (p.entity_id || '').startsWith('person.'))
+                        .map(
+                          (p) =>
+                            `<option value="${(p.entity_id || '').replace(/"/g, '&quot;')}">${(p.friendly_name || p.entity_id || '').replace(/</g, '&lt;')}</option>`,
+                        )
+                        .join('')}
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Room (optional)</label>
+                    <select class="form-select" id="eff-digest-test-room">
+                      <option value="">First room for this person</option>
+                      ${rooms
+                        .filter((r) => (r.presence_person_entity || '').trim().startsWith('person.'))
+                        .map((r) => {
+                          const rid = this._canonicalRoomId(r);
+                          const nm = String(r.name || rid).replace(/</g, '&lt;');
+                          return `<option value="${String(rid).replace(/"/g, '&quot;')}">${nm}</option>`;
+                        })
+                        .join('')}
+                    </select>
+                  </div>
+                </div>
+                <button type="button" class="btn btn-secondary" id="eff-digest-send-test">Send digest test</button>
+                <p style="color: var(--secondary-text-color); font-size: 10px; margin: 8px 0 0;">
+                  Sends one notification using current templates and saved ratings (does not mark the daily digest as sent).
                 </p>
               </div>
             </div>
@@ -10198,6 +10377,29 @@ class EnergyPanel extends HTMLElement {
       showToast(this.shadowRoot, 'Test notification sent!', 'success');
     } catch (err) {
       showToast(this.shadowRoot, `Failed to send notification: ${err.message || err}`, 'error');
+    }
+  }
+
+  async _sendEfficiencyDigestTest() {
+    const personSelect = this.shadowRoot.querySelector('#eff-digest-test-person');
+    const roomSelect = this.shadowRoot.querySelector('#eff-digest-test-room');
+    const targetPerson = personSelect?.value || '';
+    const roomId = (roomSelect?.value || '').trim();
+
+    if (!targetPerson) {
+      showToast(this.shadowRoot, 'Please select a target person', 'error');
+      return;
+    }
+
+    try {
+      await this._hass.callWS({
+        type: 'smart_dashboards/send_efficiency_digest_test',
+        target_person: targetPerson,
+        room_id: roomId || undefined,
+      });
+      showToast(this.shadowRoot, 'Efficiency digest test sent!', 'success');
+    } catch (err) {
+      showToast(this.shadowRoot, `Digest test failed: ${err.message || err}`, 'error');
     }
   }
 
@@ -11577,6 +11779,11 @@ class EnergyPanel extends HTMLElement {
       notifyTestBtn.addEventListener('click', () => this._sendTestNotification());
     }
 
+    const effDigestTestBtn = this.shadowRoot.querySelector('#eff-digest-send-test');
+    if (effDigestTestBtn) {
+      effDigestTestBtn.addEventListener('click', () => this._sendEfficiencyDigestTest());
+    }
+
     // Zone health refresh button
     const zoneHealthRefreshBtn = this.shadowRoot.querySelector('#zone-health-refresh');
     if (zoneHealthRefreshBtn) {
@@ -12549,6 +12756,47 @@ class EnergyPanel extends HTMLElement {
       statistics_refresh_seconds,
     };
 
+    const tabEff = this.shadowRoot.querySelector('#tab-efficiency');
+    const _efFloat = (id, def, min, max) => {
+      const el = tabEff?.querySelector(`#${id}`);
+      let v = parseFloat(el?.value);
+      if (!Number.isFinite(v)) v = def;
+      return Math.max(min, Math.min(max, v));
+    };
+    const _efInt = (id, def, min, max) => {
+      const el = tabEff?.querySelector(`#${id}`);
+      let v = parseInt(el?.value, 10);
+      if (!Number.isFinite(v)) v = def;
+      return Math.max(min, Math.min(max, v));
+    };
+    const digestTimeRaw = tabEff?.querySelector('#eff-digest-time')?.value || '08:00';
+    const digestTimeM = /^(\d{1,2}):(\d{2})$/.exec(String(digestTimeRaw).trim());
+    let digestH = 8;
+    let digestMi = 0;
+    if (digestTimeM) {
+      digestH = Math.max(0, Math.min(23, parseInt(digestTimeM[1], 10)));
+      digestMi = Math.max(0, Math.min(59, parseInt(digestTimeM[2], 10)));
+    }
+    const efficiency_digest_time = `${String(digestH).padStart(2, '0')}:${String(digestMi).padStart(2, '0')}`;
+    const efficiency_settings = {
+      history_window_days: _efInt('eff-history-window-days', 14, 1, 90),
+      engagement_lookback_days: _efInt('eff-engagement-lookback', 7, 1, 30),
+      compliance_tolerance: _efFloat('eff-compliance-tol', 1.02, 1.0, 1.5),
+      warning_points_per_event: _efFloat('eff-warning-points', 4, 0.25, 25),
+      consumption_peer_multiplier: _efFloat('eff-peer-mult', 1.5, 0.5, 5),
+      load_high_watts: _efFloat('eff-load-high-w', 100, 1, 5000),
+      load_penalty_per_high_hour: _efFloat('eff-load-penalty', 8, 0, 50),
+      engagement_distinct_hours_target: _efInt('eff-eng-distinct-hours', 12, 1, 24),
+      engagement_hours_weight: _efFloat('eff-eng-hours-weight', 70, 0, 100),
+      engagement_visits_weight: _efFloat('eff-eng-visits-weight', 30, 0, 100),
+      engagement_visits_daily_norm: _efFloat('eff-eng-daily-norm', 2, 1, 48),
+      engagement_max_visits_per_hour: _efInt('eff-eng-max-hour', 2, 1, 10),
+      efficiency_digest_enabled: tabEff?.querySelector('#eff-digest-enabled')?.checked === true,
+      efficiency_digest_time,
+      efficiency_digest_title: tabEff?.querySelector('#eff-digest-title')?.value ?? '',
+      efficiency_digest_message: tabEff?.querySelector('#eff-digest-message')?.value ?? '',
+    };
+
     const tabEnf = this.shadowRoot.querySelector('#tab-enforcement');
     const _pei = (id) => {
       const el = tabEnf?.querySelector(`#${id}`);
@@ -12594,6 +12842,7 @@ class EnergyPanel extends HTMLElement {
       breaker_lines: this._config?.breaker_lines || [],
       breaker_panel_size: this._config?.breaker_panel_size ?? 20,
       statistics_settings,
+      efficiency_settings,
       tts_settings: {
         language: ttsLanguage,
         speed: this._config?.tts_settings?.speed ?? 1.0,
