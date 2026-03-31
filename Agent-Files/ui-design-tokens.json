@@ -122,6 +122,7 @@
 
   "file_references": {
     "tokens_host": "custom_components/smart_dashboards/frontend/shared-utils.js (export const sharedStyles, :host block)",
-    "energy_panel_styles": "custom_components/smart_dashboards/frontend/energy-panel.js (_render inline styles)"
+    "energy_panel_styles": "custom_components/smart_dashboards/frontend/energy-panel.js (_render inline styles)",
+    "efficiency_detail_modal": "energy-panel.js `.room-rating-modal-*`: dialog and footnote use --card-bg and --card-border; header strip --panel-header-background; hero solid card + subtle --panel-accent-dim radial; metric cards --secondary-background-color; close button --secondary-background-color + --input-border; overlay scrim rgba(0,0,0,0.55)"
   }
 }

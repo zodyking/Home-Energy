@@ -837,6 +837,21 @@ class EnergyPanel extends HTMLElement {
       if (sEl) sEl.textContent = `S ${room.shutoffs || 0}`;
       if (pEl) pEl.textContent = `C ${room.power_cycles || 0}`;
 
+      const presEl = roomCard.querySelector('.room-name-presence');
+      const cycleH3 = roomCard.querySelector('.room-name--cycling');
+      if (presEl && roomConfig?.presence_person_entity) {
+        const rawEnt = String(roomConfig.presence_person_entity).trim();
+        const key = rawEnt.toLowerCase();
+        const ps =
+          this._hass?.states?.[key] || this._hass?.states?.[rawEnt];
+        const plainPresence = this._presenceLabelFromPersonState(ps);
+        presEl.textContent = plainPresence;
+        if (cycleH3) {
+          const rn = roomConfig.name || cardId;
+          cycleH3.setAttribute('aria-label', `Alternates: ${rn}, then ${plainPresence}`);
+        }
+      }
+
       // Update individual devices
       (room.outlets || []).forEach((outlet, i) => {
         const deviceCard = roomCard.querySelector(`[data-outlet-index="${i}"]`);
@@ -1458,6 +1473,8 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-card {
+        container-type: inline-size;
+        container-name: roomCard;
         background: var(--card-bg);
         border-radius: 10px;
         border: 1px solid var(--card-border);
@@ -1480,7 +1497,7 @@ class EnergyPanel extends HTMLElement {
       /* Single rail: matches footer bar row height (no second meta row) */
       .room-header-inner.room-header-rail {
         display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+        grid-template-columns: auto minmax(0, 1fr) auto auto;
         align-items: center;
         gap: clamp(4px, 1vw, 8px);
         min-width: 0;
@@ -1491,7 +1508,7 @@ class EnergyPanel extends HTMLElement {
       .room-header-title-wrap {
         display: flex;
         flex-direction: row;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         align-items: center;
         gap: clamp(4px, 1vw, 6px);
         min-width: 0;
@@ -1501,6 +1518,10 @@ class EnergyPanel extends HTMLElement {
       .room-header-title-wrap .room-name {
         flex: 1 1 auto;
         min-width: 0;
+      }
+
+      .room-header-title-wrap .room-header-rating {
+        flex-shrink: 0;
       }
 
       .room-header-title-wrap .room-header-badges {
@@ -1580,9 +1601,9 @@ class EnergyPanel extends HTMLElement {
         position: fixed;
         inset: 0;
         z-index: 10050;
-        background: rgba(0, 0, 0, 0.62);
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
+        background: rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1591,21 +1612,15 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-rating-modal-dialog {
-        background: linear-gradient(
-          165deg,
-          rgba(255, 255, 255, 0.07) 0%,
-          var(--card-bg, #1a1d24) 42%,
-          var(--card-bg, #16181e) 100%
-        );
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: var(--card-bg, #1c1c1c);
+        border: 1px solid var(--card-border);
         border-radius: clamp(14px, 3vw, 20px);
         max-width: min(440px, 100%);
         max-height: min(92vh, 720px);
         overflow: auto;
         box-shadow:
-          0 0 0 1px rgba(0, 0, 0, 0.35),
-          0 24px 64px rgba(0, 0, 0, 0.55),
-          0 0 80px rgba(3, 169, 244, 0.06);
+          0 0 0 1px rgba(0, 0, 0, 0.4),
+          0 24px 56px rgba(0, 0, 0, 0.5);
         padding: 0;
       }
 
@@ -1615,7 +1630,8 @@ class EnergyPanel extends HTMLElement {
         justify-content: space-between;
         gap: 12px;
         padding: clamp(18px, 4vw, 24px) clamp(18px, 4vw, 24px) clamp(10px, 2vw, 14px);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        background: var(--panel-header-background, var(--card-bg, #1c1c1c));
+        border-bottom: 1px solid var(--card-border);
       }
 
       .room-rating-modal-header-text {
@@ -1644,8 +1660,8 @@ class EnergyPanel extends HTMLElement {
       }
 
       .room-rating-modal-close {
-        border: none;
-        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid var(--input-border);
+        background: var(--secondary-background-color);
         color: var(--secondary-text-color);
         font-size: 20px;
         line-height: 1;
@@ -1654,11 +1670,12 @@ class EnergyPanel extends HTMLElement {
         border-radius: 10px;
         flex-shrink: 0;
         margin: -4px -4px 0 0;
-        transition: background 0.15s ease, color 0.15s ease;
+        transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
       }
 
       .room-rating-modal-close:hover {
-        background: rgba(255, 255, 255, 0.12);
+        background: var(--input-bg, var(--secondary-background-color));
+        border-color: var(--card-border);
         color: var(--primary-text-color);
       }
 
@@ -1670,12 +1687,23 @@ class EnergyPanel extends HTMLElement {
       .room-rating-modal-hero {
         text-align: center;
         padding: clamp(16px, 3.5vw, 22px) clamp(18px, 4vw, 24px) clamp(18px, 3.5vw, 22px);
-        background: radial-gradient(
-          ellipse 85% 80% at 50% 0%,
-          rgba(3, 169, 244, 0.12) 0%,
-          transparent 65%
+        background-color: var(--card-bg, #1c1c1c);
+        background-image: radial-gradient(
+          ellipse 70% 55% at 50% 0%,
+          var(--panel-accent-dim, rgba(3, 169, 244, 0.15)) 0%,
+          transparent 60%
         );
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        border-bottom: 1px solid var(--card-border);
+      }
+
+      .room-rating-modal-hero-intro {
+        margin: clamp(12px, 2.5vw, 16px) auto 0;
+        max-width: 34em;
+        font-size: clamp(11px, 2.4vw, 13px);
+        font-weight: 500;
+        line-height: 1.45;
+        color: var(--secondary-text-color);
+        text-align: center;
       }
 
       .room-rating-modal-stars {
@@ -1729,32 +1757,58 @@ class EnergyPanel extends HTMLElement {
         flex-direction: column;
         gap: clamp(10px, 2vw, 12px);
         padding: clamp(14px, 3vw, 18px) clamp(18px, 4vw, 24px) clamp(6px, 1.5vw, 10px);
+        background: var(--card-bg, #1c1c1c);
       }
 
       .room-rating-modal-metric {
         padding: clamp(12px, 2.5vw, 14px) clamp(14px, 3vw, 16px);
         border-radius: 12px;
-        background: rgba(0, 0, 0, 0.22);
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: var(--secondary-background-color);
+        border: 1px solid var(--card-border);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
       }
 
       .room-rating-modal-metric-top {
         display: flex;
         flex-direction: row;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 12px;
         margin-bottom: 10px;
       }
 
-      .room-rating-modal-metric-label {
-        font-size: clamp(11px, 2.4vw, 13px);
+      .room-rating-modal-metric-text {
+        min-width: 0;
+        flex: 1;
+        text-align: left;
+      }
+
+      .room-rating-modal-metric-kicker {
+        display: block;
+        font-size: clamp(9px, 2vw, 10px);
         font-weight: 700;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
         color: var(--secondary-text-color);
-        min-width: 0;
+        margin-bottom: 4px;
+      }
+
+      .room-rating-modal-metric-title {
+        display: block;
+        font-size: clamp(13px, 2.8vw, 15px);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: var(--primary-text-color);
+        line-height: 1.25;
+      }
+
+      .room-rating-modal-metric-desc {
+        display: block;
+        margin-top: 5px;
+        font-size: clamp(10px, 2.2vw, 12px);
+        font-weight: 500;
+        line-height: 1.35;
+        color: var(--secondary-text-color);
       }
 
       .room-rating-modal-metric-value {
@@ -1770,8 +1824,10 @@ class EnergyPanel extends HTMLElement {
       .room-rating-modal-metric-bar {
         height: clamp(11px, 2.4vw, 14px);
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.07);
+        background: var(--card-bg, #111);
+        border: 1px solid var(--card-border);
         overflow: hidden;
+        box-sizing: border-box;
         box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
       }
 
@@ -1795,8 +1851,9 @@ class EnergyPanel extends HTMLElement {
         color: var(--secondary-text-color);
         line-height: 1.4;
         text-align: center;
-        opacity: 0.75;
-        border-top: 1px solid rgba(255, 255, 255, 0.05);
+        opacity: 0.88;
+        border-top: 1px solid var(--card-border);
+        background: var(--card-bg, #1c1c1c);
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -1916,6 +1973,115 @@ class EnergyPanel extends HTMLElement {
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+
+      .room-name--cycling {
+        position: relative;
+      }
+
+      .room-name--cycling .room-name-text,
+      .room-name--cycling .room-name-presence {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .room-name--cycling .room-name-presence {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        opacity: 0;
+        pointer-events: none;
+        animation: roomPresenceCycle 10s ease-in-out infinite;
+      }
+
+      .room-name--cycling .room-name-text {
+        animation: roomNameCycle 10s ease-in-out infinite;
+      }
+
+      @keyframes roomNameCycle {
+        0%, 42% { opacity: 1; }
+        50%, 92% { opacity: 0; }
+        100% { opacity: 1; }
+      }
+
+      @keyframes roomPresenceCycle {
+        0%, 42% { opacity: 0; }
+        50%, 92% { opacity: 1; }
+        100% { opacity: 0; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .room-name--cycling .room-name-text,
+        .room-name--cycling .room-name-presence {
+          animation: none;
+        }
+        .room-name--cycling .room-name-presence {
+          display: none;
+        }
+      }
+
+      @container roomCard (max-width: 260px) {
+        .room-header-rail .room-name {
+          font-size: 10px;
+        }
+        .room-header-rail .room-total-watts {
+          font-size: 11px;
+        }
+        .room-header-rail .event-count {
+          font-size: 7px;
+          padding: 1px clamp(3px, 0.8vw, 5px);
+        }
+        .room-header-rail .room-threshold-pill {
+          font-size: 7px;
+          padding: 1px clamp(3px, 0.8vw, 6px);
+        }
+        .room-header-rail .room-header-rating .room-efficiency-star {
+          width: 9px;
+          height: 9px;
+        }
+        .room-header-rail .enforcement-badge--inline {
+          font-size: 7px;
+          padding: 1px clamp(3px, 0.8vw, 5px);
+          gap: 2px;
+        }
+        .room-header-rail .enforcement-badge--inline svg {
+          width: clamp(8px, 2vw, 10px);
+          height: clamp(8px, 2vw, 10px);
+        }
+      }
+
+      @container roomCard (min-width: 261px) and (max-width: 340px) {
+        .room-header-rail .room-name {
+          font-size: clamp(10px, 3.5cqi, 13px);
+        }
+        .room-header-rail .room-total-watts {
+          font-size: clamp(11px, 4cqi, 15px);
+        }
+        .room-header-rail .event-count {
+          font-size: clamp(7px, 2.2cqi, 9px);
+        }
+        .room-header-rail .room-threshold-pill {
+          font-size: clamp(7px, 2cqi, 9px);
+        }
+        .room-header-rail .room-header-rating .room-efficiency-star {
+          width: clamp(9px, 2.5cqi, 13px);
+          height: clamp(9px, 2.5cqi, 13px);
+        }
+        .room-header-rail .enforcement-badge--inline {
+          font-size: clamp(7px, 2cqi, 9px);
+        }
+      }
+
+      @container roomCard (min-width: 341px) {
+        .room-header-rail .room-name {
+          font-size: clamp(12px, 2.6vw, 16px);
+        }
+        .room-header-rail .room-total-watts {
+          font-size: clamp(13px, 3vw, 17px);
+        }
       }
 
       .room-header-badges {
@@ -6844,7 +7010,7 @@ class EnergyPanel extends HTMLElement {
       r.average != null && Number.isFinite(Number(r.average))
         ? Math.round(Number(r.average))
         : null;
-    const scoreRow = (pillarNum, key) => {
+    const scoreRow = (pillarNum, key, title, desc) => {
       const raw = r[key];
       const v =
         raw != null && Number.isFinite(Number(raw)) ? Math.round(Number(raw)) : null;
@@ -6852,12 +7018,16 @@ class EnergyPanel extends HTMLElement {
       const show = v != null ? `${v}` : '—';
       const barLabel =
         v != null
-          ? `Pillar ${pillarNum}, ${v} out of 100`
-          : `Pillar ${pillarNum}, score not available`;
+          ? `${title}, ${v} out of 100`
+          : `${title}, score not available`;
       return `
         <div class="room-rating-modal-metric">
           <div class="room-rating-modal-metric-top">
-            <span class="room-rating-modal-metric-label">Pillar ${pillarNum}</span>
+            <div class="room-rating-modal-metric-text">
+              <span class="room-rating-modal-metric-kicker">Pillar ${pillarNum}</span>
+              <span class="room-rating-modal-metric-title">${esc(title)}</span>
+              <span class="room-rating-modal-metric-desc">${esc(desc)}</span>
+            </div>
             <span class="room-rating-modal-metric-value" aria-hidden="true">${show}</span>
           </div>
           <div class="room-rating-modal-metric-bar" role="progressbar" aria-valuenow="${v != null ? v : 0}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(barLabel)}">
@@ -6867,6 +7037,8 @@ class EnergyPanel extends HTMLElement {
     };
 
     const heroStarsLabel = `Overall efficiency, ${starN} out of 5 stars`;
+    const heroIntro =
+      'Your score blends the five pillars below. Each is 0–100; the composite index is their average.';
 
     this.shadowRoot.querySelector('.room-rating-modal-overlay')?.remove();
     const overlay = document.createElement('div');
@@ -6891,13 +7063,39 @@ class EnergyPanel extends HTMLElement {
           <p class="room-rating-modal-index-caption">Composite index</p>`
               : ''
           }
+          <p class="room-rating-modal-hero-intro">${esc(heroIntro)}</p>
         </div>
         <div class="room-rating-modal-body">
-          ${scoreRow(1, 'compliance')}
-          ${scoreRow(2, 'warning')}
-          ${scoreRow(3, 'consumption')}
-          ${scoreRow(4, 'load')}
-          ${scoreRow(5, 'engagement')}
+          ${scoreRow(
+            1,
+            'compliance',
+            'Compliance',
+            'How often daily energy stayed within your kWh budget (with a small tolerance).',
+          )}
+          ${scoreRow(
+            2,
+            'warning',
+            'Warnings & events',
+            'Fewer threshold warnings, safety shutoffs, and enforcement outlet cycles score higher.',
+          )}
+          ${scoreRow(
+            3,
+            'consumption',
+            'Consumption vs other rooms',
+            'Your room’s average daily energy compared to a peer median across configured rooms.',
+          )}
+          ${scoreRow(
+            4,
+            'load',
+            'Load pattern',
+            'Rewards steadier use; many minutes above about 100 W in the rolling window lowers this score.',
+          )}
+          ${scoreRow(
+            5,
+            'engagement',
+            'Dashboard engagement',
+            'How often the household uses this dashboard (shared score across rooms).',
+          )}
         </div>
         <p class="room-rating-modal-footnote">Refreshes about every hour.</p>
       </div>
@@ -6974,12 +7172,32 @@ class EnergyPanel extends HTMLElement {
     const iconDataAttr = personEntRaw
       ? ` data-zone-health-person="${personEntKey.replace(/"/g, '&quot;')}"`
       : '';
-    const roomNameEsc = (room.name || '').replace(/</g, '&lt;');
     const escAttr = (s) =>
       String(s ?? '')
         .replace(/&/g, '&amp;')
         .replace(/"/g, '&quot;')
         .replace(/</g, '&lt;');
+    const escHtmlText = (s) =>
+      String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    const roomNameEsc = escHtmlText(room.name || '');
+
+    let roomNameHtml = `<h3 class="room-name">${roomNameEsc}</h3>`;
+    if (personEntRaw) {
+      const personState =
+        this._hass?.states?.[personEntKey] || this._hass?.states?.[personEntRaw];
+      const presencePlain = this._presenceLabelFromPersonState(personState);
+      const presenceLabel = escHtmlText(presencePlain);
+      const ariaCycle = escAttr(
+        `Alternates: ${room.name || roomId}, then ${presencePlain}`,
+      );
+      roomNameHtml = `<h3 class="room-name room-name--cycling" data-has-presence="true" aria-label="${ariaCycle}">
+              <span class="room-name-text">${roomNameEsc}</span>
+              <span class="room-name-presence">${presenceLabel}</span>
+            </h3>`;
+    }
 
     let iconTitle = (room.name || '').trim();
     let iconAriaLabel = iconTitle || roomId;
@@ -7009,7 +7227,8 @@ class EnergyPanel extends HTMLElement {
               <ha-icon icon="${roomCardIcon}"></ha-icon>
             </div>
             <div class="room-header-title-wrap">
-              <h3 class="room-name">${roomNameEsc}</h3>
+              ${roomNameHtml}
+              ${starsRowHtml}
               ${badgesHtml}
             </div>
             <div class="room-event-chips">
@@ -7017,7 +7236,6 @@ class EnergyPanel extends HTMLElement {
               <span class="event-count graph-clickable has-tooltip" data-event="shutoffs" data-graph-type="room_shutoffs" data-room-id="${roomId}" title="Safety shutoffs today">S ${shutoffs}</span>
               <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C ${powerCycles}</span>
             </div>
-            ${starsRowHtml}
             <div class="room-header-watts-col">
               <span class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</span>
             </div>
