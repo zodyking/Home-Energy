@@ -631,11 +631,33 @@ async def websocket_get_daily_history(
     connection.send_result(msg["id"], result)
 
 
+def _intraday_point_power_w(hass: HomeAssistant, entity_id: str) -> float:
+    """Instantaneous watts for a sensor.* or switch.* (current_power_w) entity."""
+    state = hass.states.get(entity_id)
+    if not state:
+        return 0.0
+    if entity_id.startswith("sensor."):
+        if state.state in ("unknown", "unavailable", ""):
+            return 0.0
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            return 0.0
+    if entity_id.startswith("switch."):
+        try:
+            return float(state.attributes.get("current_power_w", 0))
+        except (ValueError, TypeError):
+            return 0.0
+    return 0.0
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "smart_dashboards/get_intraday_history",
         vol.Optional("room_id"): str,
         vol.Optional("minutes"): vol.Coerce(int),
+        vol.Optional("outlet_index"): vol.Coerce(int),
+        vol.Optional("plug_slot"): vol.Coerce(int),
     }
 )
 @websocket_api.async_response
@@ -645,14 +667,63 @@ async def websocket_get_intraday_history(
     msg: dict[str, Any],
 ) -> None:
     """Get minute-by-minute power history for 24-hour charts."""
+    from homeassistant.util import dt as dt_util
+
     config_manager = hass.data[DOMAIN].get("config_manager")
     if not config_manager:
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
         return
-    
+
     room_id = msg.get("room_id")
     minutes = min(1440, max(1, msg.get("minutes", 1440)))  # Max 24 hours
-    
+    outlet_index = msg.get("outlet_index")
+
+    if outlet_index is not None:
+        if not room_id:
+            connection.send_error(
+                msg["id"],
+                "invalid_param",
+                "room_id is required when outlet_index is set",
+            )
+            return
+        raw_plug = msg.get("plug_slot")
+        plug_slot: int | None = None
+        if raw_plug is not None:
+            try:
+                ps = int(raw_plug)
+            except (TypeError, ValueError):
+                ps = 0
+            plug_slot = ps if ps in (1, 2) else None
+        tracking_key = config_manager.resolve_outlet_energy_tracking_key(
+            room_id, int(outlet_index), plug_slot
+        )
+        if not tracking_key:
+            connection.send_result(
+                msg["id"],
+                {
+                    "timestamps": [],
+                    "watts": [],
+                    "reference_kwh_today": 0.0,
+                },
+            )
+            return
+        hist = config_manager.get_intraday_history(tracking_key, minutes)
+        ref_wh = float(config_manager.get_day_energy(tracking_key))
+        ref_kwh = ref_wh / 1000.0
+        data: dict[str, Any] = {
+            "timestamps": [t for t, _ in hist],
+            "watts": [w for _, w in hist],
+            "reference_kwh_today": ref_kwh,
+        }
+        if not data["timestamps"]:
+            now = dt_util.now().strftime("%Y-%m-%d %H:%M")
+            w = 0.0
+            if tracking_key.startswith(("sensor.", "switch.")):
+                w = _intraday_point_power_w(hass, tracking_key)
+            data = {"timestamps": [now], "watts": [w], "reference_kwh_today": ref_kwh}
+        connection.send_result(msg["id"], data)
+        return
+
     if room_id:
         # Get room-specific intraday history
         data = config_manager.get_room_intraday_history(room_id, minutes)
@@ -662,26 +733,7 @@ async def websocket_get_intraday_history(
     
     # Ensure at least one data point (current power if no history)
     if not data["timestamps"]:
-        from homeassistant.util import dt as dt_util
         now = dt_util.now().strftime("%Y-%m-%d %H:%M")
-
-        def _get_power(entity_id: str) -> float:
-            state = hass.states.get(entity_id)
-            if not state:
-                return 0.0
-            if entity_id.startswith("sensor."):
-                if state.state in ("unknown", "unavailable", ""):
-                    return 0.0
-                try:
-                    return float(state.state)
-                except (ValueError, TypeError):
-                    return 0.0
-            if entity_id.startswith("switch."):
-                try:
-                    return float(state.attributes.get("current_power_w", 0))
-                except (ValueError, TypeError):
-                    return 0.0
-            return 0.0
 
         current_watts = 0.0
         for room in config_manager.energy_config.get("rooms", []):
@@ -701,7 +753,7 @@ async def websocket_get_intraday_history(
                                 else None
                             )
                             if power_ent:
-                                current_watts += _get_power(power_ent)
+                                current_watts += _intraday_point_power_w(hass, power_ent)
                             else:
                                 for le in outlet.get("light_entities") or []:
                                     if isinstance(le, dict) and str(
@@ -720,13 +772,13 @@ async def websocket_get_intraday_history(
                         state = hass.states.get(switch_entity)
                         if state and (state.state or "off").lower() in ("on",):
                             if power_ent:
-                                current_watts += _get_power(power_ent)
+                                current_watts += _intraday_point_power_w(hass, power_ent)
                             elif watts_when_on > 0:
                                 current_watts += watts_when_on
                 else:
                     for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
                         if eid:
-                            current_watts += _get_power(eid)
+                            current_watts += _intraday_point_power_w(hass, eid)
         data = {"timestamps": [now], "watts": [current_watts]}
 
     data["reference_kwh_today"] = (
