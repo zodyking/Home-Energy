@@ -1802,6 +1802,15 @@ class EnergyPanel extends HTMLElement {
         line-height: 1.25;
       }
 
+      .room-rating-modal-metric-status {
+        display: block;
+        margin-top: 4px;
+        font-size: clamp(10px, 2.2vw, 12px);
+        font-weight: 600;
+        color: var(--secondary-text-color);
+        font-style: italic;
+      }
+
       .room-rating-modal-metric-desc {
         display: block;
         margin-top: 5px;
@@ -7010,35 +7019,62 @@ class EnergyPanel extends HTMLElement {
       r.average != null && Number.isFinite(Number(r.average))
         ? Math.round(Number(r.average))
         : null;
+    const pillarMeta = r.pillar_meta || {};
     const scoreRow = (pillarNum, key, title, desc) => {
+      const meta = pillarMeta[key] || 'ok';
       const raw = r[key];
-      const v =
+      let v =
         raw != null && Number.isFinite(Number(raw)) ? Math.round(Number(raw)) : null;
-      const pct = v != null ? Math.max(0, Math.min(100, v)) : 0;
-      const show = v != null ? `${v}` : '—';
+      if (meta === 'no_data') v = 0;
+      if (meta === 'na') v = null;
+      const pct =
+        meta === 'na' ? 0 : v != null ? Math.max(0, Math.min(100, v)) : 0;
+      const show =
+        meta === 'na' ? '—' : meta === 'no_data' ? '0' : v != null ? `${v}` : '—';
+      const statusNote =
+        meta === 'no_data'
+          ? 'No data yet'
+          : meta === 'na'
+            ? 'Non applicable'
+            : '';
       const barLabel =
-        v != null
-          ? `${title}, ${v} out of 100`
-          : `${title}, score not available`;
+        meta === 'no_data'
+          ? `${title}, no data yet`
+          : meta === 'na'
+            ? `${title}, not applicable`
+            : v != null
+              ? `${title}, ${v} out of 100`
+              : `${title}, score not available`;
+      const barAria =
+        meta === 'na'
+          ? ' aria-valuetext="not applicable"'
+          : '';
       return `
         <div class="room-rating-modal-metric">
           <div class="room-rating-modal-metric-top">
             <div class="room-rating-modal-metric-text">
               <span class="room-rating-modal-metric-kicker">Pillar ${pillarNum}</span>
               <span class="room-rating-modal-metric-title">${esc(title)}</span>
+              ${
+                statusNote
+                  ? `<span class="room-rating-modal-metric-status">${esc(statusNote)}</span>`
+                  : ''
+              }
               <span class="room-rating-modal-metric-desc">${esc(desc)}</span>
             </div>
             <span class="room-rating-modal-metric-value" aria-hidden="true">${show}</span>
           </div>
-          <div class="room-rating-modal-metric-bar" role="progressbar" aria-valuenow="${v != null ? v : 0}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(barLabel)}">
-            <div class="room-rating-modal-metric-fill" style="width: ${pct}%"></div>
+          <div class="room-rating-modal-metric-bar" role="progressbar" aria-valuenow="${meta === 'na' ? 0 : v != null ? v : 0}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(barLabel)}"${barAria}>
+            <div class="room-rating-modal-metric-fill" style="width: ${pct}%${meta === 'na' ? '; opacity: 0.35' : ''}"></div>
           </div>
         </div>`;
     };
 
     const heroStarsLabel = `Overall efficiency, ${starN} out of 5 stars`;
-    const heroIntro =
-      'Your score blends the five pillars below. Each is 0–100; the composite index is their average.';
+    const engagementNa = pillarMeta.engagement === 'na';
+    const heroIntro = engagementNa
+      ? 'Your score blends the four pillars below (engagement does not apply to this room). Each pillar is 0–100; the composite averages the pillars that apply.'
+      : 'Your score blends the five pillars below. Each is 0–100; the composite index is their average.';
 
     this.shadowRoot.querySelector('.room-rating-modal-overlay')?.remove();
     const overlay = document.createElement('div');
@@ -7094,7 +7130,7 @@ class EnergyPanel extends HTMLElement {
             5,
             'engagement',
             'Dashboard engagement',
-            'How often the household uses this dashboard (shared score across rooms).',
+            'How often you open this dashboard as your Home Assistant user (capped visits per hour), compared to spreading use across many hours of the day.',
           )}
         </div>
         <p class="room-rating-modal-footnote">Refreshes about every hour.</p>

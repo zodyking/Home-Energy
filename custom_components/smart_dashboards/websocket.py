@@ -2711,16 +2711,22 @@ async def websocket_get_room_ratings(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Recompute room ratings from current daily history, update cache, return payload."""
+    """Recompute room ratings for this viewer (engagement) without persisting or clobbering cache."""
     config_manager = hass.data.get(DOMAIN, {}).get("config_manager")
     if not config_manager:
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
         return
 
     domain_data = hass.data.setdefault(DOMAIN, {})
+    viewer_key = _dashboard_ws_user_key(connection)
 
     def _recompute_and_payload() -> dict[str, Any]:
-        full = recompute_room_ratings(hass, config_manager)
+        full = recompute_room_ratings(
+            hass,
+            config_manager,
+            engagement_user_key=viewer_key,
+            persist=False,
+        )
         return ratings_payload_for_ws(full)
 
     try:
@@ -2741,7 +2747,6 @@ async def websocket_get_room_ratings(
                 _LOGGER.exception("get_room_ratings fallback file load failed")
                 payload = ratings_payload_for_ws({"rooms": {}})
 
-    domain_data["room_ratings_cache"] = payload
     connection.send_result(msg["id"], payload)
 
 

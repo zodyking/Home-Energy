@@ -18,6 +18,8 @@ FILENAME = "smart_dashboards_room_ratings.json"
 WINDOW_DAYS = 14
 ENGAGEMENT_LOOKBACK_DAYS = 7
 
+PILLAR_KEYS = ("compliance", "warning", "consumption", "load", "engagement")
+
 
 def ratings_store_path(hass: HomeAssistant) -> Path:
     return Path(hass.config.path("data")) / FILENAME
@@ -123,7 +125,7 @@ def _score_compliance(
     wh_list: list[float], budget_kwh: float, days_with_data: int
 ) -> float:
     if days_with_data <= 0:
-        return 50.0
+        return 0.0
     tol = 1.02
     good = 0
     for wh in wh_list:
@@ -142,7 +144,7 @@ def _score_warning(warns: list[int], shuts: list[int], cycles: list[int]) -> flo
 
 def _score_consumption(avg_wh: float, median_peer: float) -> float:
     if median_peer <= 0:
-        return 60.0
+        return 0.0
     ratio = avg_wh / (median_peer * 1.5 + 1e-6)
     return max(0.0, min(100.0, (1.0 - min(1.0, ratio)) * 100.0))
 
@@ -151,38 +153,83 @@ def _score_load(config_manager: Any, room_id: str) -> float:
     hist = config_manager.get_room_intraday_history(room_id, 1440)
     watts = hist.get("watts") or []
     if not watts:
-        return 70.0
+        return 0.0
     high_minutes = sum(1 for w in watts if float(w) > 100.0)
     hours_high = high_minutes / 60.0
     return max(0.0, 100.0 - min(100.0, hours_high * 8.0))
 
 
-def _score_engagement(visits_root: dict[str, Any], now: datetime) -> float:
-    """Score from last ENGAGEMENT_LOOKBACK_DAYS: distinct hours + visit counts."""
+def _score_engagement_for_user(
+    visits_root: dict[str, Any], now: datetime, user_key: str
+) -> float:
+    """Same formula as legacy engagement but only one HA user_key's visit map."""
     scores: list[float] = []
     for i in range(ENGAGEMENT_LOOKBACK_DAYS):
         d = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         day_users = visits_root.get(d) or {}
-        # merge all user keys for household
+        hour_map = day_users.get(user_key) if isinstance(day_users.get(user_key), dict) else {}
         hour_counts: dict[str, int] = {}
         total_visits = 0
-        for _uk, hour_map in day_users.items():
-            if not isinstance(hour_map, dict):
-                continue
-            for h, c in hour_map.items():
-                try:
-                    n = int(c)
-                except (TypeError, ValueError):
-                    n = 0
-                hour_counts[h] = hour_counts.get(h, 0) + min(2, n)
-                total_visits += min(2, n)
+        for h, c in hour_map.items():
+            try:
+                n = int(c)
+            except (TypeError, ValueError):
+                n = 0
+            hour_counts[h] = hour_counts.get(h, 0) + min(2, n)
+            total_visits += min(2, n)
         distinct = len(hour_counts)
         part_hours = min(1.0, distinct / 12.0) * 70.0
         part_visits = min(1.0, total_visits / 2.0) * 30.0
         scores.append(min(100.0, part_hours + part_visits))
     if not scores:
-        return 40.0
+        return 0.0
     return sum(scores) / len(scores)
+
+
+def _user_has_engagement_activity(
+    visits_root: dict[str, Any], now: datetime, user_key: str
+) -> bool:
+    for i in range(ENGAGEMENT_LOOKBACK_DAYS):
+        d = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        day_users = visits_root.get(d) or {}
+        hour_map = day_users.get(user_key) if isinstance(day_users.get(user_key), dict) else {}
+        for c in hour_map.values():
+            try:
+                if int(c) > 0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
+def _engagement_user_keys_in_window(visits_root: dict[str, Any], now: datetime) -> list[str]:
+    keys: set[str] = set()
+    for i in range(ENGAGEMENT_LOOKBACK_DAYS):
+        d = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        day_users = visits_root.get(d) or {}
+        if isinstance(day_users, dict):
+            keys.update(str(k) for k in day_users if isinstance(day_users.get(k), dict))
+    return sorted(keys)
+
+
+def _engagement_score_for_mode(
+    visits_root: dict[str, Any],
+    now: datetime,
+    engagement_user_key: str | None,
+    room_has_presence: bool,
+) -> tuple[float, str]:
+    """Returns (score, meta) where meta is ok | no_data | na."""
+    if not room_has_presence:
+        return 0.0, "na"
+    if engagement_user_key is not None:
+        if not _user_has_engagement_activity(visits_root, now, engagement_user_key):
+            return 0.0, "no_data"
+        return _score_engagement_for_user(visits_root, now, engagement_user_key), "ok"
+    user_keys = _engagement_user_keys_in_window(visits_root, now)
+    if not user_keys:
+        return 0.0, "no_data"
+    parts = [_score_engagement_for_user(visits_root, now, uk) for uk in user_keys]
+    return sum(parts) / len(parts), "ok"
 
 
 def _stars_from_average(avg: float) -> float:
@@ -192,8 +239,22 @@ def _stars_from_average(avg: float) -> float:
     return min(5.0, max(0.0, steps / 2.0))
 
 
-def recompute_room_ratings(hass: HomeAssistant, config_manager: Any) -> dict[str, Any]:
-    """Synchronous recompute; call from executor if desired. Returns full store dict."""
+def _default_pillar_meta() -> dict[str, str]:
+    return {k: "ok" for k in PILLAR_KEYS}
+
+
+def recompute_room_ratings(
+    hass: HomeAssistant,
+    config_manager: Any,
+    engagement_user_key: str | None = None,
+    *,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Synchronous recompute; call from executor if desired. Returns full store dict.
+
+    When ``persist`` is False (e.g. WebSocket with viewer-specific engagement), scores are
+    not written to disk so hourly snapshots stay household-averaged.
+    """
     path = ratings_store_path(hass)
     data = load_ratings(path)
     now = dt_util.now()
@@ -201,7 +262,6 @@ def recompute_room_ratings(hass: HomeAssistant, config_manager: Any) -> dict[str
     rooms_h = history.get("rooms") or {}
     rooms_cfg = config_manager.energy_config.get("rooms", [])
 
-    # Peer median of average daily Wh for consumption scoring
     room_avg_wh: dict[str, float] = {}
     for room in rooms_cfg:
         rid = canonical_room_id(room)
@@ -215,43 +275,85 @@ def recompute_room_ratings(hass: HomeAssistant, config_manager: Any) -> dict[str
     med_list = sorted(v for v in room_avg_wh.values() if v > 0)
     median_peer = med_list[len(med_list) // 2] if med_list else 0.0
 
-    engagement_score = _score_engagement(data.get("engagement_visits") or {}, now)
+    visits_root = data.get("engagement_visits") or {}
 
     rooms_out: dict[str, Any] = {}
     for room in rooms_cfg:
         rid = canonical_room_id(room)
         legacy_id = legacy_room_id_history(room)
+        presence_raw = str(room.get("presence_person_entity") or "").strip()
+        room_has_presence = bool(presence_raw)
+
         try:
             budget_kwh = float(room.get("kwh_budget", 5) or 5)
         except (TypeError, ValueError):
             budget_kwh = 5.0
         rdata = _room_history_row(rooms_h, rid, legacy_id)
         wh_list = [float(x) for x in (rdata.get("wh") or [])]
-        compliance = _score_compliance(wh_list, budget_kwh, len(wh_list))
-        warning = _score_warning(
-            rdata.get("warnings") or [],
-            rdata.get("shutoffs") or [],
-            rdata.get("power_cycles") or [],
-        )
-        consumption = _score_consumption(room_avg_wh.get(rid, 0.0), median_peer)
+        has_daily = len(wh_list) > 0
+
+        meta: dict[str, str] = _default_pillar_meta()
+
+        if not has_daily:
+            compliance = 0.0
+            meta["compliance"] = "no_data"
+            warning = 0.0
+            meta["warning"] = "no_data"
+            consumption = 0.0
+            meta["consumption"] = "no_data"
+        else:
+            compliance = _score_compliance(wh_list, budget_kwh, len(wh_list))
+            meta["compliance"] = "ok"
+            warning = _score_warning(
+                rdata.get("warnings") or [],
+                rdata.get("shutoffs") or [],
+                rdata.get("power_cycles") or [],
+            )
+            meta["warning"] = "ok"
+            if median_peer <= 0:
+                consumption = 0.0
+                meta["consumption"] = "no_data"
+            else:
+                consumption = _score_consumption(room_avg_wh.get(rid, 0.0), median_peer)
+                meta["consumption"] = "ok"
+
         load = _score_load(config_manager, legacy_id)
-        engagement = engagement_score
-        avg = (compliance + warning + consumption + load + engagement) / 5.0
+        hist = config_manager.get_room_intraday_history(legacy_id, 1440)
+        if not (hist.get("watts") or []):
+            meta["load"] = "no_data"
+
+        engagement, eng_meta = _engagement_score_for_mode(
+            visits_root, now, engagement_user_key, room_has_presence
+        )
+        meta["engagement"] = eng_meta
+
+        c_part = 0.0 if meta["compliance"] == "no_data" else compliance
+        w_part = 0.0 if meta["warning"] == "no_data" else warning
+        cons_part = 0.0 if meta["consumption"] == "no_data" else consumption
+        load_part = 0.0 if meta["load"] == "no_data" else load
+        if meta["engagement"] == "na":
+            avg = (c_part + w_part + cons_part + load_part) / 4.0
+        else:
+            eng_part = 0.0 if meta["engagement"] == "no_data" else float(engagement)
+            avg = (c_part + w_part + cons_part + load_part + eng_part) / 5.0
+
         stars = _stars_from_average(avg)
         rooms_out[rid] = {
             "compliance": round(compliance, 1),
             "warning": round(warning, 1),
             "consumption": round(consumption, 1),
             "load": round(load, 1),
-            "engagement": round(engagement, 1),
+            "engagement": round(float(engagement), 1) if meta["engagement"] != "na" else 0.0,
             "average": round(avg, 1),
             "stars": stars,
+            "pillar_meta": meta,
         }
 
     data["version"] = SCHEMA_VERSION
     data["updated_at"] = now.isoformat()
     data["rooms"] = rooms_out
-    save_ratings(path, data)
+    if persist:
+        save_ratings(path, data)
     return data
 
 
