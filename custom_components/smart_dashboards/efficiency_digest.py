@@ -20,6 +20,24 @@ _LOGGER = logging.getLogger(__name__)
 
 STATE_FILE = "efficiency_digest_state.json"
 
+PILLAR_KEYS = ("compliance", "warning", "consumption", "load", "engagement")
+
+PILLAR_LABELS: dict[str, str] = {
+    "compliance": "Compliance",
+    "warning": "Warnings",
+    "consumption": "Consumption",
+    "load": "Load",
+    "engagement": "Engagement",
+}
+
+PILLAR_TIPS: dict[str, str] = {
+    "compliance": "Try to stay under your daily budget.",
+    "warning": "Reduce threshold warnings and shutoffs.",
+    "consumption": "Usage is high vs your other rooms.",
+    "load": "Avoid sustained high-power draws.",
+    "engagement": "Open this dashboard a bit more often.",
+}
+
 
 def _parse_digest_hhmm(s: str) -> tuple[int, int]:
     m = re.match(r"^(\d{1,2}):(\d{2})$", str(s or "").strip())
@@ -60,6 +78,26 @@ def _format_vars(
             return str(v).rstrip("0").rstrip(".") if "." in str(v) else str(v)
         return str(v)
 
+    pillar_meta = r.get("pillar_meta") if isinstance(r.get("pillar_meta"), dict) else {}
+    candidates: list[tuple[str, float]] = []
+    for k in PILLAR_KEYS:
+        if pillar_meta.get(k) in ("na", "no_data"):
+            continue
+        raw = r.get(k)
+        try:
+            score = float(raw)
+        except (TypeError, ValueError):
+            continue
+        candidates.append((k, score))
+
+    if candidates:
+        worst_key = min(candidates, key=lambda x: x[1])[0]
+    else:
+        worst_key = "compliance"
+
+    worst_pillar = PILLAR_LABELS.get(worst_key, worst_key.capitalize())
+    worst_pillar_tip = PILLAR_TIPS.get(worst_key, PILLAR_TIPS["compliance"])
+
     return {
         "notification_title": notification_title,
         "room_name": room_name,
@@ -70,6 +108,8 @@ def _format_vars(
         "consumption": _fmt(r.get("consumption")),
         "load": _fmt(r.get("load")),
         "engagement": _fmt(r.get("engagement")),
+        "worst_pillar": worst_pillar,
+        "worst_pillar_tip": worst_pillar_tip,
     }
 
 
@@ -130,7 +170,10 @@ async def _run_efficiency_digest(hass: HomeAssistant) -> None:
         except (KeyError, ValueError) as err:
             _LOGGER.warning("Efficiency digest template error for %s: %s", rid, err)
             title = f"{notification_title} {room_name}"
-            message = f"{room_name}: efficiency index {vars_['average']}."
+            message = (
+                f"{room_name}: {vars_['stars']} stars ({vars_['average']}/100). "
+                f"{vars_['worst_pillar_tip']}"
+            )
         result = await async_send_notify_push(hass, person_eid, title, message)
         if not result.ok:
             _LOGGER.debug(
@@ -262,7 +305,10 @@ async def async_send_efficiency_digest_test(
     except (KeyError, ValueError) as err:
         _LOGGER.warning("Efficiency digest test template error: %s", err)
         title = f"{notification_title} {room_name}"
-        message = f"{room_name}: efficiency index {vars_['average']}."
+        message = (
+            f"{room_name}: {vars_['stars']} stars ({vars_['average']}/100). "
+            f"{vars_['worst_pillar_tip']}"
+        )
 
     result = await async_send_notify_push(hass, target_person, title, message)
     if result.ok:

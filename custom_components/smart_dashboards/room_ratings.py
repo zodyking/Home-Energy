@@ -366,6 +366,171 @@ def _engagement_score_for_assignee(
     return _score_engagement_for_user(visits_root, now, assignee_key, p), "ok"
 
 
+def _score_engagement_single_day(
+    visits_root: dict[str, Any],
+    day: str,
+    user_key: str,
+    p: dict[str, Any],
+) -> float:
+    """Engagement score for a single calendar day (dashboard visits for one user)."""
+    cap = max(1, int(p["engagement_max_visits_per_hour"]))
+    distinct_target = max(1, int(p["engagement_distinct_hours_target"]))
+    w_h = float(p["engagement_hours_weight"])
+    w_v = float(p["engagement_visits_weight"])
+    visit_daily_norm = max(1.0, float(p["engagement_visits_daily_norm"]))
+
+    day_users = visits_root.get(day) or {}
+    hour_map = day_users.get(user_key) if isinstance(day_users.get(user_key), dict) else {}
+    hour_counts: dict[str, int] = {}
+    total_visits = 0
+    for h, c in hour_map.items():
+        try:
+            n = int(c)
+        except (TypeError, ValueError):
+            n = 0
+        hour_counts[h] = hour_counts.get(h, 0) + min(cap, n)
+        total_visits += min(cap, n)
+    distinct = len(hour_counts)
+    part_hours = min(1.0, distinct / float(distinct_target)) * w_h
+    part_visits = min(1.0, total_visits / visit_daily_norm) * w_v
+    return min(100.0, part_hours + part_visits)
+
+
+def _user_has_engagement_on_day(
+    visits_root: dict[str, Any],
+    day: str,
+    user_key: str,
+) -> bool:
+    day_users = visits_root.get(day) or {}
+    hour_map = day_users.get(user_key) if isinstance(day_users.get(user_key), dict) else {}
+    for c in hour_map.values():
+        try:
+            if int(c) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _score_engagement_period_days(
+    visits_root: dict[str, Any],
+    days: list[str],
+    user_key: str,
+    p: dict[str, Any],
+) -> float:
+    """Engagement over explicit calendar days (e.g. billing period)."""
+    cap = max(1, int(p["engagement_max_visits_per_hour"]))
+    distinct_target = max(1, int(p["engagement_distinct_hours_target"]))
+    w_h = float(p["engagement_hours_weight"])
+    w_v = float(p["engagement_visits_weight"])
+    visit_daily_norm = max(1.0, float(p["engagement_visits_daily_norm"]))
+
+    distinct_slots: set[tuple[str, str]] = set()
+    total_visits = 0
+    for d in days:
+        day_users = visits_root.get(d) or {}
+        hour_map = day_users.get(user_key) if isinstance(day_users.get(user_key), dict) else {}
+        for h, c in hour_map.items():
+            try:
+                n = min(cap, int(c))
+            except (TypeError, ValueError):
+                n = 0
+            if n > 0:
+                distinct_slots.add((d, str(h)))
+            total_visits += n
+
+    n_days = max(1, len(days))
+    denom_hours = float(distinct_target) * float(n_days)
+    denom_visits = visit_daily_norm * float(n_days)
+    part_hours = min(1.0, len(distinct_slots) / (denom_hours + 1e-6)) * w_h
+    part_visits = min(1.0, total_visits / (denom_visits + 1e-6)) * w_v
+    return min(100.0, part_hours + part_visits)
+
+
+def _user_has_engagement_on_days(
+    visits_root: dict[str, Any],
+    days: list[str],
+    user_key: str,
+) -> bool:
+    for d in days:
+        if _user_has_engagement_on_day(visits_root, d, user_key):
+            return True
+    return False
+
+
+def _engagement_score_for_assignee_intraday(
+    hass: HomeAssistant,
+    visits_root: dict[str, Any],
+    today: str,
+    presence_person_entity: str,
+    room_has_presence: bool,
+    p: dict[str, Any],
+) -> tuple[float, str]:
+    """Today's engagement only for the room assignee."""
+    if not room_has_presence:
+        return 0.0, "na"
+    assignee_key = engagement_user_key_from_person(hass, presence_person_entity)
+    if not assignee_key:
+        return 0.0, "no_data"
+    if not _user_has_engagement_on_day(visits_root, today, assignee_key):
+        return 0.0, "no_data"
+    return _score_engagement_single_day(visits_root, today, assignee_key, p), "ok"
+
+
+def _engagement_score_for_assignee_period(
+    hass: HomeAssistant,
+    visits_root: dict[str, Any],
+    days: list[str],
+    presence_person_entity: str,
+    room_has_presence: bool,
+    p: dict[str, Any],
+) -> tuple[float, str]:
+    """Engagement summed over ``days`` (billing / statistics range) for the assignee."""
+    if not room_has_presence:
+        return 0.0, "na"
+    assignee_key = engagement_user_key_from_person(hass, presence_person_entity)
+    if not assignee_key:
+        return 0.0, "no_data"
+    if not days:
+        return 0.0, "no_data"
+    if not _user_has_engagement_on_days(visits_root, days, assignee_key):
+        return 0.0, "no_data"
+    return _score_engagement_period_days(visits_root, days, assignee_key, p), "ok"
+
+
+def _monthly_load_score_from_daily_wh(
+    wh_by_day: dict[str, float],
+    day_keys: list[str],
+    budget_kwh: float,
+    high_watts: float,
+    penalty_per_high_hour: float,
+    compliance_tolerance: float,
+) -> tuple[float, str]:
+    """Load pillar over a range: penalize energy above budget tolerance as equivalent high-watt hours."""
+    if not day_keys:
+        return 0.0, "no_data"
+    hw = float(high_watts)
+    pen = float(penalty_per_high_hour)
+    tol = float(compliance_tolerance)
+    cap_kwh = max(float(budget_kwh) * tol, 0.001)
+    total_high_hours = 0.0
+    any_wh = False
+    for d in day_keys:
+        wh = float(wh_by_day.get(d, 0) or 0)
+        if wh > 0:
+            any_wh = True
+        used_kwh = wh / 1000.0
+        excess_kwh = max(0.0, used_kwh - cap_kwh)
+        if excess_kwh <= 0:
+            continue
+        equiv_h = min(24.0, excess_kwh / max(hw / 1000.0, 1e-6))
+        total_high_hours += equiv_h
+    score = max(0.0, 100.0 - min(100.0, total_high_hours * pen))
+    if not any_wh:
+        return score, "no_data"
+    return score, "ok"
+
+
 def _stars_from_average(avg: float) -> float:
     """Map 0–100 mean to 0–5 in 0.5 steps."""
     x = max(0.0, min(100.0, avg))
@@ -375,6 +540,271 @@ def _stars_from_average(avg: float) -> float:
 
 def _default_pillar_meta() -> dict[str, str]:
     return {k: "ok" for k in PILLAR_KEYS}
+
+
+def _assemble_room_rating(
+    compliance: float,
+    warning: float,
+    consumption: float,
+    load: float,
+    engagement: float,
+    meta: dict[str, str],
+) -> dict[str, Any]:
+    """Composite average, stars, and rounded pillar values (matches ``recompute_room_ratings``)."""
+    c_part = 0.0 if meta["compliance"] == "no_data" else compliance
+    w_part = 0.0 if meta["warning"] == "no_data" else warning
+    cons_part = 0.0 if meta["consumption"] == "no_data" else consumption
+    load_part = 0.0 if meta["load"] == "no_data" else load
+    if meta["engagement"] == "na":
+        avg = (c_part + w_part + cons_part + load_part) / 4.0
+    else:
+        eng_part = 0.0 if meta["engagement"] == "no_data" else float(engagement)
+        avg = (c_part + w_part + cons_part + load_part + eng_part) / 5.0
+    stars = _stars_from_average(avg)
+    return {
+        "compliance": round(compliance, 1),
+        "warning": round(warning, 1),
+        "consumption": round(consumption, 1),
+        "load": round(load, 1),
+        "engagement": round(float(engagement), 1) if meta["engagement"] != "na" else 0.0,
+        "average": round(avg, 1),
+        "stars": stars,
+        "pillar_meta": dict(meta),
+    }
+
+
+def compute_intraday_ratings(
+    hass: HomeAssistant,
+    config_manager: Any,
+    rooms_payload: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Efficiency pillars using **today only** (live power row + intraday samples + today's visits).
+
+    ``rooms_payload`` items must include ``id``, ``total_day_wh``, ``warnings``, ``shutoffs``,
+    ``power_cycles`` (as returned by ``get_power_data``).
+    """
+    p = efficiency_scoring_params_from_manager(config_manager)
+    path = ratings_store_path(hass)
+    data = load_ratings(path)
+    visits_root = data.get("engagement_visits") or {}
+    today = dt_util.now().strftime("%Y-%m-%d")
+
+    by_id: dict[str, dict[str, Any]] = {}
+    for r in rooms_payload:
+        rid = str(r.get("id") or "").strip()
+        if rid:
+            by_id[rid] = r
+
+    peer_wh: list[float] = []
+    for r in rooms_payload:
+        tw = float(r.get("total_day_wh") or 0)
+        if tw > 0:
+            peer_wh.append(tw)
+    peer_wh.sort()
+    median_peer = peer_wh[len(peer_wh) // 2] if peer_wh else 0.0
+
+    rooms_cfg = config_manager.energy_config.get("rooms", [])
+    out: dict[str, dict[str, Any]] = {}
+    for room in rooms_cfg:
+        rid = canonical_room_id(room)
+        legacy_id = legacy_room_id_history(room)
+        row = by_id.get(rid, {})
+        total_day_wh = float(row.get("total_day_wh") or 0)
+        warnings = int(row.get("warnings") or 0)
+        shutoffs = int(row.get("shutoffs") or 0)
+        power_cycles = int(row.get("power_cycles") or 0)
+        presence_raw = str(room.get("presence_person_entity") or "").strip()
+        room_has_presence = bool(presence_raw)
+
+        try:
+            budget_kwh = float(room.get("kwh_budget", 5) or 5)
+        except (TypeError, ValueError):
+            budget_kwh = 5.0
+
+        meta = _default_pillar_meta()
+
+        compliance = _score_compliance(
+            [total_day_wh],
+            budget_kwh,
+            1,
+            float(p["compliance_tolerance"]),
+        )
+        meta["compliance"] = "ok"
+
+        warning = _score_warning(
+            [warnings],
+            [shutoffs],
+            [power_cycles],
+            float(p["warning_points_per_event"]),
+        )
+        meta["warning"] = "ok"
+
+        if median_peer <= 0:
+            consumption = 0.0
+            meta["consumption"] = "no_data"
+        else:
+            consumption = _score_consumption(
+                total_day_wh,
+                median_peer,
+                float(p["consumption_peer_multiplier"]),
+            )
+            meta["consumption"] = "ok"
+
+        load = _score_load(
+            config_manager,
+            legacy_id,
+            float(p["load_high_watts"]),
+            float(p["load_penalty_per_high_hour"]),
+        )
+        hist = config_manager.get_room_intraday_history(legacy_id, 1440)
+        if not (hist.get("watts") or []):
+            meta["load"] = "no_data"
+
+        engagement, eng_meta = _engagement_score_for_assignee_intraday(
+            hass,
+            visits_root,
+            today,
+            presence_raw,
+            room_has_presence,
+            p,
+        )
+        meta["engagement"] = eng_meta
+
+        out[rid] = _assemble_room_rating(
+            compliance,
+            warning,
+            consumption,
+            load,
+            engagement,
+            meta,
+        )
+    return out
+
+
+def compute_monthly_ratings(
+    hass: HomeAssistant,
+    config_manager: Any,
+    *,
+    stat_day_keys: list[str],
+    room_wh_totals: dict[str, float],
+    room_day_wh: dict[str, dict[str, float]],
+    room_event_totals: dict[str, dict[str, int]],
+) -> dict[str, dict[str, Any]]:
+    """Efficiency pillars over ``stat_day_keys`` (billing / statistics range).
+
+    ``room_wh_totals``: period sum Wh per room id.
+    ``room_day_wh``: room id → {date → Wh}.
+    ``room_event_totals``: room id → warnings/shutoffs/power_cycles sums for the range.
+    """
+    p = efficiency_scoring_params_from_manager(config_manager)
+    path = ratings_store_path(hass)
+    data = load_ratings(path)
+    visits_root = data.get("engagement_visits") or {}
+
+    n_days = max(1, len(stat_day_keys))
+    room_avg_wh: dict[str, float] = {}
+    for rid, total_wh in room_wh_totals.items():
+        room_avg_wh[rid] = float(total_wh) / float(n_days)
+
+    med_list = sorted(v for v in room_avg_wh.values() if v > 0)
+    median_peer = med_list[len(med_list) // 2] if med_list else 0.0
+
+    rooms_cfg = config_manager.energy_config.get("rooms", [])
+    out: dict[str, dict[str, Any]] = {}
+    for room in rooms_cfg:
+        rid = canonical_room_id(room)
+        presence_raw = str(room.get("presence_person_entity") or "").strip()
+        room_has_presence = bool(presence_raw)
+
+        try:
+            budget_kwh = float(room.get("kwh_budget", 5) or 5)
+        except (TypeError, ValueError):
+            budget_kwh = 5.0
+
+        meta = _default_pillar_meta()
+        ev = room_event_totals.get(
+            rid, {"warnings": 0, "shutoffs": 0, "power_cycles": 0}
+        )
+        twarn = int(ev.get("warnings", 0))
+        tshut = int(ev.get("shutoffs", 0))
+        tcyc = int(ev.get("power_cycles", 0))
+
+        wh_list = [
+            float(room_day_wh.get(rid, {}).get(d, 0) or 0) for d in stat_day_keys
+        ]
+        if not stat_day_keys:
+            compliance = 0.0
+            meta["compliance"] = "no_data"
+            warning = 0.0
+            meta["warning"] = "no_data"
+            consumption = 0.0
+            meta["consumption"] = "no_data"
+            load = 0.0
+            meta["load"] = "no_data"
+        else:
+            if not any(wh_list):
+                compliance = 0.0
+                meta["compliance"] = "no_data"
+            else:
+                compliance = _score_compliance(
+                    wh_list,
+                    budget_kwh,
+                    len(wh_list),
+                    float(p["compliance_tolerance"]),
+                )
+                meta["compliance"] = "ok"
+
+            warning = _score_warning(
+                [twarn],
+                [tshut],
+                [tcyc],
+                float(p["warning_points_per_event"]),
+            )
+            meta["warning"] = "ok"
+
+            avg_wh = room_avg_wh.get(rid, 0.0)
+            if median_peer <= 0 or avg_wh <= 0:
+                consumption = 0.0
+                meta["consumption"] = "no_data"
+            else:
+                consumption = _score_consumption(
+                    avg_wh,
+                    median_peer,
+                    float(p["consumption_peer_multiplier"]),
+                )
+                meta["consumption"] = "ok"
+
+            wh_by_day = room_day_wh.get(rid, {}) or {}
+            load, load_meta = _monthly_load_score_from_daily_wh(
+                {k: float(v or 0) for k, v in wh_by_day.items()},
+                stat_day_keys,
+                budget_kwh,
+                float(p["load_high_watts"]),
+                float(p["load_penalty_per_high_hour"]),
+                float(p["compliance_tolerance"]),
+            )
+            meta["load"] = load_meta
+
+        engagement, eng_meta = _engagement_score_for_assignee_period(
+            hass,
+            visits_root,
+            stat_day_keys,
+            presence_raw,
+            room_has_presence,
+            p,
+        )
+        meta["engagement"] = eng_meta
+
+        out[rid] = _assemble_room_rating(
+            compliance,
+            warning,
+            consumption,
+            load,
+            engagement,
+            meta,
+        )
+
+    return out
 
 
 def recompute_room_ratings(
@@ -485,27 +915,14 @@ def recompute_room_ratings(
         )
         meta["engagement"] = eng_meta
 
-        c_part = 0.0 if meta["compliance"] == "no_data" else compliance
-        w_part = 0.0 if meta["warning"] == "no_data" else warning
-        cons_part = 0.0 if meta["consumption"] == "no_data" else consumption
-        load_part = 0.0 if meta["load"] == "no_data" else load
-        if meta["engagement"] == "na":
-            avg = (c_part + w_part + cons_part + load_part) / 4.0
-        else:
-            eng_part = 0.0 if meta["engagement"] == "no_data" else float(engagement)
-            avg = (c_part + w_part + cons_part + load_part + eng_part) / 5.0
-
-        stars = _stars_from_average(avg)
-        rooms_out[rid] = {
-            "compliance": round(compliance, 1),
-            "warning": round(warning, 1),
-            "consumption": round(consumption, 1),
-            "load": round(load, 1),
-            "engagement": round(float(engagement), 1) if meta["engagement"] != "na" else 0.0,
-            "average": round(avg, 1),
-            "stars": stars,
-            "pillar_meta": meta,
-        }
+        rooms_out[rid] = _assemble_room_rating(
+            compliance,
+            warning,
+            consumption,
+            load,
+            engagement,
+            meta,
+        )
 
     data["version"] = SCHEMA_VERSION
     data["updated_at"] = now.isoformat()

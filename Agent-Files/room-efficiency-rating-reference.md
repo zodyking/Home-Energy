@@ -2,9 +2,22 @@
 
 Purpose: How Smart Dashboards room efficiency scores are computed, where data comes from, and what to edit when tuning behavior.
 
-Related code: `custom_components/smart_dashboards/room_ratings.py`, `efficiency_digest.py`, `websocket.py` (`get_room_ratings`, `save_energy`), `__init__.py` (hourly job + digest schedule), `config_manager.py` / `const.py` (`efficiency_settings`), `frontend/energy-panel.js` (Efficiency settings tab, stars + modal).
+Related code: `custom_components/smart_dashboards/room_ratings.py`, `efficiency_digest.py`, `websocket.py` (`get_power_data`, `get_statistics`, `get_room_ratings`, `save_energy`), `__init__.py` (hourly job + digest schedule), `config_manager.py` / `const.py` (`efficiency_settings`), `frontend/energy-panel.js` (Efficiency settings tab, stars + modal).
 
-This is **not** Home Assistant’s Statistics API. It uses integration daily/intraday history plus `config/data/smart_dashboards_room_ratings.json`.
+This is **not** Home Assistant’s Statistics API. It uses integration daily/intraday history plus `config/data/smart_dashboards_room_ratings.json` (for **engagement visits** and the **hourly JSON snapshot** used by digest / `get_room_ratings`).
+
+---
+
+## Two live rating modes (UI)
+
+| Mode | Where | Backend entry | Reactivity |
+|------|--------|---------------|------------|
+| **Intraday** | Rooms dashboard — header stars + modal | `compute_intraday_ratings()` embedded in **`get_power_data`** | Updates whenever power data refreshes (same interval as live W / today’s Wh). |
+| **Monthly (statistics range)** | Statistics page — **Efficiency** column + modal | `compute_monthly_ratings()` embedded in **`get_statistics`** / statistics cache | Updates when statistics load or live statistics push fires. |
+
+Both use the **same five pillars** and naming: **Compliance**, **Warnings**, **Consumption**, **Load**, **Engagement** (composite + `pillar_meta` rules unchanged).
+
+**Hourly `recompute_room_ratings`** still runs for **persisted JSON** (`smart_dashboards_room_ratings.json`), digest, and optional **`get_room_ratings`**; it keeps a **rolling multi-day** window (`history_window_days`), not the same formulas as intraday/monthly above.
 
 ---
 
@@ -12,45 +25,29 @@ This is **not** Home Assistant’s Statistics API. It uses integration daily/int
 
 ```mermaid
 flowchart TB
-  subgraph sources [Data sources]
-    DH[get_daily_history N days plus today]
-    IH[get_room_intraday_history room_id 1440]
-    JSON[smart_dashboards_room_ratings.json]
-    CFG[energy_config rooms kwh_budget etc]
+  subgraph intraday [Intraday ratings]
+    PD[get_power_data room rows]
+    IH[get_room_intraday_history 1440]
+    JSON1[engagement_visits today]
+    CI[compute_intraday_ratings]
   end
-  subgraph compute [recompute_room_ratings]
-    P1[Compliance]
-    P2[Warnings]
-    P3[Consumption]
-    P4[Load]
-    P5[Engagement]
-    AVG[Mean of applicable pillars]
-    STARS[Stars 0-5 in 0.5 steps]
+  subgraph monthly [Monthly ratings]
+    ST[get_statistics room_wh_map plus daily breakdown]
+    JSON2[engagement_visits date range]
+    CM[compute_monthly_ratings]
   end
-  subgraph persist [Persistence and API]
-    SAVE[Save JSON rooms plus engagement_visits hourly]
-    WS[WebSocket get_room_ratings]
-    HR[Hourly tick plus dashboard_heartbeat writes visits]
+  subgraph legacy [Persisted snapshot optional]
+    DH[get_daily_history window]
+    RC[recompute_room_ratings]
+    SAVE[JSON hourly]
   end
-  subgraph ui [Frontend]
-    PANEL[energy-panel.js stars plus modal]
-  end
-  DH --> P1
-  DH --> P2
-  DH --> P3
-  CFG --> P1
-  IH --> P4
-  JSON --> P5
-  HR --> JSON
-  P1 --> AVG
-  P2 --> AVG
-  P3 --> AVG
-  P4 --> AVG
-  P5 --> AVG
-  AVG --> STARS
-  SAVE --> HR
-  HR --> WS
-  WS --> PANEL
+  PD --> CI
+  IH --> CI
+  JSON1 --> CI
+  ST --> CM
+  JSON2 --> CM
+  DH --> RC
+  RC --> SAVE
 ```
 
 ---
@@ -84,6 +81,16 @@ Pillars with **`no_data`** contribute **0** to the sum but **still count** in th
 | **3 Consumption** | `_score_consumption` | Room **average daily Wh** vs **median** of other rooms’ averages | If no usable peer median (`median_peer <= 0`) or missing consumption context: **0** + `no_data`. Else score from ratio `avg_wh / (median_peer * consumption_peer_multiplier)` mapped to 0–100. Default multiplier **1.5**. |
 | **4 Load** | `_score_load` | `get_room_intraday_history(legacy_room_id, 1440)` → minute `watts[]` | Empty `watts`: **0** + `no_data`. Else: count minutes with `w > load_high_watts`; `100 - min(100, (high_minutes / 60) * load_penalty_per_high_hour)`. Defaults **100** W, penalty **8**. |
 | **5 Engagement** | `_score_engagement_for_user` + `_engagement_score_for_assignee` + `engagement_user_key_from_person` | `engagement_visits` in JSON, last **N** days (`engagement_lookback_days`) | **No** `presence_person_entity`: **0**, `na`, **excluded** from composite mean. **With** person: score uses only the HA user **linked** to that `person.*` (`user_id` on person state, with YAML/storage + name→user fallback). If no user resolves or no visits for that user: **0** + `no_data`. Same rule for hourly persist and `get_room_ratings`. Capped visits per clock hour (`engagement_max_visits_per_hour`, default **2**). Score uses distinct-hour target (`engagement_distinct_hours_target`, default **12**), weights (`engagement_hours_weight` / `engagement_visits_weight`, default **70** / **30**), and daily visit norm (`engagement_visits_daily_norm`, default **2**) for the visits component. |
+
+### Intraday vs monthly (embedded ratings)
+
+| Pillar | Intraday (`compute_intraday_ratings`) | Monthly (`compute_monthly_ratings`, statistics date range) |
+|--------|--------------------------------------|------------------------------------------------------------|
+| Compliance | Single day: `total_day_wh` vs budget (`_score_compliance` one day). | All days in range: fraction of days under budget (`_score_compliance` on daily Wh list). |
+| Warnings | Today’s counts from power row. | Sum of warnings / shutoffs / cycles over the range (one `_score_warning` call on totals). |
+| Consumption | Today’s `total_day_wh` vs **median** of other rooms’ today Wh. | **Average daily Wh** (period total ÷ number of stat days) vs median of other rooms’ averages. |
+| Load | `_score_load` on **today’s** minute samples. | `_monthly_load_score_from_daily_wh`: per day, energy **above** `budget_kwh * compliance_tolerance` converted to equivalent hours at `load_high_watts`, summed and penalized (no per-minute archive for past days). |
+| Engagement | **Today only** for assignee (`_engagement_score_for_assignee_intraday`). | **All days in range** for assignee (`_engagement_score_for_assignee_period` + `_score_engagement_period_days`). |
 
 **Room keys:** Scores are stored under **`canonical_room_id(room)`**. Daily history rows use **`_room_history_row`** (canonical vs **legacy** slug from `legacy_room_id_history`). **Load** uses **`legacy_id`** for intraday history only.
 
@@ -150,12 +157,14 @@ Module-level `WINDOW_DAYS` / `ENGAGEMENT_LOOKBACK_DAYS` in `room_ratings.py` rem
 
 ## When scores recompute, cache, and how the UI loads them
 
-- **On demand:** WebSocket `smart_dashboards/get_room_ratings` runs `recompute_room_ratings(hass, config_manager, persist=False)` in an executor. Engagement matches the hourly logic (assignee per room). It **does not** write JSON; on success it updates **`room_ratings_cache`** so other clients see fresh scores without waiting for the hourly tick.
-- **Scheduled:** `async_track_time_interval` **every hour** in `__init__.py` runs `recompute_room_ratings(hass, cm_ratings, persist=True)`, then sets **`room_ratings_cache`** from `ratings_payload_for_ws`. Persisted JSON uses the same assignee-based engagement.
+- **Rooms dashboard (intraday):** Each `smart_dashboards/get_power_data` response includes per-room **`ratings`** from `compute_intraday_ratings`. The panel reads **`room.ratings`** for header stars and the modal (no separate ratings poll).
+- **Statistics page (monthly):** `smart_dashboards/get_statistics` (and the statistics JSON cache / push) includes per-room **`ratings`** from `compute_monthly_ratings` for the same date range as the table.
+- **On demand (legacy snapshot):** WebSocket `smart_dashboards/get_room_ratings` still runs `recompute_room_ratings(hass, config_manager, persist=False)` in an executor (rolling window). It **does not** write JSON; on success it updates **`room_ratings_cache`**.
+- **Scheduled:** `async_track_time_interval` **every hour** in `__init__.py` runs `recompute_room_ratings(hass, cm_ratings, persist=True)`, then sets **`room_ratings_cache`** from `ratings_payload_for_ws`. Persisted JSON powers **efficiency digest** and optional consumers of `get_room_ratings`.
 - **Engagement input:** `smart_dashboards/dashboard_heartbeat` → `record_dashboard_heartbeat` (max **`engagement_max_visits_per_hour`** per HA user per clock hour) in `engagement_visits`. Visit keys are `str(user.id)` for the connected user.
 - **Assignee resolution:** Link each person to their Home Assistant user in **Settings → People** so the person state exposes **`user_id`**; the integration also scans person YAML/storage and can match **`friendly_name`** to an active auth user’s name (case-insensitive) as a fallback.
 - **File:** `config/data/smart_dashboards_room_ratings.json`.
-- **Panel:** `_loadRoomRatings()` in `energy-panel.js`; header stars + modal uses **`pillar_meta`** for “No data yet” / “Non applicable”.
+- **Panel:** `energy-panel.js` — intraday from **`get_power_data`**; statistics table **Efficiency** column from **`get_statistics`**; **`pillar_meta`** drives “No data yet” / “Non applicable” in the modal.
 
 ---
 
@@ -167,7 +176,9 @@ Module-level `WINDOW_DAYS` / `ENGAGEMENT_LOOKBACK_DAYS` in `room_ratings.py` rem
 | Change formula structure or composite rules | `room_ratings.py` |
 | Recompute frequency | `__init__.py` — hourly interval |
 | Modal labels / explanatory copy | `energy-panel.js` — `_openRoomRatingModal` |
-| On-demand recompute + `room_ratings_cache` refresh | `websocket.py`, `__init__.py` |
+| Intraday embed | `websocket.py` — `get_power_data`; `room_ratings.py` — `compute_intraday_ratings` |
+| Monthly embed | `websocket.py` — `async_build_statistics_payload`; `room_ratings.py` — `compute_monthly_ratings` |
+| On-demand rolling snapshot + `room_ratings_cache` | `websocket.py` — `get_room_ratings`; `__init__.py` — hourly job |
 | Daily digest time, templates, enable | **Settings → Efficiency**; `efficiency_digest.py` |
 
 ---

@@ -22,6 +22,8 @@ from .efficiency_digest import (
 )
 from .mobile_notify_target import async_send_notify_push
 from .room_ratings import (
+    compute_intraday_ratings,
+    compute_monthly_ratings,
     efficiency_scoring_params_from_manager,
     load_ratings,
     ratings_payload_for_ws,
@@ -585,6 +587,15 @@ async def websocket_get_power_data(
             )
             room_data["enforcement_phase"] = max(0, min(2, phase))
         result["rooms"].append(room_data)
+
+    try:
+        intraday = compute_intraday_ratings(hass, config_manager, result["rooms"])
+        for room_data in result["rooms"]:
+            rid = room_data.get("id")
+            if rid:
+                room_data["ratings"] = intraday.get(rid)
+    except Exception as err:
+        _LOGGER.warning("Intraday room ratings embed failed: %s", err)
 
     connection.send_result(msg["id"], result)
 
@@ -1356,7 +1367,7 @@ async def async_build_billing_daily_history_from_recorder(
     date_start: str,
     date_end: str,
 ) -> dict[str, Any]:
-    """Daily Wh for billing charts from recorder (matches Statistics table Usage).
+    """Daily Wh for billing charts: recorder for past days; **today** uses day ledger.
 
     Per-day warnings/shutoffs/power_cycles still come from smart_dashboards_daily_totals
     snapshots (same as get_daily_history_for_range) so event series stay file-backed.
@@ -1396,16 +1407,21 @@ async def async_build_billing_daily_history_from_recorder(
     for d in dates_list:
         if d > today:
             break
-        total_wh_day = sum(
-            float(rdays.get(d, 0.0)) for rdays in room_day_wh_map.values()
-        )
-        for rid in all_room_ids:
-            wh = float(room_day_wh_map.get(rid, {}).get(d, 0.0))
-            result["rooms"][rid]["wh"].append(round(wh, 2))
-
         if d == today:
+            # Day ledger matches Rooms page / get_power_data (recorder can differ).
             row = config_manager._build_today_totals()
+            total_wh_day = float(row.get("total_wh", 0.0))
+            row_rooms = row.get("rooms") or {}
+            for rid in all_room_ids:
+                wh = float((row_rooms.get(rid) or {}).get("wh", 0.0))
+                result["rooms"][rid]["wh"].append(round(wh, 2))
         else:
+            total_wh_day = sum(
+                float(rdays.get(d, 0.0)) for rdays in room_day_wh_map.values()
+            )
+            for rid in all_room_ids:
+                wh = float(room_day_wh_map.get(rid, {}).get(d, 0.0))
+                result["rooms"][rid]["wh"].append(round(wh, 2))
             row = daily_snapshots.get(d)
             if row is None:
                 row = {
@@ -1676,6 +1692,30 @@ async def async_build_statistics_payload(
                 "power_cycles": rsum.get("power_cycles", 0),
                 **_room_daily_kwh_stats(rid, kwh),
             })
+
+    try:
+        room_event_totals = {
+            rid: {
+                "warnings": int(rsum["warnings"]),
+                "shutoffs": int(rsum["shutoffs"]),
+                "power_cycles": int(rsum.get("power_cycles", 0)),
+            }
+            for rid, rsum in room_sums.items()
+        }
+        monthly = compute_monthly_ratings(
+            hass,
+            config_manager,
+            stat_day_keys=stat_day_keys,
+            room_wh_totals=dict(room_wh_map),
+            room_day_wh=dict(room_day_wh_map),
+            room_event_totals=room_event_totals,
+        )
+        for r in result["rooms"]:
+            rid = r.get("id")
+            if rid:
+                r["ratings"] = monthly.get(rid)
+    except Exception as err:
+        _LOGGER.warning("Monthly room ratings embed failed: %s", err)
 
     return result
 

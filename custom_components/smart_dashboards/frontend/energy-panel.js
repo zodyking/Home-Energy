@@ -63,7 +63,7 @@ const TTS_DEFAULTS = {
 const EFFICIENCY_UI_DEFAULTS = {
   efficiency_digest_title: '{notification_title} {room_name} efficiency',
   efficiency_digest_message:
-    '{room_name}: index {average}/100, {stars} stars. Compliance {compliance}, warnings {warning}, consumption {consumption}, load {load}, engagement {engagement}.',
+    '{room_name}: {stars} stars ({average}/100). {worst_pillar_tip}',
 };
 
 /** Tooltip + visible label for room header enforcement badge (index = phase 0–2). */
@@ -153,7 +153,7 @@ class EnergyPanel extends HTMLElement {
     this._summaryFitZeroRetry = null;
     this._summaryFitRaf = null;
     this._graphModalEscapeHandler = null;
-    /** AbortController teardown for Shadow-DOM-safe billing bar chart (no Apex). */
+    /** AbortController teardown for Shadow-DOM-safe native bar charts (billing + room hourly; no Apex). */
     this._billingBarNativeCleanup = null;
     /** Room icon modal: `.room-settings-card` receiving the selection. */
     this._roomIconModalTargetCard = null;
@@ -164,11 +164,6 @@ class EnergyPanel extends HTMLElement {
     this._zoneHealthData = null;
     this._zoneHealthRefreshInterval = null;
     this._zoneHealthIconClickDelegation = false;
-    /** @type {object|null} smart_dashboards/get_room_ratings payload */
-    this._roomRatingsData = null;
-    /** @type {'idle'|'loading'|'ok'|'error'} */
-    this._roomRatingsLoadState = 'idle';
-    this._roomRatingsRefreshInterval = null;
     this._dashboardHeartbeatInterval = null;
     this._roomRatingModalDelegation = false;
     this._roomRatingModalEsc = null;
@@ -857,6 +852,20 @@ class EnergyPanel extends HTMLElement {
       if (wEl) wEl.textContent = `W ${room.warnings || 0}`;
       if (sEl) sEl.textContent = `S ${room.shutoffs || 0}`;
       if (pEl) pEl.textContent = `C ${room.power_cycles || 0}`;
+
+      const ratingBtn = roomCard.querySelector('.room-header-rating:not(.room-header-rating--loading)');
+      if (ratingBtn) {
+        const rat = room.ratings;
+        const starValue =
+          rat != null && rat.stars != null && Number.isFinite(Number(rat.stars))
+            ? Number(rat.stars)
+            : 0;
+        const prefix = `u_${String(cardId).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        const wrap = ratingBtn.querySelector('.room-efficiency-stars');
+        if (wrap) {
+          wrap.innerHTML = this._formatEfficiencyStarsSvg(starValue, prefix);
+        }
+      }
 
       const presEl = roomCard.querySelector('.room-name-presence');
       const cycleH3 = roomCard.querySelector('.room-name--cycling');
@@ -1697,6 +1706,36 @@ class EnergyPanel extends HTMLElement {
           animation: none;
           opacity: 0.65;
         }
+      }
+
+      .stat-efficiency-cell {
+        white-space: nowrap;
+        vertical-align: middle;
+      }
+      .stat-room-efficiency-rating {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        padding: 4px 6px;
+        margin: 0;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        cursor: pointer;
+        color: inherit;
+        font: inherit;
+      }
+      .stat-room-efficiency-rating:hover {
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .stat-room-efficiency-rating:focus-visible {
+        outline: 2px solid var(--primary-color, #03a9f4);
+        outline-offset: 2px;
+      }
+      .stat-room-efficiency-stars .room-efficiency-star {
+        width: 14px;
+        height: 14px;
       }
 
       .room-rating-modal-overlay {
@@ -5818,7 +5857,7 @@ class EnergyPanel extends HTMLElement {
       total_wh: 'Usage (kWh)', total_watts_intraday: 'Power now (W)', total_wh_intraday: 'Home kWh today (minute data)',
       total_warnings: 'Threshold Warnings (24h)', total_shutoffs: 'Safety Shutoffs (24h)',
       total_power_cycles: 'Power Cycles (24h)',
-      room_wh: `${roomName} Usage (kWh) today`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`,
+      room_wh: `${roomName} Usage (kWh) by hour today`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`,
       room_power_cycles: `${roomName} Power Cycles (24h)`,
       stat_total_wh: 'Home daily usage',
       stat_room_wh: `${roomName || 'Room'} daily usage`,
@@ -5960,7 +5999,8 @@ class EnergyPanel extends HTMLElement {
    * Chart data sources (must stay aligned with backend):
    * - Event logs: get_event_log (warnings/shutoffs/power_cycles; home or room).
    * - Intraday W: get_intraday_history (timestamps + watts).
-   * - Intraday kWh (home/room): same + reference_kwh_today offset to match day ledger.
+   * - Intraday kWh (home): cumulative area + reference_kwh_today offset to match day ledger.
+   * - Intraday kWh (room): same intraday fetch, native 24 hourly kWh bars.
    * - Stat billing (stat_*): get_daily_history date_start/end → bar chart kWh/day.
    * - Legacy daily (31d): get_daily_history days=31 for total_* / room_* non-intraday types.
    */
@@ -6035,11 +6075,76 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  /** Local hour label 0–23 → "12am" … "11pm". */
+  _hourLabel12h(hour) {
+    const h = Number(hour);
+    if (h === 0) return '12am';
+    if (h < 12) return `${h}am`;
+    if (h === 12) return '12pm';
+    return `${h - 12}pm`;
+  }
+
   /**
-   * Shadow-DOM-safe daily kWh bars (Statistics billing modal). Apex bar hover breaks under retargeting (#3237).
+   * Per-hour kWh (24 buckets, local calendar day) from uneven W samples via trapezoids split at hour boundaries.
+   * Returns 24 floats (kWh); hours after `now` contribute only from samples clipped at now.
+   */
+  _aggregateHourlyKwh(timestamps, watts) {
+    const dayStart = this._startOfLocalDayMs();
+    const nextMidnight = new Date(dayStart);
+    nextMidnight.setDate(nextMidnight.getDate() + 1);
+    const dayEndMs = nextMidnight.getTime();
+    const now = Date.now();
+    const hourlyWh = new Array(24).fill(0);
+
+    const pairs = [];
+    const n = Math.min(timestamps.length, watts.length);
+    for (let i = 0; i < n; i++) {
+      const t = this._parseChartTimeMs(timestamps[i]);
+      if (Number.isNaN(t) || t < dayStart || t >= dayEndMs) continue;
+      pairs.push({ t, w: Number(watts[i]) || 0 });
+    }
+    pairs.sort((a, b) => a.t - b.t);
+
+    for (let i = 1; i < pairs.length; i++) {
+      const origT0 = pairs[i - 1].t;
+      const origT1 = pairs[i].t;
+      const w0 = pairs[i - 1].w;
+      const w1 = pairs[i].w;
+      if (!(origT1 > origT0)) continue;
+      const t0 = Math.max(origT0, dayStart);
+      const t1 = Math.min(origT1, Math.min(now, dayEndMs));
+      if (!(t1 > t0)) continue;
+
+      let segStart = t0;
+      while (segStart < t1) {
+        const h0 = Math.floor((segStart - dayStart) / 3600000);
+        if (h0 < 0 || h0 > 23) break;
+        const hStart = dayStart + h0 * 3600000;
+        const hEnd = Math.min(hStart + 3600000, dayEndMs);
+        const segEnd = Math.min(t1, hEnd);
+        const wa = w0 + ((w1 - w0) * (segStart - origT0)) / (origT1 - origT0);
+        const wb = w0 + ((w1 - w0) * (segEnd - origT0)) / (origT1 - origT0);
+        const dtH = (segEnd - segStart) / 3600000;
+        hourlyWh[h0] += ((wa + wb) / 2) * dtH;
+        segStart = segEnd;
+      }
+    }
+    return hourlyWh.map((wh) => wh / 1000);
+  }
+
+  /**
+   * Shadow-DOM-safe kWh bars (Statistics billing daily + room hourly). Apex bar hover breaks under retargeting (#3237).
    */
   _renderBillingBarChartNative(container, opts) {
-    const { categories, values, seriesName, yFormatter, accent, textColor } = opts;
+    const {
+      categories,
+      values,
+      seriesName,
+      yFormatter,
+      accent,
+      textColor,
+      ariaCountNoun = 'days',
+    } = opts;
     this._teardownBillingBarChartNative();
     container.innerHTML = '';
     const n = values.length;
@@ -6059,7 +6164,7 @@ class EnergyPanel extends HTMLElement {
     const wrap = document.createElement('div');
     wrap.className = 'billing-bar-chart-native';
     wrap.setAttribute('role', 'group');
-    wrap.setAttribute('aria-label', `${seriesName}, ${n} days`);
+    wrap.setAttribute('aria-label', `${seriesName}, ${n} ${ariaCountNoun}`);
 
     const tooltip = document.createElement('div');
     tooltip.className = 'billing-bar-tooltip';
@@ -6121,6 +6226,12 @@ class EnergyPanel extends HTMLElement {
 
     const ac = new AbortController();
     const sig = ac.signal;
+    const supportsTouchTap =
+      typeof window.matchMedia === 'function' &&
+      (window.matchMedia('(pointer: coarse)').matches ||
+        window.matchMedia('(hover: none)').matches);
+    /** Tap-pinned bar (touch/coarse); mouse hover unchanged on fine pointer. */
+    let tapPinnedBar = null;
 
     nums.forEach((v, i) => {
       const col = document.createElement('div');
@@ -6149,7 +6260,37 @@ class EnergyPanel extends HTMLElement {
       btn.addEventListener('pointerleave', hide, { signal: sig });
       btn.addEventListener('focus', show, { signal: sig });
       btn.addEventListener('blur', hide, { signal: sig });
+
+      if (supportsTouchTap) {
+        btn.addEventListener(
+          'click',
+          (e) => {
+            e.stopPropagation();
+            if (tapPinnedBar === btn && !tooltip.hidden) {
+              hide();
+              tapPinnedBar = null;
+              return;
+            }
+            tapPinnedBar = btn;
+            show();
+          },
+          { signal: sig },
+        );
+      }
     });
+
+    if (supportsTouchTap) {
+      wrap.addEventListener(
+        'click',
+        (e) => {
+          if (!e.target.closest('.billing-bar-hit')) {
+            tooltip.hidden = true;
+            tapPinnedBar = null;
+          }
+        },
+        { signal: sig },
+      );
+    }
 
     this._billingBarNativeCleanup = () => ac.abort();
 
@@ -6184,6 +6325,10 @@ class EnergyPanel extends HTMLElement {
     /** Daily billing bars: category axis + numeric series (datetime bars mis-map hover/tooltip in Apex). */
     let billingCategories = null;
     let billingValues = null;
+    /** Room intraday kWh: native 24 hourly bars (not cumulative area). */
+    let useRoomHourlyBars = false;
+    let roomHourlyCategories = null;
+    let roomHourlyValues = null;
     /** Set for intraday kWh charts: tighter y-axis + label precision */
     let intradayKwhYMax = null;
 
@@ -6202,7 +6347,34 @@ class EnergyPanel extends HTMLElement {
       const n = Math.min(timestamps.length, watts.length);
       const dayStart = this._startOfLocalDayMs();
       const dayEnd = Date.now();
-      if (type === 'total_wh_intraday' || type === 'room_wh') {
+      if (type === 'room_wh') {
+        const tsDay = [];
+        const wDay = [];
+        for (let i = 0; i < n; i++) {
+          const x = this._parseChartTimeMs(timestamps[i]);
+          if (Number.isNaN(x) || x < dayStart || x > dayEnd) continue;
+          tsDay.push(timestamps[i]);
+          wDay.push(watts[i]);
+        }
+        useRoomHourlyBars = true;
+        if (tsDay.length === 0) {
+          roomHourlyValues = null;
+          roomHourlyCategories = null;
+        } else {
+          roomHourlyValues = this._aggregateHourlyKwh(tsDay, wDay);
+          roomHourlyCategories = Array.from({ length: 24 }, (_, h) =>
+            this._hourLabel12h(h),
+          );
+          const peakKwh = roomHourlyValues.reduce(
+            (m, x) => Math.max(m, Number(x) || 0),
+            0,
+          );
+          const decimals = peakKwh <= 0.02 ? 3 : peakKwh <= 0.5 ? 2 : 2;
+          yFormatter = (v) => (v == null ? '—' : `${Number(v).toFixed(decimals)} kWh`);
+          seriesName = `${roomName || 'Room'} kWh per hour`;
+        }
+        seriesData = [];
+      } else if (type === 'total_wh_intraday') {
         seriesName = 'kWh (cumulative today)';
         const tsDay = [];
         const wDay = [];
@@ -6228,7 +6400,8 @@ class EnergyPanel extends HTMLElement {
         ) {
           const lastIntegrated =
             Number(seriesData[seriesData.length - 1][1]) || 0;
-          const offset = refKwh - lastIntegrated;
+          // Never shift the curve negative at t0 when integrated > ledger reference.
+          const offset = Math.max(0, refKwh - lastIntegrated);
           for (let i = 0; i < seriesData.length; i++) {
             seriesData[i][1] = (Number(seriesData[i][1]) || 0) + offset;
           }
@@ -6314,15 +6487,38 @@ class EnergyPanel extends HTMLElement {
     }
     this._teardownBillingBarChartNative();
 
+    const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
+    const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
+
+    if (useRoomHourlyBars) {
+      container.innerHTML = '';
+      if (
+        !roomHourlyValues ||
+        !roomHourlyCategories ||
+        roomHourlyCategories.length !== roomHourlyValues.length
+      ) {
+        container.innerHTML =
+          '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">No data yet</p>';
+        return;
+      }
+      this._renderBillingBarChartNative(container, {
+        categories: roomHourlyCategories,
+        values: roomHourlyValues,
+        seriesName,
+        yFormatter,
+        accent,
+        textColor,
+        ariaCountNoun: 'hours',
+      });
+      return;
+    }
+
     const useBillingBars =
       isStatBillingModal &&
       Array.isArray(billingValues) &&
       billingValues.length > 0 &&
       Array.isArray(billingCategories) &&
       billingCategories.length === billingValues.length;
-
-    const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
-    const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
 
     if (isStatBillingModal) {
       container.innerHTML = '';
@@ -6667,6 +6863,7 @@ class EnergyPanel extends HTMLElement {
                 <thead>
                   <tr>
                     <th scope="col">Room</th>
+                    <th scope="col"><abbr title="Efficiency (billing period)">Efficiency</abbr></th>
                     <th scope="col"><abbr title="kWh this period">Usage</abbr></th>
                     <th scope="col"><abbr title="Percent of tracked kWh this period">Percent</abbr></th>
                     <th scope="col"><abbr title="Voice threshold warnings">Warnings</abbr></th>
@@ -6679,10 +6876,23 @@ class EnergyPanel extends HTMLElement {
                   </tr>
                 </thead>
                 <tbody id="stat-rooms-tbody">
-                  ${rooms.length === 0 ? '<tr><td colspan="10" class="statistics-empty">No room data for this range.</td></tr>' : ''}
+                  ${rooms.length === 0 ? '<tr><td colspan="11" class="statistics-empty">No room data for this range.</td></tr>' : ''}
                   ${rooms.map((r) => {
                   const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
                   const rid = String(r.id || '').replace(/"/g, '&quot;');
+                  const effRatings = r.ratings;
+                  const effStars =
+                    effRatings != null &&
+                    effRatings.stars != null &&
+                    Number.isFinite(Number(effRatings.stars))
+                      ? Number(effRatings.stars)
+                      : 0;
+                  const effPrefix = `stat_${String(r.id || 'room').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+                  const effStarsHtml = this._formatEfficiencyStarsSvg(effStars, effPrefix);
+                  const effCell = `<button type="button" class="stat-room-efficiency-rating has-tooltip" data-stat-room-rating="${rid}"
+                    title="Efficiency (billing period) — tap for details" aria-label="Room efficiency for this period, tap for details">
+                    <span class="room-efficiency-stars stat-room-efficiency-stars">${effStarsHtml}</span>
+                  </button>`;
                   const warnCell = dateStart && dateEnd
                     ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log (billing period)">${r.warnings ?? 0}</span>`
                     : `${r.warnings ?? 0}`;
@@ -6707,6 +6917,7 @@ class EnergyPanel extends HTMLElement {
                   return `
                   <tr>
                     <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
+                    <td class="stat-efficiency-cell">${effCell}</td>
                     <td>${(r.kwh ?? 0).toFixed(2)} kWh</td>
                     <td>${(r.pct ?? 0).toFixed(1)}%</td>
                     <td>${warnCell}</td>
@@ -7031,8 +7242,7 @@ class EnergyPanel extends HTMLElement {
 
   _roomEfficiencyRatingRowHtml(roomId, idPrefix) {
     const esc = (x) => String(x || '').replace(/"/g, '&quot;');
-    const st = this._roomRatingsLoadState;
-    const loadingLike = st === 'loading' || (st === 'idle' && this._roomRatingsData == null);
+    const loadingLike = this._loading || !this._powerData;
     if (loadingLike) {
       return `
       <button type="button" class="room-header-rating room-header-rating--loading has-tooltip" data-room-rating="${esc(roomId)}"
@@ -7040,15 +7250,8 @@ class EnergyPanel extends HTMLElement {
         <span class="room-efficiency-placeholder" aria-hidden="true">…</span>
       </button>`;
     }
-    if (st === 'error') {
-      return `
-      <button type="button" class="room-header-rating room-header-rating--error has-tooltip" data-room-rating="${esc(roomId)}"
-        data-room-rating-retry="1"
-        title="Rating unavailable — tap to retry" aria-label="Efficiency rating unavailable, tap to retry">
-        <span class="room-efficiency-placeholder" aria-hidden="true">!</span>
-      </button>`;
-    }
-    const r = this._roomRatingsData?.rooms?.[roomId];
+    const row = this._resolvePowerRoomRow(roomId);
+    const r = row?.ratings;
     const starValue =
       r != null && r.stars != null && Number.isFinite(Number(r.stars))
         ? Number(r.stars)
@@ -7063,46 +7266,18 @@ class EnergyPanel extends HTMLElement {
 
   _startRoomRatingsAndHeartbeat() {
     if (!this._hass?.callWS) return;
-    if (this._roomRatingsRefreshInterval != null) return;
-    this._roomRatingsRefreshInterval = setInterval(() => this._loadRoomRatings(), 3600000);
+    if (this._dashboardHeartbeatInterval != null) return;
     this._dashboardHeartbeatInterval = setInterval(
       () => this._sendDashboardHeartbeat(),
       30 * 60 * 1000,
     );
     this._sendDashboardHeartbeat();
-    this._loadRoomRatings();
   }
 
   _stopRoomRatingsAndHeartbeat() {
-    if (this._roomRatingsRefreshInterval) {
-      clearInterval(this._roomRatingsRefreshInterval);
-      this._roomRatingsRefreshInterval = null;
-    }
     if (this._dashboardHeartbeatInterval) {
       clearInterval(this._dashboardHeartbeatInterval);
       this._dashboardHeartbeatInterval = null;
-    }
-  }
-
-  async _loadRoomRatings() {
-    if (!this._hass?.callWS) return;
-    const isFirst = this._roomRatingsData == null;
-    if (isFirst) {
-      this._roomRatingsLoadState = 'loading';
-      if (this._dashboardView === 'rooms' && !this._showSettings) {
-        this._render();
-      }
-    }
-    try {
-      const data = await this._hass.callWS({ type: 'smart_dashboards/get_room_ratings' });
-      this._roomRatingsData = data;
-      this._roomRatingsLoadState = 'ok';
-    } catch (e) {
-      console.warn('get_room_ratings failed', e);
-      this._roomRatingsLoadState = 'error';
-    }
-    if (this._dashboardView === 'rooms' && !this._showSettings) {
-      this._render();
     }
   }
 
@@ -7116,25 +7291,46 @@ class EnergyPanel extends HTMLElement {
   }
 
   _handleRoomRatingClick(e) {
+    const statBtn = e.target?.closest?.('[data-stat-room-rating]');
+    if (statBtn && this.shadowRoot.contains(statBtn)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const roomId = statBtn.getAttribute('data-stat-room-rating');
+      if (!roomId) return;
+      const statRow = (this._statsData?.rooms || []).find(
+        (row) => String(row.id) === String(roomId),
+      );
+      this._openRoomRatingModal(roomId, {
+        mode: 'monthly',
+        ratings: statRow?.ratings || null,
+      });
+      return;
+    }
     const btn = e.target?.closest?.('[data-room-rating]');
     if (!btn || !this.shadowRoot.contains(btn)) return;
     e.preventDefault();
     e.stopPropagation();
-    if (btn.hasAttribute('data-room-rating-retry')) {
-      this._loadRoomRatings();
-      return;
-    }
     if (btn.disabled) return;
     const roomId = btn.getAttribute('data-room-rating');
-    if (roomId) this._openRoomRatingModal(roomId);
+    if (roomId) this._openRoomRatingModal(roomId, { mode: 'intraday' });
   }
 
-  _openRoomRatingModal(roomId) {
+  /**
+   * @param {string} roomId
+   * @param {{ mode?: 'intraday'|'monthly', ratings?: object|null }} [options]
+   */
+  _openRoomRatingModal(roomId, options = {}) {
+    const mode = options.mode === 'monthly' ? 'monthly' : 'intraday';
     const room = this._config?.rooms?.find(
       (r) => this._canonicalRoomId(r) === roomId,
     );
     const titleName = room?.name || roomId;
-    const r = this._roomRatingsData?.rooms?.[roomId] || {};
+    let r = {};
+    if (options.ratings != null && typeof options.ratings === 'object') {
+      r = options.ratings;
+    } else if (mode === 'intraday') {
+      r = this._resolvePowerRoomRow(roomId)?.ratings || {};
+    }
     const esc = (s) =>
       String(s ?? '')
         .replace(/&/g, '&amp;')
@@ -7201,9 +7397,13 @@ class EnergyPanel extends HTMLElement {
 
     const heroStarsLabel = `Overall efficiency, ${starN} out of 5 stars`;
     const engagementNa = pillarMeta.engagement === 'na';
+    const periodNote =
+      mode === 'monthly'
+        ? 'Each pillar is 0–100 for the statistics date range; the composite averages the pillars that apply.'
+        : 'Each pillar is 0–100 for today only; the composite averages the pillars that apply.';
     const heroIntro = engagementNa
-      ? 'Your score blends the four pillars below (engagement does not apply to this room). Each pillar is 0–100; the composite averages the pillars that apply.'
-      : 'Your score blends the five pillars below. Engagement reflects this room’s assigned person’s dashboard use. Each pillar is 0–100; the composite averages the pillars that apply.';
+      ? `Your score blends the four pillars below (engagement does not apply to this room). ${periodNote}`
+      : `Your score blends the five pillars below. Engagement reflects this room’s assigned person’s dashboard use. ${periodNote}`;
 
     const personEnt = String(room?.presence_person_entity || '').trim();
     const personState =
@@ -7218,7 +7418,10 @@ class EnergyPanel extends HTMLElement {
       loadHighRaw != null && Number.isFinite(Number(loadHighRaw))
         ? Math.max(1, Math.round(Number(loadHighRaw)))
         : 100;
-    const loadPatternDesc = `Rewards steadier use; more time above about ${loadHighW} W (counted as hours in the window) lowers this score.`;
+    const loadPatternDesc =
+      mode === 'monthly'
+        ? `Rewards steadier use; sustained heavy draw in this period (from daily use above your budget tolerance, expressed as time near about ${loadHighW} W) lowers this score.`
+        : `Rewards steadier use; more time above about ${loadHighW} W today (counted as hours in the window) lowers this score.`;
 
     const engMeta = pillarMeta.engagement || 'ok';
     let engagementDesc;
@@ -7226,10 +7429,33 @@ class EnergyPanel extends HTMLElement {
       engagementDesc =
         'Only applies when this room has an assigned person in settings.';
     } else if (engMeta === 'no_data') {
-      engagementDesc = `How often ${personNameRaw} opens this dashboard; steadier use over time scores higher. No recent activity yet.`;
+      engagementDesc =
+        mode === 'monthly'
+          ? `How often ${personNameRaw} opened this dashboard in this period; steadier use scores higher. No activity in range yet.`
+          : `How often ${personNameRaw} opens this dashboard today; steadier use scores higher. No activity yet.`;
     } else {
-      engagementDesc = `How often ${personNameRaw} opens this dashboard; steadier use over time scores higher.`;
+      engagementDesc =
+        mode === 'monthly'
+          ? `How often ${personNameRaw} opened this dashboard across this period; steadier use scores higher.`
+          : `How often ${personNameRaw} opens this dashboard today; steadier use scores higher.`;
     }
+
+    const complianceDesc =
+      mode === 'monthly'
+        ? 'Share of days in this period under your room kWh budget (with tolerance).'
+        : 'Today’s energy vs your room kWh budget (with tolerance).';
+    const warningDesc =
+      mode === 'monthly'
+        ? 'Alerts, shutoffs, and enforcement cycles in this period—fewer is better.'
+        : 'Today’s alerts, shutoffs, and enforcement cycles—fewer is better.';
+    const consumptionDesc =
+      mode === 'monthly'
+        ? 'Average daily use vs your other rooms this period.'
+        : 'Today’s use vs your other rooms today.';
+    const footnote =
+      mode === 'monthly'
+        ? 'Based on the statistics date range (updates when statistics refresh).'
+        : 'Updates with live power data.';
 
     this.shadowRoot.querySelector('.room-rating-modal-overlay')?.remove();
     const overlay = document.createElement('div');
@@ -7257,28 +7483,13 @@ class EnergyPanel extends HTMLElement {
           <p class="room-rating-modal-hero-intro">${esc(heroIntro)}</p>
         </div>
         <div class="room-rating-modal-body">
-          ${scoreRow(
-            1,
-            'compliance',
-            'Compliance',
-            'Daily energy vs your room kWh budget (with a small tolerance).',
-          )}
-          ${scoreRow(
-            2,
-            'warning',
-            'Warnings & events',
-            'Alerts, shutoffs, and enforcement cycles—fewer is better.',
-          )}
-          ${scoreRow(
-            3,
-            'consumption',
-            'Consumption vs other rooms',
-            'How this room’s average use compares to your other rooms.',
-          )}
-          ${scoreRow(4, 'load', 'Load pattern', loadPatternDesc)}
-          ${scoreRow(5, 'engagement', 'Dashboard engagement', engagementDesc)}
+          ${scoreRow(1, 'compliance', 'Compliance', complianceDesc)}
+          ${scoreRow(2, 'warning', 'Warnings', warningDesc)}
+          ${scoreRow(3, 'consumption', 'Consumption', consumptionDesc)}
+          ${scoreRow(4, 'load', 'Load', loadPatternDesc)}
+          ${scoreRow(5, 'engagement', 'Engagement', engagementDesc)}
         </div>
-        <p class="room-rating-modal-footnote">Refreshes about every hour.</p>
+        <p class="room-rating-modal-footnote">${esc(footnote)}</p>
       </div>
     `;
     const close = () => {
@@ -9185,14 +9396,14 @@ class EnergyPanel extends HTMLElement {
                   <textarea class="tts-msg-textarea" id="eff-digest-title" rows="2">${this._escapeForSettingsTextarea(
                     effSettings.efficiency_digest_title || EFFICIENCY_UI_DEFAULTS.efficiency_digest_title,
                   )}</textarea>
-                  <div class="tts-var-help">Variables: <code>{notification_title}</code> <code>{room_name}</code> <code>{average}</code> <code>{stars}</code> <code>{compliance}</code> <code>{warning}</code> <code>{consumption}</code> <code>{load}</code> <code>{engagement}</code></div>
+                  <div class="tts-var-help">Variables: <code>{notification_title}</code> <code>{room_name}</code> <code>{average}</code> <code>{stars}</code> <code>{compliance}</code> <code>{warning}</code> <code>{consumption}</code> <code>{load}</code> <code>{engagement}</code> <code>{worst_pillar}</code> <code>{worst_pillar_tip}</code></div>
                 </div>
                 <div class="tts-msg-group" style="margin-bottom: 10px;">
                   <div class="tts-msg-title">Digest message template</div>
                   <textarea class="tts-msg-textarea" id="eff-digest-message" rows="4">${this._escapeForSettingsTextarea(
                     effSettings.efficiency_digest_message || EFFICIENCY_UI_DEFAULTS.efficiency_digest_message,
                   )}</textarea>
-                  <div class="tts-var-help">Same variables as title.</div>
+                  <div class="tts-var-help">Same as title; <code>{worst_pillar_tip}</code> is a short line for the lowest-scoring pillar (excluding N/A / no-data pillars).</div>
                 </div>
                 <div class="grid-2" style="margin-bottom: 12px;">
                   <div class="form-group">
@@ -13080,7 +13291,6 @@ class EnergyPanel extends HTMLElement {
 
       setTimeout(async () => {
         await this._loadPowerData({ force: true });
-        void this._loadRoomRatings();
         this._render();
         this._startRefresh();
         if (!this._showSettings) {
