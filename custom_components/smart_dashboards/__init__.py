@@ -58,9 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     cm_ratings = hass.data[DOMAIN]["config_manager"]
 
     def _room_ratings_run_sync() -> None:
-        full = recompute_room_ratings(
-            hass, cm_ratings, engagement_user_key=None, persist=True
-        )
+        full = recompute_room_ratings(hass, cm_ratings, persist=True)
         hass.data[DOMAIN]["room_ratings_cache"] = ratings_payload_for_ws(full)
 
     async def _room_ratings_tick(_now: datetime) -> None:

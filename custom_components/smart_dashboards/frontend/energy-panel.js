@@ -7100,7 +7100,31 @@ class EnergyPanel extends HTMLElement {
     const engagementNa = pillarMeta.engagement === 'na';
     const heroIntro = engagementNa
       ? 'Your score blends the four pillars below (engagement does not apply to this room). Each pillar is 0–100; the composite averages the pillars that apply.'
-      : 'Your score blends the five pillars below. Each is 0–100; the composite index is their average.';
+      : 'Your score blends the five pillars below. Engagement reflects this room’s assigned person’s dashboard use. Each pillar is 0–100; the composite averages the pillars that apply.';
+
+    const personEnt = String(room?.presence_person_entity || '').trim();
+    const personState =
+      personEnt && this._hass?.states ? this._hass.states[personEnt] : null;
+    const personNameRaw =
+      (personState?.attributes?.friendly_name || '').trim() ||
+      (personEnt.startsWith('person.')
+        ? personEnt.slice(7).replace(/_/g, ' ')
+        : 'This person');
+    const effEng = this._config?.efficiency_settings?.engagement_max_visits_per_hour;
+    const engagementCapN =
+      effEng != null && Number.isFinite(Number(effEng))
+        ? Math.max(1, Math.min(10, Math.round(Number(effEng))))
+        : 2;
+    const engMeta = pillarMeta.engagement || 'ok';
+    let engagementDesc;
+    if (engMeta === 'na') {
+      engagementDesc =
+        'Engagement applies when this room has an assigned person; it measures that person’s dashboard opens, not yours.';
+    } else if (engMeta === 'no_data') {
+      engagementDesc = `How often the assigned person opens this Home Energy dashboard (up to ${engagementCapN} visits per clock hour; spreading use across many hours scores higher). No recorded visits for them in the lookback window yet.`;
+    } else {
+      engagementDesc = `How often ${personNameRaw} opens this Home Energy dashboard (up to ${engagementCapN} visits per clock hour; spreading use across many hours of the day scores higher).`;
+    }
 
     this.shadowRoot.querySelector('.room-rating-modal-overlay')?.remove();
     const overlay = document.createElement('div');
@@ -7152,12 +7176,7 @@ class EnergyPanel extends HTMLElement {
             'Load pattern',
             'Rewards steadier use; many minutes above about 100 W in the rolling window lowers this score.',
           )}
-          ${scoreRow(
-            5,
-            'engagement',
-            'Dashboard engagement',
-            'How often you open this dashboard as your Home Assistant user (capped visits per hour), compared to spreading use across many hours of the day.',
-          )}
+          ${scoreRow(5, 'engagement', 'Dashboard engagement', engagementDesc)}
         </div>
         <p class="room-rating-modal-footnote">Refreshes about every hour.</p>
       </div>
@@ -9050,7 +9069,7 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Daily digest (push)</div>
                 <p style="color: var(--secondary-text-color); font-size: 10px; margin: 0 0 10px;">
                   Sends once per day at the chosen local time for each room that has a <strong>Presence person</strong> (<code>person.*</code>).
-                  Requires <strong>Notifications</strong> enabled and a mobile notify target for that person. Uses saved rating scores (household-mean engagement).
+                  Requires <strong>Notifications</strong> enabled and a mobile notify target for that person. Uses saved rating scores (engagement is per assigned person’s linked HA user).
                 </p>
                 <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: pointer;">
                   <input type="checkbox" id="eff-digest-enabled" ${effSettings.efficiency_digest_enabled ? 'checked' : ''} style="width: 18px; height: 18px;">

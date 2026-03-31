@@ -22,6 +22,61 @@ ENGAGEMENT_LOOKBACK_DAYS = 7
 
 PILLAR_KEYS = ("compliance", "warning", "consumption", "load", "engagement")
 
+_PERSON_DOMAIN = "person"
+
+
+def engagement_user_key_from_person(hass: HomeAssistant, person_entity_id: str) -> str | None:
+    """Map ``person.*`` to the HA auth user id string used in ``engagement_visits`` keys.
+
+    Prefer ``user_id`` on person state (set when the person is linked to a user in HA).
+    Then scan person YAML/storage collections. Finally match person ``friendly_name`` to
+    an active auth user's ``name`` (same idea as toggle auth).
+    """
+    pe = str(person_entity_id or "").strip().lower()
+    if not pe.startswith("person."):
+        return None
+    want_slug = pe.split(".", 1)[-1].strip().lower()
+
+    st = hass.states.get(pe)
+    if st:
+        uid = st.attributes.get("user_id")
+        if uid is not None and str(uid).strip():
+            return str(uid).strip()
+
+    dom = hass.data.get(_PERSON_DOMAIN)
+    if isinstance(dom, (tuple, list)) and len(dom) >= 2:
+        for coll in (dom[0], dom[1]):
+            raw_data = getattr(coll, "data", None)
+            if not isinstance(raw_data, dict):
+                continue
+            for item in raw_data.values():
+                if not isinstance(item, dict):
+                    continue
+                pid = str(item.get("id") or "").strip().lower()
+                if pid != want_slug:
+                    continue
+                uid = item.get("user_id")
+                if uid is not None and str(uid).strip():
+                    return str(uid).strip()
+
+    if st:
+        pname = str(st.attributes.get("friendly_name") or "").strip().lower()
+        if pname:
+            auth = getattr(hass, "auth", None)
+            users_map = getattr(auth, "_users", None) if auth is not None else None
+            if isinstance(users_map, dict):
+                for u in users_map.values():
+                    if not getattr(u, "is_active", True):
+                        continue
+                    uname = str(getattr(u, "name", None) or "").strip().lower()
+                    if uname and uname == pname:
+                        return str(getattr(u, "id", "") or "").strip() or None
+    _LOGGER.debug(
+        "No engagement user key for %s; link person to a user in Settings → People",
+        pe,
+    )
+    return None
+
 
 def merge_efficiency_scoring_params(raw: dict[str, Any] | None) -> dict[str, Any]:
     """Clamp efficiency scoring fields from config (defaults from ``DEFAULT_CONFIG``)."""
@@ -291,40 +346,24 @@ def _user_has_engagement_activity(
     return False
 
 
-def _engagement_user_keys_in_window(
-    visits_root: dict[str, Any], now: datetime, lookback_days: int
-) -> list[str]:
-    keys: set[str] = set()
-    for i in range(lookback_days):
-        d = (now - timedelta(days=i)).strftime("%Y-%m-%d")
-        day_users = visits_root.get(d) or {}
-        if isinstance(day_users, dict):
-            keys.update(str(k) for k in day_users if isinstance(day_users.get(k), dict))
-    return sorted(keys)
-
-
-def _engagement_score_for_mode(
+def _engagement_score_for_assignee(
+    hass: HomeAssistant,
     visits_root: dict[str, Any],
     now: datetime,
-    engagement_user_key: str | None,
+    presence_person_entity: str,
     room_has_presence: bool,
     p: dict[str, Any],
 ) -> tuple[float, str]:
-    """Returns (score, meta) where meta is ok | no_data | na."""
+    """Engagement for the HA user linked to the room's ``presence_person_entity`` only."""
     lb = int(p["engagement_lookback_days"])
     if not room_has_presence:
         return 0.0, "na"
-    if engagement_user_key is not None:
-        if not _user_has_engagement_activity(
-            visits_root, now, engagement_user_key, lb
-        ):
-            return 0.0, "no_data"
-        return _score_engagement_for_user(visits_root, now, engagement_user_key, p), "ok"
-    user_keys = _engagement_user_keys_in_window(visits_root, now, lb)
-    if not user_keys:
+    assignee_key = engagement_user_key_from_person(hass, presence_person_entity)
+    if not assignee_key:
         return 0.0, "no_data"
-    parts = [_score_engagement_for_user(visits_root, now, uk, p) for uk in user_keys]
-    return sum(parts) / len(parts), "ok"
+    if not _user_has_engagement_activity(visits_root, now, assignee_key, lb):
+        return 0.0, "no_data"
+    return _score_engagement_for_user(visits_root, now, assignee_key, p), "ok"
 
 
 def _stars_from_average(avg: float) -> float:
@@ -341,14 +380,15 @@ def _default_pillar_meta() -> dict[str, str]:
 def recompute_room_ratings(
     hass: HomeAssistant,
     config_manager: Any,
-    engagement_user_key: str | None = None,
     *,
     persist: bool = True,
 ) -> dict[str, Any]:
     """Synchronous recompute; call from executor if desired. Returns full store dict.
 
-    When ``persist`` is False (e.g. WebSocket with viewer-specific engagement), scores are
-    not written to disk so hourly snapshots stay household-averaged.
+    Engagement uses each room's ``presence_person_entity`` → linked HA user only
+    (``engagement_visits`` keys match ``str(user.id)``).
+
+    When ``persist`` is False, scores are not written to disk (e.g. on-demand WS load).
     """
     p = efficiency_scoring_params_from_manager(config_manager)
     path = ratings_store_path(hass)
@@ -435,10 +475,11 @@ def recompute_room_ratings(
         if not (hist.get("watts") or []):
             meta["load"] = "no_data"
 
-        engagement, eng_meta = _engagement_score_for_mode(
+        engagement, eng_meta = _engagement_score_for_assignee(
+            hass,
             visits_root,
             now,
-            engagement_user_key,
+            presence_raw,
             room_has_presence,
             p,
         )
