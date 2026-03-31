@@ -2718,26 +2718,21 @@ async def websocket_get_room_ratings(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Recompute room ratings for this viewer (engagement) without persisting or clobbering cache."""
+    """Recompute room ratings without persisting; refresh shared cache on success."""
     config_manager = hass.data.get(DOMAIN, {}).get("config_manager")
     if not config_manager:
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
         return
 
     domain_data = hass.data.setdefault(DOMAIN, {})
-    viewer_key = _dashboard_ws_user_key(connection)
 
     def _recompute_and_payload() -> dict[str, Any]:
-        full = recompute_room_ratings(
-            hass,
-            config_manager,
-            engagement_user_key=viewer_key,
-            persist=False,
-        )
+        full = recompute_room_ratings(hass, config_manager, persist=False)
         return ratings_payload_for_ws(full)
 
     try:
         payload = await hass.async_add_executor_job(_recompute_and_payload)
+        domain_data["room_ratings_cache"] = payload
     except Exception:
         _LOGGER.exception("smart_dashboards/get_room_ratings recompute failed")
         cached = domain_data.get("room_ratings_cache")
