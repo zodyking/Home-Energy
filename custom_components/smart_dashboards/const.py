@@ -275,9 +275,7 @@ DEFAULT_CONFIG = {
             "efficiency_digest_time": "08:00",
             "efficiency_digest_title": "{notification_title} {room_name} efficiency",
             "efficiency_digest_message": (
-                "{room_name}: index {average}/100, {stars} stars. "
-                "Compliance {compliance}, warnings {warning}, consumption {consumption}, "
-                "load {load}, engagement {engagement}."
+                "{room_name}: {stars} stars ({average}/100). {worst_pillar_tip}"
             ),
         },
     },
