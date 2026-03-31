@@ -2717,12 +2717,31 @@ async def websocket_get_room_ratings(
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
         return
 
+    domain_data = hass.data.setdefault(DOMAIN, {})
+
     def _recompute_and_payload() -> dict[str, Any]:
         full = recompute_room_ratings(hass, config_manager)
         return ratings_payload_for_ws(full)
 
-    payload = await hass.async_add_executor_job(_recompute_and_payload)
-    hass.data.setdefault(DOMAIN, {})["room_ratings_cache"] = payload
+    try:
+        payload = await hass.async_add_executor_job(_recompute_and_payload)
+    except Exception:
+        _LOGGER.exception("smart_dashboards/get_room_ratings recompute failed")
+        cached = domain_data.get("room_ratings_cache")
+        if isinstance(cached, dict) and isinstance(cached.get("rooms"), dict):
+            payload = cached
+        else:
+
+            def _load_file_payload() -> dict[str, Any]:
+                return ratings_payload_for_ws(load_ratings(ratings_store_path(hass)))
+
+            try:
+                payload = await hass.async_add_executor_job(_load_file_payload)
+            except Exception:
+                _LOGGER.exception("get_room_ratings fallback file load failed")
+                payload = ratings_payload_for_ws({"rooms": {}})
+
+    domain_data["room_ratings_cache"] = payload
     connection.send_result(msg["id"], payload)
 
 
