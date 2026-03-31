@@ -574,6 +574,30 @@ class ConfigManager:
                                 pass
                     elif v:
                         ss_result[k] = str(v).strip()
+            if "efficiency_settings" in energy:
+                es_result = result["energy"]["efficiency_settings"]
+                ev = energy["efficiency_settings"]
+                if isinstance(ev, dict):
+                    for k in list(es_result.keys()):
+                        if k not in ev:
+                            continue
+                        val = ev[k]
+                        if val is None:
+                            continue
+                        if isinstance(es_result[k], bool):
+                            es_result[k] = _coerce_bool(val, es_result[k])
+                        elif isinstance(es_result[k], (int, float)) and not isinstance(
+                            es_result[k], bool
+                        ):
+                            try:
+                                if isinstance(es_result[k], int):
+                                    es_result[k] = int(float(val))
+                                else:
+                                    es_result[k] = float(val)
+                            except (TypeError, ValueError):
+                                pass
+                        elif isinstance(es_result[k], str):
+                            es_result[k] = str(val).strip()
 
         return result
 
@@ -583,7 +607,13 @@ class ConfigManager:
         default_energy = DEFAULT_CONFIG["energy"]
         merged = dict(energy_config)
         # Preserve existing values when incoming config omits or sends empty structured fields
-        for key in ("power_enforcement", "statistics_settings", "breaker_lines", "breaker_panel_size"):
+        for key in (
+            "power_enforcement",
+            "statistics_settings",
+            "efficiency_settings",
+            "breaker_lines",
+            "breaker_panel_size",
+        ):
             val = merged.get(key)
             if key not in merged:
                 merged[key] = existing.get(key, default_energy.get(key))
@@ -1450,6 +1480,114 @@ class ConfigManager:
             "statistics_refresh_seconds": max(
                 15,
                 min(600, _safe_int(stats.get("statistics_refresh_seconds"), default_refresh)),
+            ),
+        }
+
+        default_eff = DEFAULT_CONFIG["energy"]["efficiency_settings"]
+        es = config.get("efficiency_settings", {})
+        if not isinstance(es, dict):
+            es = {}
+        validated["efficiency_settings"] = {
+            "history_window_days": max(
+                1,
+                min(90, _safe_int(es.get("history_window_days"), default_eff["history_window_days"])),
+            ),
+            "engagement_lookback_days": max(
+                1,
+                min(
+                    30,
+                    _safe_int(es.get("engagement_lookback_days"), default_eff["engagement_lookback_days"]),
+                ),
+            ),
+            "compliance_tolerance": max(
+                1.0,
+                min(1.5, _safe_float(es.get("compliance_tolerance"), default_eff["compliance_tolerance"])),
+            ),
+            "warning_points_per_event": max(
+                0.25,
+                min(
+                    25.0,
+                    _safe_float(es.get("warning_points_per_event"), default_eff["warning_points_per_event"]),
+                ),
+            ),
+            "consumption_peer_multiplier": max(
+                0.5,
+                min(
+                    5.0,
+                    _safe_float(
+                        es.get("consumption_peer_multiplier"),
+                        default_eff["consumption_peer_multiplier"],
+                    ),
+                ),
+            ),
+            "load_high_watts": max(
+                1.0,
+                min(5000.0, _safe_float(es.get("load_high_watts"), default_eff["load_high_watts"])),
+            ),
+            "load_penalty_per_high_hour": max(
+                0.0,
+                min(
+                    50.0,
+                    _safe_float(
+                        es.get("load_penalty_per_high_hour"),
+                        default_eff["load_penalty_per_high_hour"],
+                    ),
+                ),
+            ),
+            "engagement_distinct_hours_target": max(
+                1,
+                min(
+                    24,
+                    _safe_int(
+                        es.get("engagement_distinct_hours_target"),
+                        default_eff["engagement_distinct_hours_target"],
+                    ),
+                ),
+            ),
+            "engagement_hours_weight": max(
+                0.0,
+                min(100.0, _safe_float(es.get("engagement_hours_weight"), default_eff["engagement_hours_weight"])),
+            ),
+            "engagement_visits_weight": max(
+                0.0,
+                min(
+                    100.0,
+                    _safe_float(es.get("engagement_visits_weight"), default_eff["engagement_visits_weight"]),
+                ),
+            ),
+            "engagement_visits_daily_norm": max(
+                1.0,
+                min(
+                    48.0,
+                    _safe_float(
+                        es.get("engagement_visits_daily_norm"),
+                        default_eff["engagement_visits_daily_norm"],
+                    ),
+                ),
+            ),
+            "engagement_max_visits_per_hour": max(
+                1,
+                min(
+                    10,
+                    _safe_int(
+                        es.get("engagement_max_visits_per_hour"),
+                        default_eff["engagement_max_visits_per_hour"],
+                    ),
+                ),
+            ),
+            "efficiency_digest_enabled": _coerce_bool(
+                es.get("efficiency_digest_enabled", default_eff["efficiency_digest_enabled"]),
+                default_eff["efficiency_digest_enabled"],
+            ),
+            "efficiency_digest_time": _validate_budget_boost_announce_time(
+                es.get("efficiency_digest_time"),
+                str(default_eff["efficiency_digest_time"]),
+            ),
+            "efficiency_digest_title": str(
+                es.get("efficiency_digest_title") or default_eff["efficiency_digest_title"]
+            ),
+            "efficiency_digest_message": str(
+                es.get("efficiency_digest_message") or default_eff["efficiency_digest_message"]
             ),
         }
 

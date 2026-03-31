@@ -16,8 +16,13 @@ from homeassistant.util import dt as dt_util
 
 from .config_manager import vent_like_energy_tracking_key
 from .const import DEFAULT_NOTIFICATION_TITLE, DOMAIN
+from .efficiency_digest import (
+    async_reschedule_efficiency_digest,
+    async_send_efficiency_digest_test,
+)
 from .mobile_notify_target import async_send_notify_push
 from .room_ratings import (
+    efficiency_scoring_params_from_manager,
     load_ratings,
     ratings_payload_for_ws,
     ratings_store_path,
@@ -201,6 +206,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_refresh_zone_health)
     websocket_api.async_register_command(hass, websocket_get_room_ratings)
     websocket_api.async_register_command(hass, websocket_dashboard_heartbeat)
+    websocket_api.async_register_command(hass, websocket_send_efficiency_digest_test)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -246,6 +252,7 @@ async def websocket_save_energy(
         _clear_recorder_derived_caches()
         connection.send_result(msg["id"], {"success": True})
         hass.async_create_task(_prime_statistics_cache(hass))
+        hass.async_create_task(async_reschedule_efficiency_digest(hass))
     except Exception as e:
         _LOGGER.exception("Failed to save energy config: %s", e)
         connection.send_error(msg["id"], "save_failed", str(e))
@@ -2751,6 +2758,35 @@ async def websocket_get_room_ratings(
 
 
 @websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/send_efficiency_digest_test",
+        vol.Required("target_person"): str,
+        vol.Optional("room_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_send_efficiency_digest_test(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Send a sample efficiency digest notification (same templates as daily digest)."""
+    ok, err = await async_send_efficiency_digest_test(
+        hass,
+        msg["target_person"],
+        msg.get("room_id"),
+    )
+    if ok:
+        connection.send_result(msg["id"], {"success": True})
+        return
+    connection.send_error(
+        msg["id"],
+        "efficiency_digest_test_failed",
+        err or "Failed to send efficiency digest test.",
+    )
+
+
+@websocket_api.websocket_command(
     {vol.Required("type"): "smart_dashboards/dashboard_heartbeat"}
 )
 @websocket_api.async_response
@@ -2762,10 +2798,18 @@ async def websocket_dashboard_heartbeat(
     """Record a dashboard visit for engagement scoring (throttled server-side)."""
     path = ratings_store_path(hass)
     user_key = _dashboard_ws_user_key(connection)
+    config_manager = hass.data.get(DOMAIN, {}).get("config_manager")
 
     def _beat() -> None:
         data = load_ratings(path)
-        record_dashboard_heartbeat(data, user_key)
+        cap = None
+        if config_manager is not None:
+            cap = int(
+                efficiency_scoring_params_from_manager(config_manager)[
+                    "engagement_max_visits_per_hour"
+                ]
+            )
+        record_dashboard_heartbeat(data, user_key, max_per_hour=cap)
         save_ratings(path, data)
 
     await hass.async_add_executor_job(_beat)

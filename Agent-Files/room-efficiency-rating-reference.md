@@ -2,7 +2,7 @@
 
 Purpose: How Smart Dashboards room efficiency scores are computed, where data comes from, and what to edit when tuning behavior.
 
-Related code: `custom_components/smart_dashboards/room_ratings.py`, `websocket.py` (`get_room_ratings`), `__init__.py` (hourly job), `frontend/energy-panel.js` (stars + modal).
+Related code: `custom_components/smart_dashboards/room_ratings.py`, `efficiency_digest.py`, `websocket.py` (`get_room_ratings`, `save_energy`), `__init__.py` (hourly job + digest schedule), `config_manager.py` / `const.py` (`efficiency_settings`), `frontend/energy-panel.js` (Efficiency settings tab, stars + modal).
 
 This is **not** Home Assistant’s Statistics API. It uses integration daily/intraday history plus `config/data/smart_dashboards_room_ratings.json`.
 
@@ -13,7 +13,7 @@ This is **not** Home Assistant’s Statistics API. It uses integration daily/int
 ```mermaid
 flowchart TB
   subgraph sources [Data sources]
-    DH[get_daily_history 14d plus today]
+    DH[get_daily_history N days plus today]
     IH[get_room_intraday_history room_id 1440]
     JSON[smart_dashboards_room_ratings.json]
     CFG[energy_config rooms kwh_budget etc]
@@ -79,11 +79,11 @@ Pillars with **`no_data`** contribute **0** to the sum but **still count** in th
 
 | Pillar | Function | Input data | Logic summary |
 |--------|----------|------------|----------------|
-| **1 Compliance** | `_score_compliance` | Per-day `wh` list vs room `kwh_budget` | Requires daily `wh` history. If **no** `wh` series for the room: **0** + `no_data`. Else: fraction of days where `used_kwh <= budget_kwh * 1.02`, times 100. |
-| **2 Warnings** | `_score_warning` | Lists `warnings`, `shutoffs`, `power_cycles` | If **no** daily row / no `wh` (same block as compliance): **0** + `no_data`. If rows exist: `100 - min(100, total_events * 4)`. |
-| **3 Consumption** | `_score_consumption` | Room **average daily Wh** vs **median** of other rooms’ averages | If no usable peer median (`median_peer <= 0`) or missing consumption context: **0** + `no_data`. Else score from ratio `avg_wh / (median_peer * 1.5)` mapped to 0–100. |
-| **4 Load** | `_score_load` | `get_room_intraday_history(legacy_room_id, 1440)` → minute `watts[]` | Empty `watts`: **0** + `no_data`. Else: count minutes with `w > 100`; `100 - min(100, (high_minutes / 60) * 8)`. |
-| **5 Engagement** | `_score_engagement_for_user` + `_engagement_score_for_mode` | `engagement_visits` in JSON, last **7** days | **No** `presence_person_entity`: **0**, `na`, **excluded** from composite mean. **With** person: **per Home Assistant user** on `get_room_ratings` (WebSocket user key); **hourly** job uses the **mean** of per-user scores over all user keys seen in the window. Max **2** visits per user per clock hour; score rewards up to **12** distinct hours per day (rolling window). Viewer with no activity in window: **0** + `no_data`. |
+| **1 Compliance** | `_score_compliance` | Per-day `wh` list vs room `kwh_budget` | Requires daily `wh` history. If **no** `wh` series for the room: **0** + `no_data`. Else: fraction of days where `used_kwh <= budget_kwh * compliance_tolerance`, times 100. Defaults: tolerance **1.02**, history window **14** days (both configurable). |
+| **2 Warnings** | `_score_warning` | Lists `warnings`, `shutoffs`, `power_cycles` | If **no** daily row / no `wh` (same block as compliance): **0** + `no_data`. If rows exist: `100 - min(100, total_events * warning_points_per_event)`. Default **4** points per event. |
+| **3 Consumption** | `_score_consumption` | Room **average daily Wh** vs **median** of other rooms’ averages | If no usable peer median (`median_peer <= 0`) or missing consumption context: **0** + `no_data`. Else score from ratio `avg_wh / (median_peer * consumption_peer_multiplier)` mapped to 0–100. Default multiplier **1.5**. |
+| **4 Load** | `_score_load` | `get_room_intraday_history(legacy_room_id, 1440)` → minute `watts[]` | Empty `watts`: **0** + `no_data`. Else: count minutes with `w > load_high_watts`; `100 - min(100, (high_minutes / 60) * load_penalty_per_high_hour)`. Defaults **100** W, penalty **8**. |
+| **5 Engagement** | `_score_engagement_for_user` + `_engagement_score_for_mode` | `engagement_visits` in JSON, last **N** days (`engagement_lookback_days`) | **No** `presence_person_entity`: **0**, `na`, **excluded** from composite mean. **With** person: **per Home Assistant user** on `get_room_ratings`; **hourly** job uses **mean** per-user scores. Capped visits per clock hour (`engagement_max_visits_per_hour`, default **2**). Score uses distinct-hour target (`engagement_distinct_hours_target`, default **12**), weights (`engagement_hours_weight` / `engagement_visits_weight`, default **70** / **30**), and daily visit norm (`engagement_visits_daily_norm`, default **2**) for the visits component. |
 
 **Room keys:** Scores are stored under **`canonical_room_id(room)`**. Daily history rows use **`_room_history_row`** (canonical vs **legacy** slug from `legacy_room_id_history`). **Load** uses **`legacy_id`** for intraday history only.
 
@@ -115,16 +115,36 @@ flowchart LR
 
 ---
 
-## Constants (tweak in `room_ratings.py`)
+## Configurable settings (`efficiency_settings`)
 
-| Constant | Value | Role |
-|----------|-------|------|
-| `WINDOW_DAYS` | 14 | Days of daily history for compliance / warnings / consumption inputs |
-| `ENGAGEMENT_LOOKBACK_DAYS` | 7 | Days rolled into engagement score |
-| Compliance tolerance | `1.02` | `budget_kwh * tol` cap per day |
-| Warning penalty | `4` points per event (capped) | See `_score_warning` |
-| Load threshold | `100` W per minute | Minutes above this penalize load |
-| Load penalty | `8` per “high hour” | `hours_high * 8` subtracted from 100 |
+Stored under **`energy.efficiency_settings`** in the integration config (defaults in `const.py`). The Energy panel **Settings → Efficiency** tab edits these; values are merged and validated in `config_manager.py` and applied via `merge_efficiency_scoring_params` / `efficiency_scoring_params_from_manager` in `room_ratings.py`.
+
+| Key | Role |
+|-----|------|
+| `history_window_days` | Daily history depth for compliance / warnings / consumption |
+| `engagement_lookback_days` | Days of `engagement_visits` considered for engagement |
+| `compliance_tolerance` | Multiplier on `kwh_budget` for daily compliance cap |
+| `warning_points_per_event` | Points subtracted per warning/shutoff/cycle event |
+| `consumption_peer_multiplier` | Divisor multiplier with peer median in consumption ratio |
+| `load_high_watts` | Minute power threshold for “high load” minutes |
+| `load_penalty_per_high_hour` | Subtracted per hour of aggregated high-load time |
+| `engagement_distinct_hours_target` | Target distinct clock-hours for the hours part of engagement |
+| `engagement_hours_weight` / `engagement_visits_weight` | Weights for the two parts (each 0–100) |
+| `engagement_visits_daily_norm` | Scale for capped visit counts in the visits part (default **2**, same role as legacy `/ 2` divisor) |
+| `engagement_max_visits_per_hour` | Cap in scoring **and** in `record_dashboard_heartbeat` |
+
+Module-level `WINDOW_DAYS` / `ENGAGEMENT_LOOKBACK_DAYS` in `room_ratings.py` remain as documentation defaults; runtime uses **`efficiency_settings`**.
+
+---
+
+## Daily efficiency digest (optional push)
+
+- **Module:** `efficiency_digest.py`. **Schedule:** `async_track_time_change` at **`efficiency_digest_time`** (local, `HH:MM`), registered from `__init__.py` and **re-registered** after each successful `save_energy` (so time changes apply without restart).
+- **Gates:** `efficiency_digest_enabled` and **`tts_settings.notifications_enabled`** must both be true.
+- **Recipients:** Each configured room with a valid **`presence_person_entity`** (`person.*`) gets **one** push to that person’s mobile notify target (same resolution as other dashboard notifications).
+- **Content:** Title and message templates (`efficiency_digest_title`, `efficiency_digest_message`) support `{notification_title}`, `{room_name}`, `{average}`, `{stars}`, `{compliance}`, `{warning}`, `{consumption}`, `{load}`, `{engagement}`. Scores come from **persisted** `smart_dashboards_room_ratings.json` (household **mean** engagement, same as hourly snapshot—not per-person engagement).
+- **De-dupe:** After a run, `smart_dashboards_data/efficiency_digest_state.json` stores `last_sent` (local date) so the same calendar day is not processed twice (including across restarts).
+- **Test:** WebSocket `smart_dashboards/send_efficiency_digest_test` with `target_person` and optional `room_id` (must match the room’s assigned person if provided).
 
 ---
 
@@ -132,7 +152,7 @@ flowchart LR
 
 - **On demand:** WebSocket `smart_dashboards/get_room_ratings` runs `recompute_room_ratings(..., engagement_user_key=<viewer>, persist=False)` in an executor. The response is **viewer-specific** for engagement. It **does not** write JSON and **does not** overwrite `room_ratings_cache` (so the next client still benefits from the hourly household snapshot unless it recomputes too).
 - **Scheduled:** `async_track_time_interval` **every hour** in `__init__.py` runs `recompute_room_ratings(..., engagement_user_key=None, persist=True)`, then sets **`room_ratings_cache`** from `ratings_payload_for_ws`. This persists **mean engagement** across HA users and is the shared cache.
-- **Engagement input:** `smart_dashboards/dashboard_heartbeat` → `record_dashboard_heartbeat` (max **2** counts per HA user per clock hour) in `engagement_visits`.
+- **Engagement input:** `smart_dashboards/dashboard_heartbeat` → `record_dashboard_heartbeat` (max **`engagement_max_visits_per_hour`** per HA user per clock hour) in `engagement_visits`.
 - **File:** `config/data/smart_dashboards_room_ratings.json`.
 - **Panel:** `_loadRoomRatings()` in `energy-panel.js`; header stars + modal uses **`pillar_meta`** for “No data yet” / “Non applicable”.
 
@@ -142,11 +162,12 @@ flowchart LR
 
 | Goal | File |
 |------|------|
-| Change formulas, windows, neutral defaults | `room_ratings.py` |
-| Weight pillars differently (today equal mean of applicable set) | `room_ratings.py` — composite block in `recompute_room_ratings` |
+| Tunable scoring parameters (windows, tolerances, weights, caps) | **Settings → Efficiency** (or `efficiency_settings` in config / `const.py` defaults) |
+| Change formula structure or composite rules | `room_ratings.py` |
 | Recompute frequency | `__init__.py` — hourly interval |
 | Modal labels / explanatory copy | `energy-panel.js` — `_openRoomRatingModal` |
 | Viewer vs hourly engagement / cache rules | `websocket.py`, `__init__.py` |
+| Daily digest time, templates, enable | **Settings → Efficiency**; `efficiency_digest.py` |
 
 ---
 

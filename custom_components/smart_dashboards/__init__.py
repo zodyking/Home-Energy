@@ -71,6 +71,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, _room_ratings_tick, timedelta(hours=1)
     )
 
+    from .efficiency_digest import async_setup_efficiency_digest
+
+    await async_setup_efficiency_digest(hass)
+
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(async_options_update_listener))
 
@@ -90,6 +94,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ratings_unsub = hass.data.get(DOMAIN, {}).get("room_ratings_unsub")
     if ratings_unsub:
         ratings_unsub()
+
+    digest_unsub = hass.data.get(DOMAIN, {}).get("efficiency_digest_unsub")
+    if callable(digest_unsub):
+        digest_unsub()
 
     # Stop energy monitor (unregister listeners, cancel task)
     energy_monitor = hass.data.get(DOMAIN, {}).get("energy_monitor")
