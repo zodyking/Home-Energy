@@ -147,6 +147,9 @@ class EnergyPanel extends HTMLElement {
     this._statsPieSyncChain = Promise.resolve();
     this._statPieBillingDelegation = false;
     this._applianceToggleDelegation = false;
+    /** Appliance card context menu: Escape handler + scroll-close. */
+    this._applianceMenuEsc = null;
+    this._applianceMenuScrollClose = null;
     this._summaryStatsResizeObs = null;
     this._summaryStatsWindowResizeBound = null;
     this._summaryFitDebounce = null;
@@ -251,6 +254,7 @@ class EnergyPanel extends HTMLElement {
       this._roomsGridResizeObserver = null;
     }
     this.shadowRoot?.querySelector('.room-rating-modal-overlay')?.remove();
+    this._closeApplianceMenu();
     this._teardownBillingBarChartNative();
     this._unsubscribeFromStatisticsUpdates();
   }
@@ -4150,6 +4154,55 @@ class EnergyPanel extends HTMLElement {
         color: var(--panel-accent, #03a9f4);
       }
 
+      .appliance-context-menu-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 1100;
+        background: transparent;
+      }
+      .appliance-context-menu {
+        position: fixed;
+        z-index: 1101;
+        min-width: 200px;
+        max-width: min(92vw, 280px);
+        padding: 6px;
+        margin: 0;
+        border-radius: 10px;
+        border: 1px solid var(--card-border, rgba(255,255,255,0.14));
+        background: var(--card-bg, #1c1c1c);
+        box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+        box-sizing: border-box;
+      }
+      .appliance-context-menu-item {
+        display: block;
+        width: 100%;
+        margin: 0;
+        padding: 10px 12px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--primary-text-color, #e8e8e8);
+        font: inherit;
+        font-size: 14px;
+        text-align: left;
+        cursor: pointer;
+        min-height: 44px;
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .appliance-context-menu-item:hover,
+      .appliance-context-menu-item:focus-visible {
+        background: rgba(255, 255, 255, 0.08);
+        outline: none;
+      }
+      .appliance-context-menu-item:focus-visible {
+        outline: 2px solid var(--panel-accent, #03a9f4);
+        outline-offset: 0;
+      }
+      .appliance-context-menu-item + .appliance-context-menu-item {
+        margin-top: 2px;
+      }
+
       .graph-modal-overlay {
         position: fixed;
         inset: 0;
@@ -4312,6 +4365,8 @@ class EnergyPanel extends HTMLElement {
         display: flex;
         flex-direction: column;
         box-sizing: border-box;
+        container-type: inline-size;
+        container-name: billing-bar;
       }
       .billing-bar-chart-body {
         display: flex;
@@ -4398,6 +4453,9 @@ class EnergyPanel extends HTMLElement {
       .billing-bar-x-labels--dense {
         min-height: 4.5em;
       }
+      .billing-bar-x-labels--hourly {
+        min-height: 1.35em;
+      }
       .billing-bar-x-label {
         flex: 1;
         min-width: 0;
@@ -4414,6 +4472,16 @@ class EnergyPanel extends HTMLElement {
       .billing-bar-x-labels--dense .billing-bar-x-label {
         font-size: 9px;
         -webkit-line-clamp: 3;
+      }
+      .billing-bar-x-labels--hourly .billing-bar-x-label {
+        display: block;
+        -webkit-line-clamp: unset;
+        -webkit-box-orient: unset;
+        word-break: normal;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font-size: clamp(6px, 2.4cqi, 9px);
+        line-height: 1.2;
       }
       .billing-bar-tooltip {
         position: absolute;
@@ -5853,6 +5921,9 @@ class EnergyPanel extends HTMLElement {
     if (!go) return 'History';
     const type = go.type;
     const roomName = go.roomName || '';
+    if (type === 'outlet_wh' && go.outletGraphTitle) {
+      return go.outletGraphTitle;
+    }
     const labels = {
       total_wh: 'Usage (kWh)', total_watts_intraday: 'Power now (W)', total_wh_intraday: 'Home kWh today (minute data)',
       total_warnings: 'Threshold Warnings (24h)', total_shutoffs: 'Safety Shutoffs (24h)',
@@ -6001,12 +6072,17 @@ class EnergyPanel extends HTMLElement {
    * - Intraday W: get_intraday_history (timestamps + watts).
    * - Intraday kWh (home): cumulative area + reference_kwh_today offset to match day ledger.
    * - Intraday kWh (room): same intraday fetch, native 24 hourly kWh bars.
+   * - Intraday kWh (outlet): get_intraday_history with outlet_index (+ plug_slot for dual outlet).
    * - Stat billing (stat_*): get_daily_history date_start/end → bar chart kWh/day.
    * - Legacy daily (31d): get_daily_history days=31 for total_* / room_* non-intraday types.
    */
-  async _openGraph(type, roomId = null, roomName = null, billingRange = null) {
+  async _openGraph(type, roomId = null, roomName = null, billingRange = null, graphOpts = null) {
     try {
-      const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
+      const isIntraday =
+        type === 'total_watts_intraday' ||
+        type === 'total_wh_intraday' ||
+        type === 'room_wh' ||
+        type === 'outlet_wh';
       const isStatBilling = type === 'stat_total_wh' || type === 'stat_room_wh';
       const isEventLog = this._isEventLogType(type);
       let result;
@@ -6042,6 +6118,15 @@ class EnergyPanel extends HTMLElement {
           });
         }
         billingRange = br;
+      } else if (type === 'outlet_wh' && graphOpts && graphOpts.outletIndex != null) {
+        const payload = {
+          type: 'smart_dashboards/get_intraday_history',
+          minutes: 1440,
+          room_id: roomId,
+          outlet_index: graphOpts.outletIndex,
+        };
+        if (graphOpts.plugSlot != null) payload.plug_slot = graphOpts.plugSlot;
+        result = await this._hass.callWS(payload);
       } else if (isIntraday) {
         const payload = { type: 'smart_dashboards/get_intraday_history', minutes: 1440 };
         if (roomId) payload.room_id = roomId;
@@ -6055,6 +6140,10 @@ class EnergyPanel extends HTMLElement {
         roomName,
         date_start: billingRange?.date_start || null,
         date_end: billingRange?.date_end || null,
+        outletIndex: graphOpts?.outletIndex ?? null,
+        plugSlot: graphOpts?.plugSlot ?? null,
+        outletGraphTitle: graphOpts?.outletGraphTitle ?? null,
+        outletSeriesLabel: graphOpts?.outletSeriesLabel ?? null,
       };
       this._graphData = result;
       this._render();
@@ -6144,6 +6233,7 @@ class EnergyPanel extends HTMLElement {
       accent,
       textColor,
       ariaCountNoun = 'days',
+      xLabelsMode = 'daily',
     } = opts;
     this._teardownBillingBarChartNative();
     container.innerHTML = '';
@@ -6295,8 +6385,14 @@ class EnergyPanel extends HTMLElement {
     this._billingBarNativeCleanup = () => ac.abort();
 
     const xRow = document.createElement('div');
-    xRow.className =
-      n > 12 ? 'billing-bar-x-labels billing-bar-x-labels--dense' : 'billing-bar-x-labels';
+    const dense = n > 12;
+    xRow.className = [
+      'billing-bar-x-labels',
+      dense ? 'billing-bar-x-labels--dense' : '',
+      xLabelsMode === 'hourly' ? 'billing-bar-x-labels--hourly' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
     categories.forEach((cat) => {
       const x = document.createElement('span');
       x.className = 'billing-bar-x-label';
@@ -6320,8 +6416,13 @@ class EnergyPanel extends HTMLElement {
     const roomId = this._graphOpen.roomId;
     const roomName = this._graphOpen.roomName || '';
 
-    const isIntraday = type === 'total_watts_intraday' || type === 'total_wh_intraday' || type === 'room_wh';
+    const isIntraday =
+      type === 'total_watts_intraday' ||
+      type === 'total_wh_intraday' ||
+      type === 'room_wh' ||
+      type === 'outlet_wh';
     const isStatBillingModal = type === 'stat_total_wh' || type === 'stat_room_wh';
+    const outletSeriesLabel = this._graphOpen.outletSeriesLabel || '';
     /** Daily billing bars: category axis + numeric series (datetime bars mis-map hover/tooltip in Apex). */
     let billingCategories = null;
     let billingValues = null;
@@ -6347,7 +6448,7 @@ class EnergyPanel extends HTMLElement {
       const n = Math.min(timestamps.length, watts.length);
       const dayStart = this._startOfLocalDayMs();
       const dayEnd = Date.now();
-      if (type === 'room_wh') {
+      if (type === 'room_wh' || type === 'outlet_wh') {
         const tsDay = [];
         const wDay = [];
         for (let i = 0; i < n; i++) {
@@ -6371,7 +6472,11 @@ class EnergyPanel extends HTMLElement {
           );
           const decimals = peakKwh <= 0.02 ? 3 : peakKwh <= 0.5 ? 2 : 2;
           yFormatter = (v) => (v == null ? '—' : `${Number(v).toFixed(decimals)} kWh`);
-          seriesName = `${roomName || 'Room'} kWh per hour`;
+          const labelForSeries =
+            type === 'outlet_wh'
+              ? outletSeriesLabel || 'Outlet'
+              : roomName || 'Room';
+          seriesName = `${labelForSeries} kWh per hour`;
         }
         seriesData = [];
       } else if (type === 'total_wh_intraday') {
@@ -6509,6 +6614,7 @@ class EnergyPanel extends HTMLElement {
         accent,
         textColor,
         ariaCountNoun: 'hours',
+        xLabelsMode: 'hourly',
       });
       return;
     }
@@ -7397,13 +7503,11 @@ class EnergyPanel extends HTMLElement {
 
     const heroStarsLabel = `Overall efficiency, ${starN} out of 5 stars`;
     const engagementNa = pillarMeta.engagement === 'na';
-    const periodNote =
-      mode === 'monthly'
-        ? 'Each pillar is 0–100 for the statistics date range; the composite averages the pillars that apply.'
-        : 'Each pillar is 0–100 for today only; the composite averages the pillars that apply.';
+    const scopePhrase =
+      mode === 'monthly' ? 'this statistics period' : 'today';
     const heroIntro = engagementNa
-      ? `Your score blends the four pillars below (engagement does not apply to this room). ${periodNote}`
-      : `Your score blends the five pillars below. Engagement reflects this room’s assigned person’s dashboard use. ${periodNote}`;
+      ? `Engagement is off without an assigned person. The score above is the average of the four pillars below (0–100 each) for ${scopePhrase}.`
+      : `The score above is the average of five pillars (0–100 each) for ${scopePhrase}, including engagement from this room’s assignee.`;
 
     const personEnt = String(room?.presence_person_entity || '').trim();
     const personState =
@@ -7477,7 +7581,7 @@ class EnergyPanel extends HTMLElement {
             <span class="room-rating-modal-index-value">${avgRounded}</span>
             <span class="room-rating-modal-index-suffix">/ 100</span>
           </div>
-          <p class="room-rating-modal-index-caption">Composite index</p>`
+          <p class="room-rating-modal-index-caption">Overall score</p>`
               : ''
           }
           <p class="room-rating-modal-hero-intro">${esc(heroIntro)}</p>
@@ -9317,12 +9421,12 @@ class EnergyPanel extends HTMLElement {
                   <div class="form-group">
                     <label class="form-label" for="eff-compliance-tol">Compliance budget multiplier</label>
                     <input type="number" id="eff-compliance-tol" class="form-input" min="1" max="1.5" step="0.01"
-                      value="${effSettings.compliance_tolerance ?? 1.02}">
+                      value="${effSettings.compliance_tolerance ?? 1.0}">
                   </div>
                   <div class="form-group">
                     <label class="form-label" for="eff-warning-points">Warning points lost per event</label>
                     <input type="number" id="eff-warning-points" class="form-input" min="0.25" max="25" step="0.25"
-                      value="${effSettings.warning_points_per_event ?? 4}">
+                      value="${effSettings.warning_points_per_event ?? 5.5}">
                   </div>
                 </div>
               </div>
@@ -9342,7 +9446,7 @@ class EnergyPanel extends HTMLElement {
                   <div class="form-group">
                     <label class="form-label" for="eff-load-penalty">Load penalty per high-load hour</label>
                     <input type="number" id="eff-load-penalty" class="form-input" min="0" max="50" step="0.5"
-                      value="${effSettings.load_penalty_per_high_hour ?? 8}">
+                      value="${effSettings.load_penalty_per_high_hour ?? 11}">
                   </div>
                 </div>
               </div>
@@ -9352,7 +9456,7 @@ class EnergyPanel extends HTMLElement {
                   <div class="form-group">
                     <label class="form-label" for="eff-eng-distinct-hours">Distinct hours target (per day)</label>
                     <input type="number" id="eff-eng-distinct-hours" class="form-input" min="1" max="24" step="1"
-                      value="${effSettings.engagement_distinct_hours_target ?? 12}">
+                      value="${effSettings.engagement_distinct_hours_target ?? 14}">
                   </div>
                   <div class="form-group">
                     <label class="form-label" for="eff-eng-hours-weight">Hours component weight (0–100)</label>
@@ -9367,7 +9471,7 @@ class EnergyPanel extends HTMLElement {
                   <div class="form-group">
                     <label class="form-label" for="eff-eng-daily-norm">Visits daily norm (score scale)</label>
                     <input type="number" id="eff-eng-daily-norm" class="form-input" min="1" max="48" step="1"
-                      value="${effSettings.engagement_visits_daily_norm ?? 2}">
+                      value="${effSettings.engagement_visits_daily_norm ?? 3}">
                   </div>
                   <div class="form-group">
                     <label class="form-label" for="eff-eng-max-hour">Max visits counted per clock hour</label>
@@ -10129,59 +10233,200 @@ class EnergyPanel extends HTMLElement {
     return null;
   }
 
-  async _handleApplianceToggleClick(e) {
-    if (this._showSettings) return;
+  _closeApplianceMenu() {
+    if (this._applianceMenuEsc) {
+      window.removeEventListener('keydown', this._applianceMenuEsc);
+      this._applianceMenuEsc = null;
+    }
+    if (this._applianceMenuScrollClose) {
+      window.removeEventListener('scroll', this._applianceMenuScrollClose, true);
+      this._applianceMenuScrollClose = null;
+    }
+    this.shadowRoot?.querySelector('.appliance-context-menu-backdrop')?.remove();
+  }
 
-    const plugEl = e.target.closest('.plug-receptacle');
-    const deviceCard = e.target.closest('.device-card, .outlet-card');
-    if (!deviceCard) return;
+  _openOutletUsageGraph(roomId, outletIndex, outlet, plugSlot) {
+    const name = outlet.name || 'Appliance';
+    let seriesLabel = name;
+    let graphTitle = `${name} usage by hour today`;
+    if (plugSlot === 1) {
+      seriesLabel = `${name} (Plug 1)`;
+      graphTitle = `${name} (Plug 1) usage by hour today`;
+    } else if (plugSlot === 2) {
+      seriesLabel = `${name} (Plug 2)`;
+      graphTitle = `${name} (Plug 2) usage by hour today`;
+    }
+    void this._openGraph('outlet_wh', roomId, '', null, {
+      outletIndex,
+      plugSlot,
+      outletGraphTitle: graphTitle,
+      outletSeriesLabel: seriesLabel,
+    });
+  }
 
-    if (e.target.closest('.graph-clickable')) return;
+  _openApplianceContextMenu(e, { roomId, outletIndex, outlet }) {
+    e.preventDefault();
+    e.stopPropagation();
+    this._closeApplianceMenu();
 
-    const roomCard = deviceCard.closest('.room-card');
-    if (!roomCard) return;
-    const roomId = roomCard.dataset.roomId;
-    if (!roomId) return;
+    const otype = outlet.type || 'outlet';
+    const hasP1 = Boolean(String(outlet.plug1_entity || '').trim());
+    const hasP2 = Boolean(String(outlet.plug2_entity || '').trim());
+    const dualReceptacle = otype === 'outlet' && hasP1 && hasP2;
 
-    const outletIndex = parseInt(deviceCard.dataset.outletIndex, 10);
-    if (Number.isNaN(outletIndex)) return;
+    const backdrop = document.createElement('div');
+    backdrop.className = 'appliance-context-menu-backdrop';
+    const menu = document.createElement('div');
+    menu.className = 'appliance-context-menu';
+    menu.setAttribute('role', 'menu');
 
+    const addItem = (label, action, plugSlot) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'appliance-context-menu-item';
+      b.setAttribute('role', 'menuitem');
+      b.textContent = label;
+      b.dataset.applianceAction = action;
+      if (plugSlot != null) b.dataset.plugSlot = String(plugSlot);
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this._closeApplianceMenu();
+        if (action === 'graph') {
+          this._openOutletUsageGraph(roomId, outletIndex, outlet, plugSlot);
+        } else {
+          void this._executeApplianceToggle({ roomId, outletIndex, plugSlot });
+        }
+      });
+      menu.appendChild(b);
+    };
+
+    if (dualReceptacle) {
+      addItem('Open usage graph (Plug 1)', 'graph', 1);
+      if (this._resolveApplianceToggleTarget(outlet, 1)) {
+        addItem('Turn Plug 1 on or off', 'toggle', 1);
+      }
+      addItem('Open usage graph (Plug 2)', 'graph', 2);
+      if (this._resolveApplianceToggleTarget(outlet, 2)) {
+        addItem('Turn Plug 2 on or off', 'toggle', 2);
+      }
+    } else if (otype === 'outlet') {
+      if (hasP1) {
+        addItem('Open usage graph', 'graph', 1);
+        if (this._resolveApplianceToggleTarget(outlet, 1)) {
+          addItem('Turn on or off', 'toggle', 1);
+        }
+      } else if (hasP2) {
+        addItem('Open usage graph', 'graph', 2);
+        if (this._resolveApplianceToggleTarget(outlet, 2)) {
+          addItem('Turn on or off', 'toggle', 2);
+        }
+      } else {
+        addItem('Open usage graph', 'graph', 1);
+      }
+    } else {
+      addItem('Open usage graph', 'graph', null);
+      if (this._resolveApplianceToggleTarget(outlet, null)) {
+        addItem('Turn on or off', 'toggle', null);
+      }
+    }
+
+    menu.addEventListener('click', (ev) => ev.stopPropagation());
+    backdrop.addEventListener('click', () => this._closeApplianceMenu());
+
+    backdrop.appendChild(menu);
+    this.shadowRoot.appendChild(backdrop);
+
+    const cx = e.clientX ?? 0;
+    const cy = e.clientY ?? 0;
+    menu.style.left = `${cx}px`;
+    menu.style.top = `${cy}px`;
+
+    const pad = 8;
+    requestAnimationFrame(() => {
+      const rect = menu.getBoundingClientRect();
+      let left = cx;
+      let top = cy;
+      if (left + rect.width > window.innerWidth - pad) {
+        left = Math.max(pad, window.innerWidth - rect.width - pad);
+      }
+      if (top + rect.height > window.innerHeight - pad) {
+        top = Math.max(pad, window.innerHeight - rect.height - pad);
+      }
+      if (left < pad) left = pad;
+      if (top < pad) top = pad;
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    });
+
+    const first = menu.querySelector('.appliance-context-menu-item');
+    first?.focus?.();
+
+    this._applianceMenuEsc = (kev) => {
+      if (kev.key === 'Escape') this._closeApplianceMenu();
+    };
+    window.addEventListener('keydown', this._applianceMenuEsc);
+
+    this._applianceMenuScrollClose = () => this._closeApplianceMenu();
+    window.addEventListener('scroll', this._applianceMenuScrollClose, true);
+  }
+
+  _resolveApplianceToggleTarget(outlet, plugSlot) {
+    const otype = outlet.type || 'outlet';
+    if (otype === 'outlet') {
+      if (plugSlot === 1) {
+        const s = outlet.plug1_switch;
+        return s && String(s).startsWith('switch.')
+          ? { switchEntity: s, plugName: 'Plug 1' }
+          : null;
+      }
+      if (plugSlot === 2) {
+        const s = outlet.plug2_switch;
+        return s && String(s).startsWith('switch.')
+          ? { switchEntity: s, plugName: 'Plug 2' }
+          : null;
+      }
+      return null;
+    }
+    if (otype === 'light') {
+      const s = outlet.switch_entity;
+      return s && String(s).startsWith('switch.')
+        ? { switchEntity: s, plugName: '' }
+        : null;
+    }
+    if (
+      otype === 'single_outlet' ||
+      otype === 'minisplit' ||
+      otype === 'stove' ||
+      otype === 'microwave' ||
+      otype === 'fridge'
+    ) {
+      const s = outlet.plug1_switch;
+      return s && String(s).startsWith('switch.')
+        ? { switchEntity: s, plugName: '' }
+        : null;
+    }
+    if (otype === 'vent' || otype === 'wall_heater') {
+      const s = outlet.switch_entity;
+      return s && String(s).startsWith('switch.')
+        ? { switchEntity: s, plugName: '' }
+        : null;
+    }
+    return null;
+  }
+
+  async _executeApplianceToggle({ roomId, outletIndex, plugSlot }) {
     const room = this._getRoomConfig(roomId);
     if (!room) return;
     const outlet = room.outlets?.[outletIndex];
     if (!outlet) return;
-
     const otype = outlet.type || 'outlet';
-    let switchEntity = null;
-    let plugName = '';
-    let outletName = outlet.name || 'Appliance';
-
-    if (otype === 'outlet') {
-      if (plugEl) {
-        const plugIndex = plugEl.dataset.plugIndex;
-        if (plugIndex === '1') {
-          switchEntity = outlet.plug1_switch;
-          plugName = 'Plug 1';
-        } else if (plugIndex === '2') {
-          switchEntity = outlet.plug2_switch;
-          plugName = 'Plug 2';
-        }
-      }
-      if (!switchEntity) return;
-    } else if (otype === 'light') {
-      switchEntity = outlet.switch_entity;
-    } else if (otype === 'single_outlet' || otype === 'minisplit' || otype === 'stove' || otype === 'microwave' || otype === 'fridge') {
-      switchEntity = outlet.plug1_switch;
-    } else if (otype === 'vent' || otype === 'wall_heater') {
-      switchEntity = outlet.switch_entity;
-    } else {
+    const t = this._resolveApplianceToggleTarget(outlet, plugSlot);
+    if (!t?.switchEntity) {
+      showToast(this.shadowRoot, 'This device is not configured for switching.', 'error');
       return;
     }
-
-    if (!switchEntity || !switchEntity.startsWith('switch.')) return;
-
-    e.preventDefault();
-    e.stopPropagation();
+    const { switchEntity, plugName } = t;
+    const outletName = outlet.name || 'Appliance';
 
     try {
       const authResult = await this._hass.callWS({
@@ -10190,7 +10435,11 @@ class EnergyPanel extends HTMLElement {
       });
 
       if (!authResult.authorized) {
-        showToast(this.shadowRoot, `Not authorized. Only ${authResult.room_person || 'the assigned person'} can control devices in this room.`, 'error');
+        showToast(
+          this.shadowRoot,
+          `Not authorized. Only ${authResult.room_person || 'the assigned person'} can control devices in this room.`,
+          'error',
+        );
         return;
       }
 
@@ -10233,19 +10482,65 @@ class EnergyPanel extends HTMLElement {
 
       const newState = currentState === 'on' ? 'off' : 'on';
       showToast(this.shadowRoot, `${displayName} turned ${newState}`, 'success');
-
     } catch (err) {
       const code = err?.code ?? err?.error?.code;
       const m = err?.message || err?.error?.message || '';
       if (
-        code === 'heater_too_warm'
-        || (typeof m === 'string' && m.includes('only turns on below'))
+        code === 'heater_too_warm' ||
+        (typeof m === 'string' && m.includes('only turns on below'))
       ) {
         showToast(this.shadowRoot, m || "It's too warm in here to turn on the heater.", 'error');
         return;
       }
       showToast(this.shadowRoot, `Failed to toggle: ${err.message || err}`, 'error');
     }
+  }
+
+  _handleApplianceToggleClick(e) {
+    if (this._showSettings) return;
+    if (e.target.closest('.appliance-context-menu') || e.target.closest('.appliance-context-menu-backdrop')) {
+      return;
+    }
+
+    const deviceCard = e.target.closest('.device-card, .outlet-card');
+    if (!deviceCard) return;
+
+    if (e.target.closest('.graph-clickable')) return;
+
+    const roomCard = deviceCard.closest('.room-card');
+    if (!roomCard) return;
+    const roomId = roomCard.dataset.roomId;
+    if (!roomId) return;
+
+    const outletIndex = parseInt(deviceCard.dataset.outletIndex, 10);
+    if (Number.isNaN(outletIndex)) return;
+
+    const room = this._getRoomConfig(roomId);
+    if (!room) return;
+    const outlet = room.outlets?.[outletIndex];
+    if (!outlet) return;
+
+    const otype = outlet.type || 'outlet';
+    if (
+      !(
+        otype === 'outlet' ||
+        otype === 'light' ||
+        otype === 'single_outlet' ||
+        otype === 'minisplit' ||
+        otype === 'stove' ||
+        otype === 'microwave' ||
+        otype === 'fridge' ||
+        otype === 'vent' ||
+        otype === 'wall_heater'
+      )
+    ) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    this._openApplianceContextMenu(e, { roomId, outletIndex, outlet });
   }
 
   _showToggleConfirmation(applianceName, actionWord) {
@@ -13111,15 +13406,15 @@ class EnergyPanel extends HTMLElement {
     const efficiency_settings = {
       history_window_days: _efInt('eff-history-window-days', 14, 1, 90),
       engagement_lookback_days: _efInt('eff-engagement-lookback', 7, 1, 30),
-      compliance_tolerance: _efFloat('eff-compliance-tol', 1.02, 1.0, 1.5),
-      warning_points_per_event: _efFloat('eff-warning-points', 4, 0.25, 25),
-      consumption_peer_multiplier: _efFloat('eff-peer-mult', 1.5, 0.5, 5),
+      compliance_tolerance: _efFloat('eff-compliance-tol', 1.0, 1.0, 1.5),
+      warning_points_per_event: _efFloat('eff-warning-points', 5.5, 0.25, 25),
+      consumption_peer_multiplier: _efFloat('eff-peer-mult', 1.25, 0.5, 5),
       load_high_watts: _efFloat('eff-load-high-w', 100, 1, 5000),
-      load_penalty_per_high_hour: _efFloat('eff-load-penalty', 8, 0, 50),
-      engagement_distinct_hours_target: _efInt('eff-eng-distinct-hours', 12, 1, 24),
+      load_penalty_per_high_hour: _efFloat('eff-load-penalty', 11, 0, 50),
+      engagement_distinct_hours_target: _efInt('eff-eng-distinct-hours', 14, 1, 24),
       engagement_hours_weight: _efFloat('eff-eng-hours-weight', 70, 0, 100),
       engagement_visits_weight: _efFloat('eff-eng-visits-weight', 30, 0, 100),
-      engagement_visits_daily_norm: _efFloat('eff-eng-daily-norm', 2, 1, 48),
+      engagement_visits_daily_norm: _efFloat('eff-eng-daily-norm', 3, 1, 48),
       engagement_max_visits_per_hour: _efInt('eff-eng-max-hour', 2, 1, 10),
       efficiency_digest_enabled: tabEff?.querySelector('#eff-digest-enabled')?.checked === true,
       efficiency_digest_time,

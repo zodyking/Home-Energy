@@ -1675,6 +1675,54 @@ class ConfigManager:
         history = self._intraday_history.get(entity_id, [])
         return history[-minutes:] if history else []
 
+    def resolve_outlet_energy_tracking_key(
+        self,
+        room_id: str,
+        outlet_index: int,
+        plug_slot: int | None,
+    ) -> str | None:
+        """Tracking key for ``_intraday_history`` / day ledger for one outlet or one plug."""
+        room = None
+        for r in self.energy_config.get("rooms", []):
+            rid = r.get("id", r["name"].lower().replace(" ", "_"))
+            if rid == room_id:
+                room = r
+                break
+        if not room:
+            return None
+        outlets = room.get("outlets") or []
+        if outlet_index < 0 or outlet_index >= len(outlets):
+            return None
+        outlet = outlets[outlet_index]
+        otype = outlet.get("type") or "outlet"
+
+        if otype == "outlet":
+            if plug_slot not in (1, 2):
+                return None
+            ent = (
+                outlet.get("plug1_entity") if plug_slot == 1 else outlet.get("plug2_entity")
+            )
+            return str(ent).strip() if ent else None
+
+        if otype == "light":
+            if outlet.get("power_source") == "sensor":
+                pe = outlet.get("power_sensor_entity")
+                return str(pe).strip() if pe else None
+            name = (outlet.get("name") or "light").lower().replace(" ", "_")
+            return f"light_{room_id}_{name}"
+
+        if otype in ("vent", "wall_heater"):
+            if outlet.get("power_source") == "sensor":
+                pe = outlet.get("power_sensor_entity")
+                return str(pe).strip() if pe else None
+            return vent_like_energy_tracking_key(room_id, outlet)
+
+        if otype in ("single_outlet", "minisplit", "stove", "microwave", "fridge"):
+            e = outlet.get("plug1_entity")
+            return str(e).strip() if e else None
+
+        return None
+
     def get_room_intraday_history(self, room_id: str, minutes: int = 1440) -> dict[str, Any]:
         """Get intraday power history for a room (sum of all outlets)."""
         room = None
