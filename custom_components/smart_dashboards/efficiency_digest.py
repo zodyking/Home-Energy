@@ -12,9 +12,9 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
 from .config_manager import _coerce_bool, _normalize_presence_person_entity
-from .const import DEFAULT_NOTIFICATION_TITLE, DOMAIN
+from .const import DEFAULT_NOTIFICATION_TITLE, DEFAULT_TTS_PREFIX, DOMAIN
 from .mobile_notify_target import async_send_notify_push
-from .room_ratings import canonical_room_id, load_ratings, ratings_store_path
+from .room_ratings import canonical_room_id, compute_intraday_ratings
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,10 +66,29 @@ def _save_digest_state(path: str, data: dict[str, Any]) -> None:
         json.dump(data, f, indent=2)
 
 
+def _digest_tts_prefix(tts: dict[str, Any]) -> str:
+    raw = tts.get("prefix")
+    s = str(raw if raw is not None else DEFAULT_TTS_PREFIX).strip()
+    return s or DEFAULT_TTS_PREFIX
+
+
+def _intraday_ratings_by_room(hass: HomeAssistant, cm: Any) -> dict[str, dict[str, Any]]:
+    """Same intraday scores as the room tab (get_power_data)."""
+    from .websocket import build_rooms_payload_for_power_and_ratings
+
+    try:
+        rooms_payload = build_rooms_payload_for_power_and_ratings(hass, cm)
+        return compute_intraday_ratings(hass, cm, rooms_payload)
+    except Exception as err:
+        _LOGGER.warning("Efficiency digest intraday ratings failed: %s", err)
+        return {}
+
+
 def _format_vars(
     room_name: str,
     r: dict[str, Any],
     notification_title: str,
+    prefix: str,
 ) -> dict[str, Any]:
     def _fmt(v: Any) -> str:
         if v is None:
@@ -99,6 +118,7 @@ def _format_vars(
     worst_pillar_tip = PILLAR_TIPS.get(worst_key, PILLAR_TIPS["compliance"])
 
     return {
+        "prefix": prefix,
         "notification_title": notification_title,
         "room_name": room_name,
         "average": _fmt(r.get("average")),
@@ -138,17 +158,12 @@ async def _run_efficiency_digest(hass: HomeAssistant) -> None:
     if state.get("last_sent") == today:
         return
 
-    path = ratings_store_path(hass)
-
-    def _load_r() -> dict[str, Any]:
-        return load_ratings(path)
-
-    ratings_data = await hass.async_add_executor_job(_load_r)
-    ratings_rooms = ratings_data.get("rooms") or {}
+    intraday = _intraday_ratings_by_room(hass, cm)
 
     notification_title = str(
         tts.get("notification_title") or DEFAULT_NOTIFICATION_TITLE
     ).strip() or DEFAULT_NOTIFICATION_TITLE
+    prefix = _digest_tts_prefix(tts)
 
     title_tmpl = str(es.get("efficiency_digest_title") or "")
     msg_tmpl = str(es.get("efficiency_digest_message") or "")
@@ -161,9 +176,9 @@ async def _run_efficiency_digest(hass: HomeAssistant) -> None:
         if not person_eid:
             continue
         rid = canonical_room_id(room)
-        r = ratings_rooms.get(rid) if isinstance(ratings_rooms.get(rid), dict) else {}
+        r = intraday.get(rid) if isinstance(intraday.get(rid), dict) else {}
         room_name = str(room.get("name") or rid)
-        vars_ = _format_vars(room_name, r, notification_title)
+        vars_ = _format_vars(room_name, r, notification_title, prefix)
         try:
             title = title_tmpl.format(**vars_)
             message = msg_tmpl.format(**vars_)
@@ -245,19 +260,14 @@ async def async_send_efficiency_digest_test(
     if not person_state:
         return False, f"Person entity not found: {target_person}"
 
-    path = ratings_store_path(hass)
-
-    def _load_r() -> dict[str, Any]:
-        return load_ratings(path)
-
-    ratings_data = await hass.async_add_executor_job(_load_r)
-    ratings_rooms = ratings_data.get("rooms") or {}
+    intraday = _intraday_ratings_by_room(hass, cm)
 
     tts = cm.energy_config.get("tts_settings") or {}
     es = cm.energy_config.get("efficiency_settings") or {}
     notification_title = str(
         tts.get("notification_title") or DEFAULT_NOTIFICATION_TITLE
     ).strip() or DEFAULT_NOTIFICATION_TITLE
+    prefix = _digest_tts_prefix(tts)
     title_tmpl = str(es.get("efficiency_digest_title") or "")
     msg_tmpl = str(es.get("efficiency_digest_message") or "")
 
@@ -293,12 +303,12 @@ async def async_send_efficiency_digest_test(
             return False, "No room uses this person as presence_person_entity"
 
     r = (
-        ratings_rooms.get(rid_key or "")
-        if isinstance(ratings_rooms.get(rid_key or ""), dict)
+        intraday.get(rid_key or "")
+        if isinstance(intraday.get(rid_key or ""), dict)
         else {}
     )
     room_name = str(chosen.get("name") or rid_key)
-    vars_ = _format_vars(room_name, r, notification_title)
+    vars_ = _format_vars(room_name, r, notification_title, prefix)
     try:
         title = title_tmpl.format(**vars_)
         message = msg_tmpl.format(**vars_)

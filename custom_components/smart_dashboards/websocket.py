@@ -442,31 +442,14 @@ async def websocket_set_volume(
         connection.send_error(msg["id"], "volume_failed", str(e))
 
 
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): "smart_dashboards/get_power_data",
-    }
-)
-@websocket_api.async_response
-async def websocket_get_power_data(
+def build_rooms_payload_for_power_and_ratings(
     hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict[str, Any],
-) -> None:
-    """Get current power readings for all configured outlets."""
-    config_manager = hass.data[DOMAIN].get("config_manager")
-    if not config_manager:
-        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
-        return
-
+    config_manager: Any,
+) -> list[dict[str, Any]]:
+    """Room rows (ids, day Wh, event counts, outlets) for get_power_data and intraday ratings."""
     event_counts = config_manager.get_event_counts()
     energy_monitor = hass.data.get(DOMAIN, {}).get("energy_monitor")
-    result: dict[str, Any] = {
-        "rooms": [],
-        "total_warnings": event_counts.get("total_warnings", 0),
-        "total_shutoffs": event_counts.get("total_shutoffs", 0),
-        "total_power_cycles": event_counts.get("total_power_cycles", 0),
-    }
+    rooms_out: list[dict[str, Any]] = []
 
     for room in config_manager.energy_config.get("rooms", []):
         room_id = room.get("id", room["name"].lower().replace(" ", "_"))
@@ -586,7 +569,35 @@ async def websocket_get_power_data(
                 config_manager.get_enforcement_state(room_id).get("phase", 0) or 0
             )
             room_data["enforcement_phase"] = max(0, min(2, phase))
-        result["rooms"].append(room_data)
+        rooms_out.append(room_data)
+
+    return rooms_out
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_power_data",
+    }
+)
+@websocket_api.async_response
+async def websocket_get_power_data(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get current power readings for all configured outlets."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    event_counts = config_manager.get_event_counts()
+    result: dict[str, Any] = {
+        "rooms": build_rooms_payload_for_power_and_ratings(hass, config_manager),
+        "total_warnings": event_counts.get("total_warnings", 0),
+        "total_shutoffs": event_counts.get("total_shutoffs", 0),
+        "total_power_cycles": event_counts.get("total_power_cycles", 0),
+    }
 
     try:
         intraday = compute_intraday_ratings(hass, config_manager, result["rooms"])

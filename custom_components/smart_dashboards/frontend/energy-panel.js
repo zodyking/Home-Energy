@@ -9484,7 +9484,8 @@ class EnergyPanel extends HTMLElement {
                 <div class="tts-msg-title">Daily digest (push)</div>
                 <p style="color: var(--secondary-text-color); font-size: 10px; margin: 0 0 10px;">
                   Sends once per day at the chosen local time for each room that has a <strong>Presence person</strong> (<code>person.*</code>).
-                  Requires <strong>Notifications</strong> enabled and a mobile notify target for that person. Uses saved rating scores (engagement is per assigned person’s linked HA user).
+                  Requires <strong>Notifications</strong> enabled and a mobile notify target for that person.
+                  Scores are <strong>today’s efficiency</strong> (same formula as the stars on each room card), not the rolling saved file or the Statistics billing-period rating. Engagement uses the assigned person’s linked HA user.
                 </p>
                 <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: pointer;">
                   <input type="checkbox" id="eff-digest-enabled" ${effSettings.efficiency_digest_enabled ? 'checked' : ''} style="width: 18px; height: 18px;">
@@ -9500,14 +9501,14 @@ class EnergyPanel extends HTMLElement {
                   <textarea class="tts-msg-textarea" id="eff-digest-title" rows="2">${this._escapeForSettingsTextarea(
                     effSettings.efficiency_digest_title || EFFICIENCY_UI_DEFAULTS.efficiency_digest_title,
                   )}</textarea>
-                  <div class="tts-var-help">Variables: <code>{notification_title}</code> <code>{room_name}</code> <code>{average}</code> <code>{stars}</code> <code>{compliance}</code> <code>{warning}</code> <code>{consumption}</code> <code>{load}</code> <code>{engagement}</code> <code>{worst_pillar}</code> <code>{worst_pillar_tip}</code></div>
+                  <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{notification_title}</code> <code>{room_name}</code> <code>{average}</code> <code>{stars}</code> <code>{compliance}</code> <code>{warning}</code> <code>{consumption}</code> <code>{load}</code> <code>{engagement}</code> <code>{worst_pillar}</code> <code>{worst_pillar_tip}</code> — <code>{prefix}</code> is the TTS message prefix from Notifications settings.</div>
                 </div>
                 <div class="tts-msg-group" style="margin-bottom: 10px;">
                   <div class="tts-msg-title">Digest message template</div>
                   <textarea class="tts-msg-textarea" id="eff-digest-message" rows="4">${this._escapeForSettingsTextarea(
                     effSettings.efficiency_digest_message || EFFICIENCY_UI_DEFAULTS.efficiency_digest_message,
                   )}</textarea>
-                  <div class="tts-var-help">Same as title; <code>{worst_pillar_tip}</code> is a short line for the lowest-scoring pillar (excluding N/A / no-data pillars).</div>
+                  <div class="tts-var-help">Same variables as the title; <code>{worst_pillar_tip}</code> is a short line for the lowest-scoring pillar (excluding N/A / no-data pillars).</div>
                 </div>
                 <div class="grid-2" style="margin-bottom: 12px;">
                   <div class="form-group">
@@ -9540,7 +9541,7 @@ class EnergyPanel extends HTMLElement {
                 </div>
                 <button type="button" class="btn btn-secondary" id="eff-digest-send-test">Send digest test</button>
                 <p style="color: var(--secondary-text-color); font-size: 10px; margin: 8px 0 0;">
-                  Sends one notification using current templates and saved ratings (does not mark the daily digest as sent).
+                  Sends one notification using current templates and <strong>today’s</strong> room efficiency (same as the room tab). Does not mark the daily digest as sent.
                 </p>
               </div>
             </div>
