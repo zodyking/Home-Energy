@@ -2795,13 +2795,23 @@ class EnergyMonitor:
                         if outlet.get("power_source") == "sensor"
                         else None
                     )
+                    energy_ent = (
+                        outlet.get("energy_sensor_entity")
+                        if outlet.get("power_source") == "sensor"
+                        else None
+                    )
                     watts_when_on = float(outlet.get("watts_when_on", 0) or 0)
                     if power_ent:
                         # Power sensor mode: read sensor directly (sensor reports 0W when off)
                         outlet_total_watts = self._get_power_value(power_ent)
-                        await self.config_manager.async_add_energy_reading(
-                            power_ent, outlet_total_watts, elapsed_seconds=1.0
-                        )
+                        if energy_ent:
+                            # Use Summation sensor for accurate energy tracking
+                            self.config_manager.update_energy_sensor_day_wh(energy_ent)
+                        else:
+                            # Fall back to power integration
+                            await self.config_manager.async_add_energy_reading(
+                                power_ent, outlet_total_watts, elapsed_seconds=1.0
+                            )
                         self.config_manager.record_intraday_power(
                             power_ent, outlet_total_watts
                         )
