@@ -951,21 +951,20 @@ def _sync_supplier_usage_plateau_started_at(
 
 
 def _integrate_power_to_wh_clipped(states: list, start_dt, end_dt) -> float:
-    """Integrate power (W) to Wh using trapezoids between states, clipped to [start_dt, end_dt]."""
+    """Integrate power (W) to Wh using trapezoids between states, clipped to [start_dt, end_dt].
+
+    Does NOT forward-fill beyond 5 minutes. If a sensor stops reporting, we assume 0W
+    rather than holding the last reading indefinitely. This prevents massive over-counting
+    for devices that cycle on/off with infrequent state updates.
+    """
     if not states:
         return 0.0
     states = sorted(states, key=lambda s: s.last_updated)
     total_wh = 0.0
+    max_hold_seconds = 300  # 5 minutes max forward-fill
 
     def w_at(s):
         return _parse_power_from_state_object(s)
-
-    t_first = states[0].last_updated
-    if t_first > start_dt:
-        w0 = w_at(states[0])
-        seg_end = min(t_first, end_dt)
-        if seg_end > start_dt:
-            total_wh += w0 * (seg_end - start_dt).total_seconds() / 3600.0
 
     for i in range(len(states) - 1):
         s1, s2 = states[i], states[i + 1]
@@ -993,10 +992,12 @@ def _integrate_power_to_wh_clipped(states: list, start_dt, end_dt) -> float:
     t_last = states[-1].last_updated
     if t_last < end_dt:
         wn = w_at(states[-1])
-        overlap_start = max(t_last, start_dt)
-        overlap_end = end_dt
-        if overlap_end > overlap_start:
-            total_wh += wn * (overlap_end - overlap_start).total_seconds() / 3600.0
+        if wn > 0:
+            overlap_start = max(t_last, start_dt)
+            max_end = t_last + timedelta(seconds=max_hold_seconds)
+            overlap_end = min(end_dt, max_end)
+            if overlap_end > overlap_start:
+                total_wh += wn * (overlap_end - overlap_start).total_seconds() / 3600.0
 
     return total_wh
 
@@ -1095,21 +1096,19 @@ def _add_constant_wh_to_date_buckets(
 def _integrate_power_to_wh_by_local_date(
     states: list, start_dt: datetime, end_dt: datetime
 ) -> dict[str, float]:
-    """Same physics as _integrate_power_to_wh_clipped; Wh split by local calendar day."""
+    """Same physics as _integrate_power_to_wh_clipped; Wh split by local calendar day.
+
+    Does NOT forward-fill beyond 5 minutes. If a sensor stops reporting, we assume 0W
+    rather than holding the last reading indefinitely.
+    """
     buckets: dict[str, float] = {}
     if not states:
         return buckets
     states = sorted(states, key=lambda s: s.last_updated)
+    max_hold_seconds = 300  # 5 minutes max forward-fill
 
     def w_at(s):
         return _parse_power_from_state_object(s)
-
-    t_first = states[0].last_updated
-    if t_first > start_dt:
-        w0 = w_at(states[0])
-        seg_end = min(t_first, end_dt)
-        if seg_end > start_dt:
-            _add_constant_wh_to_date_buckets(buckets, w0, start_dt, seg_end)
 
     for i in range(len(states) - 1):
         s1, s2 = states[i], states[i + 1]
@@ -1128,10 +1127,12 @@ def _integrate_power_to_wh_by_local_date(
     t_last = states[-1].last_updated
     if t_last < end_dt:
         wn = w_at(states[-1])
-        overlap_start = max(t_last, start_dt)
-        overlap_end = end_dt
-        if overlap_end > overlap_start:
-            _add_constant_wh_to_date_buckets(buckets, wn, overlap_start, overlap_end)
+        if wn > 0:
+            overlap_start = max(t_last, start_dt)
+            max_end = t_last + timedelta(seconds=max_hold_seconds)
+            overlap_end = min(end_dt, max_end)
+            if overlap_end > overlap_start:
+                _add_constant_wh_to_date_buckets(buckets, wn, overlap_start, overlap_end)
 
     return buckets
 
