@@ -518,10 +518,19 @@ def build_rooms_payload_for_power_and_ratings(
                     if outlet.get("power_source") == "sensor"
                     else None
                 )
+                energy_ent = (
+                    outlet.get("energy_sensor_entity")
+                    if outlet.get("power_source") == "sensor"
+                    else None
+                )
                 if power_ent:
                     # Power sensor mode: read sensor directly (sensor reports 0W when off)
                     watts = _get_power_value(hass, power_ent)
-                    day_wh = config_manager.get_day_energy(power_ent)
+                    if energy_ent:
+                        # Use Summation sensor for accurate energy
+                        day_wh = config_manager.get_day_energy(energy_ent)
+                    else:
+                        day_wh = config_manager.get_day_energy(power_ent)
                 elif switch_entity:
                     # Fixed watts mode: use watts_when_on only when switch is on
                     state = hass.states.get(switch_entity)
@@ -1157,11 +1166,14 @@ def _integrate_switch_constant_wh_by_local_date(
 
 def _collect_statistics_energy_sources(
     config_manager,
-) -> tuple[dict[str, str], list[dict[str, Any]]]:
+) -> tuple[dict[str, str], list[dict[str, Any]], dict[str, str]]:
     """Map plug power entities to rooms; list switch-based constant loads (lights, vents).
+    Returns (power_entity_to_room, switch_specs, energy_entity_to_room).
+    energy_entity_to_room is for cumulative kWh sensors (summation/energy) that should use delta.
     Last mapping wins if the same plug entity appears twice (same as legacy behavior)."""
     entity_to_room: dict[str, str] = {}
     switch_specs: list[dict[str, Any]] = []
+    energy_entity_to_room: dict[str, str] = {}
 
     for room in config_manager.energy_config.get("rooms", []):
         room_id = room.get("id", room["name"].lower().replace(" ", "_"))
@@ -1192,14 +1204,15 @@ def _collect_statistics_energy_sources(
                         "watts": total_w,
                     })
             elif otype in ("vent", "wall_heater"):
-                pe = (
-                    outlet.get("power_sensor_entity")
-                    if outlet.get("power_source") == "sensor"
-                    else None
-                )
-                if pe and isinstance(pe, str) and pe.strip():
-                    entity_to_room[pe.strip()] = room_id
-                    continue
+                if outlet.get("power_source") == "sensor":
+                    ee = outlet.get("energy_sensor_entity")
+                    if ee and isinstance(ee, str) and ee.strip():
+                        energy_entity_to_room[ee.strip()] = room_id
+                        continue
+                    pe = outlet.get("power_sensor_entity")
+                    if pe and isinstance(pe, str) and pe.strip():
+                        entity_to_room[pe.strip()] = room_id
+                        continue
                 sw = (outlet.get("switch_entity") or "").strip()
                 w_on = float(outlet.get("watts_when_on", 0) or 0)
                 if sw and w_on > 0:
@@ -1213,7 +1226,7 @@ def _collect_statistics_energy_sources(
                     if eid and isinstance(eid, str) and eid.strip():
                         entity_to_room[eid.strip()] = room_id
 
-    return entity_to_room, switch_specs
+    return entity_to_room, switch_specs, energy_entity_to_room
 
 
 def _sync_integrate_entity_wh(
@@ -1258,6 +1271,74 @@ def _sync_integrate_entity_wh_total_and_by_day(
     total = _integrate_power_to_wh_clipped(states, start_dt, end_dt)
     by_day = _integrate_power_to_wh_by_local_date(states, start_dt, end_dt)
     return total, by_day
+
+
+def _sync_cumulative_energy_delta_total_and_by_day(
+    hass: HomeAssistant,
+    entity_id: str,
+    start_dt,
+    end_dt,
+) -> tuple[float, dict[str, float]]:
+    """Compute energy from a cumulative kWh sensor via delta (max - min) per day.
+
+    For devices that report cumulative energy (like Summation delivered), this is more
+    accurate than integrating power readings. Returns Wh values.
+    """
+    from homeassistant.components.recorder.history import get_significant_states_with_session
+    from homeassistant.components.recorder.util import session_scope
+    from homeassistant.util import dt as dt_util
+
+    with session_scope(hass=hass, read_only=True) as session:
+        states_dict = get_significant_states_with_session(
+            hass,
+            session,
+            start_dt,
+            end_dt,
+            [entity_id],
+            None,
+            include_start_time_state=True,
+            significant_changes_only=True,
+            minimal_response=False,
+            no_attributes=False,
+        )
+    states = states_dict.get(entity_id) or []
+    if not states:
+        return 0.0, {}
+
+    def _parse_kwh(state) -> float | None:
+        try:
+            val = float(state.state)
+        except (ValueError, TypeError):
+            return None
+        unit = (state.attributes or {}).get("unit_of_measurement", "").lower()
+        if unit == "wh":
+            return val / 1000.0
+        if unit == "mwh":
+            return val * 1000.0
+        return val
+
+    states = sorted(states, key=lambda s: s.last_updated)
+
+    by_day: dict[str, float] = {}
+    day_vals: dict[str, list[float]] = {}
+
+    for s in states:
+        kwh = _parse_kwh(s)
+        if kwh is None:
+            continue
+        local_dt = dt_util.as_local(s.last_updated)
+        day_key = local_dt.strftime("%Y-%m-%d")
+        if day_key not in day_vals:
+            day_vals[day_key] = []
+        day_vals[day_key].append(kwh)
+
+    for day_key, vals in day_vals.items():
+        if vals:
+            delta_kwh = max(vals) - min(vals)
+            by_day[day_key] = max(0.0, delta_kwh * 1000.0)
+
+    total_wh = sum(by_day.values())
+    return total_wh, by_day
 
 
 def _sync_integrate_switch_constant_wh(
@@ -1355,7 +1436,7 @@ async def _compute_kwh_from_history(
             if now_m - cached_at < ttl:
                 return payload
 
-    entity_to_room, switch_specs = _collect_statistics_energy_sources(config_manager)
+    entity_to_room, switch_specs, energy_entity_to_room = _collect_statistics_energy_sources(config_manager)
 
     try:
         start_dt = dt_util.parse_datetime(f"{start_date} 00:00:00")
@@ -1374,7 +1455,7 @@ async def _compute_kwh_from_history(
     if end_dt < start_dt:
         return 0.0, {}, {}
 
-    if not entity_to_room and not switch_specs:
+    if not entity_to_room and not switch_specs and not energy_entity_to_room:
         return 0.0, {}, {}
 
     sem = asyncio.Semaphore(_STATISTICS_QUERY_CONCURRENCY)
@@ -1383,6 +1464,17 @@ async def _compute_kwh_from_history(
         async with sem:
             wh, by_day = await hass.async_add_executor_job(
                 _sync_integrate_entity_wh_total_and_by_day,
+                hass,
+                eid,
+                start_dt,
+                end_dt,
+            )
+        return room_id, float(wh), by_day
+
+    async def one_energy_sensor(eid: str, room_id: str) -> tuple[str, float, dict[str, float]]:
+        async with sem:
+            wh, by_day = await hass.async_add_executor_job(
+                _sync_cumulative_energy_delta_total_and_by_day,
                 hass,
                 eid,
                 start_dt,
@@ -1403,6 +1495,7 @@ async def _compute_kwh_from_history(
         return spec["room_id"], float(wh), by_day
 
     coros: list = [one_plug(eid, rid) for eid, rid in entity_to_room.items()]
+    coros.extend(one_energy_sensor(eid, rid) for eid, rid in energy_entity_to_room.items())
     coros.extend(one_switch(s) for s in switch_specs)
     if not coros:
         return 0.0, {}, {}
@@ -2748,12 +2841,22 @@ async def websocket_get_statistics_sources(
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
         return
 
-    entity_to_room, switch_specs = _collect_statistics_energy_sources(config_manager)
+    entity_to_room, switch_specs, energy_entity_to_room = _collect_statistics_energy_sources(config_manager)
 
     power_sensors = []
     for entity_id, room_id in entity_to_room.items():
         state = hass.states.get(entity_id)
         power_sensors.append({
+            "entity_id": entity_id,
+            "room_id": room_id,
+            "state": state.state if state else None,
+            "unit": state.attributes.get("unit_of_measurement") if state else None,
+        })
+
+    energy_sensors = []
+    for entity_id, room_id in energy_entity_to_room.items():
+        state = hass.states.get(entity_id)
+        energy_sensors.append({
             "entity_id": entity_id,
             "room_id": room_id,
             "state": state.state if state else None,
@@ -2772,6 +2875,7 @@ async def websocket_get_statistics_sources(
 
     connection.send_result(msg["id"], {
         "power_sensors": power_sensors,
+        "energy_sensors": energy_sensors,
         "switch_sources": switch_sources,
     })
 
