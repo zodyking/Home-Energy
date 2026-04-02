@@ -10162,14 +10162,6 @@ class EnergyPanel extends HTMLElement {
       && (cvpse.startsWith('sensor.') || cvpse.startsWith('switch.'))
         ? cvpse
         : null;
-    const cveseIn =
-      item.querySelector('.entity-datalist-input.ceiling-vent-energy-sensor-entity')
-      || item.querySelector('input.ceiling-vent-energy-sensor-entity');
-    const cvese = (cveseIn?.value || '').trim();
-    device.energy_sensor_entity =
-      device.power_source === 'sensor' && cvese.startsWith('sensor.')
-        ? cvese
-        : null;
     device.watts_when_on =
       device.power_source === 'sensor'
         ? 0
@@ -11943,11 +11935,6 @@ class EnergyPanel extends HTMLElement {
                   ${this._renderEntityAutocomplete(device.power_sensor_entity || '', 'power_watts', roomIndex, 'ceiling-vent-power-sensor-entity', 'sensor.bathroom_vent_power')}
                   <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">sensor.* or switch.* with power reading.</div>
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Energy sensor (optional)</label>
-                  ${this._renderEntityAutocomplete(device.energy_sensor_entity || '', 'sensor', roomIndex, 'ceiling-vent-energy-sensor-entity', 'sensor.bathroom_heater_summation_delivered')}
-                  <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Cumulative kWh sensor (Summation / Energy). If set, uses this for accurate energy tracking instead of integrating power.</div>
-                </div>
               </div>
               <div class="ceiling-vent-watts-block" style="display: ${ventPowerSource === 'configured' ? 'block' : 'none'};">
                 <div class="form-group">
@@ -12862,7 +12849,6 @@ class EnergyPanel extends HTMLElement {
       newOutlet.watts_when_on = 25;
       newOutlet.power_source = 'configured';
       newOutlet.power_sensor_entity = '';
-      newOutlet.energy_sensor_entity = null;
       if (deviceType === 'wall_heater') {
         newOutlet.heater_on_below_temperature = 65;
         newOutlet.heater_stay_on_minutes = 5;

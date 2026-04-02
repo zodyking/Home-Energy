@@ -247,7 +247,6 @@ class ConfigManager:
         self._config_path = self._data_path("config.json")
         self._day_energy_data: dict[str, dict[str, float]] = {}
         self._last_reset_date: str | None = None
-        self._energy_sensor_midnight: dict[str, float] = {}  # entity_id -> kWh at midnight
         self._event_counts_reset_date: str | None = None
         self._event_counts: dict[str, Any] = {
             "total_warnings": 0,
@@ -803,8 +802,6 @@ class ConfigManager:
                             ps, pse = _power_source_for_light_vent(outlet)
                             item["power_source"] = ps
                             item["power_sensor_entity"] = pse
-                            ese = str(outlet.get("energy_sensor_entity") or "").strip()
-                            item["energy_sensor_entity"] = ese if ese.startswith("sensor.") else None
                             if outlet_type == "vent":
                                 item["vent_automation_enabled"] = bool(
                                     outlet.get("vent_automation_enabled")
@@ -1642,51 +1639,6 @@ class ConfigManager:
         """Get accumulated day energy for an entity."""
         return self._day_energy_data.get(entity_id, {}).get("energy", 0.0)
 
-    def update_energy_sensor_day_wh(self, energy_sensor_entity: str) -> float:
-        """Read cumulative kWh from energy_sensor_entity and return today's Wh delta.
-
-        For devices with a Summation/energy sensor, this is more accurate than integrating
-        power readings. The sensor reports cumulative kWh; we track midnight value and compute
-        today's usage as (current - midnight) * 1000.
-        """
-        today = dt_util.now().strftime("%Y-%m-%d")
-        if self._last_reset_date != today:
-            self._day_energy_data = {}
-            self._last_reset_date = today
-            self._last_power_update = {}
-            self._energy_sensor_midnight = {}
-
-        state = self.hass.states.get(energy_sensor_entity)
-        if not state or state.state in ("unknown", "unavailable", ""):
-            return 0.0
-
-        try:
-            current_kwh = float(state.state)
-        except (ValueError, TypeError):
-            return 0.0
-
-        unit = state.attributes.get("unit_of_measurement", "").lower()
-        if unit == "wh":
-            current_kwh = current_kwh / 1000.0
-        elif unit == "mwh":
-            current_kwh = current_kwh * 1000.0
-
-        if energy_sensor_entity not in self._energy_sensor_midnight:
-            self._energy_sensor_midnight[energy_sensor_entity] = current_kwh
-
-        midnight_kwh = self._energy_sensor_midnight[energy_sensor_entity]
-        if current_kwh < midnight_kwh:
-            self._energy_sensor_midnight[energy_sensor_entity] = current_kwh
-            midnight_kwh = current_kwh
-
-        day_wh = max(0.0, (current_kwh - midnight_kwh) * 1000.0)
-
-        if energy_sensor_entity not in self._day_energy_data:
-            self._day_energy_data[energy_sensor_entity] = {"energy": 0.0}
-        self._day_energy_data[energy_sensor_entity]["energy"] = day_wh
-
-        return day_wh
-
     async def async_add_energy_reading(
         self, entity_id: str, watts: float, elapsed_seconds: float = 1.0
     ) -> None:
@@ -1697,7 +1649,6 @@ class ConfigManager:
             self._day_energy_data = {}
             self._last_reset_date = today
             self._last_power_update = {}
-            self._energy_sensor_midnight = {}
 
         if entity_id not in self._day_energy_data:
             self._day_energy_data[entity_id] = {"energy": 0.0}
@@ -1762,9 +1713,6 @@ class ConfigManager:
 
         if otype in ("vent", "wall_heater"):
             if outlet.get("power_source") == "sensor":
-                ee = outlet.get("energy_sensor_entity")
-                if ee:
-                    return str(ee).strip()
                 pe = outlet.get("power_sensor_entity")
                 return str(pe).strip() if pe else None
             return vent_like_energy_tracking_key(room_id, outlet)
@@ -2262,13 +2210,9 @@ class ConfigManager:
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 elif outlet.get("type") in ("vent", "wall_heater"):
                     if outlet.get("power_source") == "sensor":
-                        ee = outlet.get("energy_sensor_entity")
-                        if ee:
-                            room_wh += self._day_energy_data.get(ee, {}).get("energy", 0.0)
-                        else:
-                            pe = outlet.get("power_sensor_entity")
-                            if pe:
-                                room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
                     else:
                         key = vent_like_energy_tracking_key(room_id, outlet)
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
@@ -2327,13 +2271,9 @@ class ConfigManager:
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 elif outlet.get("type") in ("vent", "wall_heater"):
                     if outlet.get("power_source") == "sensor":
-                        ee = outlet.get("energy_sensor_entity")
-                        if ee:
-                            room_wh += self._day_energy_data.get(ee, {}).get("energy", 0.0)
-                        else:
-                            pe = outlet.get("power_sensor_entity")
-                            if pe:
-                                room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
                     else:
                         key = vent_like_energy_tracking_key(rid, outlet)
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
@@ -2717,13 +2657,9 @@ class ConfigManager:
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 elif outlet.get("type") in ("vent", "wall_heater"):
                     if outlet.get("power_source") == "sensor":
-                        ee = outlet.get("energy_sensor_entity")
-                        if ee:
-                            room_wh += self._day_energy_data.get(ee, {}).get("energy", 0.0)
-                        else:
-                            pe = outlet.get("power_sensor_entity")
-                            if pe:
-                                room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
+                        pe = outlet.get("power_sensor_entity")
+                        if pe:
+                            room_wh += self._day_energy_data.get(pe, {}).get("energy", 0.0)
                     else:
                         key = vent_like_energy_tracking_key(rid, outlet)
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
