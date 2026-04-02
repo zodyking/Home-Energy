@@ -9117,7 +9117,7 @@ class EnergyPanel extends HTMLElement {
               <div class="form-group" style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--divider-color, rgba(255,255,255,0.1));">
                 <div class="toggle-row">
                   <label class="toggle-switch">
-                    <input type="checkbox" id="tts-zone-health-check" ${ttsSettings.zone_health_check_enabled !== false ? 'checked' : ''} />
+                    <input type="checkbox" id="tts-zone-health-check" class="zone-health-check-sync" ${ttsSettings.zone_health_check_enabled !== false ? 'checked' : ''} />
                     <span class="toggle-slider"></span>
                   </label>
                   <span class="toggle-label">Zone tracking health check (TTS + push when setup looks wrong)</span>
@@ -9304,6 +9304,16 @@ class EnergyPanel extends HTMLElement {
                 For each person, <strong>no TTS or push alerts</strong> run until <strong>Home Assistant has been up for 10 minutes</strong> and a <strong>warm-up period</strong> (same length as the history window, 1–3 days) has finished.
                 After warm-up, <strong>healthy</strong> means <code>home</code>, <code>nearby</code>, and <code>away</code> all appear in that saved snapshot window. Live <code>person.*</code> and recorder columns below are for reference only.
               </p>
+              <div class="form-group" style="margin-bottom: 16px; padding: 12px; border: 1px solid var(--divider-color, rgba(255,255,255,0.12)); border-radius: 8px;">
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="zone-health-master-toggle" class="zone-health-check-sync" ${ttsSettings.zone_health_check_enabled !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label"><strong>Enable zone health tracking</strong></span>
+                </div>
+                <p style="color: var(--secondary-text-color); font-size: 10px; margin: 8px 0 0 0;">When off, the integration skips zone-health checks, recorder snapshot updates for health, TTS, and push for this feature. The same toggle is linked on the <strong>Notifications</strong> tab.</p>
+              </div>
               <details class="settings-fold" style="margin-bottom: 16px;">
                 <summary class="settings-fold-summary">Zone health settings</summary>
                 <div class="settings-fold-body">
@@ -9324,7 +9334,7 @@ class EnergyPanel extends HTMLElement {
                     <div class="tts-msg-desc" style="margin-top: 4px;">Hours between repeat TTS and push reminders (1–24). First alert is immediate.</div>
                   </div>
                   <p style="color: var(--secondary-text-color); font-size: 10px; font-style: italic; margin: 0;">
-                    Enable/disable the health check on the <strong>Notifications</strong> tab. Message templates: <strong>TTS Settings</strong> tab → Zone Health TTS.
+                    Master on/off is at the top of this tab. Message templates: <strong>TTS Settings</strong> tab → Zone Health TTS.
                   </p>
                 </div>
               </details>
@@ -12467,6 +12477,15 @@ class EnergyPanel extends HTMLElement {
       });
     }
 
+    this.shadowRoot.querySelectorAll('input.zone-health-check-sync').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const v = cb.checked;
+        this.shadowRoot.querySelectorAll('input.zone-health-check-sync').forEach(x => {
+          x.checked = v;
+        });
+      });
+    });
+
     // Toggle room details
     this.shadowRoot.querySelectorAll('.toggle-room-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -13562,7 +13581,12 @@ class EnergyPanel extends HTMLElement {
         notify_heater_auto: this.shadowRoot.querySelector('#tts-notify-heater-auto')?.checked !== false,
         notify_vent_auto: this.shadowRoot.querySelector('#tts-notify-vent-auto')?.checked !== false,
         notify_external_auto: this.shadowRoot.querySelector('#tts-notify-external-auto')?.checked !== false,
-        zone_health_check_enabled: this.shadowRoot.querySelector('#tts-zone-health-check')?.checked !== false,
+        zone_health_check_enabled: (() => {
+          const master = this.shadowRoot.querySelector('#zone-health-master-toggle');
+          const tts = this.shadowRoot.querySelector('#tts-zone-health-check');
+          if (master) return master.checked;
+          return tts?.checked !== false;
+        })(),
         zone_health_history_days: (() => {
           const d = parseInt(this.shadowRoot.querySelector('#zone-health-history-days')?.value, 10);
           return [1, 2, 3].includes(d) ? d : 3;
