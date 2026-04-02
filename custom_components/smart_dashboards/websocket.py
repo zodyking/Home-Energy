@@ -1193,13 +1193,11 @@ def _collect_statistics_energy_sources(
                         "watts": total_w,
                     })
             elif otype in ("vent", "wall_heater"):
-                pe = (
-                    outlet.get("power_sensor_entity")
-                    if outlet.get("power_source") == "sensor"
-                    else None
-                )
-                if pe and isinstance(pe, str) and pe.strip():
-                    entity_to_room[pe.strip()] = room_id
+                if outlet.get("power_source") == "sensor":
+                    # Skip recorder integration for heater/vent power sensors entirely.
+                    # The day ledger (1-second polling) tracks today accurately; recorder
+                    # history is unreliable due to infrequent state updates causing massive
+                    # over-counting. Past days will show 0 for these devices.
                     continue
                 sw = (outlet.get("switch_entity") or "").strip()
                 w_on = float(outlet.get("watts_when_on", 0) or 0)
