@@ -1388,11 +1388,12 @@ class ConfigManager:
                 )
                 or ""
             ),
-            "zone_health_check_enabled": bool(
+            "zone_health_check_enabled": _coerce_bool(
                 tts.get(
                     "zone_health_check_enabled",
                     default_tts.get("zone_health_check_enabled", True),
-                )
+                ),
+                default_tts.get("zone_health_check_enabled", True),
             ),
             "zone_health_history_days": (
                 lambda: (
