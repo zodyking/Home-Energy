@@ -198,8 +198,6 @@ class EnergyPanel extends HTMLElement {
   connectedCallback() {
     this._render();
     this._loadConfig();
-    // Start zone health refresh
-    this._startZoneHealthRefresh();
   }
 
   disconnectedCallback() {
@@ -323,6 +321,7 @@ class EnergyPanel extends HTMLElement {
       this._loading = false;
       this._render();
       this._startRefresh();
+      this._syncZoneHealthPollingFromConfig();
       queueMicrotask(() => {
         if (!this._showSettings && this._hass) {
           void this._loadStatistics();
@@ -11134,6 +11133,36 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  /** Matches backend _coerce_bool for zone_health_check_enabled (string "false" is off). */
+  _isZoneHealthConfigEnabled() {
+    const v = this._config?.tts_settings?.zone_health_check_enabled;
+    if (v === false || v === 0) return false;
+    if (typeof v === 'string') {
+      const s = v.trim().toLowerCase();
+      if (s === 'false' || s === '0' || s === 'off' || s === 'no' || s === '') return false;
+    }
+    return true;
+  }
+
+  _syncZoneHealthPollingFromConfig() {
+    if (!this._hass) return;
+    if (!this._isZoneHealthConfigEnabled()) {
+      this._stopZoneHealthRefresh();
+      this._zoneHealthData = {
+        persons: [],
+        zone_health_enabled: false,
+        event_log: [],
+      };
+      this._updateRoomCardZoneHealthIndicators();
+      const contentEl = this.shadowRoot?.querySelector('#zone-health-content');
+      if (contentEl && this._showSettings) {
+        this._renderZoneHealthStatus(this._zoneHealthData);
+      }
+    } else if (!this._zoneHealthRefreshInterval) {
+      this._startZoneHealthRefresh();
+    }
+  }
+
   _updateRoomCardZoneHealthIndicators() {
     if (!this._zoneHealthData?.persons) return;
     const unhealthyPersons = new Set(
@@ -11157,6 +11186,7 @@ class EnergyPanel extends HTMLElement {
       event_log = [],
       history_days = 3,
       recorder_refreshed_at = null,
+      zone_health_enabled,
       required_zones: requiredZonesSnake = {},
       requiredZones: requiredZonesCamel = {},
     } = data;
@@ -11164,22 +11194,6 @@ class EnergyPanel extends HTMLElement {
       ...requiredZonesCamel,
       ...requiredZonesSnake,
     };
-    if (persons.length === 0) {
-      contentEl.innerHTML = `
-        <p style="color: var(--secondary-text-color); font-size: 12px;">
-          No persons are configured for presence tracking. Assign a <strong>Presence person</strong> to rooms to enable zone health monitoring.
-        </p>`;
-      return;
-    }
-    const formatTime = (iso) => {
-      if (!iso) return '—';
-      const d = new Date(iso);
-      return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    };
-    const windowLabel = history_days === 1 ? '1 day' : `${history_days} days`;
-    const refreshedLine = recorder_refreshed_at
-      ? `<p style="font-size: 10px; color: var(--secondary-text-color); margin: 0 0 8px 0;">Last recorder pull: ${new Date(recorder_refreshed_at).toLocaleString()}</p>`
-      : '';
     const checkIcon = '<span style="color: var(--success-color, #4caf50);">&#10003;</span>';
     const xIcon = '<span style="color: var(--error-color, #f44336);">&#10007;</span>';
     const zh = {
@@ -11235,6 +11249,36 @@ class EnergyPanel extends HTMLElement {
           </table>
         </div>
       </div>`;
+
+    if (zone_health_enabled === false) {
+      contentEl.innerHTML = `
+        <div role="status" style="margin-bottom: 16px; padding: 12px; border-radius: 8px; background: var(--warning-color, #ff9800); color: #000; font-size: 13px;">
+          <strong>Zone health monitoring is off.</strong> Alerts, push/TTS for zone health, periodic recorder work for this feature, and room-card health styling are disabled. Turn it on in Energy settings (TTS &amp; notifications) if you want monitoring again.
+        </div>
+        ${requiredZonesBlock}
+        <p style="color: var(--secondary-text-color); font-size: 12px; margin-top: 8px;">
+          Person status and event log are hidden while monitoring is disabled.
+        </p>`;
+      return;
+    }
+
+    if (persons.length === 0) {
+      contentEl.innerHTML = `
+        ${requiredZonesBlock}
+        <p style="color: var(--secondary-text-color); font-size: 12px;">
+          No persons are configured for presence tracking. Assign a <strong>Presence person</strong> to rooms to enable zone health monitoring.
+        </p>`;
+      return;
+    }
+    const formatTime = (iso) => {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    };
+    const windowLabel = history_days === 1 ? '1 day' : `${history_days} days`;
+    const refreshedLine = recorder_refreshed_at
+      ? `<p style="font-size: 10px; color: var(--secondary-text-color); margin: 0 0 8px 0;">Last recorder pull: ${new Date(recorder_refreshed_at).toLocaleString()}</p>`
+      : '';
     const personsHtml = persons
       .map(p => {
         const warmingUp = p.warming_up === true;
@@ -13637,6 +13681,7 @@ class EnergyPanel extends HTMLElement {
       });
 
       this._config = config;
+      this._syncZoneHealthPollingFromConfig();
       showToast(this.shadowRoot, 'Settings saved!', 'success');
 
       try {

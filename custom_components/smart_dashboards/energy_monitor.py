@@ -60,6 +60,7 @@ from .zone_health_storage import (
     warmup_complete_at_iso,
     zone_health_store_path,
 )
+from .config_manager import _coerce_bool
 from .person_device_trackers import get_person_device_tracker_entity_ids
 from .tts_helper import async_send_tts
 from .tts_queue import async_send_tts_or_queue
@@ -341,6 +342,10 @@ class EnergyMonitor:
             return False
         return now >= self._zone_health_earliest_alert_at
 
+    def _is_zone_health_enabled(self) -> bool:
+        ts = self.config_manager.energy_config.get("tts_settings") or {}
+        return _coerce_bool(ts.get("zone_health_check_enabled"), True)
+
     def _zone_health_ensure_store_loaded(self) -> dict:
         if self._zone_health_store_cache is None:
             self._zone_health_store_cache = load_store(zone_health_store_path(self.hass))
@@ -617,10 +622,48 @@ class EnergyMonitor:
 
     def get_zone_health_status(self) -> dict:
         """Return zone health status for all configured persons (for WebSocket API)."""
-        now = dt_util.now()
-        self._zone_health_reload_store_from_disk()
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
+        if not self._is_zone_health_enabled():
+            zone_entity_ids = set(self.hass.states.async_entity_ids("zone"))
+            zone_home_ok = "zone.home" in zone_entity_ids
+            zone_nearby_ok = "zone.nearby" in zone_entity_ids
+            return {
+                "zone_health_enabled": False,
+                "history_days": history_days,
+                "persons": [],
+                "event_log": [],
+                "recorder_refreshed_at": None,
+                "required_zones": {
+                    "zone_home": {
+                        "entity_id": "zone.home",
+                        "exists": zone_home_ok,
+                        "setup_hint": (
+                            ""
+                            if zone_home_ok
+                            else (
+                                "Add or restore the default Home zone: Settings → Areas & zones → Zones. "
+                                "The entity should be zone.home."
+                            )
+                        ),
+                    },
+                    "zone_nearby": {
+                        "entity_id": "zone.nearby",
+                        "exists": zone_nearby_ok,
+                        "setup_hint": (
+                            ""
+                            if zone_nearby_ok
+                            else (
+                                "Create a zone named Nearby so the entity id is zone.nearby: "
+                                "Settings → Areas & zones → Zones → Add zone. "
+                                "See https://www.home-assistant.io/integrations/zone/"
+                            )
+                        ),
+                    },
+                },
+            }
+        now = dt_util.now()
+        self._zone_health_reload_store_from_disk()
         all_persons = self._distinct_presence_person_entity_ids()
         persons_data = []
         for person_ent in all_persons:
@@ -664,6 +707,7 @@ class EnergyMonitor:
         zone_home_ok = "zone.home" in zone_entity_ids
         zone_nearby_ok = "zone.nearby" in zone_entity_ids
         return {
+            "zone_health_enabled": True,
             "history_days": history_days,
             "persons": persons_data,
             "event_log": event_log,
@@ -703,6 +747,8 @@ class EnergyMonitor:
 
     async def async_force_zone_health_refresh(self) -> dict:
         """Re-query recorder for all persons + device_trackers, then run one health evaluation tick."""
+        if not self._is_zone_health_enabled():
+            return self.get_zone_health_status()
         await self._async_refresh_zone_health_recorder_cache(force=True)
         await self._async_tick_zone_health_check(dt_util.now())
         return self.get_zone_health_status()
@@ -774,12 +820,12 @@ class EnergyMonitor:
     ) -> None:
         """Clear zone-health alert state when home, nearby, and away all appear in history."""
         person_key = str(person_ent).strip().lower()
-        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
-        if not tts_settings.get("zone_health_check_enabled", True):
+        if not self._is_zone_health_enabled():
             return
 
         if not self._zone_health_post_startup_ready(now):
             return
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
         history_days = int(tts_settings.get("zone_health_history_days", 3) or 3)
         pe = self._zone_health_person_entry(person_key)
         if pe is None or not warmup_complete(pe, now, history_days):
@@ -912,12 +958,13 @@ class EnergyMonitor:
 
     async def _async_tick_zone_health_check(self, now: datetime) -> None:
         """Detect unhealthy zone tracking; repeat TTS/push spaced by zone_health_reminder_hours."""
-        # Check Nearby zone existence once per pass
+        if not self._is_zone_health_enabled():
+            return
+
+        # Check Nearby zone existence once per pass (only when zone health is enabled)
         await self._check_nearby_zone_notification()
 
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
-        if not tts_settings.get("zone_health_check_enabled", True):
-            return
 
         # Refresh recorder-backed history cache (throttled internally); append JSON snapshots when it runs.
         await self._async_refresh_zone_health_recorder_cache()
