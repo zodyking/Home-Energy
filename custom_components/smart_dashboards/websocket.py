@@ -170,6 +170,7 @@ _last_stats_prime_at: float = 0.0
 
 async def async_register_statistics_cache_primer(hass: HomeAssistant) -> None:
     """Periodic background prime of default-range statistics cache and save to JSON."""
+    _clear_recorder_derived_caches()
 
     async def _tick(_now: datetime) -> None:
         await _statistics_cache_prime_tick(hass, _now)
@@ -1038,25 +1039,6 @@ def _iter_local_calendar_chunks(start_utc: datetime, end_utc: datetime):
         cur = chunk_end_utc
 
 
-def _trap_wh_linear(
-    w1: float, w2: float, ta: datetime, tb: datetime, t0: datetime, t1: datetime
-) -> float:
-    """Trapezoid Wh for linear w from (ta,w1) to (tb,w2) on [t0,t1] subset of [ta,tb]."""
-    if t1 <= t0 or tb <= ta:
-        return 0.0
-    dur = (tb - ta).total_seconds()
-    if dur <= 0:
-        return 0.0
-
-    def w_at(t: datetime) -> float:
-        frac = (t - ta).total_seconds() / dur
-        return w1 + (w2 - w1) * frac
-
-    wa = w_at(t0)
-    wb = w_at(t1)
-    return (wa + wb) / 2.0 * ((t1 - t0).total_seconds() / 3600.0)
-
-
 def _add_constant_wh_to_date_buckets(
     buckets: dict[str, float], watts: float, t0: datetime, t1: datetime
 ) -> None:
@@ -1176,19 +1158,6 @@ def _collect_statistics_energy_sources(
     return entity_to_room, switch_specs
 
 
-def _sync_integrate_entity_wh(
-    hass: HomeAssistant,
-    entity_id: str,
-    start_dt,
-    end_dt,
-) -> float:
-    """Load one entity's history and integrate W -> Wh."""
-    total, _by = _sync_integrate_entity_wh_total_and_by_day(
-        hass, entity_id, start_dt, end_dt
-    )
-    return total
-
-
 def _sync_integrate_entity_wh_total_and_by_day(
     hass: HomeAssistant,
     entity_id: str,
@@ -1221,19 +1190,6 @@ def _sync_integrate_entity_wh_total_and_by_day(
     total = _integrate_power_to_wh_clipped(states, start_dt, end_dt)
     by_day = _integrate_power_to_wh_by_local_date(states, start_dt, end_dt)
     return total, by_day
-
-
-def _sync_integrate_switch_constant_wh(
-    hass: HomeAssistant,
-    switch_entity: str,
-    watts: float,
-    start_dt,
-    end_dt,
-) -> float:
-    total, _by = _sync_integrate_switch_constant_wh_total_and_by_day(
-        hass, switch_entity, watts, start_dt, end_dt
-    )
-    return total
 
 
 def _sync_integrate_switch_constant_wh_total_and_by_day(
@@ -2727,6 +2683,9 @@ async def websocket_clear_statistics_cache(
 ) -> None:
     """Clear statistics and kWh history caches to force fresh recalculation."""
     _clear_recorder_derived_caches()
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if config_manager:
+        await config_manager.async_save_statistics_cache({})
     connection.send_result(msg["id"], {"success": True})
 
 
