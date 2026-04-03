@@ -1166,8 +1166,8 @@ def _sync_integrate_entity_wh_total_and_by_day(
 ) -> tuple[float, dict[str, float]]:
     """Step-function W -> Wh for full range and per local calendar day.
 
-    No back-fill (include_start_time_state=False): only states that actually
-    occurred within [start_dt, end_dt] are considered.
+    Back-fill enabled: inject last state before window so constant-power periods are captured.
+    No forward-fill, no interpolation/averaging.
     """
     from homeassistant.components.recorder.history import get_significant_states_with_session
     from homeassistant.components.recorder.util import session_scope
@@ -1181,7 +1181,7 @@ def _sync_integrate_entity_wh_total_and_by_day(
             end_dt,
             [entity_id],
             None,
-            include_start_time_state=False,
+            include_start_time_state=True,
             significant_changes_only=sig_only,
             minimal_response=False,
             no_attributes=False,
@@ -1199,7 +1199,7 @@ def _sync_integrate_switch_constant_wh_total_and_by_day(
     start_dt,
     end_dt,
 ) -> tuple[float, dict[str, float]]:
-    """No back-fill (include_start_time_state=False): only states within the window."""
+    """Back-fill enabled: inject last state before window so constant-power periods are captured."""
     from homeassistant.components.recorder.history import get_significant_states_with_session
     from homeassistant.components.recorder.util import session_scope
 
@@ -1211,7 +1211,7 @@ def _sync_integrate_switch_constant_wh_total_and_by_day(
             end_dt,
             [switch_entity],
             None,
-            include_start_time_state=False,
+            include_start_time_state=True,
             significant_changes_only=True,
             minimal_response=False,
             no_attributes=False,
