@@ -951,53 +951,28 @@ def _sync_supplier_usage_plateau_started_at(
 
 
 def _integrate_power_to_wh_clipped(states: list, start_dt, end_dt) -> float:
-    """Integrate power (W) to Wh using trapezoids between states, clipped to [start_dt, end_dt].
+    """Step-function W-to-Wh: hold each state's power constant until the next state.
 
-    Does NOT forward-fill beyond 5 minutes. If a sensor stops reporting, we assume 0W
-    rather than holding the last reading indefinitely. This prevents massive over-counting
-    for devices that cycle on/off with infrequent state updates.
+    No forward-fill, no back-fill, no interpolation/averaging.  Energy is counted
+    only for exact intervals between recorded states within [start_dt, end_dt].
     """
     if not states:
         return 0.0
     states = sorted(states, key=lambda s: s.last_updated)
     total_wh = 0.0
-    max_hold_seconds = 300  # 5 minutes max forward-fill
-
-    def w_at(s):
-        return _parse_power_from_state_object(s)
 
     for i in range(len(states) - 1):
         s1, s2 = states[i], states[i + 1]
         a, b = s1.last_updated, s2.last_updated
         if b <= a:
             continue
-        w1, w2 = w_at(s1), w_at(s2)
+        w1 = _parse_power_from_state_object(s1)
         overlap_start = max(a, start_dt)
         overlap_end = min(b, end_dt)
         if overlap_end <= overlap_start:
             continue
-        dur = (b - a).total_seconds()
-        if dur <= 0:
-            continue
-
-        def w_linear(t):
-            frac = (t - a).total_seconds() / dur
-            return w1 + (w2 - w1) * frac
-
-        wa = w_linear(overlap_start)
-        wb = w_linear(overlap_end)
         dt_sec = (overlap_end - overlap_start).total_seconds()
-        total_wh += (wa + wb) / 2.0 * (dt_sec / 3600.0)
-
-    t_last = states[-1].last_updated
-    if t_last < end_dt:
-        wn = w_at(states[-1])
-        if wn > 0:
-            overlap_start = max(t_last, start_dt)
-            max_end = t_last + timedelta(seconds=max_hold_seconds)
-            overlap_end = min(end_dt, max_end)
-            if overlap_end > overlap_start:
-                total_wh += wn * (overlap_end - overlap_start).total_seconds() / 3600.0
+        total_wh += w1 * (dt_sec / 3600.0)
 
     return total_wh
 
@@ -1096,43 +1071,27 @@ def _add_constant_wh_to_date_buckets(
 def _integrate_power_to_wh_by_local_date(
     states: list, start_dt: datetime, end_dt: datetime
 ) -> dict[str, float]:
-    """Same physics as _integrate_power_to_wh_clipped; Wh split by local calendar day.
+    """Step-function W-to-Wh split by local calendar day.
 
-    Does NOT forward-fill beyond 5 minutes. If a sensor stops reporting, we assume 0W
-    rather than holding the last reading indefinitely.
+    No forward-fill, no back-fill, no interpolation/averaging.  Energy is counted
+    only for exact intervals between recorded states within [start_dt, end_dt].
     """
     buckets: dict[str, float] = {}
     if not states:
         return buckets
     states = sorted(states, key=lambda s: s.last_updated)
-    max_hold_seconds = 300  # 5 minutes max forward-fill
-
-    def w_at(s):
-        return _parse_power_from_state_object(s)
 
     for i in range(len(states) - 1):
         s1, s2 = states[i], states[i + 1]
         a, b = s1.last_updated, s2.last_updated
         if b <= a:
             continue
-        w1, w2 = w_at(s1), w_at(s2)
+        w1 = _parse_power_from_state_object(s1)
         overlap_start = max(a, start_dt)
         overlap_end = min(b, end_dt)
         if overlap_end <= overlap_start:
             continue
-        for cs, ce, day_key in _iter_local_calendar_chunks(overlap_start, overlap_end):
-            wh = _trap_wh_linear(w1, w2, a, b, cs, ce)
-            buckets[day_key] = buckets.get(day_key, 0.0) + wh
-
-    t_last = states[-1].last_updated
-    if t_last < end_dt:
-        wn = w_at(states[-1])
-        if wn > 0:
-            overlap_start = max(t_last, start_dt)
-            max_end = t_last + timedelta(seconds=max_hold_seconds)
-            overlap_end = min(end_dt, max_end)
-            if overlap_end > overlap_start:
-                _add_constant_wh_to_date_buckets(buckets, wn, overlap_start, overlap_end)
+        _add_constant_wh_to_date_buckets(buckets, w1, overlap_start, overlap_end)
 
     return buckets
 
@@ -1236,11 +1195,14 @@ def _sync_integrate_entity_wh_total_and_by_day(
     start_dt,
     end_dt,
 ) -> tuple[float, dict[str, float]]:
-    """Integrate W -> Wh for full range and per local calendar day (same recorder fetch)."""
+    """Step-function W -> Wh for full range and per local calendar day.
+
+    No back-fill (include_start_time_state=False): only states that actually
+    occurred within [start_dt, end_dt] are considered.
+    """
     from homeassistant.components.recorder.history import get_significant_states_with_session
     from homeassistant.components.recorder.util import session_scope
 
-    # switch.* power often lives in current_power_w; significant_changes_only drops attribute-only rows
     sig_only = not entity_id.startswith("switch.")
     with session_scope(hass=hass, read_only=True) as session:
         states_dict = get_significant_states_with_session(
@@ -1250,7 +1212,7 @@ def _sync_integrate_entity_wh_total_and_by_day(
             end_dt,
             [entity_id],
             None,
-            include_start_time_state=True,
+            include_start_time_state=False,
             significant_changes_only=sig_only,
             minimal_response=False,
             no_attributes=False,
@@ -1281,6 +1243,7 @@ def _sync_integrate_switch_constant_wh_total_and_by_day(
     start_dt,
     end_dt,
 ) -> tuple[float, dict[str, float]]:
+    """No back-fill (include_start_time_state=False): only states within the window."""
     from homeassistant.components.recorder.history import get_significant_states_with_session
     from homeassistant.components.recorder.util import session_scope
 
@@ -1292,7 +1255,7 @@ def _sync_integrate_switch_constant_wh_total_and_by_day(
             end_dt,
             [switch_entity],
             None,
-            include_start_time_state=True,
+            include_start_time_state=False,
             significant_changes_only=True,
             minimal_response=False,
             no_attributes=False,
@@ -1431,10 +1394,11 @@ async def async_build_billing_daily_history_from_recorder(
     date_start: str,
     date_end: str,
 ) -> dict[str, Any]:
-    """Daily Wh for billing charts: recorder for past days; **today** uses day ledger.
+    """Daily Wh for billing charts.
 
-    Per-day warnings/shutoffs/power_cycles still come from smart_dashboards_daily_totals
-    snapshots (same as get_daily_history_for_range) so event series stay file-backed.
+    Primary source: daily_totals.json snapshots (accurate 1s-poll ledger).
+    Fallback: recorder integration (step-function, no estimation) for days without a snapshot.
+    Today: live day ledger (_build_today_totals).
     """
     today = dt_util.now().strftime("%Y-%m-%d")
     all_room_ids = [
@@ -1457,23 +1421,35 @@ async def async_build_billing_daily_history_from_recorder(
     if date_start > effective_end:
         return result
 
-    try:
-        _, _, room_day_wh_map = await _compute_kwh_from_history(
-            hass, config_manager, date_start, date_end
-        )
-    except Exception as err:
-        _LOGGER.warning("Billing daily history recorder integration failed: %s", err)
-        room_day_wh_map = {}
-
     dates_list = _enumerate_date_range_iso(date_start, effective_end)
     daily_snapshots = config_manager.daily_totals
+
+    needs_recorder = any(
+        d != today and d not in daily_snapshots
+        for d in dates_list
+        if d <= today
+    )
+    room_day_wh_map: dict[str, dict[str, float]] = {}
+    if needs_recorder:
+        try:
+            _, _, room_day_wh_map = await _compute_kwh_from_history(
+                hass, config_manager, date_start, date_end
+            )
+        except Exception as err:
+            _LOGGER.warning("Billing daily history recorder fallback failed: %s", err)
 
     for d in dates_list:
         if d > today:
             break
         if d == today:
-            # Day ledger matches Rooms page / get_power_data (recorder can differ).
             row = config_manager._build_today_totals()
+            total_wh_day = float(row.get("total_wh", 0.0))
+            row_rooms = row.get("rooms") or {}
+            for rid in all_room_ids:
+                wh = float((row_rooms.get(rid) or {}).get("wh", 0.0))
+                result["rooms"][rid]["wh"].append(round(wh, 2))
+        elif d in daily_snapshots:
+            row = daily_snapshots[d]
             total_wh_day = float(row.get("total_wh", 0.0))
             row_rooms = row.get("rooms") or {}
             for rid in all_room_ids:
@@ -1486,15 +1462,13 @@ async def async_build_billing_daily_history_from_recorder(
             for rid in all_room_ids:
                 wh = float(room_day_wh_map.get(rid, {}).get(d, 0.0))
                 result["rooms"][rid]["wh"].append(round(wh, 2))
-            row = daily_snapshots.get(d)
-            if row is None:
-                row = {
-                    "total_wh": 0,
-                    "total_warnings": 0,
-                    "total_shutoffs": 0,
-                    "total_power_cycles": 0,
-                    "rooms": {},
-                }
+            row = {
+                "total_wh": 0,
+                "total_warnings": 0,
+                "total_shutoffs": 0,
+                "total_power_cycles": 0,
+                "rooms": {},
+            }
 
         result["dates"].append(d)
         result["total_wh"].append(round(total_wh_day, 2))
@@ -1647,7 +1621,8 @@ async def async_build_statistics_payload(
             total_wh = 0.0
             room_wh_map = {}
             room_day_wh_map = {}
-    total_kwh = total_wh / 1000.0 if total_wh else 0.0
+
+    daily_totals = config_manager.daily_totals
     if start <= today:
         effective_end = min(end, today)
         stat_day_keys = (
@@ -1657,6 +1632,28 @@ async def async_build_statistics_payload(
         )
     else:
         stat_day_keys = []
+
+    for d in stat_day_keys:
+        if d == today:
+            snap = config_manager._build_today_totals()
+        else:
+            snap = daily_totals.get(d)
+        if snap is None:
+            continue
+        snap_rooms = snap.get("rooms") or {}
+        for rid, rdata in snap_rooms.items():
+            wh = float(rdata.get("wh", 0.0))
+            rmap = room_day_wh_map.setdefault(rid, {})
+            rmap[d] = wh
+
+    room_wh_map = {}
+    total_wh = 0.0
+    for rid, dmap in room_day_wh_map.items():
+        s = sum(dmap.values())
+        room_wh_map[rid] = s
+        total_wh += s
+
+    total_kwh = total_wh / 1000.0 if total_wh else 0.0
     n_stat_days = len(stat_day_keys)
 
     def _room_daily_kwh_stats(rid: str, kwh_total: float) -> dict[str, float]:
@@ -1675,7 +1672,6 @@ async def async_build_statistics_payload(
             "daily_avg_kwh": round(kwh_total / n_stat_days, 2),
         }
 
-    daily_totals = config_manager.daily_totals
     all_dates = set(daily_totals.keys())
     if start <= today <= end:
         all_dates.add(today)
