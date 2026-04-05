@@ -1594,13 +1594,12 @@ async def async_build_statistics_payload(
             snap = config_manager._build_today_totals()
         else:
             snap = daily_totals.get(d)
-        if snap is None:
-            continue
-        snap_rooms = snap.get("rooms") or {}
-        for rid, rdata in snap_rooms.items():
-            wh = float(rdata.get("wh", 0.0))
-            rmap = room_day_wh_map.setdefault(rid, {})
-            rmap[d] = wh
+        if snap is not None:
+            snap_rooms = snap.get("rooms") or {}
+            for rid, rdata in snap_rooms.items():
+                wh = float(rdata.get("wh", 0.0))
+                rmap = room_day_wh_map.setdefault(rid, {})
+                rmap[d] = wh
 
     room_wh_map = {}
     total_wh = 0.0
