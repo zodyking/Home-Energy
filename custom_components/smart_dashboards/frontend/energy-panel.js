@@ -2657,6 +2657,21 @@ class EnergyPanel extends HTMLElement {
         white-space: nowrap;
       }
 
+      .room-total-watts.load-rate-clickable {
+        cursor: pointer;
+        border-radius: 4px;
+        padding: 2px 4px;
+        margin: -2px -4px;
+        transition: background 0.15s;
+      }
+      .room-total-watts.load-rate-clickable:hover {
+        background: rgba(255,255,255,0.08);
+      }
+      .room-total-watts.load-rate-clickable:focus-visible {
+        outline: 2px solid var(--panel-accent);
+        outline-offset: 2px;
+      }
+
       .room-total-watts.over-threshold {
         color: var(--panel-danger);
         animation: pulse-danger 1s infinite;
@@ -4295,6 +4310,147 @@ class EnergyPanel extends HTMLElement {
         text-align: center;
         font-size: 14px;
       }
+
+      /* Load Rate Popup */
+      .load-rate-popup-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1200;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(12px, 4vw, 24px);
+        box-sizing: border-box;
+      }
+      .load-rate-popup {
+        background: var(--card-bg, #1c1c1c);
+        border-radius: clamp(10px, 2.5vw, 14px);
+        border: 1px solid var(--card-border, rgba(255,255,255,0.12));
+        width: min(92vw, 360px);
+        max-width: 100%;
+        box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+        overflow: hidden;
+      }
+      .load-rate-popup-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--card-border, rgba(255,255,255,0.12));
+        background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, transparent 100%);
+      }
+      .load-rate-popup-title {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--primary-text-color, #fff);
+      }
+      .load-rate-popup-close {
+        width: 32px;
+        height: 32px;
+        border: none;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.1);
+        color: var(--primary-text-color, #fff);
+        font-size: 20px;
+        font-weight: 400;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        transition: background 0.2s;
+      }
+      .load-rate-popup-close:hover {
+        background: rgba(255,255,255,0.2);
+      }
+      .load-rate-popup-body {
+        padding: 16px;
+      }
+      .load-rate-stats {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .load-rate-stat {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        background: rgba(255,255,255,0.04);
+        border-radius: 8px;
+      }
+      .load-rate-stat-label {
+        font-size: 13px;
+        color: var(--secondary-text-color, #9b9b9b);
+      }
+      .load-rate-stat-value {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--panel-accent, #03a9f4);
+        font-variant-numeric: tabular-nums;
+      }
+      .load-rate-stat-value.cost {
+        color: #4caf50;
+      }
+      .load-rate-explainer {
+        background: rgba(255,255,255,0.03);
+        border-radius: 8px;
+        padding: 14px;
+        border: 1px solid var(--card-border, rgba(255,255,255,0.08));
+      }
+      .load-rate-explainer-text {
+        font-size: 13px;
+        line-height: 1.55;
+        color: var(--secondary-text-color, #b0b0b0);
+        margin: 0;
+      }
+      .load-rate-explainer-nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid var(--card-border, rgba(255,255,255,0.08));
+      }
+      .load-rate-explainer-dots {
+        display: flex;
+        gap: 6px;
+      }
+      .load-rate-explainer-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.25);
+      }
+      .load-rate-explainer-dot.active {
+        background: var(--panel-accent, #03a9f4);
+      }
+      .load-rate-explainer-btn {
+        background: none;
+        border: none;
+        color: var(--panel-accent, #03a9f4);
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: background 0.15s;
+      }
+      .load-rate-explainer-btn:hover {
+        background: rgba(3, 169, 244, 0.15);
+      }
+      .load-rate-explainer-btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .load-rate-explainer-btn:disabled:hover {
+        background: none;
+      }
+
       .event-log-container {
         max-height: 360px;
         overflow-y: auto;
@@ -6243,7 +6399,7 @@ class EnergyPanel extends HTMLElement {
       return;
     }
     const nums = values.map((v) => Math.max(0, Number(v) || 0));
-    const maxV = Math.max(...nums, 1e-9);
+    const maxV = Math.max(...nums, 0.001);
     const tickSteps = 5;
     const tickVals = [];
     for (let t = 0; t <= tickSteps; t++) {
@@ -7732,7 +7888,7 @@ class EnergyPanel extends HTMLElement {
               <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C ${powerCycles}</span>
             </div>
             <div class="room-header-watts-col">
-              <span class="room-total-watts ${isOverThreshold ? 'over-threshold' : ''}">${roomData.total_watts.toFixed(1)} W</span>
+              <span class="room-total-watts load-rate-clickable ${isOverThreshold ? 'over-threshold' : ''}" data-room-id="${roomId}" data-watts="${roomData.total_watts}" role="button" tabindex="0" title="Tap to see hourly rate">${roomData.total_watts.toFixed(1)} W</span>
             </div>
           </div>
         </div>
@@ -10398,6 +10554,106 @@ class EnergyPanel extends HTMLElement {
     window.addEventListener('scroll', this._applianceMenuScrollClose, true);
   }
 
+  _showLoadRatePopup(roomId, roomName, currentWatts) {
+    this.shadowRoot?.querySelector('.load-rate-popup-overlay')?.remove();
+
+    const kwhRate = currentWatts / 1000;
+    const kwhCost = parseFloat(this._config?.kwh_cost) || 0;
+    const hourlyCost = kwhRate * kwhCost;
+    const hasCost = kwhCost > 0;
+
+    const explainerPages = [
+      'Utilities like Con Edison do not typically bill residential customers based simply on watts or kilowatts alone. Instead, most residential electric charges are based on electricity used over time, measured in kilowatt-hours, along with separate delivery charges, supply charges, taxes, and other fees.',
+      'A toaster oven that uses 500 watts continuously for 2 hours would consume 1 kilowatt-hour of electricity. Since 500 watts is equal to 0.5 kilowatts, multiplying 0.5 by 2 hours gives 1 kilowatt-hour.'
+    ];
+
+    let currentPage = 0;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'load-rate-popup-overlay';
+    overlay.innerHTML = `
+      <div class="load-rate-popup" role="dialog" aria-modal="true" aria-labelledby="load-rate-popup-title">
+        <div class="load-rate-popup-header">
+          <h2 class="load-rate-popup-title" id="load-rate-popup-title">${this._eventLogEscape(roomName || 'Room')} Load</h2>
+          <button type="button" class="load-rate-popup-close" id="load-rate-popup-close" aria-label="Close">×</button>
+        </div>
+        <div class="load-rate-popup-body">
+          <div class="load-rate-stats">
+            <div class="load-rate-stat">
+              <span class="load-rate-stat-label">Current draw</span>
+              <span class="load-rate-stat-value">${currentWatts.toFixed(1)} W</span>
+            </div>
+            <div class="load-rate-stat">
+              <span class="load-rate-stat-label">Hourly rate</span>
+              <span class="load-rate-stat-value">${kwhRate.toFixed(3)} kWh/hr</span>
+            </div>
+            ${hasCost ? `
+            <div class="load-rate-stat">
+              <span class="load-rate-stat-label">Est. cost/hr</span>
+              <span class="load-rate-stat-value cost">$${hourlyCost.toFixed(4)}</span>
+            </div>
+            ` : ''}
+          </div>
+          <div class="load-rate-explainer">
+            <p class="load-rate-explainer-text" id="load-rate-explainer-text">${explainerPages[0]}</p>
+            <div class="load-rate-explainer-nav">
+              <button type="button" class="load-rate-explainer-btn" id="load-rate-prev" disabled>Back</button>
+              <div class="load-rate-explainer-dots">
+                <span class="load-rate-explainer-dot active" data-page="0"></span>
+                <span class="load-rate-explainer-dot" data-page="1"></span>
+              </div>
+              <button type="button" class="load-rate-explainer-btn" id="load-rate-next">Next</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    this.shadowRoot.appendChild(overlay);
+
+    const closePopup = () => {
+      if (this._loadRatePopupEsc) {
+        window.removeEventListener('keydown', this._loadRatePopupEsc);
+        this._loadRatePopupEsc = null;
+      }
+      overlay.remove();
+    };
+
+    const updatePage = (page) => {
+      currentPage = page;
+      const textEl = overlay.querySelector('#load-rate-explainer-text');
+      const prevBtn = overlay.querySelector('#load-rate-prev');
+      const nextBtn = overlay.querySelector('#load-rate-next');
+      const dots = overlay.querySelectorAll('.load-rate-explainer-dot');
+
+      if (textEl) textEl.textContent = explainerPages[currentPage];
+      if (prevBtn) prevBtn.disabled = currentPage === 0;
+      if (nextBtn) nextBtn.disabled = currentPage === explainerPages.length - 1;
+      dots.forEach((dot, i) => {
+        dot.classList.toggle('active', i === currentPage);
+      });
+    };
+
+    overlay.querySelector('#load-rate-popup-close')?.addEventListener('click', closePopup);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closePopup();
+    });
+
+    overlay.querySelector('#load-rate-prev')?.addEventListener('click', () => {
+      if (currentPage > 0) updatePage(currentPage - 1);
+    });
+    overlay.querySelector('#load-rate-next')?.addEventListener('click', () => {
+      if (currentPage < explainerPages.length - 1) updatePage(currentPage + 1);
+    });
+
+    this._loadRatePopupEsc = (e) => {
+      if (e.key === 'Escape') closePopup();
+    };
+    window.addEventListener('keydown', this._loadRatePopupEsc);
+
+    overlay.querySelector('.load-rate-popup-close')?.focus();
+  }
+
   _resolveApplianceToggleTarget(outlet, plugSlot) {
     const otype = outlet.type || 'outlet';
     if (otype === 'outlet') {
@@ -12324,6 +12580,23 @@ class EnergyPanel extends HTMLElement {
           billingRange = this._statisticsGraphDateRange();
         }
         this._openGraph(type, roomId, nameFromData || room?.name || null, billingRange);
+      });
+    });
+
+    this.shadowRoot.querySelectorAll('.load-rate-clickable').forEach(el => {
+      const handler = (e) => {
+        e.stopPropagation();
+        const roomId = el.dataset.roomId;
+        const watts = parseFloat(el.dataset.watts) || 0;
+        const room = roomId ? this._getRoomConfig(roomId) : null;
+        this._showLoadRatePopup(roomId, room?.name || roomId, watts);
+      };
+      el.addEventListener('click', handler);
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handler(e);
+        }
       });
     });
 
