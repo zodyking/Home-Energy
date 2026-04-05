@@ -954,12 +954,25 @@ def _sync_supplier_usage_plateau_started_at(
 def _integrate_power_to_wh_clipped(states: list, start_dt, end_dt) -> float:
     """Step-function W-to-Wh: hold each state's power constant until the next state.
 
-    No forward-fill, no back-fill, no interpolation/averaging.  Energy is counted
-    only for exact intervals between recorded states within [start_dt, end_dt].
+    Back-fill is handled by the caller (include_start_time_state=True injects a state
+    before the window). This function adds a synthetic end-of-window marker so that
+    constant-power periods with no state changes still accumulate energy through end_dt.
     """
     if not states:
         return 0.0
     states = sorted(states, key=lambda s: s.last_updated)
+
+    # Add synthetic end-of-window state to capture trailing constant power
+    last = states[-1]
+    if last.last_updated < end_dt:
+        from types import SimpleNamespace
+        states = list(states)
+        states.append(SimpleNamespace(
+            state=last.state,
+            last_updated=end_dt,
+            attributes=getattr(last, 'attributes', {}),
+        ))
+
     total_wh = 0.0
 
     for i in range(len(states) - 1):
@@ -1055,13 +1068,25 @@ def _integrate_power_to_wh_by_local_date(
 ) -> dict[str, float]:
     """Step-function W-to-Wh split by local calendar day.
 
-    No forward-fill, no back-fill, no interpolation/averaging.  Energy is counted
-    only for exact intervals between recorded states within [start_dt, end_dt].
+    Back-fill is handled by the caller (include_start_time_state=True injects a state
+    before the window). This function adds a synthetic end-of-window marker so that
+    constant-power periods with no state changes still accumulate energy through end_dt.
     """
     buckets: dict[str, float] = {}
     if not states:
         return buckets
     states = sorted(states, key=lambda s: s.last_updated)
+
+    # Add synthetic end-of-window state to capture trailing constant power
+    last = states[-1]
+    if last.last_updated < end_dt:
+        from types import SimpleNamespace
+        states = list(states)
+        states.append(SimpleNamespace(
+            state=last.state,
+            last_updated=end_dt,
+            attributes=getattr(last, 'attributes', {}),
+        ))
 
     for i in range(len(states) - 1):
         s1, s2 = states[i], states[i + 1]
