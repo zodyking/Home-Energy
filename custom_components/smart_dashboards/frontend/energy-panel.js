@@ -4396,6 +4396,12 @@ class EnergyPanel extends HTMLElement {
       .load-rate-stat-value.cost {
         color: #4caf50;
       }
+      .load-rate-cost-hint {
+        margin: 0 0 12px;
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--secondary-text-color, #9b9b9b);
+      }
       .load-rate-explainer {
         background: rgba(255,255,255,0.03);
         border-radius: 8px;
@@ -10554,13 +10560,47 @@ class EnergyPanel extends HTMLElement {
     window.addEventListener('scroll', this._applianceMenuScrollClose, true);
   }
 
+  /**
+   * $/kWh from Statistics settings (kwh_cost_sensor), matching server parse in websocket.
+   * Prefers live hass.states; falls back to last get_statistics sensor_values.
+   */
+  _getKwhCostPerKwh() {
+    const ent = String(this._config?.statistics_settings?.kwh_cost_sensor || '').trim();
+    const fromCached = () => {
+      const c = this._statsData?.sensor_values?.kwh_cost;
+      if (c == null) return null;
+      const n = Number(c);
+      return Number.isFinite(n) ? n : null;
+    };
+    if (!ent) {
+      return fromCached();
+    }
+    const st = this._hass?.states?.[ent];
+    const raw = st?.state;
+    if (raw == null || raw === 'unknown' || raw === 'unavailable' || raw === '') {
+      return fromCached();
+    }
+    const val = String(raw).replace(/[$,]/g, '').trim();
+    const n = parseFloat(val);
+    if (!Number.isFinite(n)) {
+      return fromCached();
+    }
+    return n;
+  }
+
   _showLoadRatePopup(roomId, roomName, currentWatts) {
     this.shadowRoot?.querySelector('.load-rate-popup-overlay')?.remove();
 
-    const kwhRate = currentWatts / 1000;
-    const kwhCost = parseFloat(this._config?.kwh_cost) || 0;
-    const hourlyCost = kwhRate * kwhCost;
-    const hasCost = kwhCost > 0;
+    const kwhIfOneHour = currentWatts / 1000;
+    const costPerKwh = this._getKwhCostPerKwh();
+    const hasCostRate = costPerKwh != null && Number.isFinite(costPerKwh);
+    const costIfOneHour = hasCostRate ? kwhIfOneHour * costPerKwh : null;
+    const costValueHtml = hasCostRate && costIfOneHour != null && Number.isFinite(costIfOneHour)
+      ? `$${costIfOneHour.toFixed(2)}`
+      : '—';
+    const costHintHtml = hasCostRate
+      ? ''
+      : '<p class="load-rate-cost-hint">Set the kWh cost entity in Settings → Statistics to estimate dollar cost.</p>';
 
     const explainerPages = [
       'Utilities like Con Edison do not typically bill residential customers based simply on watts or kilowatts alone. Instead, most residential electric charges are based on electricity used over time, measured in kilowatt-hours, along with separate delivery charges, supply charges, taxes, and other fees.',
@@ -10584,16 +10624,15 @@ class EnergyPanel extends HTMLElement {
               <span class="load-rate-stat-value">${currentWatts.toFixed(1)} W</span>
             </div>
             <div class="load-rate-stat">
-              <span class="load-rate-stat-label">Hourly rate</span>
-              <span class="load-rate-stat-value">${kwhRate.toFixed(3)} kWh/hr</span>
+              <span class="load-rate-stat-label">kWh if sustained 1 hour</span>
+              <span class="load-rate-stat-value">${kwhIfOneHour.toFixed(3)} kWh</span>
             </div>
-            ${hasCost ? `
             <div class="load-rate-stat">
-              <span class="load-rate-stat-label">Est. cost/hr</span>
-              <span class="load-rate-stat-value cost">$${hourlyCost.toFixed(4)}</span>
+              <span class="load-rate-stat-label">Cost if sustained 1 hour</span>
+              <span class="load-rate-stat-value cost">${costValueHtml}</span>
             </div>
-            ` : ''}
           </div>
+          ${costHintHtml}
           <div class="load-rate-explainer">
             <p class="load-rate-explainer-text" id="load-rate-explainer-text">${explainerPages[0]}</p>
             <div class="load-rate-explainer-nav">
