@@ -454,10 +454,10 @@ class EnergyPanel extends HTMLElement {
         const dayWord = recorderZeroDays === 1 ? 'day' : 'days';
         return {
           paragraph1:
-            'One or more days in this period have no daily snapshot and no recorded energy for that day, so tracked usage can be far below your supplier meter.',
+            'One or more days have no daily snapshot and no usable energy from Home Assistant sensor history for that day (recorder showed 0 Wh), so tracked usage can be far below your supplier meter.',
           paragraph2:
-            'After snapshots or recorder history catch up, totals usually move closer together. If this keeps happening, an administrator should verify integrations and the billing date range.',
-          detailSuffix: ` · ${recorderZeroDays} ${dayWord} without snapshot data`,
+            'That usually means plugs or sensors had no history for those dates, or the integration was not running yet. After snapshots or recorder data fill in, totals usually move closer together.',
+          detailSuffix: ` · ${recorderZeroDays} ${dayWord} with no snapshot or sensor history`,
         };
       }
       return {
@@ -4904,6 +4904,42 @@ class EnergyPanel extends HTMLElement {
         padding-bottom: 2px;
         overflow: visible;
       }
+      .billing-bar-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        align-items: center;
+        margin-top: 10px;
+        padding-left: 56px;
+        font-size: 11px;
+        line-height: 1.35;
+        color: var(--secondary-text-color);
+      }
+      .billing-bar-legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 100%;
+      }
+      .billing-bar-legend-swatch {
+        width: 14px;
+        height: 10px;
+        border-radius: 2px;
+        flex-shrink: 0;
+      }
+      .billing-bar-legend-swatch--snap {
+        background: var(--billing-legend-accent, #03a9f4);
+      }
+      .billing-bar-legend-swatch--rec {
+        background: var(--billing-legend-warn, #ff9800);
+      }
+      .billing-bar-legend-swatch--nodata {
+        width: 18px;
+        height: 0;
+        border-radius: 0;
+        background: transparent;
+        border-bottom: 2px dashed var(--billing-legend-warn, #ff9800);
+      }
       .billing-bar-x-label {
         flex: 1;
         min-width: 0;
@@ -6687,7 +6723,9 @@ class EnergyPanel extends HTMLElement {
       xLabelsMode = 'daily',
       barColors = null,
       sourceTags = null,
+      warnColor = null,
     } = opts;
+    const legendWarn = (warnColor || '').trim() || '#ff9800';
     const tipCats =
       Array.isArray(tooltipCategories) && tooltipCategories.length === categories.length
         ? tooltipCategories
@@ -6710,6 +6748,8 @@ class EnergyPanel extends HTMLElement {
 
     const wrap = document.createElement('div');
     wrap.className = 'billing-bar-chart-native';
+    wrap.style.setProperty('--billing-legend-accent', accent);
+    wrap.style.setProperty('--billing-legend-warn', legendWarn);
     wrap.setAttribute('role', 'group');
     wrap.setAttribute('aria-label', `${seriesName}, ${n} ${ariaCountNoun}`);
 
@@ -6760,8 +6800,10 @@ class EnergyPanel extends HTMLElement {
       const cat = tipCats[i];
       const v = nums[i];
       const tag = sourceTags?.[i];
-      const estNote =
-        tag === 'recorder' ? ' (estimated from HA recorder history)' : '';
+      const isRec = tag === 'recorder';
+      const noSensorData = isRec && v <= 1e-9;
+      const estNote = isRec ? ' (from HA recorder history)' : '';
+      const zeroNote = noSensorData ? ' — no sensor history for this day' : '';
       tooltip.replaceChildren();
       const t1 = document.createElement('div');
       t1.style.fontWeight = '600';
@@ -6769,7 +6811,7 @@ class EnergyPanel extends HTMLElement {
       t1.textContent = cat;
       const t2 = document.createElement('div');
       t2.style.color = textColor || '#e1e1e1';
-      t2.textContent = `${seriesName}: ${yFormatter(v)}${estNote}`;
+      t2.textContent = `${seriesName}: ${yFormatter(v)}${estNote}${zeroNote}`;
       tooltip.appendChild(t1);
       tooltip.appendChild(t2);
     };
@@ -6867,6 +6909,37 @@ class EnergyPanel extends HTMLElement {
     body.appendChild(plot);
     wrap.appendChild(body);
     wrap.appendChild(xRow);
+    const showBillingSourceLegend =
+      xLabelsMode !== 'hourly' &&
+      Array.isArray(sourceTags) &&
+      sourceTags.length > 0;
+    if (showBillingSourceLegend) {
+      const leg = document.createElement('div');
+      leg.className = 'billing-bar-legend';
+      leg.setAttribute('aria-hidden', 'true');
+      const mkItem = (swatchClass, label) => {
+        const item = document.createElement('span');
+        item.className = 'billing-bar-legend-item';
+        const sw = document.createElement('span');
+        sw.className = `billing-bar-legend-swatch ${swatchClass}`;
+        sw.setAttribute('aria-hidden', 'true');
+        const tx = document.createElement('span');
+        tx.textContent = label;
+        item.appendChild(sw);
+        item.appendChild(tx);
+        return item;
+      };
+      leg.appendChild(
+        mkItem('billing-bar-legend-swatch--snap', 'Daily snapshot (ledger)'),
+      );
+      leg.appendChild(
+        mkItem('billing-bar-legend-swatch--rec', 'Recorder estimate'),
+      );
+      leg.appendChild(
+        mkItem('billing-bar-legend-swatch--nodata', 'No sensor data (dashed at 0)'),
+      );
+      wrap.appendChild(leg);
+    }
     wrap.appendChild(tooltip);
     container.appendChild(wrap);
   }
@@ -7124,6 +7197,7 @@ class EnergyPanel extends HTMLElement {
         yFormatter,
         accent,
         textColor,
+        warnColor,
         barColors: billingBarColors,
         sourceTags: billingSourceTags,
       });
