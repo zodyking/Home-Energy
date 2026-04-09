@@ -4817,11 +4817,12 @@ class EnergyPanel extends HTMLElement {
         padding-left: 56px;
         min-height: 2.5em;
       }
-      .billing-bar-x-labels--dense {
-        min-height: 4.5em;
-      }
+      .billing-bar-x-labels--dense,
       .billing-bar-x-labels--hourly {
-        min-height: 1.35em;
+        min-height: 5rem;
+        align-items: flex-end;
+        padding-bottom: 6px;
+        overflow: visible;
       }
       .billing-bar-x-label {
         flex: 1;
@@ -4836,19 +4837,19 @@ class EnergyPanel extends HTMLElement {
         -webkit-box-orient: vertical;
         word-break: break-word;
       }
-      .billing-bar-x-labels--dense .billing-bar-x-label {
-        font-size: 9px;
-        -webkit-line-clamp: 3;
-      }
+      .billing-bar-x-labels--dense .billing-bar-x-label,
       .billing-bar-x-labels--hourly .billing-bar-x-label {
         display: block;
+        font-size: clamp(5px, 1.85cqi, 9px);
         -webkit-line-clamp: unset;
         -webkit-box-orient: unset;
         word-break: normal;
         white-space: nowrap;
-        text-overflow: ellipsis;
-        font-size: clamp(6px, 2.4cqi, 9px);
-        line-height: 1.2;
+        overflow: visible;
+        line-height: 1.1;
+        transform: rotate(-45deg);
+        transform-origin: center top;
+        text-align: right;
       }
       .billing-bar-tooltip {
         position: absolute;
@@ -6287,24 +6288,26 @@ class EnergyPanel extends HTMLElement {
     const go = this._graphOpen;
     if (!go) return 'History';
     const type = go.type;
-    const roomName = go.roomName || '';
-    if (type === 'outlet_wh' && go.outletGraphTitle) {
-      return go.outletGraphTitle;
-    }
     const labels = {
-      total_wh: 'Usage (kWh)', total_watts_intraday: 'Power now (W)', total_wh_intraday: 'Home kWh today (by hour)',
-      total_warnings: 'Threshold Warnings (24h)', total_shutoffs: 'Safety Shutoffs (24h)',
-      total_power_cycles: 'Power Cycles (24h)',
-      room_wh: `${roomName} Usage (kWh) by hour today`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`,
-      room_power_cycles: `${roomName} Power Cycles (24h)`,
-      stat_total_wh: 'Home daily usage',
-      stat_room_wh: `${roomName || 'Room'} daily usage`,
-      stat_total_warnings: 'Threshold Warnings',
-      stat_total_shutoffs: 'Safety Shutoffs',
-      stat_total_power_cycles: 'Power Cycles',
-      stat_room_warnings: `${roomName || 'Room'} Warnings`,
-      stat_room_shutoffs: `${roomName || 'Room'} Shutoffs`,
-      stat_room_power_cycles: `${roomName || 'Room'} Power Cycles`,
+      total_wh: 'Load',
+      total_watts_intraday: 'Load',
+      total_wh_intraday: 'Load',
+      total_warnings: 'Warnings',
+      total_shutoffs: 'Shutoffs',
+      total_power_cycles: 'Cycles',
+      room_wh: 'Load',
+      room_warnings: 'Warnings',
+      room_shutoffs: 'Shutoffs',
+      room_power_cycles: 'Cycles',
+      outlet_wh: 'Load',
+      stat_total_wh: 'Load',
+      stat_room_wh: 'Load',
+      stat_total_warnings: 'Warnings',
+      stat_total_shutoffs: 'Shutoffs',
+      stat_total_power_cycles: 'Cycles',
+      stat_room_warnings: 'Warnings',
+      stat_room_shutoffs: 'Shutoffs',
+      stat_room_power_cycles: 'Cycles',
     };
     let title = labels[type] || 'History';
     const statPeriodEvent =
@@ -6510,7 +6513,6 @@ class EnergyPanel extends HTMLElement {
         date_end: billingRange?.date_end || null,
         outletIndex: graphOpts?.outletIndex ?? null,
         plugSlot: graphOpts?.plugSlot ?? null,
-        outletGraphTitle: graphOpts?.outletGraphTitle ?? null,
         outletSeriesLabel: graphOpts?.outletSeriesLabel ?? null,
       };
       this._graphData = result;
@@ -6603,6 +6605,8 @@ class EnergyPanel extends HTMLElement {
       textColor,
       ariaCountNoun = 'days',
       xLabelsMode = 'daily',
+      barColors = null,
+      sourceTags = null,
     } = opts;
     const tipCats =
       Array.isArray(tooltipCategories) && tooltipCategories.length === categories.length
@@ -6675,6 +6679,9 @@ class EnergyPanel extends HTMLElement {
     const setTipContent = (i) => {
       const cat = tipCats[i];
       const v = nums[i];
+      const tag = sourceTags?.[i];
+      const estNote =
+        tag === 'recorder' ? ' (estimated from HA recorder history)' : '';
       tooltip.replaceChildren();
       const t1 = document.createElement('div');
       t1.style.fontWeight = '600';
@@ -6682,7 +6689,7 @@ class EnergyPanel extends HTMLElement {
       t1.textContent = cat;
       const t2 = document.createElement('div');
       t2.style.color = textColor || '#e1e1e1';
-      t2.textContent = `${seriesName}: ${yFormatter(v)}`;
+      t2.textContent = `${seriesName}: ${yFormatter(v)}${estNote}`;
       tooltip.appendChild(t1);
       tooltip.appendChild(t2);
     };
@@ -6707,7 +6714,7 @@ class EnergyPanel extends HTMLElement {
       fill.className = 'billing-bar-fill';
       const pct = maxV > 0 ? (v / maxV) * 100 : 0;
       fill.style.height = v > 0 ? `${Math.max(pct, 1.2)}%` : '0px';
-      fill.style.background = accent;
+      fill.style.background = barColors?.[i] ?? accent;
       btn.appendChild(fill);
       col.appendChild(btn);
       plot.appendChild(col);
@@ -6799,6 +6806,8 @@ class EnergyPanel extends HTMLElement {
     /** Daily billing bars: category axis + numeric series (datetime bars mis-map hover/tooltip in Apex). */
     let billingCategories = null;
     let billingValues = null;
+    /** Parallel to billing bars: snapshot | recorder | today (from get_daily_history). */
+    let billingSourceTags = null;
     /** Room / home intraday kWh: native 24 hourly bars (not cumulative area). */
     let useRoomHourlyBars = false;
     let roomHourlyCategories = null;
@@ -6841,9 +6850,7 @@ class EnergyPanel extends HTMLElement {
           roomHourlyTooltipCategories = Array.from({ length: 24 }, (_, h) =>
             this._hourLabel12h(h),
           );
-          roomHourlyCategories = roomHourlyTooltipCategories.map((lb, h) =>
-            h % 2 === 0 ? lb : '\u00a0',
-          );
+          roomHourlyCategories = roomHourlyTooltipCategories;
           const peakKwh = roomHourlyValues.reduce(
             (m, x) => Math.max(m, Number(x) || 0),
             0,
@@ -6884,9 +6891,7 @@ class EnergyPanel extends HTMLElement {
           roomHourlyTooltipCategories = Array.from({ length: 24 }, (_, h) =>
             this._hourLabel12h(h),
           );
-          roomHourlyCategories = roomHourlyTooltipCategories.map((lb, h) =>
-            h % 2 === 0 ? lb : '\u00a0',
-          );
+          roomHourlyCategories = roomHourlyTooltipCategories;
           const peakKwh = roomHourlyValues.reduce(
             (m, x) => Math.max(m, Number(x) || 0),
             0,
@@ -6908,6 +6913,7 @@ class EnergyPanel extends HTMLElement {
       }
     } else if (type === 'stat_total_wh' || type === 'stat_room_wh') {
       const dates = this._graphData.dates || [];
+      const sourcesRaw = Array.isArray(this._graphData.sources) ? this._graphData.sources : [];
       let raw;
       if (type === 'stat_total_wh') {
         raw = this._graphData.total_wh || [];
@@ -6921,11 +6927,18 @@ class EnergyPanel extends HTMLElement {
       const m = Math.min(dates.length, values.length);
       for (let i = 0; i < m; i++) {
         const x = this._parseChartTimeMs(dates[i]);
-        if (!Number.isNaN(x)) pairs.push({ x, v: values[i] });
+        if (!Number.isNaN(x)) {
+          const src =
+            sourcesRaw[i] != null && String(sourcesRaw[i]).trim() !== ''
+              ? String(sourcesRaw[i]).trim()
+              : 'snapshot';
+          pairs.push({ x, v: values[i], src });
+        }
       }
       pairs.sort((a, b) => a.x - b.x);
       billingValues = pairs.map((p) => p.v);
       billingCategories = pairs.map((p) => this._formatChartDateNumeric(p.x));
+      billingSourceTags = pairs.map((p) => p.src);
       seriesData = pairs.map((p) => [p.x, p.v]);
       strokeCurve = 'straight';
       yFormatter = (v) => `${Number(v).toFixed(2)} kWh`;
@@ -6967,7 +6980,15 @@ class EnergyPanel extends HTMLElement {
     this._teardownBillingBarChartNative();
 
     const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
+    const warnColor =
+      getComputedStyle(this).getPropertyValue('--panel-warning').trim() || '#ff9800';
     const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
+    const billingBarColors =
+      isStatBillingModal &&
+      Array.isArray(billingSourceTags) &&
+      billingSourceTags.length === billingValues?.length
+        ? billingSourceTags.map((src) => (src === 'recorder' ? warnColor : accent))
+        : null;
 
     if (useRoomHourlyBars) {
       container.innerHTML = '';
@@ -7017,6 +7038,8 @@ class EnergyPanel extends HTMLElement {
         yFormatter,
         accent,
         textColor,
+        barColors: billingBarColors,
+        sourceTags: billingSourceTags,
       });
       return;
     }
@@ -7043,6 +7066,8 @@ class EnergyPanel extends HTMLElement {
           labels: {
             style: { colors: textColor, fontSize: '11px' },
             datetimeUTC: false,
+            rotate: -45,
+            rotateAlways: true,
           },
           axisBorder: { show: true, color: gridColor },
           axisTicks: { show: true, color: gridColor },
@@ -7073,7 +7098,7 @@ class EnergyPanel extends HTMLElement {
         grid: {
           borderColor: gridColor,
           strokeDashArray: 4,
-          padding: { right: 8, bottom: 4, left: 4 },
+          padding: { right: 8, bottom: 52, left: 4 },
           xaxis: { lines: { show: false } },
           yaxis: { lines: { show: true } },
         },
@@ -8130,12 +8155,14 @@ class EnergyPanel extends HTMLElement {
     const ttsCfg = this._config?.tts_settings || {};
     const boostDaysNeeded =
       !zoneHealthIssue && this._roomNeedsAssigneeBoostDays(room, ttsCfg);
+    const budgetBoostIconEligible =
+      !zoneHealthIssue && this._roomBudgetBoostIconEligible(room, ttsCfg);
     const iconClass = `room-icon${zoneHealthIssue ? ' zone-health-issue' : ''}${boostDaysNeeded ? ' room-icon--boost-days-needed' : ''}`;
     let iconDataAttr = personEntRaw
       ? ` data-zone-health-person="${personEntKey.replace(/"/g, '&quot;')}"`
       : '';
-    if (boostDaysNeeded) {
-      iconDataAttr += ` data-boost-days-room-id="${String(roomId).replace(/"/g, '&quot;')}"`;
+    if (budgetBoostIconEligible) {
+      iconDataAttr += ` data-room-budget-boost="${String(roomId).replace(/"/g, '&quot;')}"`;
     }
     const escAttr = (s) =>
       String(s ?? '')
@@ -8178,10 +8205,12 @@ class EnergyPanel extends HTMLElement {
         iconAriaLabel = `${room.name || roomId}, presence: ${personName}, ${location}`;
       }
     }
-    if (boostDaysNeeded) {
-      iconAriaLabel = `${iconAriaLabel}. Tap to set which weekdays use your higher kWh budget.`;
+    if (budgetBoostIconEligible) {
+      iconAriaLabel = boostDaysNeeded
+        ? `${iconAriaLabel}. Tap to set which weekdays use your higher kWh budget.`
+        : `${iconAriaLabel}. Tap to view or change boost budget days.`;
     }
-    const iconBoostA11y = boostDaysNeeded ? ' role="button" tabindex="0"' : '';
+    const iconBoostA11y = budgetBoostIconEligible ? ' role="button" tabindex="0"' : '';
     const iconTitleAttr = iconTitle ? ` title="${escAttr(iconTitle)}"` : '';
     const iconAriaAttr = ` aria-label="${escAttr(iconAriaLabel)}"`;
 
@@ -10769,18 +10798,14 @@ class EnergyPanel extends HTMLElement {
   _openOutletUsageGraph(roomId, outletIndex, outlet, plugSlot) {
     const name = outlet.name || 'Appliance';
     let seriesLabel = name;
-    let graphTitle = `${name} usage by hour today`;
     if (plugSlot === 1) {
       seriesLabel = `${name} (Plug 1)`;
-      graphTitle = `${name} (Plug 1) usage by hour today`;
     } else if (plugSlot === 2) {
       seriesLabel = `${name} (Plug 2)`;
-      graphTitle = `${name} (Plug 2) usage by hour today`;
     }
     void this._openGraph('outlet_wh', roomId, '', null, {
       outletIndex,
       plugSlot,
-      outletGraphTitle: graphTitle,
       outletSeriesLabel: seriesLabel,
     });
   }
@@ -11472,14 +11497,14 @@ class EnergyPanel extends HTMLElement {
   }
 
   _handleBoostDaysIconClick(e) {
-    const iconEl = e.target.closest('.room-icon--boost-days-needed');
+    const iconEl = e.target.closest('.room-icon[data-room-budget-boost]');
     if (!iconEl || !this.shadowRoot.contains(iconEl)) return;
     if (iconEl.classList.contains('zone-health-issue')) return;
-    const rid = iconEl.dataset.boostDaysRoomId;
+    const rid = iconEl.dataset.roomBudgetBoost;
     if (!rid) return;
     e.preventDefault();
     e.stopPropagation();
-    this._showBoostDaysModal(rid);
+    void this._activateRoomBudgetBoostIcon(rid);
   }
 
   _handleRoomSettingsSubtabClick(e) {
@@ -11500,29 +11525,31 @@ class EnergyPanel extends HTMLElement {
     });
   }
 
-  async _showBoostDaysModal(roomId) {
+  async _showBoostDaysModal(roomId, opts = {}) {
     const rooms = this._config?.rooms || [];
     const room = rooms.find((r) => this._canonicalRoomId(r) === roomId);
     if (!room) return;
 
-    const personEnt = (room.presence_person_entity || '').trim();
-    if (personEnt.startsWith('person.')) {
-      try {
-        const authResult = await this._hass.callWS({
-          type: 'smart_dashboards/check_toggle_auth',
-          room_id: roomId,
-        });
-        if (!authResult.authorized) {
-          showToast(
-            this.shadowRoot,
-            `${authResult.room_person || 'The assigned person'} can configure boost days for this room.`,
-            'error',
-          );
+    if (!opts.skipAuth) {
+      const personEnt = (room.presence_person_entity || '').trim();
+      if (personEnt.startsWith('person.')) {
+        try {
+          const authResult = await this._hass.callWS({
+            type: 'smart_dashboards/check_toggle_auth',
+            room_id: roomId,
+          });
+          if (!authResult.authorized) {
+            showToast(
+              this.shadowRoot,
+              `${authResult.room_person || 'The assigned person'} can configure boost days for this room.`,
+              'error',
+            );
+            return;
+          }
+        } catch (_err) {
+          showToast(this.shadowRoot, 'Could not verify permissions.', 'error');
           return;
         }
-      } catch (err) {
-        showToast(this.shadowRoot, 'Could not verify permissions.', 'error');
-        return;
       }
     }
 
@@ -12231,6 +12258,77 @@ class EnergyPanel extends HTMLElement {
     if (mult <= 1) return false;
     const w = roomConfig?.room_budget_boost_weekdays;
     return !Array.isArray(w) || w.length === 0;
+  }
+
+  /** Room header icon: assignee boost path (presence + boost enabled + mult > 1 + kWh budget > 0), ignoring weekday selection. */
+  _roomBudgetBoostIconEligible(roomConfig, tts) {
+    const pe = (roomConfig?.presence_person_entity || '').trim().toLowerCase();
+    if (!pe.startsWith('person.')) return false;
+    if (roomConfig?.kwh_budget_use_boost === false) return false;
+    const kb = Number(roomConfig?.kwh_budget ?? 5);
+    if (!Number.isFinite(kb) || kb <= 0) return false;
+    const t = tts || {};
+    if (!t.budget_boost_enabled) return false;
+    const roomMult = roomConfig?.room_budget_boost_multiplier;
+    const mult = roomMult != null ? parseFloat(roomMult) : (parseFloat(t.budget_boost_multiplier) || 1);
+    return mult > 1;
+  }
+
+  /** Milliseconds until 48h cooldown from room_budget_boost_weekdays_changed_at ends; 0 if none / expired. */
+  _roomBudgetBoostCooldownRemainingMs(room) {
+    const raw = room?.room_budget_boost_weekdays_changed_at;
+    if (raw == null || String(raw).trim() === '') return 0;
+    const lastMs = Date.parse(String(raw));
+    if (!Number.isFinite(lastMs)) return 0;
+    const endMs = lastMs + 48 * 3600 * 1000;
+    return Math.max(0, endMs - Date.now());
+  }
+
+  _formatRoomBudgetBoostCooldownHm(ms) {
+    const totalSec = Math.max(0, Math.ceil(ms / 1000));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    return `${h}:${String(m).padStart(2, '0')}`;
+  }
+
+  async _activateRoomBudgetBoostIcon(roomId) {
+    const rooms = this._config?.rooms || [];
+    const room = rooms.find((r) => this._canonicalRoomId(r) === roomId);
+    if (!room) return;
+
+    const personEnt = (room.presence_person_entity || '').trim();
+    if (personEnt.startsWith('person.')) {
+      try {
+        const authResult = await this._hass.callWS({
+          type: 'smart_dashboards/check_toggle_auth',
+          room_id: roomId,
+        });
+        if (!authResult.authorized) {
+          showToast(
+            this.shadowRoot,
+            `${authResult.room_person || 'The assigned person'} can configure boost days for this room.`,
+            'error',
+          );
+          return;
+        }
+      } catch (_err) {
+        showToast(this.shadowRoot, 'Could not verify permissions.', 'error');
+        return;
+      }
+    }
+
+    const remMs = this._roomBudgetBoostCooldownRemainingMs(room);
+    if (remMs > 0) {
+      const hm = this._formatRoomBudgetBoostCooldownHm(remMs);
+      showToast(
+        this.shadowRoot,
+        `You have to wait ${hm} (remaining hours:minutes) before you can change budget days again.`,
+        'error',
+      );
+      return;
+    }
+
+    await this._showBoostDaysModal(roomId, { skipAuth: true });
   }
 
   _renderRoomSettings(room, index, mediaPlayers, powerSensors) {
@@ -13207,13 +13305,13 @@ class EnergyPanel extends HTMLElement {
       this._boostDaysKeyDelegation = true;
       this.shadowRoot.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
-        const iconEl = e.target.closest('.room-icon--boost-days-needed');
+        const iconEl = e.target.closest('.room-icon[data-room-budget-boost]');
         if (!iconEl || !this.shadowRoot.contains(iconEl)) return;
         if (iconEl.classList.contains('zone-health-issue')) return;
-        const rid = iconEl.dataset.boostDaysRoomId;
+        const rid = iconEl.dataset.roomBudgetBoost;
         if (!rid) return;
         e.preventDefault();
-        this._showBoostDaysModal(rid);
+        void this._activateRoomBudgetBoostIcon(rid);
       });
     }
 
