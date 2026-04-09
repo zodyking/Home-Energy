@@ -12,6 +12,7 @@ import voluptuous as vol
 
 from homeassistant.components import websocket_api
 from homeassistant.core import Context, HomeAssistant, callback
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
@@ -2124,7 +2125,7 @@ async def websocket_check_toggle_auth(
         vol.Required("type"): "smart_dashboards/set_room_budget_boost_days",
         vol.Required("room_id"): str,
         vol.Required("weekdays"): vol.All(
-            vol.ensure_list,
+            cv.ensure_list,
             [vol.All(vol.Coerce(int), vol.Range(min=0, max=6))],
         ),
     }
