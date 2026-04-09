@@ -82,6 +82,27 @@ def _assignee_matches_connection_user(
     return bool(pn) and un == pn
 
 
+def _room_budget_boost_assignee_only(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    person_ent: str,
+) -> bool:
+    """True if websocket user is the room's assigned person. Admins are not exempt."""
+    user = connection.user
+    if not user or not person_ent:
+        return False
+    pe = str(person_ent).strip()
+    st = hass.states.get(pe) or hass.states.get(pe.lower())
+    if not st:
+        return False
+    uid = st.attributes.get("user_id")
+    if uid is not None and str(uid).strip() == str(user.id):
+        return True
+    un = (user.name or "").lower().strip()
+    pn = (st.attributes.get("friendly_name") or "").lower().strip()
+    return bool(pn) and un == pn
+
+
 def _attach_stove_timer_to_outlet_data(
     outlet_data: dict[str, Any],
     outlet: dict[str, Any],
@@ -191,6 +212,7 @@ _STATISTICS_CACHE_TTL_LIVE = 60.0
 _STATISTICS_CACHE_TTL_PAST = 3600.0
 _STATISTICS_QUERY_CONCURRENCY = 6
 # Shared result of _compute_kwh_from_history — same work as get_statistics + billing daily chart
+# (cleared with statistics cache when energy config changes; TTL is range-dependent)
 _KWH_HISTORY_CACHE: dict[
     tuple[str, str],
     tuple[float, tuple[float, dict[str, float], dict[str, dict[str, float]]]],
@@ -1411,6 +1433,9 @@ async def async_build_billing_daily_history_from_recorder(
 
     Primary source: daily_totals.json snapshots (accurate 1s-poll ledger).
     Fallback: recorder integration (step-function, no estimation) for days without a snapshot.
+    Merge: when a snapshot day has total_wh ~0 but recorder aggregates Wh > 0 for that day,
+    use recorder per-room (and total from recorder sum). Otherwise for past days use
+    max(snapshot, recorder) per room and max(snapshot total, recorder sum) for total.
     Today: live day ledger (_build_today_totals).
     """
     today = dt_util.now().strftime("%Y-%m-%d")
@@ -1437,16 +1462,13 @@ async def async_build_billing_daily_history_from_recorder(
     dates_list = _enumerate_date_range_iso(date_start, effective_end)
     daily_snapshots = config_manager.daily_totals
 
-    needs_recorder = any(
-        d != today and d not in daily_snapshots
-        for d in dates_list
-        if d <= today
-    )
+    # Load recorder for any past day in range so we can fill missing snapshots and correct zero snapshots.
+    needs_recorder = any(d < today for d in dates_list)
     room_day_wh_map: dict[str, dict[str, float]] = {}
     if needs_recorder:
         try:
             _, _, room_day_wh_map = await _compute_kwh_from_history(
-                hass, config_manager, date_start, date_end
+                hass, config_manager, date_start, effective_end
             )
         except Exception as err:
             _LOGGER.warning("Billing daily history recorder fallback failed: %s", err)
@@ -1465,9 +1487,27 @@ async def async_build_billing_daily_history_from_recorder(
             row = daily_snapshots[d]
             total_wh_day = float(row.get("total_wh", 0.0))
             row_rooms = row.get("rooms") or {}
+            rec_total = 0.0
+            if d < today:
+                rec_total = sum(
+                    float(room_day_wh_map.get(rid, {}).get(d, 0.0))
+                    for rid in all_room_ids
+                )
+            snap_total_zero = total_wh_day <= 1e-6
             for rid in all_room_ids:
-                wh = float((row_rooms.get(rid) or {}).get("wh", 0.0))
+                wh_snap = float((row_rooms.get(rid) or {}).get("wh", 0.0))
+                wh_rec = float(room_day_wh_map.get(rid, {}).get(d, 0.0)) if d < today else 0.0
+                if d < today and snap_total_zero and rec_total > 1e-6:
+                    wh = wh_rec
+                elif d < today:
+                    wh = max(wh_snap, wh_rec)
+                else:
+                    wh = wh_snap
                 result["rooms"][rid]["wh"].append(round(wh, 2))
+            if d < today and snap_total_zero and rec_total > 1e-6:
+                total_wh_day = rec_total
+            elif d < today:
+                total_wh_day = max(total_wh_day, rec_total)
         else:
             total_wh_day = sum(
                 float(rdays.get(d, 0.0)) for rdays in room_day_wh_map.values()
@@ -1494,6 +1534,33 @@ async def async_build_billing_daily_history_from_recorder(
             result["rooms"][rid]["warnings"].append(int(rdata.get("warnings", 0)))
             result["rooms"][rid]["shutoffs"].append(int(rdata.get("shutoffs", 0)))
             result["rooms"][rid]["power_cycles"].append(int(rdata.get("power_cycles", 0)))
+
+    n_dates = len(result["dates"])
+    if n_dates:
+        for key in (
+            "total_wh",
+            "total_warnings",
+            "total_shutoffs",
+            "total_power_cycles",
+        ):
+            if len(result[key]) != n_dates:
+                _LOGGER.warning(
+                    "Billing daily history length mismatch: dates=%d %s=%d",
+                    n_dates,
+                    key,
+                    len(result[key]),
+                )
+        for rid in all_room_ids:
+            for sub in ("wh", "warnings", "shutoffs", "power_cycles"):
+                ln = len(result["rooms"][rid][sub])
+                if ln != n_dates:
+                    _LOGGER.warning(
+                        "Billing daily history length mismatch: dates=%d room=%s %s=%d",
+                        n_dates,
+                        rid,
+                        sub,
+                        ln,
+                    )
 
     return result
 
@@ -2159,9 +2226,12 @@ async def websocket_set_room_budget_boost_days(
         )
         return
 
-    is_admin = _ws_connection_user_is_admin(connection)
-    if not _assignee_matches_connection_user(hass, connection, str(person_ent)):
-        connection.send_error(msg["id"], "unauthorized", "Not allowed to edit this room")
+    if not _room_budget_boost_assignee_only(hass, connection, str(person_ent)):
+        connection.send_error(
+            msg["id"],
+            "unauthorized",
+            "Only the assigned person can set boost budget days for this room.",
+        )
         return
 
     old_days = _normalize_room_budget_boost_weekdays(room.get("room_budget_boost_weekdays"))
@@ -2169,19 +2239,18 @@ async def websocket_set_room_budget_boost_days(
         connection.send_result(msg["id"], {"success": True, "room_budget_boost_weekdays": new_days})
         return
 
-    if not is_admin:
-        raw_at = room.get("room_budget_boost_weekdays_changed_at")
-        if raw_at:
-            last_dt = dt_util.parse_datetime(str(raw_at))
-            if last_dt is not None:
-                last_utc = dt_util.as_utc(last_dt)
-                if dt_util.utcnow() - last_utc < timedelta(hours=48):
-                    connection.send_error(
-                        msg["id"],
-                        "cooldown",
-                        "Budget boost days can only be changed once every 48 hours. Try again later.",
-                    )
-                    return
+    raw_at = room.get("room_budget_boost_weekdays_changed_at")
+    if raw_at:
+        last_dt = dt_util.parse_datetime(str(raw_at))
+        if last_dt is not None:
+            last_utc = dt_util.as_utc(last_dt)
+            if dt_util.utcnow() - last_utc < timedelta(hours=48):
+                connection.send_error(
+                    msg["id"],
+                    "cooldown",
+                    "Budget boost days can only be changed once every 48 hours. Try again later.",
+                )
+                return
 
     energy = deepcopy(dict(config_manager.energy_config))
     updated = False
