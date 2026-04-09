@@ -398,6 +398,81 @@ class EnergyPanel extends HTMLElement {
   }
 
   /**
+   * Body copy for the statistics discrepancy modal from `_statsData` and numeric reads.
+   * Uses `daily_history.sources` / `total_wh` when present to detect recorder-only zero days.
+   */
+  _statisticsDiscrepancyCopy(s, supN, trN) {
+    const dh = s?.daily_history;
+    const sources = dh?.sources;
+    const totalWh = dh?.total_wh;
+    let malformed = false;
+    let hasValidDh = false;
+    let recorderZeroDays = 0;
+
+    if (dh != null && typeof dh === 'object') {
+      const srcOk = Array.isArray(sources);
+      const whOk = Array.isArray(totalWh);
+      if (srcOk && whOk && sources.length === totalWh.length && sources.length > 0) {
+        hasValidDh = true;
+        for (let i = 0; i < sources.length; i++) {
+          if (sources[i] === 'recorder' && (Number(totalWh[i]) || 0) <= 0.01) {
+            recorderZeroDays += 1;
+          }
+        }
+      } else if (
+        (srcOk && whOk && sources.length !== totalWh.length) ||
+        (srcOk && !whOk) ||
+        (!srcOk && whOk)
+      ) {
+        malformed = true;
+      }
+    }
+
+    const fallback = {
+      paragraph1:
+        'Tracked usage and your supplier (utility) reading disagree by more than 50 kWh for this period.',
+      paragraph2:
+        'Not all information on this page is currently accurate. Please wait for an administrator to resolve the discrepancy.',
+      detailSuffix: null,
+    };
+
+    if (trN > supN) {
+      return {
+        paragraph1:
+          'Tracked usage is more than 50 kWh above your supplier (utility) reading for this period.',
+        paragraph2:
+          'Your supplier sensor may be stale, the billing window may not match this dashboard, or the meter may have reset. Confirm dates and entity state before relying on these numbers.',
+        detailSuffix: null,
+      };
+    }
+
+    if (supN > trN) {
+      if (malformed) {
+        return fallback;
+      }
+      if (hasValidDh && recorderZeroDays >= 1) {
+        const dayWord = recorderZeroDays === 1 ? 'day' : 'days';
+        return {
+          paragraph1:
+            'One or more days in this period have no daily snapshot and no recorded energy for that day, so tracked usage can be far below your supplier meter.',
+          paragraph2:
+            'After snapshots or recorder history catch up, totals usually move closer together. If this keeps happening, an administrator should verify integrations and the billing date range.',
+          detailSuffix: ` · ${recorderZeroDays} ${dayWord} without snapshot data`,
+        };
+      }
+      return {
+        paragraph1:
+          'Your supplier (utility) reading is more than 50 kWh above tracked usage for this period.',
+        paragraph2:
+          'Common causes include loads not monitored here, a mismatch between the supplier billing period and this range, or sensor inaccuracy. Treat these statistics as uncertain until they reconcile.',
+        detailSuffix: null,
+      };
+    }
+
+    return fallback;
+  }
+
+  /**
    * When supplier utility read and tracked total differ by more than 50 kWh, show a blocking notice
    * once per visit to the Statistics tab (after data is ready, not while pending).
    */
@@ -433,20 +508,20 @@ class EnergyPanel extends HTMLElement {
     title.className = 'statistics-discrepancy-modal-title';
     title.textContent = 'Discrepancy in statistics';
 
+    const copy = this._statisticsDiscrepancyCopy(s, supN, trN);
     const body = document.createElement('div');
     body.className = 'statistics-discrepancy-modal-body';
     const p1 = document.createElement('p');
-    p1.textContent =
-      'Tracked usage and your supplier (utility) reading disagree by more than 50 kWh for this period.';
+    p1.textContent = copy.paragraph1;
     const p2 = document.createElement('p');
-    p2.textContent =
-      'Not all information on this page is currently accurate. Please wait for an administrator to resolve the discrepancy.';
+    p2.textContent = copy.paragraph2;
     body.appendChild(p1);
     body.appendChild(p2);
 
     const detail = document.createElement('p');
     detail.className = 'statistics-discrepancy-modal-detail';
-    detail.textContent = `Utility read: ${supN.toFixed(2)} kWh · Tracked: ${trN.toFixed(2)} kWh · Difference: ${Math.abs(supN - trN).toFixed(2)} kWh`;
+    const baseDetail = `Utility read: ${supN.toFixed(2)} kWh · Tracked: ${trN.toFixed(2)} kWh · Difference: ${Math.abs(supN - trN).toFixed(2)} kWh`;
+    detail.textContent = copy.detailSuffix ? `${baseDetail}${copy.detailSuffix}` : baseDetail;
     body.appendChild(detail);
 
     const btn = document.createElement('button');
@@ -4817,11 +4892,16 @@ class EnergyPanel extends HTMLElement {
         padding-left: 56px;
         min-height: 2.5em;
       }
-      .billing-bar-x-labels--dense,
-      .billing-bar-x-labels--hourly {
+      .billing-bar-x-labels--dense {
         min-height: 5rem;
         align-items: flex-end;
         padding-bottom: 6px;
+        overflow: visible;
+      }
+      .billing-bar-x-labels--hourly {
+        min-height: 2.75rem;
+        align-items: flex-end;
+        padding-bottom: 2px;
         overflow: visible;
       }
       .billing-bar-x-label {
@@ -6713,7 +6793,9 @@ class EnergyPanel extends HTMLElement {
       const fill = document.createElement('span');
       fill.className = 'billing-bar-fill';
       const pct = maxV > 0 ? (v / maxV) * 100 : 0;
-      fill.style.height = v > 0 ? `${Math.max(pct, 1.2)}%` : '0px';
+      const isRecorderDay = sourceTags?.[i] === 'recorder';
+      const minBarPx = isRecorderDay ? '3px' : '0px';
+      fill.style.height = v > 0 ? `${Math.max(pct, 1.2)}%` : minBarPx;
       fill.style.background = barColors?.[i] ?? accent;
       btn.appendChild(fill);
       col.appendChild(btn);
@@ -6850,7 +6932,9 @@ class EnergyPanel extends HTMLElement {
           roomHourlyTooltipCategories = Array.from({ length: 24 }, (_, h) =>
             this._hourLabel12h(h),
           );
-          roomHourlyCategories = roomHourlyTooltipCategories;
+          roomHourlyCategories = roomHourlyTooltipCategories.map((lb, h) =>
+            h % 2 === 0 ? lb : '\u00a0',
+          );
           const peakKwh = roomHourlyValues.reduce(
             (m, x) => Math.max(m, Number(x) || 0),
             0,
@@ -6891,7 +6975,9 @@ class EnergyPanel extends HTMLElement {
           roomHourlyTooltipCategories = Array.from({ length: 24 }, (_, h) =>
             this._hourLabel12h(h),
           );
-          roomHourlyCategories = roomHourlyTooltipCategories;
+          roomHourlyCategories = roomHourlyTooltipCategories.map((lb, h) =>
+            h % 2 === 0 ? lb : '\u00a0',
+          );
           const peakKwh = roomHourlyValues.reduce(
             (m, x) => Math.max(m, Number(x) || 0),
             0,
@@ -7253,7 +7339,7 @@ class EnergyPanel extends HTMLElement {
     return s;
   }
 
-  /** Epoch ms (from YYYY-MM-DD or ms) → MM/DD/YYYY local. */
+  /** Epoch ms (from YYYY-MM-DD or ms) → MM/DD local (year in modal title). */
   _formatChartDateNumeric(isoOrMs) {
     const ms =
       typeof isoOrMs === 'number'
@@ -7263,7 +7349,7 @@ class EnergyPanel extends HTMLElement {
     const d = new Date(ms);
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
-    return `${mm}/${dd}/${d.getFullYear()}`;
+    return `${mm}/${dd}`;
   }
 
   /** Parse HA date or "YYYY-MM-DD HH:mm" to epoch ms (local wall time). */
