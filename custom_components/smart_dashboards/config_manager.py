@@ -435,7 +435,11 @@ class ConfigManager:
         """True when today's weekday matches boost schedule for this room and multiplier > 1."""
         if not tts_settings.get("budget_boost_enabled"):
             return False
-        mult = float(tts_settings.get("budget_boost_multiplier") or 1)
+        room_mult = room.get("room_budget_boost_multiplier") if room else None
+        if room_mult is not None:
+            mult = float(room_mult)
+        else:
+            mult = float(tts_settings.get("budget_boost_multiplier") or 1)
         if mult <= 1:
             return False
         days = resolve_budget_boost_weekdays(room, tts_settings)
@@ -515,7 +519,11 @@ class ConfigManager:
         tts = tts_settings or {}
         if not cls._is_budget_boost_day(now, tts, room):
             return base
-        mult = float(tts.get("budget_boost_multiplier") or 2)
+        room_mult = room.get("room_budget_boost_multiplier") if room else None
+        if room_mult is not None:
+            mult = float(room_mult)
+        else:
+            mult = float(tts.get("budget_boost_multiplier") or 2)
         mult = max(1.0, min(5.0, mult))
         return round(base * mult, 4)
 
@@ -817,6 +825,14 @@ class ConfigManager:
                 )
                 if ch_at is not None:
                     validated_room["room_budget_boost_weekdays_changed_at"] = ch_at
+                raw_mult = room.get("room_budget_boost_multiplier")
+                if raw_mult is not None:
+                    try:
+                        mult_val = float(raw_mult)
+                        if 1.0 <= mult_val <= 5.0:
+                            validated_room["room_budget_boost_multiplier"] = round(mult_val, 1)
+                    except (TypeError, ValueError):
+                        pass
                 for outlet in room.get("outlets", []):
                     if isinstance(outlet, dict) and outlet.get("name"):
                         outlet_type = _normalize_outlet_type(outlet.get("type", "outlet"))
