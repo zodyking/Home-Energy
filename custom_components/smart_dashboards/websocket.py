@@ -1230,6 +1230,12 @@ def _collect_statistics_energy_sources(
                         "watts": w_on,
                     })
             else:
+                # For outlet/single_outlet/stove/microwave/minisplit/fridge:
+                # 1. Check explicit power_sensor_entity (preferred if user configured it)
+                pe = outlet.get("power_sensor_entity")
+                if pe and isinstance(pe, str) and pe.strip():
+                    entity_to_room[pe.strip()] = room_id
+                # 2. Also collect plug entities (may be sensor.* or switch.* with current_power_w)
                 for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
                     if eid and isinstance(eid, str) and eid.strip():
                         entity_to_room[eid.strip()] = room_id
@@ -1369,6 +1375,23 @@ async def _compute_kwh_from_history(
                 return payload
 
     entity_to_room, switch_specs = _collect_statistics_energy_sources(config_manager)
+
+    if entity_to_room or switch_specs:
+        _LOGGER.debug(
+            "Statistics kWh query: %s..%s, %d power entities %s, %d switch specs %s",
+            start_date,
+            end_date,
+            len(entity_to_room),
+            list(entity_to_room.keys()),
+            len(switch_specs),
+            [s["switch_entity"] for s in switch_specs],
+        )
+    else:
+        _LOGGER.debug(
+            "Statistics kWh query: %s..%s — no power entities or switch specs configured",
+            start_date,
+            end_date,
+        )
 
     try:
         start_dt = dt_util.parse_datetime(f"{start_date} 00:00:00")
