@@ -58,6 +58,9 @@ const TTS_DEFAULTS = {
   notify_vent_auto_on_msg: 'Motion detected in {room_name}, turning on {outlet_name}.',
   notify_vent_auto_off_title: '{notification_title} Vent Off',
   notify_vent_auto_off_msg: 'No motion in {room_name}, turning off {outlet_name}.',
+  notify_room_boost_days_title: '{notification_title} Set boost days',
+  notify_room_boost_days_msg:
+    '{room_name}: Open Home Energy and tap your room icon to choose up to two days when your higher kWh budget applies.',
 };
 
 const EFFICIENCY_UI_DEFAULTS = {
@@ -7517,7 +7520,8 @@ class EnergyPanel extends HTMLElement {
   _isBudgetBoostDayClient(tts, roomConfig = null) {
     const t = tts || {};
     if (!t.budget_boost_enabled) return false;
-    const mult = parseFloat(t.budget_boost_multiplier) || 1;
+    const roomMult = roomConfig?.room_budget_boost_multiplier;
+    const mult = roomMult != null ? parseFloat(roomMult) : (parseFloat(t.budget_boost_multiplier) || 1);
     if (mult <= 1) return false;
     const days = this._resolveBudgetBoostWeekdaysClient(roomConfig, t);
     if (!days.length) return false;
@@ -7531,7 +7535,10 @@ class EnergyPanel extends HTMLElement {
     if (base <= 0) return base;
     if (useRoomBoost === false) return base;
     if (!this._isBudgetBoostDayClient(tts, roomConfig)) return base;
-    const mult = Math.max(1, Math.min(5, parseFloat((tts || {}).budget_boost_multiplier) || 2));
+    const roomMult = roomConfig?.room_budget_boost_multiplier;
+    const mult = roomMult != null
+      ? Math.max(1, Math.min(5, parseFloat(roomMult)))
+      : Math.max(1, Math.min(5, parseFloat((tts || {}).budget_boost_multiplier) || 2));
     return Math.round(base * mult * 10000) / 10000;
   }
 
@@ -9484,6 +9491,35 @@ class EnergyPanel extends HTMLElement {
                   value="${(ttsSettings.notify_budget_hit_msg || TTS_DEFAULTS.notify_budget_hit_msg).replace(/"/g, '&quot;')}"
                   placeholder="{room_name} has exceeded its daily budget of {kwh_budget} kWh (used {kwh_used} kWh).">
                 <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{kwh_budget}</code> <code>{kwh_used}</code></div>
+              </div>
+                </div>
+              </details>
+              <details class="settings-fold">
+                <summary class="settings-fold-summary">Boost budget days reminder</summary>
+                <div class="settings-fold-body">
+              <div class="form-group" style="margin-bottom: 12px;">
+                <div class="toggle-row">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tts-notify-room-boost-days" ${ttsSettings.notify_room_boost_days !== false ? 'checked' : ''} />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label">Notify when a room has no boost days set</span>
+                </div>
+                <div class="tts-msg-desc" style="margin-top: 8px;">Sends a daily reminder to the room's assigned person if they haven't picked their boost budget days yet.</div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Title</div>
+                <input type="text" class="form-input" id="notify-room-boost-days-title"
+                  value="${(ttsSettings.notify_room_boost_days_title || TTS_DEFAULTS.notify_room_boost_days_title).replace(/"/g, '&quot;')}"
+                  placeholder="{notification_title} Set boost days">
+                <div class="tts-var-help">Variables: <code>{notification_title}</code></div>
+              </div>
+              <div class="tts-msg-group">
+                <div class="tts-msg-title">Message</div>
+                <input type="text" class="form-input" id="notify-room-boost-days-msg"
+                  value="${(ttsSettings.notify_room_boost_days_msg || TTS_DEFAULTS.notify_room_boost_days_msg).replace(/"/g, '&quot;')}"
+                  placeholder="{room_name}: Open Home Energy and tap your room icon to choose up to two days when your higher kWh budget applies.">
+                <div class="tts-var-help">Variables: <code>{room_name}</code></div>
               </div>
                 </div>
               </details>
@@ -11468,6 +11504,28 @@ class EnergyPanel extends HTMLElement {
     const rooms = this._config?.rooms || [];
     const room = rooms.find((r) => this._canonicalRoomId(r) === roomId);
     if (!room) return;
+
+    const personEnt = (room.presence_person_entity || '').trim();
+    if (personEnt.startsWith('person.')) {
+      try {
+        const authResult = await this._hass.callWS({
+          type: 'smart_dashboards/check_toggle_auth',
+          room_id: roomId,
+        });
+        if (!authResult.authorized) {
+          showToast(
+            this.shadowRoot,
+            `${authResult.room_person || 'The assigned person'} can configure boost days for this room.`,
+            'error',
+          );
+          return;
+        }
+      } catch (err) {
+        showToast(this.shadowRoot, 'Could not verify permissions.', 'error');
+        return;
+      }
+    }
+
     const existing = this.shadowRoot.getElementById('boost-days-modal-overlay');
     if (existing) existing.remove();
 
@@ -11481,9 +11539,9 @@ class EnergyPanel extends HTMLElement {
     const checks = dayLabel
       .map(
         (lb, d) => `
-      <label style="display:flex;align-items:center;gap:8px;margin:4px 0;cursor:pointer;">
-        <input type="checkbox" class="boost-days-modal-cb" value="${d}" ${sel.has(d) ? 'checked' : ''}>
-        <span>${lb}</span>
+      <label class="boost-days-modal-day" style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--card-bg, rgba(255,255,255,0.04));border-radius:6px;cursor:pointer;font-size:14px;transition:background 0.15s;">
+        <input type="checkbox" class="boost-days-modal-cb form-checkbox" value="${d}" ${sel.has(d) ? 'checked' : ''} style="width:18px;height:18px;">
+        <span style="font-weight:500;">${lb}</span>
       </label>`,
       )
       .join('');
@@ -11496,19 +11554,18 @@ class EnergyPanel extends HTMLElement {
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     overlay.innerHTML = `
-      <div class="room-icon-modal" role="dialog" aria-modal="true" aria-labelledby="boost-days-modal-title" style="max-width:420px;">
-        <div class="room-icon-modal-header">
-          <h2 class="room-icon-modal-title" id="boost-days-modal-title">Boost budget weekdays</h2>
+      <div class="room-icon-modal" role="dialog" aria-modal="true" aria-labelledby="boost-days-modal-title" style="max-width:380px;border-radius:12px;">
+        <div class="room-icon-modal-header" style="padding:16px 20px 12px;">
+          <h2 class="room-icon-modal-title" id="boost-days-modal-title" style="font-size:18px;font-weight:600;">Set boost budget days</h2>
           <button type="button" class="graph-modal-close boost-days-modal-close" aria-label="Close">×</button>
         </div>
-        <div class="room-icon-modal-body">
-          <p style="margin:0 0 12px;color:var(--secondary-text-color);font-size:13px;">
-            Choose up to two weekdays for <strong>${esc(room.name || roomId)}</strong> when the higher kWh budget applies.
-            As the assignee you can change these at most once every 48 hours.
+        <div class="room-icon-modal-body" style="padding:0 20px 16px;">
+          <p style="margin:0 0 16px;color:var(--secondary-text-color);font-size:13px;line-height:1.5;">
+            Select up to 2 days when <strong>${esc(room.name || roomId)}</strong> has a higher energy limit before audible warnings. You can update this once every 48 hours.
           </p>
-          <div class="boost-days-modal-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">${checks}</div>
+          <div class="boost-days-modal-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">${checks}</div>
         </div>
-        <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px 16px;border-top:1px solid var(--divider-color);">
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:12px 20px 16px;border-top:1px solid var(--divider-color);">
           <button type="button" class="btn btn-secondary boost-days-modal-close">Cancel</button>
           <button type="button" class="btn btn-primary boost-days-modal-save">Save</button>
         </div>
@@ -12169,7 +12226,9 @@ class EnergyPanel extends HTMLElement {
     if (roomConfig?.kwh_budget_use_boost === false) return false;
     const t = tts || {};
     if (!t.budget_boost_enabled) return false;
-    if ((parseFloat(t.budget_boost_multiplier) || 1) <= 1) return false;
+    const roomMult = roomConfig?.room_budget_boost_multiplier;
+    const mult = roomMult != null ? parseFloat(roomMult) : (parseFloat(t.budget_boost_multiplier) || 1);
+    if (mult <= 1) return false;
     const w = roomConfig?.room_budget_boost_weekdays;
     return !Array.isArray(w) || w.length === 0;
   }
@@ -12261,11 +12320,15 @@ class EnergyPanel extends HTMLElement {
           <div class="outlets-settings-list" id="outlets-list-${index}">
             ${(room.outlets || []).map((outlet, oi) => this._renderDeviceSettings(outlet, oi, powerSensors, index, room.outlets || [])).join('')}
           </div>`;
+    const ttsSettings = this._config?.tts_settings || {};
+    const globalMult = ttsSettings.budget_boost_multiplier ?? 2;
+    const roomMult = room.room_budget_boost_multiplier;
+    const roomMultVal = roomMult != null ? roomMult : '';
     const boostPanel = hasPerson
       ? `
           <div class="room-settings-subpanel room-settings-subpanel--boost" data-room-index="${index}" data-subpanel="boost" style="display: none;">
-            <p class="tts-msg-desc" style="margin-bottom: 12px;">Choose up to two weekdays when you are usually home (off work) and the higher kWh budget should apply. Multiplier and other boost options stay under Power Enforcement and TTS.</p>
-            <div class="form-group">
+            <p class="tts-msg-desc" style="margin-bottom: 12px;">Set the days and multiplier for when this room has a higher energy limit before audible warnings.</p>
+            <div class="form-group" style="margin-bottom: 12px;">
               <label class="form-label">Boost weekdays (max 2)</label>
               <div class="room-budget-boost-day-wrap" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox room-budget-boost-day" value="0" ${rbbDayChk(0)}> Mon</label>
@@ -12276,6 +12339,11 @@ class EnergyPanel extends HTMLElement {
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox room-budget-boost-day" value="5" ${rbbDayChk(5)}> Sat</label>
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox room-budget-boost-day" value="6" ${rbbDayChk(6)}> Sun</label>
               </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Budget multiplier</label>
+              <input type="number" class="form-input room-budget-boost-multiplier" min="1" max="5" step="0.1" value="${roomMultVal}" placeholder="${globalMult} (global)">
+              <div class="tts-msg-desc" style="margin-top: 4px;">Leave blank to use the global multiplier (${globalMult}×). On boost days, daily kWh budget is multiplied by this value.</div>
             </div>
           </div>`
       : '';
@@ -14550,6 +14618,7 @@ class EnergyPanel extends HTMLElement {
         notifications_enabled: this.shadowRoot.querySelector('#tts-notifications-enabled')?.checked === true,
         notification_title: this.shadowRoot.querySelector('#notify-notification-title')?.value ?? '',
         notify_room_budget_hit: this.shadowRoot.querySelector('#tts-notify-room-budget-hit')?.checked !== false,
+        notify_room_boost_days: this.shadowRoot.querySelector('#tts-notify-room-boost-days')?.checked !== false,
         notify_enforcement_phase_change: this.shadowRoot.querySelector('#tts-notify-enforcement-phase-change')?.checked !== false,
         notify_ac_auto_off: this.shadowRoot.querySelector('#tts-notify-ac-auto-off')?.checked !== false,
         notify_ac_auto_on: this.shadowRoot.querySelector('#tts-notify-ac-auto-on')?.checked !== false,
@@ -14573,6 +14642,8 @@ class EnergyPanel extends HTMLElement {
         zone_health_reminder_tts_msg: this.shadowRoot.querySelector('#zone-health-reminder-tts-msg')?.value ?? '',
         notify_budget_hit_title: this.shadowRoot.querySelector('#notify-budget-hit-title')?.value ?? '',
         notify_budget_hit_msg: this.shadowRoot.querySelector('#notify-budget-hit-msg')?.value ?? '',
+        notify_room_boost_days_title: this.shadowRoot.querySelector('#notify-room-boost-days-title')?.value ?? '',
+        notify_room_boost_days_msg: this.shadowRoot.querySelector('#notify-room-boost-days-msg')?.value ?? '',
         notify_enforcement_phase1_title: this.shadowRoot.querySelector('#notify-enforcement-phase1-title')?.value ?? '',
         notify_enforcement_phase1_msg: this.shadowRoot.querySelector('#notify-enforcement-phase1-msg')?.value ?? '',
         notify_enforcement_phase2_title: this.shadowRoot.querySelector('#notify-enforcement-phase2-title')?.value ?? '',
@@ -14880,7 +14951,18 @@ class EnergyPanel extends HTMLElement {
       if (!pe || !String(pe).toLowerCase().startsWith('person.')) {
         return {};
       }
-      return this._roomBudgetBoostWeekdaysPayload(originalRoom, nwBoostSingle);
+      const payload = this._roomBudgetBoostWeekdaysPayload(originalRoom, nwBoostSingle);
+      const multInput = card.querySelector('.room-budget-boost-multiplier');
+      if (multInput) {
+        const rawVal = multInput.value.trim();
+        if (rawVal === '') {
+          payload.room_budget_boost_multiplier = null;
+        } else {
+          const num = parseFloat(rawVal);
+          payload.room_budget_boost_multiplier = Number.isFinite(num) ? Math.max(1, Math.min(5, num)) : null;
+        }
+      }
+      return payload;
     })();
 
     const updatedRoom = {

@@ -1144,11 +1144,11 @@ class EnergyMonitor:
         """True if at least one room with a positive kWh budget uses boost and today is a boost day."""
         if not tts_settings.get("budget_boost_enabled"):
             return False
-        mult = float(tts_settings.get("budget_boost_multiplier") or 1)
-        if mult <= 1:
-            return False
         rooms = self.config_manager.energy_config.get("rooms") or []
         if not rooms:
+            mult = float(tts_settings.get("budget_boost_multiplier") or 1)
+            if mult <= 1:
+                return False
             return ConfigManager._is_budget_boost_day(now, tts_settings, None)
         for room in rooms:
             if room.get("kwh_budget_use_boost", True) is False:
@@ -2823,12 +2823,14 @@ class EnergyMonitor:
                     _LOGGER.warning("Budget exceeded notification failed for %s: %s", room_name, e)
 
             weekdays_res = resolve_budget_boost_weekdays(room, tts_settings)
+            room_mult = room.get("room_budget_boost_multiplier")
+            eff_mult = float(room_mult) if room_mult is not None else float(tts_settings.get("budget_boost_multiplier") or 1)
             wants_boost_days_reminder = (
                 bool(room.get("presence_person_entity"))
                 and room_uses_kwh_boost
                 and kwh_budget > 0
                 and bool(tts_settings.get("budget_boost_enabled"))
-                and float(tts_settings.get("budget_boost_multiplier") or 1) > 1
+                and eff_mult > 1
                 and not weekdays_res
             )
             if wants_boost_days_reminder:
@@ -3831,7 +3833,11 @@ class EnergyMonitor:
                         use_room_boost=True,
                         room=room,
                     )
-                    mult = float(tts_settings.get("budget_boost_multiplier") or 2)
+                    room_mult = room.get("room_budget_boost_multiplier") if room else None
+                    if room_mult is not None:
+                        mult = float(room_mult)
+                    else:
+                        mult = float(tts_settings.get("budget_boost_multiplier") or 2)
                     mult_s = self._budget_multiplier_tts_str(max(1.0, min(5.0, mult)))
                     weekdays = resolve_budget_boost_weekdays(room, tts_settings)
                     period = self._budget_boost_period_label(weekdays)
