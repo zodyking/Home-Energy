@@ -501,45 +501,34 @@ class EnergyPanel extends HTMLElement {
 
     try {
       const result = await new Promise((resolve, reject) => {
-        let msgId = null;
-        let resolved = false;
+        let unsubscribe = null;
 
-        const handleMessage = (msg) => {
-          if (msg.id !== msgId) return;
+        this._hass.connection.subscribeMessage(
+          (event) => {
+            const { step, progress, log, complete, success, error } = event;
 
-          if (msg.type === 'event' && msg.event) {
-            const { step, progress, log } = msg.event;
             if (step) updateProgress(step, progress || 0);
             if (log) {
               const type = step === 'error' ? 'error' : (step === 'complete' ? 'success' : 'info');
               addLog(log, type);
             }
-          } else if (msg.type === 'result') {
-            resolved = true;
-            this._hass.connection.removeEventListener('message', handleMessage);
-            if (msg.success) {
-              resolve(msg.result);
-            } else {
-              reject(new Error(msg.error?.message || 'Unknown error'));
+
+            if (complete) {
+              if (unsubscribe) unsubscribe();
+              if (success) {
+                resolve(event);
+              } else {
+                reject(new Error(error || 'Hard refresh failed'));
+              }
             }
-          }
-        };
-
-        this._hass.connection.addEventListener('message', handleMessage);
-
-        this._hass.connection.sendMessagePromise({
-          type: 'smart_dashboards/hard_refresh_statistics',
-        }).then(result => {
-          msgId = result;
+          },
+          { type: 'smart_dashboards/hard_refresh_statistics' }
+        ).then(unsub => {
+          unsubscribe = unsub;
+          this._hardRefreshUnsubscribe = unsub;
         }).catch(err => {
-          this._hass.connection.removeEventListener('message', handleMessage);
           reject(err);
         });
-
-        // Store unsubscribe function
-        this._hardRefreshUnsubscribe = () => {
-          this._hass.connection.removeEventListener('message', handleMessage);
-        };
       });
 
       addLog(`Completed! Total: ${(result.total_kwh || 0).toFixed(2)} kWh`, 'success');
