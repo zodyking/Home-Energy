@@ -19,6 +19,7 @@ DEFAULT_TTS_VOLUME = 0.7
 
 # Energy monitor settings
 ENERGY_CHECK_INTERVAL = 1  # seconds
+ROOM_BOOST_DAYS_REMINDER_INTERVAL_SECONDS = 3600  # resend until user sets boost weekdays
 ALERT_COOLDOWN = 60  # seconds between repeated alerts for same room
 SHUTOFF_RESET_DELAY = 5  # seconds to wait before turning plug back on
 
