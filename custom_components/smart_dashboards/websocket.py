@@ -1250,11 +1250,18 @@ def _sync_fetch_lts_wh_by_day(
     start_dt: datetime,
     end_dt: datetime,
 ) -> dict[str, dict[str, float]]:
-    """Fetch Wh per day from Long-Term Statistics (LTS) for power sensors.
+    """Fetch Wh per day from Long-Term Statistics (LTS) for energy/power sensors.
 
-    LTS stores hourly aggregations (mean, min, max) indefinitely even after
-    recorder history is purged. This function queries hourly mean power (W)
-    and converts to Wh per local calendar day.
+    LTS stores hourly aggregations indefinitely even after recorder history is purged.
+    This function intelligently handles two types of sensors:
+
+    1. Energy sensors (state_class=total_increasing, device_class=energy):
+       - Uses "change" statistic which gives actual energy delta per hour (most accurate)
+       - Values are in kWh, converted to Wh
+
+    2. Power sensors (device_class=power or no energy state_class):
+       - Uses "mean" statistic (hourly average watts)
+       - 1 hour at mean_w Watts = mean_w Wh (approximation)
 
     Returns: {entity_id: {YYYY-MM-DD: wh, ...}, ...}
     """
@@ -1263,64 +1270,132 @@ def _sync_fetch_lts_wh_by_day(
     if not entity_ids:
         return {}
 
-    try:
-        stats = statistics_during_period(
-            hass,
-            start_time=start_dt,
-            end_time=end_dt,
-            statistic_ids=set(entity_ids),
-            period="hour",
-            units={"power": "W"},
-            types={"mean"},
-        )
-    except Exception as err:
-        _LOGGER.warning("LTS query failed: %s", err)
-        return {}
-
-    result: dict[str, dict[str, float]] = {}
     tz = dt_util.get_default_time_zone()
+    result: dict[str, dict[str, float]] = {}
 
-    for entity_id, hourly_rows in stats.items():
-        day_wh: dict[str, float] = {}
-        for row in hourly_rows:
-            # row is a dict with 'start' (timestamp in seconds) and 'mean'
-            mean_w = row.get("mean")
-            if mean_w is None:
-                continue
-            try:
-                mean_w = float(mean_w)
-            except (TypeError, ValueError):
-                continue
-            # Only skip negative values (sensor errors); zero is valid (device off)
-            if mean_w < 0:
-                continue
+    # Separate entities by type for optimal querying
+    energy_entities: list[str] = []
+    power_entities: list[str] = []
 
-            # Get timestamp - Python API returns seconds since epoch (not ms like WS API)
-            start_ts = row.get("start")
-            if start_ts is None:
-                continue
-            if isinstance(start_ts, (int, float)):
-                # Seconds since epoch -> datetime (Python API uses seconds, not ms)
-                ts_dt = datetime.fromtimestamp(start_ts, tz=tz)
-            elif isinstance(start_ts, datetime):
-                ts_dt = start_ts.astimezone(tz)
+    for eid in entity_ids:
+        state = hass.states.get(eid)
+        if state:
+            state_class = state.attributes.get("state_class", "")
+            device_class = state.attributes.get("device_class", "")
+            unit = state.attributes.get("unit_of_measurement", "")
+
+            # Energy sensors: total_increasing with energy unit (kWh, Wh)
+            if state_class == "total_increasing" and (
+                device_class == "energy" or unit in ("kWh", "Wh", "MWh")
+            ):
+                energy_entities.append(eid)
             else:
-                continue
+                # Assume power sensor or treat as power for mean calculation
+                power_entities.append(eid)
+        else:
+            # Unknown state, treat as power sensor
+            power_entities.append(eid)
 
-            # 1 hour at mean_w Watts = mean_w Wh
-            wh = mean_w * 1.0
-            day_key = ts_dt.strftime("%Y-%m-%d")
-            day_wh[day_key] = day_wh.get(day_key, 0.0) + wh
+    # Query energy sensors with "change" statistic (exact energy delta per hour)
+    if energy_entities:
+        try:
+            energy_stats = statistics_during_period(
+                hass,
+                start_time=start_dt,
+                end_time=end_dt,
+                statistic_ids=set(energy_entities),
+                period="hour",
+                units={"energy": "kWh"},
+                types={"change"},
+            )
+            for entity_id, hourly_rows in energy_stats.items():
+                day_wh: dict[str, float] = {}
+                for row in hourly_rows:
+                    change_kwh = row.get("change")
+                    if change_kwh is None:
+                        continue
+                    try:
+                        change_kwh = float(change_kwh)
+                    except (TypeError, ValueError):
+                        continue
+                    # Skip negative changes (meter reset or error)
+                    if change_kwh < 0:
+                        continue
 
-        if day_wh:
-            result[entity_id] = day_wh
+                    start_ts = row.get("start")
+                    if start_ts is None:
+                        continue
+                    if isinstance(start_ts, (int, float)):
+                        ts_dt = datetime.fromtimestamp(start_ts, tz=tz)
+                    elif isinstance(start_ts, datetime):
+                        ts_dt = start_ts.astimezone(tz)
+                    else:
+                        continue
+
+                    # Convert kWh to Wh
+                    wh = change_kwh * 1000.0
+                    day_key = ts_dt.strftime("%Y-%m-%d")
+                    day_wh[day_key] = day_wh.get(day_key, 0.0) + wh
+
+                if day_wh:
+                    result[entity_id] = day_wh
+        except Exception as err:
+            _LOGGER.warning("LTS energy query failed: %s", err)
+
+    # Query power sensors with "mean" statistic (average watts per hour)
+    if power_entities:
+        try:
+            power_stats = statistics_during_period(
+                hass,
+                start_time=start_dt,
+                end_time=end_dt,
+                statistic_ids=set(power_entities),
+                period="hour",
+                units={"power": "W"},
+                types={"mean"},
+            )
+            for entity_id, hourly_rows in power_stats.items():
+                day_wh: dict[str, float] = {}
+                for row in hourly_rows:
+                    mean_w = row.get("mean")
+                    if mean_w is None:
+                        continue
+                    try:
+                        mean_w = float(mean_w)
+                    except (TypeError, ValueError):
+                        continue
+                    # Only skip negative values (sensor errors); zero is valid (device off)
+                    if mean_w < 0:
+                        continue
+
+                    start_ts = row.get("start")
+                    if start_ts is None:
+                        continue
+                    if isinstance(start_ts, (int, float)):
+                        ts_dt = datetime.fromtimestamp(start_ts, tz=tz)
+                    elif isinstance(start_ts, datetime):
+                        ts_dt = start_ts.astimezone(tz)
+                    else:
+                        continue
+
+                    # 1 hour at mean_w Watts = mean_w Wh
+                    wh = mean_w * 1.0
+                    day_key = ts_dt.strftime("%Y-%m-%d")
+                    day_wh[day_key] = day_wh.get(day_key, 0.0) + wh
+
+                if day_wh:
+                    result[entity_id] = day_wh
+        except Exception as err:
+            _LOGGER.warning("LTS power query failed: %s", err)
 
     if result:
         total_entities = len(result)
         total_days = sum(len(d) for d in result.values())
         _LOGGER.debug(
-            "LTS fallback: fetched %d entities with %d day-entries total",
+            "LTS fallback: fetched %d entities (%d energy, %d power) with %d day-entries total",
             total_entities,
+            len(energy_entities),
+            len(power_entities),
             total_days,
         )
 
@@ -3225,7 +3300,6 @@ async def websocket_clear_statistics_cache(
 @websocket_api.websocket_command(
     {vol.Required("type"): "smart_dashboards/hard_refresh_statistics"}
 )
-@websocket_api.async_response
 async def websocket_hard_refresh_statistics(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
@@ -3234,21 +3308,23 @@ async def websocket_hard_refresh_statistics(
     """Hard refresh statistics with progress streaming.
 
     Sends progress events during refresh so frontend can display real-time status.
-    Events are sent as: {"type": "event", "event": {"progress": ..., "step": ..., "log": ...}}
+    Uses websocket_api.event_message() for proper event formatting that works with
+    subscribeMessage() on the frontend.
     """
     msg_id = msg["id"]
 
     def send_progress(step: str, progress: int, log: str) -> None:
-        """Send progress event to frontend."""
-        connection.send_message({
-            "id": msg_id,
-            "type": "event",
-            "event": {
-                "step": step,
-                "progress": progress,
-                "log": log,
-            },
-        })
+        """Send progress event to frontend using proper event_message format."""
+        connection.send_message(
+            websocket_api.event_message(
+                msg_id,
+                {
+                    "step": step,
+                    "progress": progress,
+                    "log": log,
+                },
+            )
+        )
 
     config_manager = hass.data[DOMAIN].get("config_manager")
     if not config_manager:
@@ -3438,23 +3514,38 @@ async def websocket_hard_refresh_statistics(
         send_progress("save_cache", 98, "Cache saved")
 
         # Step 9: Fire event for live UI push
-        send_progress("complete", 100, "Hard refresh complete!")
         hass.bus.async_fire("smart_dashboards_statistics_updated", {"data": to_save})
 
-        # Send final result
-        connection.send_result(msg_id, {
+        # Send final complete event with result data (frontend watches for complete=True)
+        final_data = {
+            "step": "complete",
+            "progress": 100,
+            "log": "Hard refresh complete!",
+            "complete": True,
             "success": True,
             "total_kwh": result.get("total_kwh", 0),
             "date_start": start,
             "date_end": end,
             "recorder_days": len(recorder_days),
             "total_days": len(all_expected_days) if start_dt and end_dt else 0,
-        })
+        }
+        connection.send_message(websocket_api.event_message(msg_id, final_data))
 
     except Exception as err:
         _LOGGER.exception("Hard refresh failed: %s", err)
-        send_progress("error", 0, f"Error: {err}")
-        connection.send_error(msg_id, "refresh_failed", str(err))
+        connection.send_message(
+            websocket_api.event_message(
+                msg_id,
+                {
+                    "step": "error",
+                    "progress": 0,
+                    "log": f"Error: {err}",
+                    "complete": True,
+                    "success": False,
+                    "error": str(err),
+                },
+            )
+        )
 
 
 @websocket_api.websocket_command(
