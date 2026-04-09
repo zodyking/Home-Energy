@@ -172,6 +172,7 @@ class EnergyPanel extends HTMLElement {
     this._zoneHealthIconClickDelegation = false;
     this._boostDaysIconClickDelegation = false;
     this._boostDaysKeyDelegation = false;
+    this._roomSettingsSubtabDelegation = false;
     this._dashboardHeartbeatInterval = null;
     this._roomRatingModalDelegation = false;
     this._roomRatingModalEsc = null;
@@ -6288,7 +6289,7 @@ class EnergyPanel extends HTMLElement {
       return go.outletGraphTitle;
     }
     const labels = {
-      total_wh: 'Usage (kWh)', total_watts_intraday: 'Power now (W)', total_wh_intraday: 'Home kWh today (minute data)',
+      total_wh: 'Usage (kWh)', total_watts_intraday: 'Power now (W)', total_wh_intraday: 'Home kWh today (by hour)',
       total_warnings: 'Threshold Warnings (24h)', total_shutoffs: 'Safety Shutoffs (24h)',
       total_power_cycles: 'Power Cycles (24h)',
       room_wh: `${roomName} Usage (kWh) by hour today`, room_warnings: `${roomName} Warnings (24h)`, room_shutoffs: `${roomName} Shutoffs (24h)`,
@@ -6307,7 +6308,8 @@ class EnergyPanel extends HTMLElement {
       type === 'stat_total_warnings' || type === 'stat_total_shutoffs' || type === 'stat_total_power_cycles'
       || type === 'stat_room_warnings' || type === 'stat_room_shutoffs' || type === 'stat_room_power_cycles';
     if ((type === 'stat_total_wh' || type === 'stat_room_wh' || statPeriodEvent) && go?.date_start && go?.date_end) {
-      title = `${title} · ${this._formatDateRange(go.date_start)} – ${this._formatDateRange(go.date_end)}`;
+      const endCap = this._statisticsChartTitleEndDate(go.date_end);
+      title = `${title} · ${this._formatDateRange(go.date_start)} – ${this._formatDateRange(endCap)}`;
     }
     return title;
   }
@@ -6433,7 +6435,7 @@ class EnergyPanel extends HTMLElement {
    * Chart data sources (must stay aligned with backend):
    * - Event logs: get_event_log (warnings/shutoffs/power_cycles; home or room).
    * - Intraday W: get_intraday_history (timestamps + watts).
-   * - Intraday kWh (home): cumulative area + reference_kwh_today offset to match day ledger.
+   * - Intraday kWh (home): hourly native bars + reference_kwh_today scale to match day ledger.
    * - Intraday kWh (room): same intraday fetch, native 24 hourly kWh bars.
    * - Intraday kWh (outlet): get_intraday_history with outlet_index (+ plug_slot for dual outlet).
    * - Stat billing (stat_*): get_daily_history date_start/end → bar chart kWh/day.
@@ -6590,6 +6592,7 @@ class EnergyPanel extends HTMLElement {
   _renderBillingBarChartNative(container, opts) {
     const {
       categories,
+      tooltipCategories,
       values,
       seriesName,
       yFormatter,
@@ -6598,6 +6601,10 @@ class EnergyPanel extends HTMLElement {
       ariaCountNoun = 'days',
       xLabelsMode = 'daily',
     } = opts;
+    const tipCats =
+      Array.isArray(tooltipCategories) && tooltipCategories.length === categories.length
+        ? tooltipCategories
+        : categories;
     this._teardownBillingBarChartNative();
     container.innerHTML = '';
     const n = values.length;
@@ -6663,7 +6670,7 @@ class EnergyPanel extends HTMLElement {
     };
 
     const setTipContent = (i) => {
-      const cat = categories[i];
+      const cat = tipCats[i];
       const v = nums[i];
       tooltip.replaceChildren();
       const t1 = document.createElement('div');
@@ -6692,7 +6699,7 @@ class EnergyPanel extends HTMLElement {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'billing-bar-hit';
-      btn.setAttribute('aria-label', `${categories[i]}: ${yFormatter(v)}`);
+      btn.setAttribute('aria-label', `${tipCats[i]}: ${yFormatter(v)}`);
       const fill = document.createElement('span');
       fill.className = 'billing-bar-fill';
       const pct = maxV > 0 ? (v / maxV) * 100 : 0;
@@ -6789,9 +6796,10 @@ class EnergyPanel extends HTMLElement {
     /** Daily billing bars: category axis + numeric series (datetime bars mis-map hover/tooltip in Apex). */
     let billingCategories = null;
     let billingValues = null;
-    /** Room intraday kWh: native 24 hourly bars (not cumulative area). */
+    /** Room / home intraday kWh: native 24 hourly bars (not cumulative area). */
     let useRoomHourlyBars = false;
     let roomHourlyCategories = null;
+    let roomHourlyTooltipCategories = null;
     let roomHourlyValues = null;
     /** Set for intraday kWh charts: tighter y-axis + label precision */
     let intradayKwhYMax = null;
@@ -6824,10 +6832,14 @@ class EnergyPanel extends HTMLElement {
         if (tsDay.length === 0) {
           roomHourlyValues = null;
           roomHourlyCategories = null;
+          roomHourlyTooltipCategories = null;
         } else {
           roomHourlyValues = this._aggregateHourlyKwh(tsDay, wDay);
-          roomHourlyCategories = Array.from({ length: 24 }, (_, h) =>
+          roomHourlyTooltipCategories = Array.from({ length: 24 }, (_, h) =>
             this._hourLabel12h(h),
+          );
+          roomHourlyCategories = roomHourlyTooltipCategories.map((lb, h) =>
+            h % 2 === 0 ? lb : '\u00a0',
           );
           const peakKwh = roomHourlyValues.reduce(
             (m, x) => Math.max(m, Number(x) || 0),
@@ -6843,7 +6855,7 @@ class EnergyPanel extends HTMLElement {
         }
         seriesData = [];
       } else if (type === 'total_wh_intraday') {
-        seriesName = 'kWh (cumulative today)';
+        seriesName = 'Home kWh per hour';
         const tsDay = [];
         const wDay = [];
         for (let i = 0; i < n; i++) {
@@ -6852,32 +6864,34 @@ class EnergyPanel extends HTMLElement {
           tsDay.push(timestamps[i]);
           wDay.push(watts[i]);
         }
-        const cum = this._cumulativeKwhFromPowerSamples(tsDay, wDay);
-        seriesData = [];
-        for (let i = 0; i < tsDay.length; i++) {
-          const x = this._parseChartTimeMs(tsDay[i]);
-          if (!Number.isNaN(x)) seriesData.push([x, cum[i]]);
-        }
-        seriesData.sort((a, b) => a[0] - b[0]);
-        strokeCurve = 'straight';
-        const refKwh = Number(this._graphData.reference_kwh_today);
-        if (
-          Number.isFinite(refKwh) &&
-          refKwh >= 0 &&
-          seriesData.length > 0
-        ) {
-          const lastIntegrated =
-            Number(seriesData[seriesData.length - 1][1]) || 0;
-          // Never shift the curve negative at t0 when integrated > ledger reference.
-          const offset = Math.max(0, refKwh - lastIntegrated);
-          for (let i = 0; i < seriesData.length; i++) {
-            seriesData[i][1] = (Number(seriesData[i][1]) || 0) + offset;
+        useRoomHourlyBars = true;
+        if (tsDay.length === 0) {
+          roomHourlyValues = null;
+          roomHourlyCategories = null;
+          roomHourlyTooltipCategories = null;
+        } else {
+          let hourlyVals = this._aggregateHourlyKwh(tsDay, wDay);
+          const sumKwh = hourlyVals.reduce((a, b) => a + (Number(b) || 0), 0);
+          const refKwh = Number(this._graphData.reference_kwh_today);
+          if (Number.isFinite(refKwh) && refKwh >= 0 && sumKwh > 1e-6) {
+            const scale = refKwh / sumKwh;
+            hourlyVals = hourlyVals.map((x) => (Number(x) || 0) * scale);
           }
+          roomHourlyValues = hourlyVals;
+          roomHourlyTooltipCategories = Array.from({ length: 24 }, (_, h) =>
+            this._hourLabel12h(h),
+          );
+          roomHourlyCategories = roomHourlyTooltipCategories.map((lb, h) =>
+            h % 2 === 0 ? lb : '\u00a0',
+          );
+          const peakKwh = roomHourlyValues.reduce(
+            (m, x) => Math.max(m, Number(x) || 0),
+            0,
+          );
+          const decimals = peakKwh <= 0.02 ? 3 : peakKwh <= 0.5 ? 2 : 2;
+          yFormatter = (v) => (v == null ? '—' : `${Number(v).toFixed(decimals)} kWh`);
         }
-        const peakKwh = seriesData.reduce((m, p) => Math.max(m, Number(p[1]) || 0), 0);
-        intradayKwhYMax = peakKwh <= 0 ? 1 : Math.max(peakKwh * 1.2, 0.005);
-        const decimals = intradayKwhYMax <= 0.02 ? 3 : intradayKwhYMax <= 0.5 ? 2 : 2;
-        yFormatter = (v) => (v == null ? '—' : `${Number(v).toFixed(decimals)} kWh`);
+        seriesData = [];
       } else {
         seriesName = 'W';
         seriesData = [];
@@ -6908,13 +6922,7 @@ class EnergyPanel extends HTMLElement {
       }
       pairs.sort((a, b) => a.x - b.x);
       billingValues = pairs.map((p) => p.v);
-      billingCategories = pairs.map((p) =>
-        new Date(p.x).toLocaleDateString(undefined, {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-        }),
-      );
+      billingCategories = pairs.map((p) => this._formatChartDateNumeric(p.x));
       seriesData = pairs.map((p) => [p.x, p.v]);
       strokeCurve = 'straight';
       yFormatter = (v) => `${Number(v).toFixed(2)} kWh`;
@@ -6963,7 +6971,9 @@ class EnergyPanel extends HTMLElement {
       if (
         !roomHourlyValues ||
         !roomHourlyCategories ||
-        roomHourlyCategories.length !== roomHourlyValues.length
+        !roomHourlyTooltipCategories ||
+        roomHourlyCategories.length !== roomHourlyValues.length ||
+        roomHourlyTooltipCategories.length !== roomHourlyValues.length
       ) {
         container.innerHTML =
           '<p style="color:var(--secondary-text-color);padding:20px;text-align:center;">No data yet</p>';
@@ -6971,6 +6981,7 @@ class EnergyPanel extends HTMLElement {
       }
       this._renderBillingBarChartNative(container, {
         categories: roomHourlyCategories,
+        tooltipCategories: roomHourlyTooltipCategories,
         values: roomHourlyValues,
         seriesName,
         yFormatter,
@@ -7097,6 +7108,32 @@ class EnergyPanel extends HTMLElement {
       if (isIntraday) {
         options.xaxis.min = this._startOfLocalDayMs();
         options.xaxis.max = Date.now();
+        if (type === 'total_watts_intraday') {
+          options.xaxis.tickAmount = 12;
+          options.xaxis.labels.formatter = (val) => {
+            const ms = typeof val === 'number' ? val : Number(val);
+            if (!Number.isFinite(ms)) return '';
+            const d = new Date(ms);
+            return d.toLocaleTimeString(undefined, {
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true,
+            });
+          };
+          const tip12 = (val) => {
+            const ms = typeof val === 'number' ? val : Number(val);
+            if (!Number.isFinite(ms)) return '';
+            const d = new Date(ms);
+            return d.toLocaleString(undefined, {
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true,
+            });
+          };
+          options.tooltip.x.formatter = (val) => tip12(val);
+        }
       }
       this._apexChartInstance = new ApexCharts(container, options);
       await this._apexChartInstance.render();
@@ -7168,6 +7205,37 @@ class EnergyPanel extends HTMLElement {
     const y = parts[0], m = parts[1], d = parts[2];
     if (!/^\d{4}$/.test(y) || !/^\d{1,2}$/.test(m) || !/^\d{1,2}$/.test(d)) return dateStr;
     return `${m.padStart(2, '0')}/${d.padStart(2, '0')}/${y}`;
+  }
+
+  /** Local calendar date from YYYY-MM-DD for chart titles: cap at today (data only exists through today). */
+  _statisticsChartTitleEndDate(dateEndIso) {
+    const s = String(dateEndIso || '').trim();
+    const parts = s.split('-');
+    if (parts.length !== 3) return s;
+    const y = parseInt(parts[0], 10);
+    const mo = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return s;
+    const endD = new Date(y, mo, d);
+    const now = new Date();
+    const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (endD > today0) {
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    }
+    return s;
+  }
+
+  /** Epoch ms (from YYYY-MM-DD or ms) → MM/DD/YYYY local. */
+  _formatChartDateNumeric(isoOrMs) {
+    const ms =
+      typeof isoOrMs === 'number'
+        ? isoOrMs
+        : this._parseChartTimeMs(`${String(isoOrMs || '').trim()}T12:00:00`);
+    if (Number.isNaN(ms)) return '';
+    const d = new Date(ms);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${mm}/${dd}/${d.getFullYear()}`;
   }
 
   /** Parse HA date or "YYYY-MM-DD HH:mm" to epoch ms (local wall time). */
@@ -11378,6 +11446,24 @@ class EnergyPanel extends HTMLElement {
     this._showBoostDaysModal(rid);
   }
 
+  _handleRoomSettingsSubtabClick(e) {
+    const btn = e.target.closest('.room-settings-subtab');
+    if (!btn || !this.shadowRoot.contains(btn)) return;
+    const subtab = btn.dataset.subtab;
+    if (!subtab) return;
+    const card = btn.closest('.room-settings-card');
+    if (!card) return;
+    e.preventDefault();
+    e.stopPropagation();
+    card.querySelectorAll('.room-settings-subtab').forEach((b) => {
+      b.classList.toggle('active', b.dataset.subtab === subtab);
+    });
+    card.querySelectorAll('.room-settings-subpanel').forEach((p) => {
+      const show = p.dataset.subpanel === subtab;
+      p.style.display = show ? '' : 'none';
+    });
+  }
+
   async _showBoostDaysModal(roomId) {
     const rooms = this._config?.rooms || [];
     const room = rooms.find((r) => this._canonicalRoomId(r) === roomId);
@@ -13042,6 +13128,11 @@ class EnergyPanel extends HTMLElement {
     if (!this._boostDaysIconClickDelegation) {
       this._boostDaysIconClickDelegation = true;
       this.shadowRoot.addEventListener('click', (e) => this._handleBoostDaysIconClick(e));
+    }
+
+    if (!this._roomSettingsSubtabDelegation) {
+      this._roomSettingsSubtabDelegation = true;
+      this.shadowRoot.addEventListener('click', (e) => this._handleRoomSettingsSubtabClick(e));
     }
 
     if (!this._boostDaysKeyDelegation) {

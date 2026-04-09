@@ -2822,16 +2822,30 @@ class EnergyMonitor:
                 except Exception as e:
                     _LOGGER.warning("Budget exceeded notification failed for %s: %s", room_name, e)
 
-            if (
-                room.get("presence_person_entity")
+            weekdays_res = resolve_budget_boost_weekdays(room, tts_settings)
+            wants_boost_days_reminder = (
+                bool(room.get("presence_person_entity"))
                 and room_uses_kwh_boost
                 and kwh_budget > 0
-                and tts_settings.get("budget_boost_enabled")
+                and bool(tts_settings.get("budget_boost_enabled"))
                 and float(tts_settings.get("budget_boost_multiplier") or 1) > 1
-                and not resolve_budget_boost_weekdays(room, tts_settings)
-            ):
-                if self._room_boost_days_reminder_sent.get(room_id) != today:
+                and not weekdays_res
+            )
+            if wants_boost_days_reminder:
+                already_sent = self._room_boost_days_reminder_sent.get(room_id) == today
+                _LOGGER.debug(
+                    "room_boost_days room_id=%s room_name=%s weekdays=%s already_sent_today=%s",
+                    room_id,
+                    room_name,
+                    weekdays_res,
+                    already_sent,
+                )
+                if not already_sent:
                     self._room_boost_days_reminder_sent[room_id] = today
+                    _LOGGER.debug(
+                        "room_boost_days: sending notification for room_id=%s",
+                        room_id,
+                    )
                     try:
                         await self._send_notification_to_room_person(
                             room,
