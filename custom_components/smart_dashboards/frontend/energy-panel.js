@@ -7262,7 +7262,7 @@ class EnergyPanel extends HTMLElement {
         mkItem('billing-bar-legend-swatch--snap', 'Daily snapshot (ledger)'),
       );
       leg.appendChild(
-        mkItem('billing-bar-legend-swatch--rec', 'Recorder estimate'),
+        mkItem('billing-bar-legend-swatch--rec', 'Sensor history (calculated)'),
       );
       leg.appendChild(
         mkItem('billing-bar-legend-swatch--nodata', 'No sensor data (dashed at 0)'),
@@ -15605,4 +15605,6 @@ class EnergyPanel extends HTMLElement {
   }
 }
 
-customElements.define('energy-panel', EnergyPanel);
+if (!customElements.get('energy-panel')) {
+  customElements.define('energy-panel', EnergyPanel);
+}

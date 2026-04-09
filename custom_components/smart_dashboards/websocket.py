@@ -3331,6 +3331,10 @@ async def websocket_hard_refresh_statistics(
         connection.send_error(msg_id, "not_ready", "Config manager not initialized")
         return
 
+    # Acknowledge subscription immediately so frontend's subscribeMessage() resolves
+    # This allows progress events to be received properly
+    connection.send_result(msg_id)
+
     try:
         # Step 1: Clear caches
         send_progress("clear_cache", 5, "Clearing statistics caches...")
