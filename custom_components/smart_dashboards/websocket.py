@@ -1243,6 +1243,88 @@ def _collect_statistics_energy_sources(
     return entity_to_room, switch_specs
 
 
+def _sync_fetch_lts_wh_by_day(
+    hass: HomeAssistant,
+    entity_ids: list[str],
+    start_dt: datetime,
+    end_dt: datetime,
+) -> dict[str, dict[str, float]]:
+    """Fetch Wh per day from Long-Term Statistics (LTS) for power sensors.
+
+    LTS stores hourly aggregations (mean, min, max) indefinitely even after
+    recorder history is purged. This function queries hourly mean power (W)
+    and converts to Wh per local calendar day.
+
+    Returns: {entity_id: {YYYY-MM-DD: wh, ...}, ...}
+    """
+    from homeassistant.components.recorder.statistics import statistics_during_period
+
+    if not entity_ids:
+        return {}
+
+    try:
+        stats = statistics_during_period(
+            hass,
+            start_time=start_dt,
+            end_time=end_dt,
+            statistic_ids=set(entity_ids),
+            period="hour",
+            units={"power": "W"},
+            types={"mean"},
+        )
+    except Exception as err:
+        _LOGGER.warning("LTS query failed: %s", err)
+        return {}
+
+    result: dict[str, dict[str, float]] = {}
+    tz = dt_util.get_default_time_zone()
+
+    for entity_id, hourly_rows in stats.items():
+        day_wh: dict[str, float] = {}
+        for row in hourly_rows:
+            # row is a dict with 'start' (timestamp in ms or seconds) and 'mean'
+            mean_w = row.get("mean")
+            if mean_w is None:
+                continue
+            try:
+                mean_w = float(mean_w)
+            except (TypeError, ValueError):
+                continue
+            if mean_w <= 0:
+                continue
+
+            # Get timestamp - can be int (ms since epoch) or datetime
+            start_ts = row.get("start")
+            if start_ts is None:
+                continue
+            if isinstance(start_ts, (int, float)):
+                # Milliseconds since epoch -> datetime
+                ts_dt = datetime.fromtimestamp(start_ts / 1000, tz=tz)
+            elif isinstance(start_ts, datetime):
+                ts_dt = start_ts.astimezone(tz)
+            else:
+                continue
+
+            # 1 hour at mean_w Watts = mean_w Wh
+            wh = mean_w * 1.0
+            day_key = ts_dt.strftime("%Y-%m-%d")
+            day_wh[day_key] = day_wh.get(day_key, 0.0) + wh
+
+        if day_wh:
+            result[entity_id] = day_wh
+
+    if result:
+        total_entities = len(result)
+        total_days = sum(len(d) for d in result.values())
+        _LOGGER.debug(
+            "LTS fallback: fetched %d entities with %d day-entries total",
+            total_entities,
+            total_days,
+        )
+
+    return result
+
+
 def _sync_integrate_entity_wh_total_and_by_day(
     hass: HomeAssistant,
     entity_id: str,
@@ -1487,12 +1569,79 @@ async def _compute_kwh_from_history(
     room_wh: dict[str, float] = {}
     room_day_wh: dict[str, dict[str, float]] = {}
     total_wh = 0.0
+
+    # Track which entities have data for which days (for LTS fallback)
+    entity_days_with_data: dict[str, set[str]] = {}
+
     for room_id, wh, by_day in results:
         total_wh += wh
         room_wh[room_id] = room_wh.get(room_id, 0.0) + wh
         rmap = room_day_wh.setdefault(room_id, {})
         for dkey, dwh in by_day.items():
             rmap[dkey] = rmap.get(dkey, 0.0) + float(dwh)
+
+    # Store entity -> days mapping for LTS fallback detection
+    # (results are indexed by room, so we need to track via entity_to_room)
+    for eid in entity_to_room:
+        entity_days_with_data[eid] = set()
+    # We'll detect missing days from room_day_wh below
+
+    # Generate all expected days in the date range
+    all_expected_days: set[str] = set()
+    cur = start_dt
+    while cur <= end_dt:
+        all_expected_days.add(cur.strftime("%Y-%m-%d"))
+        cur += timedelta(days=1)
+
+    # Find days with no recorder data across ALL rooms
+    days_with_any_data: set[str] = set()
+    for rmap in room_day_wh.values():
+        days_with_any_data.update(rmap.keys())
+
+    missing_days = all_expected_days - days_with_any_data
+
+    # LTS fallback: query Long-Term Statistics for missing days
+    if missing_days and entity_to_room:
+        _LOGGER.debug(
+            "LTS fallback triggered: %d days missing from recorder (%s), querying LTS for %d entities",
+            len(missing_days),
+            sorted(missing_days)[:5],
+            len(entity_to_room),
+        )
+
+        # Query LTS for ALL days (it will return whatever it has)
+        lts_result = await hass.async_add_executor_job(
+            _sync_fetch_lts_wh_by_day,
+            hass,
+            list(entity_to_room.keys()),
+            start_dt,
+            end_dt,
+        )
+
+        # Merge LTS data ONLY for missing days
+        lts_wh_added = 0.0
+        lts_days_filled: set[str] = set()
+        for eid, lts_day_wh in lts_result.items():
+            room_id = entity_to_room.get(eid)
+            if not room_id:
+                continue
+            rmap = room_day_wh.setdefault(room_id, {})
+            for day_key, wh in lts_day_wh.items():
+                if day_key in missing_days and rmap.get(day_key, 0.0) == 0.0:
+                    # Only fill in if recorder had no data for this day
+                    rmap[day_key] = rmap.get(day_key, 0.0) + wh
+                    room_wh[room_id] = room_wh.get(room_id, 0.0) + wh
+                    total_wh += wh
+                    lts_wh_added += wh
+                    lts_days_filled.add(day_key)
+
+        if lts_wh_added > 0:
+            _LOGGER.debug(
+                "LTS fallback added %.2f Wh across %d days: %s",
+                lts_wh_added,
+                len(lts_days_filled),
+                sorted(lts_days_filled),
+            )
 
     if ds_key[0] and ds_key[1]:
         _KWH_HISTORY_CACHE[ds_key] = (time.monotonic(), (total_wh, room_wh, room_day_wh))
