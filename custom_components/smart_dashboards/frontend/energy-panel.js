@@ -141,6 +141,9 @@ class EnergyPanel extends HTMLElement {
     this._statsFetchError = null;
     this._statsSubscription = null; // WebSocket subscription for live statistics updates
     this._statsRoomsView = 'pie'; // 'table' | 'pie' — statistics rooms card only
+    /** One modal per visit to Statistics when supplier vs tracked kWh differ by > threshold. */
+    this._statsDiscrepancyModalShownThisVisit = false;
+    this._statsDiscrepancyModalEsc = null;
     this._statsRoomsPieInstance = null;
     this._statsPieRoomRows = null; // aligned with pie series for tooltips / selection
     /** Serializes async pie mount so concurrent _render() passes cannot stack ApexCharts. */
@@ -167,6 +170,8 @@ class EnergyPanel extends HTMLElement {
     this._zoneHealthData = null;
     this._zoneHealthRefreshInterval = null;
     this._zoneHealthIconClickDelegation = false;
+    this._boostDaysIconClickDelegation = false;
+    this._boostDaysKeyDelegation = false;
     this._dashboardHeartbeatInterval = null;
     this._roomRatingModalDelegation = false;
     this._roomRatingModalEsc = null;
@@ -252,6 +257,7 @@ class EnergyPanel extends HTMLElement {
       this._roomsGridResizeObserver = null;
     }
     this.shadowRoot?.querySelector('.room-rating-modal-overlay')?.remove();
+    this._removeStatisticsDiscrepancyModal();
     this._closeApplianceMenu();
     this._teardownBillingBarChartNative();
     this._unsubscribeFromStatisticsUpdates();
@@ -370,9 +376,98 @@ class EnergyPanel extends HTMLElement {
         this._render();
       }
     }
-    
+
     // Subscribe to live updates (only once)
     this._subscribeToStatisticsUpdates();
+
+    if (this._dashboardView === 'statistics') {
+      queueMicrotask(() => this._maybeShowStatisticsDiscrepancyModal());
+    }
+  }
+
+  _removeStatisticsDiscrepancyModal() {
+    if (this._statsDiscrepancyModalEsc) {
+      window.removeEventListener('keydown', this._statsDiscrepancyModalEsc);
+      this._statsDiscrepancyModalEsc = null;
+    }
+    this.shadowRoot?.querySelector('.statistics-discrepancy-modal-overlay')?.remove();
+  }
+
+  /**
+   * When supplier utility read and tracked total differ by more than 50 kWh, show a blocking notice
+   * once per visit to the Statistics tab (after data is ready, not while pending).
+   */
+  _maybeShowStatisticsDiscrepancyModal() {
+    if (!this._hass || this._showSettings) return;
+    if (this._dashboardView !== 'statistics') return;
+    if (this._statsDiscrepancyModalShownThisVisit) return;
+    const s = this._statsData;
+    if (!s || s.statistics_pending) return;
+    if (!this._statisticsSupplierConfigured()) return;
+    const sup = s.sensor_values?.current_usage;
+    const tracked = s.total_kwh;
+    const supN = typeof sup === 'number' ? sup : parseFloat(sup);
+    const trN = typeof tracked === 'number' ? tracked : parseFloat(tracked);
+    if (!Number.isFinite(supN) || !Number.isFinite(trN)) return;
+    const THRESH = 50;
+    if (Math.abs(supN - trN) <= THRESH) return;
+
+    this._statsDiscrepancyModalShownThisVisit = true;
+    this._removeStatisticsDiscrepancyModal();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'statistics-discrepancy-modal-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'stat-disc-title');
+
+    const panel = document.createElement('div');
+    panel.className = 'statistics-discrepancy-modal-panel';
+
+    const title = document.createElement('h2');
+    title.id = 'stat-disc-title';
+    title.className = 'statistics-discrepancy-modal-title';
+    title.textContent = 'Discrepancy in statistics';
+
+    const body = document.createElement('div');
+    body.className = 'statistics-discrepancy-modal-body';
+    const p1 = document.createElement('p');
+    p1.textContent =
+      'Tracked usage and your supplier (utility) reading disagree by more than 50 kWh for this period.';
+    const p2 = document.createElement('p');
+    p2.textContent =
+      'Not all information on this page is currently accurate. Please wait for an administrator to resolve the discrepancy.';
+    body.appendChild(p1);
+    body.appendChild(p2);
+
+    const detail = document.createElement('p');
+    detail.className = 'statistics-discrepancy-modal-detail';
+    detail.textContent = `Utility read: ${supN.toFixed(2)} kWh · Tracked: ${trN.toFixed(2)} kWh · Difference: ${Math.abs(supN - trN).toFixed(2)} kWh`;
+    body.appendChild(detail);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn statistics-discrepancy-modal-close';
+    btn.textContent = 'Close';
+
+    const close = () => {
+      this._removeStatisticsDiscrepancyModal();
+    };
+    btn.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close();
+    });
+    this._statsDiscrepancyModalEsc = (e) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', this._statsDiscrepancyModalEsc);
+
+    panel.appendChild(title);
+    panel.appendChild(body);
+    panel.appendChild(btn);
+    overlay.appendChild(panel);
+    this.shadowRoot.appendChild(overlay);
+    queueMicrotask(() => btn.focus());
   }
   
   async _subscribeToStatisticsUpdates() {
@@ -387,6 +482,7 @@ class EnergyPanel extends HTMLElement {
           this._statsFetchError = null;
           if (this._dashboardView === 'statistics') {
             this._render();
+            queueMicrotask(() => this._maybeShowStatisticsDiscrepancyModal());
           }
         },
         { type: 'smart_dashboards/subscribe_statistics' }
@@ -967,6 +1063,7 @@ class EnergyPanel extends HTMLElement {
           if (deviceType === 'wall_heater') {
             const nowEl = deviceCard.querySelector('.heater-dash-now-val');
             const thEl = deviceCard.querySelector('.heater-dash-threshold-val');
+            const targetEl = deviceCard.querySelector('.heater-dash-target-val');
             const timerEl = deviceCard.querySelector('.heater-dash-timer');
             const runRow = deviceCard.querySelector('.heater-dash-row-run');
             if (nowEl) {
@@ -976,13 +1073,22 @@ class EnergyPanel extends HTMLElement {
                 : '—';
             }
             if (thEl) {
-              const b = outlet.heater_on_below_temperature ?? deviceConfig?.heater_on_below_temperature ?? 65;
+              const b = outlet.heater_effective_on_below ?? outlet.heater_on_below_temperature ?? deviceConfig?.heater_on_below_temperature ?? 65;
               const bd = Number(b) % 1 === 0 ? 0 : 1;
               thEl.textContent = `${Number(b).toFixed(bd)}°`;
             }
-            const tr = this._formatHeaterRunRemaining(outlet.heater_time_remaining_sec);
-            if (timerEl) timerEl.textContent = tr;
-            if (runRow) runRow.style.display = tr ? '' : 'none';
+            if (targetEl) {
+              const tComfort = outlet.heater_effective_comfort ?? outlet.heater_comfort_temperature;
+              const bAuto = outlet.heater_effective_on_below ?? outlet.heater_on_below_temperature ?? deviceConfig?.heater_on_below_temperature ?? 65;
+              const tnum = (tComfort != null && tComfort !== '' && !Number.isNaN(Number(tComfort)))
+                ? Number(tComfort)
+                : Number(bAuto) + 2;
+              const td = tnum % 1 === 0 ? 0 : 1;
+              targetEl.textContent = `${Number(tnum).toFixed(td)}°`;
+            }
+            const runRemaining = this._formatHeaterRunRemaining(outlet.heater_time_remaining_sec);
+            if (timerEl) timerEl.textContent = runRemaining;
+            if (runRow) runRow.style.display = runRemaining ? '' : 'none';
           }
         }
         if (isFridge) {
@@ -2104,6 +2210,28 @@ class EnergyPanel extends HTMLElement {
         .room-icon.zone-health-issue ha-icon {
           animation: none;
           color: #ff9800;
+        }
+      }
+
+      @keyframes boost-days-attn {
+        0%, 100% { opacity: 1; filter: none; }
+        50% { opacity: 0.72; filter: brightness(1.25); }
+      }
+
+      .room-icon.room-icon--boost-days-needed {
+        cursor: pointer;
+      }
+
+      .room-icon.room-icon--boost-days-needed ha-icon {
+        animation: boost-days-attn 1.4s ease-in-out infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .room-icon.room-icon--boost-days-needed ha-icon {
+          animation: none;
+          outline: 2px dashed var(--warning-color, #ff9800);
+          outline-offset: 2px;
+          border-radius: 4px;
         }
       }
 
@@ -4146,6 +4274,20 @@ class EnergyPanel extends HTMLElement {
         gap: 3px;
         max-width: 100%;
       }
+      .device-card.ceiling-vent-card .heater-dash-row.heater-dash-row-temps {
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+      }
+      .device-card.ceiling-vent-card .heater-dash-temp-line {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: baseline;
+        justify-content: center;
+        gap: 4px;
+        width: 100%;
+      }
       .device-card.ceiling-vent-card .heater-dash-lbl {
         font-size: 8px;
         font-weight: 600;
@@ -4309,6 +4451,66 @@ class EnergyPanel extends HTMLElement {
         padding: 16px;
         text-align: center;
         font-size: 14px;
+      }
+
+      .statistics-discrepancy-modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1001;
+        background: rgba(0, 0, 0, 0.72);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(16px, 5vw, 32px);
+        box-sizing: border-box;
+      }
+      .statistics-discrepancy-modal-panel {
+        background: var(--card-bg, #1c1c1c);
+        border-radius: clamp(10px, 2.5vw, 14px);
+        border: 2px solid var(--panel-danger, rgba(255, 82, 82, 0.55));
+        width: min(92vw, 520px);
+        max-width: 100%;
+        padding: clamp(20px, 5vw, 32px);
+        box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+      }
+      .statistics-discrepancy-modal-title {
+        margin: 0 0 16px;
+        font-size: clamp(20px, 5vw, 26px);
+        font-weight: 700;
+        line-height: 1.2;
+        color: var(--primary-text-color, #fff);
+      }
+      .statistics-discrepancy-modal-body {
+        font-size: clamp(14px, 3.5vw, 16px);
+        line-height: 1.55;
+        color: var(--primary-text-color, #eee);
+      }
+      .statistics-discrepancy-modal-body p {
+        margin: 0 0 14px;
+      }
+      .statistics-discrepancy-modal-detail {
+        font-size: clamp(12px, 3vw, 14px);
+        color: var(--secondary-text-color, #b0b0b0);
+        font-variant-numeric: tabular-nums;
+      }
+      .statistics-discrepancy-modal-close {
+        margin-top: 22px;
+        width: 100%;
+        min-height: 48px;
+        font-size: 16px;
+        font-weight: 600;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        background: var(--panel-accent, #03a9f4);
+        color: #fff;
+      }
+      .statistics-discrepancy-modal-close:hover {
+        filter: brightness(1.08);
+      }
+      .statistics-discrepancy-modal-close:focus-visible {
+        outline: 2px solid var(--panel-accent, #03a9f4);
+        outline-offset: 2px;
       }
 
       /* Load Rate Popup */
@@ -7219,23 +7421,48 @@ class EnergyPanel extends HTMLElement {
     return (js + 6) % 7;
   }
 
-  _isBudgetBoostDayClient(tts) {
+  /** Weekdays that activate boost for this room (per-room when person assigned). */
+  _resolveBudgetBoostWeekdaysClient(roomConfig, tts) {
+    const t = tts || {};
+    const pe = (roomConfig?.presence_person_entity || '').trim().toLowerCase();
+    if (pe.startsWith('person.')) {
+      const raw = roomConfig?.room_budget_boost_weekdays;
+      if (!Array.isArray(raw)) return [];
+      const out = [];
+      for (const x of raw) {
+        const n = parseInt(String(x), 10);
+        if (!Number.isNaN(n) && n >= 0 && n <= 6 && !out.includes(n)) out.push(n);
+        if (out.length >= 2) break;
+      }
+      return out.sort((a, b) => a - b);
+    }
+    const days = t.budget_boost_weekdays;
+    if (!Array.isArray(days) || days.length === 0) return [];
+    const wk = [];
+    for (const d of days) {
+      const n = parseInt(String(d), 10);
+      if (!Number.isNaN(n) && n >= 0 && n <= 6 && !wk.includes(n)) wk.push(n);
+    }
+    return wk.sort((a, b) => a - b);
+  }
+
+  _isBudgetBoostDayClient(tts, roomConfig = null) {
     const t = tts || {};
     if (!t.budget_boost_enabled) return false;
     const mult = parseFloat(t.budget_boost_multiplier) || 1;
     if (mult <= 1) return false;
-    const days = t.budget_boost_weekdays;
-    if (!Array.isArray(days) || days.length === 0) return false;
+    const days = this._resolveBudgetBoostWeekdaysClient(roomConfig, t);
+    if (!days.length) return false;
     const wk = this._weekdayPythonFromDate(new Date());
     return days.some((d) => parseInt(String(d), 10) === wk);
   }
 
   /** Mirror config_manager.effective_kwh_budget_for_moment (local date). */
-  _effectiveKwhBudgetClient(baseKwh, tts, useRoomBoost = true) {
+  _effectiveKwhBudgetClient(baseKwh, tts, useRoomBoost = true, roomConfig = null) {
     const base = Math.max(0, Number(baseKwh) || 0);
     if (base <= 0) return base;
     if (useRoomBoost === false) return base;
-    if (!this._isBudgetBoostDayClient(tts)) return base;
+    if (!this._isBudgetBoostDayClient(tts, roomConfig)) return base;
     const mult = Math.max(1, Math.min(5, parseFloat((tts || {}).budget_boost_multiplier) || 2));
     return Math.round(base * mult * 10000) / 10000;
   }
@@ -7344,7 +7571,7 @@ class EnergyPanel extends HTMLElement {
     if (apiEff != null && Number.isFinite(Number(apiEff))) {
       effKwh = Math.max(0, Number(apiEff));
     } else {
-      effKwh = this._effectiveKwhBudgetClient(baseKwh, tts, roomUsesBoost);
+      effKwh = this._effectiveKwhBudgetClient(baseKwh, tts, roomUsesBoost, roomConfig);
     }
     const usedKwh = Math.max(0, (roomData.total_day_wh || 0) / 1000);
     const showBar = maxInterval > 0;
@@ -7825,10 +8052,16 @@ class EnergyPanel extends HTMLElement {
     const zoneHealthIssue =
       personEntKey &&
       this._zoneHealthData?.persons?.some(p => p.entity_id === personEntKey && !p.is_healthy);
-    const iconClass = `room-icon${zoneHealthIssue ? ' zone-health-issue' : ''}`;
-    const iconDataAttr = personEntRaw
+    const ttsCfg = this._config?.tts_settings || {};
+    const boostDaysNeeded =
+      !zoneHealthIssue && this._roomNeedsAssigneeBoostDays(room, ttsCfg);
+    const iconClass = `room-icon${zoneHealthIssue ? ' zone-health-issue' : ''}${boostDaysNeeded ? ' room-icon--boost-days-needed' : ''}`;
+    let iconDataAttr = personEntRaw
       ? ` data-zone-health-person="${personEntKey.replace(/"/g, '&quot;')}"`
       : '';
+    if (boostDaysNeeded) {
+      iconDataAttr += ` data-boost-days-room-id="${String(roomId).replace(/"/g, '&quot;')}"`;
+    }
     const escAttr = (s) =>
       String(s ?? '')
         .replace(/&/g, '&amp;')
@@ -7870,6 +8103,10 @@ class EnergyPanel extends HTMLElement {
         iconAriaLabel = `${room.name || roomId}, presence: ${personName}, ${location}`;
       }
     }
+    if (boostDaysNeeded) {
+      iconAriaLabel = `${iconAriaLabel}. Tap to set which weekdays use your higher kWh budget.`;
+    }
+    const iconBoostA11y = boostDaysNeeded ? ' role="button" tabindex="0"' : '';
     const iconTitleAttr = iconTitle ? ` title="${escAttr(iconTitle)}"` : '';
     const iconAriaAttr = ` aria-label="${escAttr(iconAriaLabel)}"`;
 
@@ -7880,7 +8117,7 @@ class EnergyPanel extends HTMLElement {
       <div class="room-card" data-room-id="${roomId}">
         <div class="room-header">
           <div class="room-header-inner room-header-rail">
-            <div class="${iconClass}"${iconDataAttr}${iconTitleAttr}${iconAriaAttr}>
+            <div class="${iconClass}"${iconDataAttr}${iconTitleAttr}${iconAriaAttr}${iconBoostA11y}>
               <ha-icon icon="${roomCardIcon}"></ha-icon>
             </div>
             <div class="room-header-title-wrap">
@@ -8158,8 +8395,14 @@ class EnergyPanel extends HTMLElement {
     const kind = (device.type || 'vent') === 'wall_heater' ? 'Wall heater' : 'Vent';
     const displayTitle = device.name || kind;
     const isWallHeater = (device.type || 'vent') === 'wall_heater';
-    const belowN = device.heater_on_below_temperature ?? 65;
-    const belowDec = belowN % 1 === 0 ? 0 : 1;
+    const autoRaw = data.heater_effective_on_below ?? data.heater_on_below_temperature ?? device.heater_on_below_temperature ?? 65;
+    const targetRaw = data.heater_effective_comfort ?? data.heater_comfort_temperature;
+    const autoN = Number(autoRaw);
+    const targetN = (targetRaw != null && targetRaw !== '' && !Number.isNaN(Number(targetRaw)))
+      ? Number(targetRaw)
+      : autoN + 2;
+    const autoDec = autoN % 1 === 0 ? 0 : 1;
+    const targetDec = targetN % 1 === 0 ? 0 : 1;
     let tempStr = '—';
     const hc = data.heater_current_temperature;
     if (isWallHeater && hc != null && hc !== '' && !Number.isNaN(Number(hc))) {
@@ -8170,9 +8413,9 @@ class EnergyPanel extends HTMLElement {
     const heaterDash = isWallHeater ? `
             <div class="heater-dash-meta">
               <div class="heater-dash-row heater-dash-row-temps">
-                <span class="heater-dash-lbl">Now</span><span class="heater-dash-val heater-dash-now-val">${tempStr}</span>
-                <span class="heater-dash-dot">·</span>
-                <span class="heater-dash-lbl">On≤</span><span class="heater-dash-val heater-dash-threshold-val">${Number(belowN).toFixed(belowDec)}°</span>
+                <div class="heater-dash-temp-line"><span class="heater-dash-lbl">Temp:</span><span class="heater-dash-val heater-dash-now-val">${tempStr}</span></div>
+                <div class="heater-dash-temp-line"><span class="heater-dash-lbl">Auto:</span><span class="heater-dash-val heater-dash-threshold-val">${Number(autoN).toFixed(autoDec)}°</span></div>
+                <div class="heater-dash-temp-line"><span class="heater-dash-lbl">Target:</span><span class="heater-dash-val heater-dash-target-val">${Number(targetN).toFixed(targetDec)}°</span></div>
               </div>
               <div class="heater-dash-row heater-dash-row-run"${timerStr ? '' : ' style="display:none"'}>
                 <span class="heater-dash-lbl">Run</span><span class="heater-dash-val heater-dash-timer">${timerStr}</span>
@@ -9790,6 +10033,9 @@ class EnergyPanel extends HTMLElement {
               </div>
               <div class="tts-msg-group pe-budget-boost-section" style="margin-bottom: 16px;">
                 <div class="tts-msg-title">Budget boost days</div>
+                <p style="color: var(--secondary-text-color); font-size: 10px; margin: 0 0 8px 0;">
+                  Rooms <strong>with an assigned person</strong> use the <strong>Boost budget</strong> tab on that room’s settings instead of the weekdays below. These global weekdays apply only to rooms without an assigned person.
+                </p>
                 <div class="tts-msg-desc">
                   On selected weekdays, each room's daily kWh budget is multiplied before power alerts apply.
                   Scheduled reminders repeat inside the time window (set <strong>Default media player</strong> on the TTS tab).
@@ -11121,6 +11367,119 @@ class EnergyPanel extends HTMLElement {
     this._showZoneHealthPopup(personData);
   }
 
+  _handleBoostDaysIconClick(e) {
+    const iconEl = e.target.closest('.room-icon--boost-days-needed');
+    if (!iconEl || !this.shadowRoot.contains(iconEl)) return;
+    if (iconEl.classList.contains('zone-health-issue')) return;
+    const rid = iconEl.dataset.boostDaysRoomId;
+    if (!rid) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this._showBoostDaysModal(rid);
+  }
+
+  async _showBoostDaysModal(roomId) {
+    const rooms = this._config?.rooms || [];
+    const room = rooms.find((r) => this._canonicalRoomId(r) === roomId);
+    if (!room) return;
+    const existing = this.shadowRoot.getElementById('boost-days-modal-overlay');
+    if (existing) existing.remove();
+
+    const raw = Array.isArray(room.room_budget_boost_weekdays) ? room.room_budget_boost_weekdays : [];
+    const sel = new Set(
+      raw
+        .map((x) => parseInt(x, 10))
+        .filter((n) => !Number.isNaN(n) && n >= 0 && n <= 6),
+    );
+    const dayLabel = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const checks = dayLabel
+      .map(
+        (lb, d) => `
+      <label style="display:flex;align-items:center;gap:8px;margin:4px 0;cursor:pointer;">
+        <input type="checkbox" class="boost-days-modal-cb" value="${d}" ${sel.has(d) ? 'checked' : ''}>
+        <span>${lb}</span>
+      </label>`,
+      )
+      .join('');
+
+    const esc = (s) =>
+      String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const overlay = document.createElement('div');
+    overlay.id = 'boost-days-modal-overlay';
+    overlay.className = 'room-icon-modal-overlay';
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    overlay.innerHTML = `
+      <div class="room-icon-modal" role="dialog" aria-modal="true" aria-labelledby="boost-days-modal-title" style="max-width:420px;">
+        <div class="room-icon-modal-header">
+          <h2 class="room-icon-modal-title" id="boost-days-modal-title">Boost budget weekdays</h2>
+          <button type="button" class="graph-modal-close boost-days-modal-close" aria-label="Close">×</button>
+        </div>
+        <div class="room-icon-modal-body">
+          <p style="margin:0 0 12px;color:var(--secondary-text-color);font-size:13px;">
+            Choose up to two weekdays for <strong>${esc(room.name || roomId)}</strong> when the higher kWh budget applies.
+            As the assignee you can change these at most once every 48 hours.
+          </p>
+          <div class="boost-days-modal-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">${checks}</div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px 16px;border-top:1px solid var(--divider-color);">
+          <button type="button" class="btn btn-secondary boost-days-modal-close">Cancel</button>
+          <button type="button" class="btn btn-primary boost-days-modal-save">Save</button>
+        </div>
+      </div>`;
+
+    const close = () => {
+      overlay.remove();
+    };
+
+    const syncDisabled = () => {
+      const cbs = overlay.querySelectorAll('.boost-days-modal-cb');
+      const n = overlay.querySelectorAll('.boost-days-modal-cb:checked').length;
+      cbs.forEach((cb) => {
+        cb.disabled = n >= 2 && !cb.checked;
+      });
+    };
+
+    overlay.querySelectorAll('.boost-days-modal-cb').forEach((cb) => {
+      cb.addEventListener('change', syncDisabled);
+    });
+    syncDisabled();
+
+    overlay.querySelectorAll('.boost-days-modal-close, .graph-modal-close').forEach((b) => {
+      b.addEventListener('click', close);
+    });
+    overlay.addEventListener('click', (ev) => {
+      if (ev.target === overlay) close();
+    });
+
+    overlay.querySelector('.boost-days-modal-save')?.addEventListener('click', async () => {
+      const days = [];
+      overlay.querySelectorAll('.boost-days-modal-cb:checked').forEach((cb) => {
+        days.push(parseInt(cb.value, 10));
+      });
+      days.sort((a, b) => a - b);
+      try {
+        await this._hass.callWS({
+          type: 'smart_dashboards/set_room_budget_boost_days',
+          room_id: roomId,
+          weekdays: days,
+        });
+        showToast(this.shadowRoot, 'Boost days saved', 'success');
+        close();
+        await this._loadConfig();
+        await this._loadPowerData({ force: true });
+        this._render();
+      } catch (err) {
+        const msg =
+          (err && (err.message || err.error_message)) ? String(err.message || err.error_message) : String(err);
+        showToast(this.shadowRoot, msg || 'Could not save', 'error');
+      }
+    });
+
+    this.shadowRoot.appendChild(overlay);
+    overlay.querySelector('.boost-days-modal-save')?.focus();
+  }
+
   _showZoneHealthPopup(personData) {
     const historyDays = this._zoneHealthData?.history_days || 3;
     const windowLabel = historyDays === 1 ? '1 day' : `${historyDays} days`;
@@ -11690,6 +12049,45 @@ class EnergyPanel extends HTMLElement {
       </details>`;
   }
 
+  _collectRoomBudgetBoostWeekdaysFromCard(card) {
+    const days = [];
+    if (!card) return days;
+    card.querySelectorAll('.room-budget-boost-day:checked').forEach((cb) => {
+      const n = parseInt(cb.value, 10);
+      if (!Number.isNaN(n) && n >= 0 && n <= 6 && !days.includes(n)) days.push(n);
+    });
+    return days.sort((a, b) => a - b);
+  }
+
+  _roomBudgetBoostWeekdaysPayload(originalRoom, newWeekdays) {
+    const oldw = Array.isArray(originalRoom?.room_budget_boost_weekdays)
+      ? [...originalRoom.room_budget_boost_weekdays]
+          .map((x) => parseInt(x, 10))
+          .filter((n) => !Number.isNaN(n) && n >= 0 && n <= 6)
+          .sort((a, b) => a - b)
+      : [];
+    const nw = Array.isArray(newWeekdays) ? [...newWeekdays].sort((a, b) => a - b) : [];
+    const same = oldw.length === nw.length && oldw.every((v, i) => v === nw[i]);
+    const out = { room_budget_boost_weekdays: nw };
+    if (!same) {
+      out.room_budget_boost_weekdays_changed_at = new Date().toISOString();
+    } else if (originalRoom?.room_budget_boost_weekdays_changed_at) {
+      out.room_budget_boost_weekdays_changed_at = originalRoom.room_budget_boost_weekdays_changed_at;
+    }
+    return out;
+  }
+
+  _roomNeedsAssigneeBoostDays(roomConfig, tts) {
+    const pe = (roomConfig?.presence_person_entity || '').trim().toLowerCase();
+    if (!pe.startsWith('person.')) return false;
+    if (roomConfig?.kwh_budget_use_boost === false) return false;
+    const t = tts || {};
+    if (!t.budget_boost_enabled) return false;
+    if ((parseFloat(t.budget_boost_multiplier) || 1) <= 1) return false;
+    const w = roomConfig?.room_budget_boost_weekdays;
+    return !Array.isArray(w) || w.length === 0;
+  }
+
   _renderRoomSettings(room, index, mediaPlayers, powerSensors) {
     const iconStored = this._roomIconStoredValue(room);
     const iconEffective = this._effectiveRoomIcon(room);
@@ -11701,33 +12099,18 @@ class EnergyPanel extends HTMLElement {
         <span class="room-settings-presence-live-text">Loading…</span>
       </div>`
         : '';
-    return `
-      <div class="room-settings-card" data-room-index="${index}" draggable="false">
-        <div class="room-settings-header">
-          <div class="room-settings-header-start">
-            <div class="room-drag-handle" title="Drag to reorder rooms">
-              <svg viewBox="0 0 24 24">${icons.menu}</svg>
-            </div>
-            <input type="hidden" class="room-icon-mdi" value="${iconStored.replace(/"/g, '&quot;')}">
-            <button type="button" class="room-icon-picker-trigger" data-room-index="${index}" aria-label="Choose room icon" title="Room icon">
-              <ha-icon icon="${iconEffective.replace(/"/g, '&quot;')}"></ha-icon>
-            </button>
-            <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name">
-          </div>
-          <div class="room-settings-header-presence">${presLive}</div>
-          <div class="room-settings-header-actions">
-            <button class="btn btn-secondary toggle-room-btn" data-index="${index}">Edit</button>
-            <button class="btn btn-primary room-save-btn" data-index="${index}" title="Save this room">
-              <svg class="btn-icon" viewBox="0 0 24 24" style="width: 14px; height: 14px;">${icons.check}</svg>
-              Save
-            </button>
-            <button class="icon-btn danger remove-room-btn" data-index="${index}">
-              <svg viewBox="0 0 24 24">${icons.delete}</svg>
-            </button>
-          </div>
-        </div>
-
-        <div class="room-settings-body" id="room-body-${index}" style="display: none;">
+    const hasPerson = personEnt.startsWith('person.');
+    const rawBb = Array.isArray(room.room_budget_boost_weekdays) ? room.room_budget_boost_weekdays : [];
+    const bbSet = new Set();
+    rawBb.forEach((x) => {
+      const n = parseInt(x, 10);
+      if (!Number.isNaN(n) && n >= 0 && n <= 6) bbSet.add(n);
+    });
+    const rbbDayChk = (d) => (bbSet.has(d) ? 'checked' : '');
+    const boostLabel = hasPerson
+      ? 'Apply budget boost on the days you set under the Boost budget tab (below).'
+      : 'Apply global budget boost on boost days (Enforcement → schedule).';
+    const mainInner = `
           ${this._renderResponsiveLightWarnings(room, index)}
           <div class="grid-2" style="margin-bottom: 12px;">
             <div class="form-group">
@@ -11751,7 +12134,7 @@ class EnergyPanel extends HTMLElement {
               <div class="tts-msg-desc" style="margin-top: 4px;">No warnings or shutoffs until room uses this much today. 0 = always enforce.</div>
               <label class="form-checkbox-row" style="margin-top: 10px; display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
                 <input type="checkbox" class="room-kwh-budget-use-boost" ${room.kwh_budget_use_boost !== false ? 'checked' : ''} style="margin-top: 2px;">
-                <span class="tts-msg-desc" style="margin: 0;">Apply global budget boost on boost days (Enforcement → schedule)</span>
+                <span class="tts-msg-desc" style="margin: 0;">${boostLabel}</span>
               </label>
             </div>
           </div>
@@ -11791,7 +12174,63 @@ class EnergyPanel extends HTMLElement {
 
           <div class="outlets-settings-list" id="outlets-list-${index}">
             ${(room.outlets || []).map((outlet, oi) => this._renderDeviceSettings(outlet, oi, powerSensors, index, room.outlets || [])).join('')}
+          </div>`;
+    const boostPanel = hasPerson
+      ? `
+          <div class="room-settings-subpanel room-settings-subpanel--boost" data-room-index="${index}" data-subpanel="boost" style="display: none;">
+            <p class="tts-msg-desc" style="margin-bottom: 12px;">Choose up to two weekdays when you are usually home (off work) and the higher kWh budget should apply. Multiplier and other boost options stay under Power Enforcement and TTS.</p>
+            <div class="form-group">
+              <label class="form-label">Boost weekdays (max 2)</label>
+              <div class="room-budget-boost-day-wrap" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox room-budget-boost-day" value="0" ${rbbDayChk(0)}> Mon</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox room-budget-boost-day" value="1" ${rbbDayChk(1)}> Tue</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox room-budget-boost-day" value="2" ${rbbDayChk(2)}> Wed</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox room-budget-boost-day" value="3" ${rbbDayChk(3)}> Thu</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox room-budget-boost-day" value="4" ${rbbDayChk(4)}> Fri</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox room-budget-boost-day" value="5" ${rbbDayChk(5)}> Sat</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;"><input type="checkbox" class="form-checkbox room-budget-boost-day" value="6" ${rbbDayChk(6)}> Sun</label>
+              </div>
+            </div>
+          </div>`
+      : '';
+    const bodyContent = hasPerson
+      ? `
+          <div class="room-settings-subtabs" role="tablist" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+            <button type="button" class="btn btn-secondary room-settings-subtab active" data-room-index="${index}" data-subtab="general">General</button>
+            <button type="button" class="btn btn-secondary room-settings-subtab" data-room-index="${index}" data-subtab="boost">Boost budget</button>
           </div>
+          <div class="room-settings-subpanel room-settings-subpanel--general" data-room-index="${index}" data-subpanel="general">${mainInner}
+          </div>
+          ${boostPanel}`
+      : mainInner;
+    return `
+      <div class="room-settings-card" data-room-index="${index}" draggable="false">
+        <div class="room-settings-header">
+          <div class="room-settings-header-start">
+            <div class="room-drag-handle" title="Drag to reorder rooms">
+              <svg viewBox="0 0 24 24">${icons.menu}</svg>
+            </div>
+            <input type="hidden" class="room-icon-mdi" value="${iconStored.replace(/"/g, '&quot;')}">
+            <button type="button" class="room-icon-picker-trigger" data-room-index="${index}" aria-label="Choose room icon" title="Room icon">
+              <ha-icon icon="${iconEffective.replace(/"/g, '&quot;')}"></ha-icon>
+            </button>
+            <input type="text" class="form-input room-name-input" value="${room.name}" placeholder="Room name">
+          </div>
+          <div class="room-settings-header-presence">${presLive}</div>
+          <div class="room-settings-header-actions">
+            <button class="btn btn-secondary toggle-room-btn" data-index="${index}">Edit</button>
+            <button class="btn btn-primary room-save-btn" data-index="${index}" title="Save this room">
+              <svg class="btn-icon" viewBox="0 0 24 24" style="width: 14px; height: 14px;">${icons.check}</svg>
+              Save
+            </button>
+            <button class="icon-btn danger remove-room-btn" data-index="${index}">
+              <svg viewBox="0 0 24 24">${icons.delete}</svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="room-settings-body" id="room-body-${index}" style="display: none;">
+          ${bodyContent}
         </div>
       </div>
     `;
@@ -12104,36 +12543,71 @@ class EnergyPanel extends HTMLElement {
     const heaterComfortVal = device.heater_comfort_temperature != null && device.heater_comfort_temperature !== ''
       ? device.heater_comfort_temperature
       : '';
+    const heaterBoostComfortVal = device.heater_cold_boost_comfort_temperature != null && device.heater_cold_boost_comfort_temperature !== ''
+      ? device.heater_cold_boost_comfort_temperature
+      : '';
+    const coldBoostOn = device.heater_cold_boost_enabled === true;
     const heaterAutomationSection = isWallHeater ? `
       <div class="divider" style="margin: 16px 0;"></div>
       <div class="plug-settings-title">Heater automation</div>
-      <p class="tts-msg-desc" style="margin-bottom: 12px;"><strong>Smart mode:</strong> Automation uses comfort temperature as the target (with hysteresis). The "turn on below" threshold only guards manual turn-on from the dashboard. Manual turns also stop early if comfort is reached. Decimals are ignored for threshold checks (66.9° triggers "66 or below"). Advanced settings enable weather-aware pre-heating, duty cycling, and power-aware pausing.</p>
+      <p class="tts-msg-desc" style="margin-bottom: 12px;">Automation targets <strong>comfort</strong> (with hysteresis). The dashboard uses <strong>Auto</strong> (effective turn-on line) and <strong>Target</strong> for what automation is aiming for—including cold boost when active. Manual turn-on from the dashboard is blocked when the room is warmer than that Auto line. Decimals are ignored for threshold checks.</p>
+      <div class="plug-settings-title" style="margin-top: 4px; font-size: 12px;">Automation</div>
       <div class="form-group" style="margin-bottom: 12px;">
         <label class="toggle-row">
           <input type="checkbox" class="form-checkbox heater-automation-enabled" ${device.heater_automation_enabled ? 'checked' : ''}>
           <span class="toggle-label">Enable heater automation</span>
         </label>
       </div>
+      <div class="plug-settings-title" style="margin-top: 8px; font-size: 12px;">Temperature targets</div>
       <div class="form-group" style="margin-bottom: 12px;">
-        <label class="form-label">Temperature sensor</label>
+        <label class="form-label">Room temperature sensor</label>
         ${this._renderEntityAutocomplete(device.heater_temperature_entity || '', 'sensor', roomIndex, 'heater-temperature-entity', 'sensor.room_temperature')}
       </div>
-      <div class="grid-2" style="margin-bottom: 12px;">
-        <div class="form-group">
-          <label class="form-label">Turn on at or below (°)</label>
-          <input type="number" class="form-input heater-on-below-temperature" value="${device.heater_on_below_temperature ?? 65}" min="-60" max="160" step="0.1">
-          <div class="tts-msg-desc" style="margin-top: 4px;">Matches your sensor unit (°F or °C)</div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Stay on (minutes)</label>
-          <input type="number" class="form-input heater-stay-on-minutes" value="${device.heater_stay_on_minutes ?? 5}" min="1" max="240" step="1">
-        </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Turn on at or below (°)</label>
+        <input type="number" class="form-input heater-on-below-temperature" value="${device.heater_on_below_temperature ?? 65}" min="-60" max="160" step="0.1">
+        <div class="tts-msg-desc" style="margin-top: 4px;">Guards manual dashboard turn-on; matches your sensor unit (°F or °C)</div>
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Stay on (minutes)</label>
+        <input type="number" class="form-input heater-stay-on-minutes" value="${device.heater_stay_on_minutes ?? 5}" min="1" max="240" step="1">
+        <div class="tts-msg-desc" style="margin-top: 4px;">Minimum run time after a manual turn-on</div>
       </div>
       <div class="form-group" style="margin-bottom: 12px;">
         <label class="form-label">Comfort temperature (°)</label>
         <input type="number" class="form-input heater-comfort-temperature" value="${heaterComfortVal}" placeholder="default: turn-on + 2" min="-60" max="160" step="0.1">
-        <div class="tts-msg-desc" style="margin-top: 4px;">After each stay period, if temp is at or above this, the heater turns off. Leave empty to use turn-on threshold + 2°.</div>
+        <div class="tts-msg-desc" style="margin-top: 4px;">Automation turns off at or above this. Leave empty to use turn-on threshold + 2°.</div>
       </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label">Outdoor / weather entity</label>
+        ${this._renderEntityAutocomplete(device.heater_weather_entity || '', 'weather', roomIndex, 'heater-weather-entity', 'weather.home')}
+        <div class="tts-msg-desc" style="margin-top: 4px;">Used for cold-weather boost (below) and for forecast-based pre-heating in Advanced. <code>weather.*</code> or <code>sensor.*</code> outdoor temp.</div>
+      </div>
+      <div class="plug-settings-title" style="margin-top: 8px; font-size: 12px;">Cold weather boost</div>
+      <p class="tts-msg-desc" style="margin-bottom: 8px;">When enabled and outdoor temp is at or below the line below, automation uses the boost turn-on and comfort targets instead of the normal ones.</p>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="toggle-row">
+          <input type="checkbox" class="form-checkbox heater-cold-boost-enabled" ${coldBoostOn ? 'checked' : ''}>
+          <span class="toggle-label">Boost temps when cold</span>
+        </label>
+      </div>
+      <div class="heater-cold-boost-fields" style="display: ${coldBoostOn ? 'block' : 'none'};">
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="form-label">Outdoor at or below (°)</label>
+          <input type="number" class="form-input heater-cold-boost-outdoor-at-or-below" value="${device.heater_cold_boost_outdoor_at_or_below ?? 32}" min="-60" max="160" step="0.1">
+          <div class="tts-msg-desc" style="margin-top: 4px;">Boost profile applies when outdoor ≤ this (same unit as entities)</div>
+        </div>
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="form-label">Boost: turn on at or below (°)</label>
+          <input type="number" class="form-input heater-cold-boost-on-below-temperature" value="${device.heater_cold_boost_on_below_temperature ?? device.heater_on_below_temperature ?? 65}" min="-60" max="160" step="0.1">
+        </div>
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="form-label">Boost: comfort temperature (°)</label>
+          <input type="number" class="form-input heater-cold-boost-comfort-temperature" value="${heaterBoostComfortVal}" placeholder="default: boost turn-on + 2" min="-60" max="160" step="0.1">
+          <div class="tts-msg-desc" style="margin-top: 4px;">Leave empty to use boost turn-on + 2°</div>
+        </div>
+      </div>
+      <div class="plug-settings-title" style="margin-top: 12px; font-size: 12px;">Presence</div>
       <div class="form-group" style="margin-bottom: 12px;">
         <label class="toggle-row">
           <input type="checkbox" class="form-checkbox heater-presence-optional-enabled" ${device.heater_presence_optional_enabled ? 'checked' : ''}>
@@ -12157,7 +12631,7 @@ class EnergyPanel extends HTMLElement {
         <input type="number" class="form-input heater-presence-cooldown-seconds" value="${device.heater_presence_cooldown_seconds ?? 60}" min="0" max="7200" step="1">
         <div class="tts-msg-desc" style="margin-top: 4px;">After an automation turn-on, ignore a new presence trigger within this window (only when require presence is on)</div>
       </div>
-      <div class="plug-settings-title" style="margin-top: 12px;">Door and window</div>
+      <div class="plug-settings-title" style="margin-top: 12px; font-size: 12px;">Door and window</div>
       <p class="tts-msg-desc" style="margin-bottom: 10px;">Optional: block heater on (manual and automation) while either sensor reports open.</p>
       <div class="form-group" style="margin-bottom: 12px;">
         <label class="form-label">Door sensor (optional)</label>
@@ -12170,19 +12644,14 @@ class EnergyPanel extends HTMLElement {
         <div class="tts-msg-desc" style="margin-top: 4px;">Heater will not turn on if window is open</div>
       </div>
       <details style="margin-top: 16px;">
-        <summary style="cursor: pointer; font-weight: 500; color: var(--primary-text-color); margin-bottom: 8px;">Advanced Optimization</summary>
+        <summary style="cursor: pointer; font-weight: 500; color: var(--primary-text-color); margin-bottom: 8px;">Advanced optimization</summary>
         <div style="padding-left: 12px; border-left: 2px solid var(--divider-color); margin-top: 8px;">
-          <div class="form-group" style="margin-bottom: 12px;">
-            <label class="form-label">Weather / Outdoor Temp Entity</label>
-            ${this._renderEntityAutocomplete(device.heater_weather_entity || '', 'weather', roomIndex, 'heater-weather-entity', 'weather.home')}
-            <div class="tts-msg-desc" style="margin-top: 4px;">weather.* for forecast-based pre-heating, or sensor.* for outdoor temp</div>
-          </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="toggle-row">
               <input type="checkbox" class="form-checkbox heater-optimization-enabled" ${device.heater_optimization_enabled !== false ? 'checked' : ''}>
               <span class="toggle-label">Enable smart optimization</span>
             </label>
-            <div class="tts-msg-desc" style="margin-top: 4px;">Uses comfort temp for automation (threshold only guards manual), adds hysteresis and other optimizations</div>
+            <div class="tts-msg-desc" style="margin-top: 4px;">Uses comfort temp for automation (Auto line guards manual), adds hysteresis and other optimizations</div>
           </div>
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Hysteresis band (°)</label>
@@ -12570,6 +13039,25 @@ class EnergyPanel extends HTMLElement {
       this.shadowRoot.addEventListener('click', (e) => this._handleZoneHealthIconClick(e));
     }
 
+    if (!this._boostDaysIconClickDelegation) {
+      this._boostDaysIconClickDelegation = true;
+      this.shadowRoot.addEventListener('click', (e) => this._handleBoostDaysIconClick(e));
+    }
+
+    if (!this._boostDaysKeyDelegation) {
+      this._boostDaysKeyDelegation = true;
+      this.shadowRoot.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const iconEl = e.target.closest('.room-icon--boost-days-needed');
+        if (!iconEl || !this.shadowRoot.contains(iconEl)) return;
+        if (iconEl.classList.contains('zone-health-issue')) return;
+        const rid = iconEl.dataset.boostDaysRoomId;
+        if (!rid) return;
+        e.preventDefault();
+        this._showBoostDaysModal(rid);
+      });
+    }
+
     if (!this._roomRatingModalDelegation) {
       this._roomRatingModalDelegation = true;
       this.shadowRoot.addEventListener('click', (e) => this._handleRoomRatingClick(e));
@@ -12598,6 +13086,11 @@ class EnergyPanel extends HTMLElement {
       tab.addEventListener('click', () => {
         const view = tab.dataset.view;
         if (view && (view === 'rooms' || view === 'statistics')) {
+          const prev = this._dashboardView;
+          if (prev === 'statistics' && view !== 'statistics') {
+            this._statsDiscrepancyModalShownThisVisit = false;
+            this._removeStatisticsDiscrepancyModal();
+          }
           this._dashboardView = view;
           this._render();
           if (view === 'statistics') {
@@ -12654,6 +13147,8 @@ class EnergyPanel extends HTMLElement {
         statRefreshBtn.textContent = 'Refreshing...';
         try {
           await this._hass.callWS({ type: 'smart_dashboards/clear_statistics_cache' });
+          this._statsDiscrepancyModalShownThisVisit = false;
+          this._removeStatisticsDiscrepancyModal();
           await this._loadStatistics();
           this._showToast('Statistics cache cleared and refreshed');
         } catch (err) {
@@ -13230,6 +13725,10 @@ class EnergyPanel extends HTMLElement {
         newOutlet.heater_presence_cooldown_seconds = 60;
         newOutlet.heater_comfort_temperature = null;
         newOutlet.heater_presence_turn_on_enabled = false;
+        newOutlet.heater_cold_boost_enabled = false;
+        newOutlet.heater_cold_boost_outdoor_at_or_below = 32;
+        newOutlet.heater_cold_boost_on_below_temperature = 65;
+        newOutlet.heater_cold_boost_comfort_temperature = null;
       }
     }
     if (deviceType === 'minisplit') {
@@ -13360,6 +13859,16 @@ class EnergyPanel extends HTMLElement {
       };
       ventPowerSourceSel.addEventListener('change', syncVentPowerUi);
       syncVentPowerUi();
+    }
+
+    const coldBoostCb = outletItem.querySelector('.heater-cold-boost-enabled');
+    if (coldBoostCb) {
+      const syncColdBoostFields = () => {
+        const wrap = outletItem.querySelector('.heater-cold-boost-fields');
+        if (wrap) wrap.style.display = coldBoostCb.checked ? 'block' : 'none';
+      };
+      coldBoostCb.addEventListener('change', syncColdBoostFields);
+      syncColdBoostFields();
     }
 
     // Collapse/expand (accordion)
@@ -13676,6 +14185,18 @@ class EnergyPanel extends HTMLElement {
               const hpe = (item.querySelector('.entity-datalist-input.heater-presence-entity') || item.querySelector('input.heater-presence-entity'))?.value?.trim() || '';
               device.heater_presence_entity = hpe.startsWith('binary_sensor.') ? hpe : null;
               device.heater_presence_cooldown_seconds = Math.max(0, Math.min(7200, parseInt(item.querySelector('.heater-presence-cooldown-seconds')?.value, 10) || 60));
+              device.heater_cold_boost_enabled = item.querySelector('.heater-cold-boost-enabled')?.checked === true;
+              device.heater_cold_boost_outdoor_at_or_below = Math.max(-60, Math.min(160, parseFloat(item.querySelector('.heater-cold-boost-outdoor-at-or-below')?.value) || 32));
+              device.heater_cold_boost_on_below_temperature = Math.max(-60, Math.min(160, parseFloat(item.querySelector('.heater-cold-boost-on-below-temperature')?.value) || 65));
+              const hbctRaw = (item.querySelector('.heater-cold-boost-comfort-temperature')?.value ?? '').trim();
+              if (hbctRaw === '') {
+                device.heater_cold_boost_comfort_temperature = null;
+              } else {
+                const hbv = parseFloat(hbctRaw);
+                device.heater_cold_boost_comfort_temperature = Number.isFinite(hbv)
+                  ? Math.max(-60, Math.min(160, hbv))
+                  : null;
+              }
               // Smart heater optimization fields
               const hwe = (item.querySelector('.entity-datalist-input.heater-weather-entity') || item.querySelector('input.heater-weather-entity'))?.value?.trim() || '';
               device.heater_weather_entity = (hwe.startsWith('weather.') || hwe.startsWith('sensor.')) ? hwe : '';
@@ -13727,7 +14248,15 @@ class EnergyPanel extends HTMLElement {
         const mediaPlayer = mediaPlayerValue !== undefined && mediaPlayerValue !== '' 
           ? mediaPlayerValue 
           : (originalRoom?.media_player || null);
-        
+        const nwBoost = this._collectRoomBudgetBoostWeekdaysFromCard(card);
+        const boostPayload = (() => {
+          const pe = this._collectPresencePersonFromCard(card);
+          if (!pe || !String(pe).toLowerCase().startsWith('person.')) {
+            return {};
+          }
+          return this._roomBudgetBoostWeekdaysPayload(originalRoom, nwBoost);
+        })();
+
         rooms.push({
           id: roomName.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
           name: roomName,
@@ -13744,6 +14273,7 @@ class EnergyPanel extends HTMLElement {
           presence_zone_entities: this._collectPresenceZonesFromCard(card),
           room_icon: this._collectRoomIconFromCard(card),
           outlets: outlets,
+          ...boostPayload,
         });
       }
     });
@@ -14178,6 +14708,18 @@ class EnergyPanel extends HTMLElement {
             const hpe = (item.querySelector('.entity-datalist-input.heater-presence-entity') || item.querySelector('input.heater-presence-entity'))?.value?.trim() || '';
             device.heater_presence_entity = hpe.startsWith('binary_sensor.') ? hpe : null;
             device.heater_presence_cooldown_seconds = Math.max(0, Math.min(7200, parseInt(item.querySelector('.heater-presence-cooldown-seconds')?.value, 10) || 60));
+            device.heater_cold_boost_enabled = item.querySelector('.heater-cold-boost-enabled')?.checked === true;
+            device.heater_cold_boost_outdoor_at_or_below = Math.max(-60, Math.min(160, parseFloat(item.querySelector('.heater-cold-boost-outdoor-at-or-below')?.value) || 32));
+            device.heater_cold_boost_on_below_temperature = Math.max(-60, Math.min(160, parseFloat(item.querySelector('.heater-cold-boost-on-below-temperature')?.value) || 65));
+            const hbctRaw2 = (item.querySelector('.heater-cold-boost-comfort-temperature')?.value ?? '').trim();
+            if (hbctRaw2 === '') {
+              device.heater_cold_boost_comfort_temperature = null;
+            } else {
+              const hbv2 = parseFloat(hbctRaw2);
+              device.heater_cold_boost_comfort_temperature = Number.isFinite(hbv2)
+                ? Math.max(-60, Math.min(160, hbv2))
+                : null;
+            }
             // Smart heater optimization fields
             const hwe2 = (item.querySelector('.entity-datalist-input.heater-weather-entity') || item.querySelector('input.heater-weather-entity'))?.value?.trim() || '';
             device.heater_weather_entity = (hwe2.startsWith('weather.') || hwe2.startsWith('sensor.')) ? hwe2 : '';
@@ -14241,6 +14783,15 @@ class EnergyPanel extends HTMLElement {
       ? kbParsed
       : (originalRoom?.kwh_budget ?? 5);
 
+    const nwBoostSingle = this._collectRoomBudgetBoostWeekdaysFromCard(card);
+    const boostPayloadSingle = (() => {
+      const pe = this._collectPresencePersonFromCard(card);
+      if (!pe || !String(pe).toLowerCase().startsWith('person.')) {
+        return {};
+      }
+      return this._roomBudgetBoostWeekdaysPayload(originalRoom, nwBoostSingle);
+    })();
+
     const updatedRoom = {
       id: roomName.toLowerCase().replace(/\s+/g, '_').replace(/'/g, ''),
       name: roomName,
@@ -14257,6 +14808,7 @@ class EnergyPanel extends HTMLElement {
       presence_zone_entities: this._collectPresenceZonesFromCard(card),
       room_icon: this._collectRoomIconFromCard(card),
       outlets: outlets,
+      ...boostPayloadSingle,
     };
 
     // Get all rooms - use existing config and update just this one

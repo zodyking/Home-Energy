@@ -18,6 +18,74 @@ from .const import CONFIG_FILE, DEFAULT_CONFIG, DOMAIN, DEFAULT_TTS_VOLUME
 _LOGGER = logging.getLogger(__name__)
 
 
+def outdoor_temperature_from_entity(hass: HomeAssistant, entity_id: str | None) -> float | None:
+    """Current outdoor temperature from weather.* (attribute) or sensor.* (state)."""
+    eid = str(entity_id or "").strip()
+    if not eid:
+        return None
+    st = hass.states.get(eid)
+    if not st or st.state in ("unknown", "unavailable", ""):
+        return None
+    if eid.startswith("weather."):
+        try:
+            return float(st.attributes.get("temperature"))
+        except (TypeError, ValueError):
+            return None
+    if eid.startswith("sensor."):
+        try:
+            return float(st.state)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def resolve_wall_heater_effective_temperatures(
+    outlet: dict[str, Any],
+    outdoor_temp: float | None,
+) -> tuple[float, float, bool]:
+    """Return (effective_on_below, effective_comfort, cold_boost_active)."""
+    base_t = float(outlet.get("heater_on_below_temperature", 65))
+    base_t = max(-60.0, min(160.0, base_t))
+    hct = outlet.get("heater_comfort_temperature")
+    try:
+        if hct is None or hct == "":
+            base_c = base_t + 2.0
+        else:
+            base_c = max(-60.0, min(160.0, float(hct)))
+    except (TypeError, ValueError):
+        base_c = base_t + 2.0
+
+    if not bool(outlet.get("heater_cold_boost_enabled")):
+        return (base_t, base_c, False)
+    if outdoor_temp is None:
+        return (base_t, base_c, False)
+
+    try:
+        oat_line = float(outlet.get("heater_cold_boost_outdoor_at_or_below", 32))
+    except (TypeError, ValueError):
+        oat_line = 32.0
+    oat_line = max(-60.0, min(160.0, oat_line))
+    if outdoor_temp > oat_line:
+        return (base_t, base_c, False)
+
+    try:
+        boost_t = float(outlet.get("heater_cold_boost_on_below_temperature", base_t))
+    except (TypeError, ValueError):
+        boost_t = base_t
+    boost_t = max(-60.0, min(160.0, boost_t))
+
+    bct = outlet.get("heater_cold_boost_comfort_temperature")
+    try:
+        if bct is None or bct == "":
+            boost_c = boost_t + 2.0
+        else:
+            boost_c = max(-60.0, min(160.0, float(bct)))
+    except (TypeError, ValueError):
+        boost_c = boost_t + 2.0
+
+    return (boost_t, boost_c, True)
+
+
 def _safe_int(val: Any, default: int) -> int:
     """Parse int safely; return default for None, empty string, or invalid."""
     if val is None or val == "":
@@ -116,6 +184,47 @@ def _normalize_budget_boost_weekdays(raw: Any) -> list[int]:
             continue
     out.sort()
     return out
+
+
+def _normalize_room_budget_boost_weekdays(raw: Any) -> list[int]:
+    """At most two weekdays (Mon=0..Sun=6), unique, sorted."""
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for x in raw:
+        try:
+            n = int(x)
+            if 0 <= n <= 6 and n not in out:
+                out.append(n)
+        except (TypeError, ValueError):
+            continue
+        if len(out) >= 2:
+            break
+    out.sort()
+    return out
+
+
+def resolve_budget_boost_weekdays(
+    room: dict[str, Any] | None, tts_settings: dict[str, Any] | None
+) -> list[int]:
+    """Weekdays that activate budget boost for this room (global TTS vs per-room)."""
+    tts = tts_settings or {}
+    pe = _normalize_presence_person_entity((room or {}).get("presence_person_entity"))
+    if pe:
+        return _normalize_room_budget_boost_weekdays((room or {}).get("room_budget_boost_weekdays"))
+    return _normalize_budget_boost_weekdays(tts.get("budget_boost_weekdays"))
+
+
+def _normalize_room_budget_boost_changed_at(raw: Any) -> str | None:
+    """Optional ISO timestamp string for last weekday change."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    if len(s) > 40:
+        return None
+    return s
 
 
 def _validate_budget_boost_announce_time(raw: Any, default: str) -> str:
@@ -318,25 +427,23 @@ class ConfigManager:
         return bool(pe.get("enabled", False)) and room_id in pe.get("rooms_enabled", [])
 
     @staticmethod
-    def _is_budget_boost_day(now, tts_settings: dict) -> bool:
-        """True when today's weekday matches budget boost schedule and multiplier > 1."""
+    def _is_budget_boost_day(
+        now,
+        tts_settings: dict,
+        room: dict[str, Any] | None = None,
+    ) -> bool:
+        """True when today's weekday matches boost schedule for this room and multiplier > 1."""
         if not tts_settings.get("budget_boost_enabled"):
             return False
         mult = float(tts_settings.get("budget_boost_multiplier") or 1)
         if mult <= 1:
             return False
-        days = tts_settings.get("budget_boost_weekdays") or []
+        days = resolve_budget_boost_weekdays(room, tts_settings)
         if not days:
             return False
         try:
             wk = now.weekday()
-            for d in days:
-                try:
-                    if int(d) == wk:
-                        return True
-                except (TypeError, ValueError):
-                    continue
-            return False
+            return wk in days
         except (TypeError, AttributeError):
             return False
 
@@ -349,6 +456,7 @@ class ConfigManager:
         tts_settings: dict | None,
         *,
         use_room_budget_boost: bool = True,
+        room: dict[str, Any] | None = None,
     ) -> list[float]:
         """Intervals used for room kWh TTS; matches energy-panel (budget replaces t0 when base > 0)."""
         t_norm = _normalize_room_kwh_intervals(
@@ -358,7 +466,11 @@ class ConfigManager:
         base = max(0.0, float(base_kwh or 0))
         eff = float(
             cls.effective_kwh_budget_for_moment(
-                base, now, tts_settings or {}, use_room_boost=use_room_budget_boost
+                base,
+                now,
+                tts_settings or {},
+                use_room_boost=use_room_budget_boost,
+                room=room,
             )
         )
         boost = base > 1e-12 and eff > base + 1e-9
@@ -389,6 +501,7 @@ class ConfigManager:
         tts_settings: dict | None,
         *,
         use_room_boost: bool = True,
+        room: dict[str, Any] | None = None,
     ) -> float:
         """Daily kWh budget after boost multiplier (matches energy_monitor logic).
 
@@ -400,7 +513,7 @@ class ConfigManager:
         if not use_room_boost:
             return base
         tts = tts_settings or {}
-        if not cls._is_budget_boost_day(now, tts):
+        if not cls._is_budget_boost_day(now, tts, room):
             return base
         mult = float(tts.get("budget_boost_multiplier") or 2)
         mult = max(1.0, min(5.0, mult))
@@ -411,15 +524,17 @@ class ConfigManager:
         now = dt_util.now()
         base = 0.0
         use_boost = True
+        room_dict: dict[str, Any] | None = None
         for r in self.energy_config.get("rooms", []):
             rid = r.get("id", r["name"].lower().replace(" ", "_"))
             if rid == room_id:
                 base = float(r.get("kwh_budget", 5) or 0)
                 use_boost = r.get("kwh_budget_use_boost", True) is not False
+                room_dict = r
                 break
         tts = self.energy_config.get("tts_settings") or {}
         eff = self.effective_kwh_budget_for_moment(
-            base, now, tts, use_room_boost=use_boost
+            base, now, tts, use_room_boost=use_boost, room=room_dict
         )
         return (base, eff)
 
@@ -642,7 +757,12 @@ class ConfigManager:
             allowed = {
                 _room_kwh_alert_threshold_key(x)
                 for x in self.filter_room_kwh_intervals_for_alerts(
-                    norm_iv, base_b, now, tts, use_room_budget_boost=use_boost
+                    norm_iv,
+                    base_b,
+                    now,
+                    tts,
+                    use_room_budget_boost=use_boost,
+                    room=room,
                 )
             }
             state = self.get_enforcement_state(room_id)
@@ -687,8 +807,16 @@ class ConfigManager:
                         room.get("presence_zone_entities")
                     ),
                     "room_icon": _normalize_room_icon(room.get("room_icon")),
+                    "room_budget_boost_weekdays": _normalize_room_budget_boost_weekdays(
+                        room.get("room_budget_boost_weekdays")
+                    ),
                     "outlets": [],
                 }
+                ch_at = _normalize_room_budget_boost_changed_at(
+                    room.get("room_budget_boost_weekdays_changed_at")
+                )
+                if ch_at is not None:
+                    validated_room["room_budget_boost_weekdays_changed_at"] = ch_at
                 for outlet in room.get("outlets", []):
                     if isinstance(outlet, dict) and outlet.get("name"):
                         outlet_type = _normalize_outlet_type(outlet.get("type", "outlet"))
@@ -858,6 +986,39 @@ class ConfigManager:
                                     0,
                                     min(7200, int(outlet.get("heater_presence_cooldown_seconds", 60))),
                                 )
+                                item["heater_cold_boost_enabled"] = bool(
+                                    outlet.get("heater_cold_boost_enabled")
+                                )
+                                item["heater_cold_boost_outdoor_at_or_below"] = max(
+                                    -60.0,
+                                    min(
+                                        160.0,
+                                        float(outlet.get("heater_cold_boost_outdoor_at_or_below", 32)),
+                                    ),
+                                )
+                                item["heater_cold_boost_on_below_temperature"] = max(
+                                    -60.0,
+                                    min(
+                                        160.0,
+                                        float(
+                                            outlet.get(
+                                                "heater_cold_boost_on_below_temperature",
+                                                outlet.get("heater_on_below_temperature", 65),
+                                            )
+                                        ),
+                                    ),
+                                )
+                                cbct = outlet.get("heater_cold_boost_comfort_temperature")
+                                if cbct is None or cbct == "":
+                                    item["heater_cold_boost_comfort_temperature"] = None
+                                else:
+                                    try:
+                                        item["heater_cold_boost_comfort_temperature"] = max(
+                                            -60.0,
+                                            min(160.0, float(cbct)),
+                                        )
+                                    except (TypeError, ValueError):
+                                        item["heater_cold_boost_comfort_temperature"] = None
                                 # Smart heater optimization settings
                                 item["heater_weather_entity"] = str(
                                     outlet.get("heater_weather_entity") or ""
@@ -1201,6 +1362,12 @@ class ConfigManager:
                     default_tts.get("notify_room_budget_hit", True),
                 )
             ),
+            "notify_room_boost_days": bool(
+                tts.get(
+                    "notify_room_boost_days",
+                    default_tts.get("notify_room_boost_days", True),
+                )
+            ),
             "notify_enforcement_phase_change": bool(
                 tts.get(
                     "notify_enforcement_phase_change",
@@ -1259,6 +1426,20 @@ class ConfigManager:
                 tts.get(
                     "notify_budget_hit_msg",
                     default_tts.get("notify_budget_hit_msg", ""),
+                )
+                or ""
+            ),
+            "notify_room_boost_days_title": str(
+                tts.get(
+                    "notify_room_boost_days_title",
+                    default_tts.get("notify_room_boost_days_title", ""),
+                )
+                or ""
+            ),
+            "notify_room_boost_days_msg": str(
+                tts.get(
+                    "notify_room_boost_days_msg",
+                    default_tts.get("notify_room_boost_days_msg", ""),
                 )
                 or ""
             ),

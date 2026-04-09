@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from copy import deepcopy
 import time
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -14,7 +15,12 @@ from homeassistant.core import Context, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
-from .config_manager import vent_like_energy_tracking_key
+from .config_manager import (
+    _normalize_room_budget_boost_weekdays,
+    outdoor_temperature_from_entity,
+    resolve_wall_heater_effective_temperatures,
+    vent_like_energy_tracking_key,
+)
 from .const import DEFAULT_NOTIFICATION_TITLE, DOMAIN
 from .efficiency_digest import (
     async_reschedule_efficiency_digest,
@@ -50,6 +56,29 @@ def _ws_connection_user_is_admin(connection: websocket_api.ActiveConnection) -> 
     if user is None or not user.is_active:
         return False
     return bool(user.is_admin)
+
+
+def _assignee_matches_connection_user(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    person_ent: str,
+) -> bool:
+    """True if the logged-in user is the person linked to the room (or admin)."""
+    if _ws_connection_user_is_admin(connection):
+        return True
+    user = connection.user
+    if not user or not person_ent:
+        return False
+    pe = str(person_ent).strip()
+    st = hass.states.get(pe) or hass.states.get(pe.lower())
+    if not st:
+        return False
+    uid = st.attributes.get("user_id")
+    if uid is not None and str(uid).strip() == str(user.id):
+        return True
+    un = (user.name or "").lower().strip()
+    pn = (st.attributes.get("friendly_name") or "").lower().strip()
+    return bool(pn) and un == pn
 
 
 def _attach_stove_timer_to_outlet_data(
@@ -105,17 +134,18 @@ def _attach_wall_heater_dashboard_fields(
     """Expose live temp, thresholds, and run timer for wall heater cards."""
     if outlet.get("type") != "wall_heater":
         return
-    threshold = float(outlet.get("heater_on_below_temperature", 65))
-    hct = outlet.get("heater_comfort_temperature")
-    try:
-        if hct is None or hct == "":
-            comfort_disp = threshold + 2.0
-        else:
-            comfort_disp = float(hct)
-    except (TypeError, ValueError):
-        comfort_disp = threshold + 2.0
-    outlet_data["heater_on_below_temperature"] = round(threshold, 2)
-    outlet_data["heater_comfort_temperature"] = round(comfort_disp, 2)
+    weather_ent = str(outlet.get("heater_weather_entity") or "").strip()
+    outdoor = (
+        outdoor_temperature_from_entity(hass, weather_ent) if weather_ent else None
+    )
+    eff_on, eff_comfort, boost_active = resolve_wall_heater_effective_temperatures(
+        outlet, outdoor
+    )
+    outlet_data["heater_on_below_temperature"] = round(eff_on, 2)
+    outlet_data["heater_comfort_temperature"] = round(eff_comfort, 2)
+    outlet_data["heater_effective_on_below"] = round(eff_on, 2)
+    outlet_data["heater_effective_comfort"] = round(eff_comfort, 2)
+    outlet_data["heater_cold_boost_active"] = boost_active
     te = str(outlet.get("heater_temperature_entity") or "").strip()
     outlet_data["heater_current_temperature"] = (
         _parse_temperature_sensor_state(hass, te) if te.startswith("sensor.") else None
@@ -198,6 +228,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_switches)
     websocket_api.async_register_command(hass, websocket_verify_passcode)
     websocket_api.async_register_command(hass, websocket_check_toggle_auth)
+    websocket_api.async_register_command(hass, websocket_set_room_budget_boost_days)
     websocket_api.async_register_command(hass, websocket_toggle_switch)
     websocket_api.async_register_command(hass, websocket_get_breaker_data)
     websocket_api.async_register_command(hass, websocket_test_trip_breaker)
@@ -2090,6 +2121,101 @@ async def websocket_check_toggle_auth(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): "smart_dashboards/set_room_budget_boost_days",
+        vol.Required("room_id"): str,
+        vol.Required("weekdays"): vol.All(
+            vol.ensure_list,
+            [vol.All(vol.Coerce(int), vol.Range(min=0, max=6))],
+        ),
+    }
+)
+@websocket_api.async_response
+async def websocket_set_room_budget_boost_days(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Set per-room budget boost weekdays (assignee or admin; 48h cooldown for assignee)."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    room_id = str(msg["room_id"]).strip()
+    new_days = _normalize_room_budget_boost_weekdays(msg.get("weekdays") or [])
+    rooms = config_manager.energy_config.get("rooms", [])
+    room = next((r for r in rooms if r.get("id") == room_id), None)
+    if not room:
+        connection.send_error(msg["id"], "not_found", "Room not found")
+        return
+
+    person_ent = room.get("presence_person_entity")
+    if not person_ent or not str(person_ent).strip().lower().startswith("person."):
+        connection.send_error(
+            msg["id"],
+            "invalid_room",
+            "This room has no assigned person",
+        )
+        return
+
+    is_admin = _ws_connection_user_is_admin(connection)
+    if not _assignee_matches_connection_user(hass, connection, str(person_ent)):
+        connection.send_error(msg["id"], "unauthorized", "Not allowed to edit this room")
+        return
+
+    old_days = _normalize_room_budget_boost_weekdays(room.get("room_budget_boost_weekdays"))
+    if old_days == new_days:
+        connection.send_result(msg["id"], {"success": True, "room_budget_boost_weekdays": new_days})
+        return
+
+    if not is_admin:
+        raw_at = room.get("room_budget_boost_weekdays_changed_at")
+        if raw_at:
+            last_dt = dt_util.parse_datetime(str(raw_at))
+            if last_dt is not None:
+                last_utc = dt_util.as_utc(last_dt)
+                if dt_util.utcnow() - last_utc < timedelta(hours=48):
+                    connection.send_error(
+                        msg["id"],
+                        "cooldown",
+                        "Budget boost days can only be changed once every 48 hours. Try again later.",
+                    )
+                    return
+
+    energy = deepcopy(dict(config_manager.energy_config))
+    updated = False
+    target_rid = room.get("id")
+    for r in energy.get("rooms", []):
+        if r.get("id") == target_rid:
+            r["room_budget_boost_weekdays"] = new_days
+            r["room_budget_boost_weekdays_changed_at"] = (
+                dt_util.utcnow().replace(microsecond=0).isoformat()
+            )
+            updated = True
+            break
+    if not updated:
+        connection.send_error(msg["id"], "not_found", "Room not found")
+        return
+
+    try:
+        await config_manager.async_update_energy(energy)
+        _reset_statistics_prime_clock()
+        _clear_recorder_derived_caches()
+        hass.async_create_task(_prime_statistics_cache(hass))
+        hass.async_create_task(async_reschedule_efficiency_digest(hass))
+    except Exception as e:
+        _LOGGER.exception("set_room_budget_boost_days failed: %s", e)
+        connection.send_error(msg["id"], "save_failed", str(e))
+        return
+
+    connection.send_result(
+        msg["id"],
+        {"success": True, "room_budget_boost_weekdays": new_days},
+    )
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): "smart_dashboards/toggle_switch",
         vol.Required("entity_id"): str,
         vol.Optional("room_id"): str,
@@ -2138,8 +2264,15 @@ async def websocket_toggle_switch(
                         continue
                     if (out.get("switch_entity") or "").strip() != entity_id:
                         continue
+                    hwe = str(out.get("heater_weather_entity") or "").strip()
+                    outdoor = (
+                        outdoor_temperature_from_entity(hass, hwe) if hwe else None
+                    )
+                    eff_on, _eff_c, _boost = resolve_wall_heater_effective_temperatures(
+                        out, outdoor
+                    )
                     try:
-                        threshold = float(out.get("heater_on_below_temperature", 65))
+                        threshold = float(eff_on)
                     except (TypeError, ValueError):
                         threshold = 65.0
                     te = str(out.get("heater_temperature_entity") or "").strip()

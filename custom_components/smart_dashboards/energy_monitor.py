@@ -7,8 +7,6 @@ import logging
 import os
 from collections import deque
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
-
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
@@ -60,14 +58,16 @@ from .zone_health_storage import (
     warmup_complete_at_iso,
     zone_health_store_path,
 )
-from .config_manager import _coerce_bool
+from .config_manager import (
+    ConfigManager,
+    _coerce_bool,
+    resolve_budget_boost_weekdays,
+    resolve_wall_heater_effective_temperatures,
+)
 from .person_device_trackers import get_person_device_tracker_entity_ids
 from .tts_helper import async_send_tts
 from .tts_queue import async_send_tts_or_queue
 from .tts_numbers import spoken_cardinal
-
-if TYPE_CHECKING:
-    from .config_manager import ConfigManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -170,6 +170,7 @@ class EnergyMonitor:
         self._presence_listener_unsub: list = []  # person.* + zone.* for presence automation
         self._room_budget_announced: set[str] = set()
         self._room_budget_announced_date: str = ""
+        self._room_boost_days_reminder_sent: dict[str, str] = {}
         self._budget_boost_scheduled_fired_date: str = ""
         self._budget_boost_slots_fired: dict[str, list[int]] = {}
         self._stove_progress_last_boundary: dict[str, int] = {}
@@ -218,6 +219,8 @@ class EnergyMonitor:
     def _notification_enable_key(notification_type: str) -> str:
         if notification_type == "budget_hit":
             return "notify_room_budget_hit"
+        if notification_type == "room_boost_days":
+            return "notify_room_boost_days"
         if notification_type in ("enforcement_phase1", "enforcement_phase2"):
             return "notify_enforcement_phase_change"
         if notification_type in ("heater_auto_on", "heater_auto_off"):
@@ -230,6 +233,8 @@ class EnergyMonitor:
     def _notification_template_keys(notification_type: str) -> tuple[str, str]:
         if notification_type == "budget_hit":
             return "notify_budget_hit_title", "notify_budget_hit_msg"
+        if notification_type == "room_boost_days":
+            return "notify_room_boost_days_title", "notify_room_boost_days_msg"
         return (
             f"notify_{notification_type}_title",
             f"notify_{notification_type}_msg",
@@ -1133,16 +1138,40 @@ class EnergyMonitor:
             return f"on {names[wk[0]]} and {names[wk[1]]}"
         return "on " + ", ".join(names[d] for d in wk[:-1]) + f", and {names[wk[-1]]}"
 
-    def _is_budget_boost_day(self, now: datetime, tts_settings: dict) -> bool:
+    def _any_room_budget_boost_active_today(
+        self, now: datetime, tts_settings: dict
+    ) -> bool:
+        """True if at least one room with a positive kWh budget uses boost and today is a boost day."""
         if not tts_settings.get("budget_boost_enabled"):
             return False
         mult = float(tts_settings.get("budget_boost_multiplier") or 1)
         if mult <= 1:
             return False
-        days = tts_settings.get("budget_boost_weekdays") or []
-        if not days:
-            return False
-        return now.weekday() in days
+        rooms = self.config_manager.energy_config.get("rooms") or []
+        if not rooms:
+            return ConfigManager._is_budget_boost_day(now, tts_settings, None)
+        for room in rooms:
+            if room.get("kwh_budget_use_boost", True) is False:
+                continue
+            if float(room.get("kwh_budget", 5) or 0) <= 0:
+                continue
+            if ConfigManager._is_budget_boost_day(now, tts_settings, room):
+                return True
+        return False
+
+    def _merged_boost_weekdays_for_scheduled_tts(self, tts_settings: dict) -> list[int]:
+        """Union of per-room / global boost weekdays for scheduled announcement copy."""
+        seen: set[int] = set()
+        for room in self.config_manager.energy_config.get("rooms") or []:
+            if room.get("kwh_budget_use_boost", True) is False:
+                continue
+            if float(room.get("kwh_budget", 5) or 0) <= 0:
+                continue
+            for d in resolve_budget_boost_weekdays(room, tts_settings):
+                seen.add(int(d))
+        if seen:
+            return sorted(seen)
+        return resolve_budget_boost_weekdays(None, tts_settings)
 
     def _effective_kwh_budget(
         self,
@@ -1151,9 +1180,14 @@ class EnergyMonitor:
         tts_settings: dict,
         *,
         use_room_boost: bool = True,
+        room: dict | None = None,
     ) -> float:
         return self.config_manager.effective_kwh_budget_for_moment(
-            base, now, tts_settings, use_room_boost=use_room_boost
+            base,
+            now,
+            tts_settings,
+            use_room_boost=use_room_boost,
+            room=room,
         )
 
     @staticmethod
@@ -1232,7 +1266,7 @@ class EnergyMonitor:
         self, now: datetime, today: str, tts_settings: dict
     ) -> None:
         """On boost days, TTS at each repeat slot inside the configured time window."""
-        if not self._is_budget_boost_day(now, tts_settings):
+        if not self._any_room_budget_boost_active_today(now, tts_settings):
             return
         mp = (
             str(tts_settings.get("tts_default_media_player") or "").strip()
@@ -1263,7 +1297,7 @@ class EnergyMonitor:
             self._budget_boost_scheduled_fired_date = today
         tmpl = (tts_settings.get("budget_boost_scheduled_msg") or "").strip() or DEFAULT_BUDGET_BOOST_SCHEDULED_MSG
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
-        weekdays = tts_settings.get("budget_boost_weekdays") or []
+        weekdays = self._merged_boost_weekdays_for_scheduled_tts(tts_settings)
         period = self._budget_boost_period_label(weekdays)
         mult = float(tts_settings.get("budget_boost_multiplier") or 2)
         mult_s = self._budget_multiplier_tts_str(max(1.0, min(5.0, mult)))
@@ -2016,16 +2050,6 @@ class EnergyMonitor:
         if temp_ent.startswith("sensor."):
             temp = self._parse_temperature_sensor(temp_ent)
 
-        threshold = float(outlet.get("heater_on_below_temperature", 65))
-        comfort_raw = outlet.get("heater_comfort_temperature")
-        try:
-            if comfort_raw is None or comfort_raw == "":
-                comfort = threshold + 2.0
-            else:
-                comfort = float(comfort_raw)
-        except (TypeError, ValueError):
-            comfort = threshold + 2.0
-
         optimization_enabled = bool(outlet.get("heater_optimization_enabled", True))
         hysteresis = float(outlet.get("heater_hysteresis_band", 2.0) or 2.0)
         duty_enabled = bool(outlet.get("heater_duty_cycle_enabled"))
@@ -2037,6 +2061,7 @@ class EnergyMonitor:
         learning_enabled = bool(outlet.get("heater_learning_enabled", True))
         preheat_mins = int(outlet.get("heater_preheat_minutes", 30) or 30)
         weather_ent = str(outlet.get("heater_weather_entity") or "").strip()
+        cold_boost_enabled = bool(outlet.get("heater_cold_boost_enabled"))
 
         need_presence = bool(outlet.get("heater_presence_optional_enabled"))
         pres_turn_on = bool(outlet.get("heater_presence_turn_on_enabled"))
@@ -2061,8 +2086,12 @@ class EnergyMonitor:
 
         outdoor_temp: float | None = None
         forecast: list[dict] = []
-        if weather_ent and optimization_enabled:
+        if weather_ent and (optimization_enabled or cold_boost_enabled):
             outdoor_temp, forecast = await self._get_outdoor_and_forecast(weather_ent)
+
+        threshold, comfort, _boost_active = resolve_wall_heater_effective_temperatures(
+            outlet, outdoor_temp
+        )
 
         def _cooldown_blocks() -> bool:
             if not need_presence:
@@ -2725,6 +2754,7 @@ class EnergyMonitor:
         if self._room_budget_announced_date != today:
             self._room_budget_announced.clear()
             self._room_budget_announced_date = today
+            self._room_boost_days_reminder_sent.clear()
         energy_config = self.config_manager.energy_config
         rooms = energy_config.get("rooms", [])
         tts_settings = energy_config.get("tts_settings", {})
@@ -2744,7 +2774,11 @@ class EnergyMonitor:
             # Match dashboard: overBudget only when effKwh > 0 and usedKwh > effKwh (strict >).
             room_day_kwh = self.config_manager.get_room_day_kwh(room_id)
             effective_kwh_budget = self._effective_kwh_budget(
-                kwh_budget, now, tts_settings, use_room_boost=room_uses_kwh_boost
+                kwh_budget,
+                now,
+                tts_settings,
+                use_room_boost=room_uses_kwh_boost,
+                room=room,
             )
             budget_exceeded = (
                 effective_kwh_budget > 0 and room_day_kwh > effective_kwh_budget
@@ -2787,6 +2821,32 @@ class EnergyMonitor:
                     )
                 except Exception as e:
                     _LOGGER.warning("Budget exceeded notification failed for %s: %s", room_name, e)
+
+            if (
+                room.get("presence_person_entity")
+                and room_uses_kwh_boost
+                and kwh_budget > 0
+                and tts_settings.get("budget_boost_enabled")
+                and float(tts_settings.get("budget_boost_multiplier") or 1) > 1
+                and not resolve_budget_boost_weekdays(room, tts_settings)
+            ):
+                if self._room_boost_days_reminder_sent.get(room_id) != today:
+                    self._room_boost_days_reminder_sent[room_id] = today
+                    try:
+                        await self._send_notification_to_room_person(
+                            room,
+                            "room_boost_days",
+                            {"room_name": room_name},
+                            "Set boost days",
+                            f"{room_name}: Open Home Energy and tap your room icon to choose up to two days when your higher kWh budget applies.",
+                            integration_auto=True,
+                        )
+                    except Exception as e:
+                        _LOGGER.warning(
+                            "Boost days reminder notification failed for %s: %s",
+                            room_name,
+                            e,
+                        )
 
             # Calculate total room watts and track energy
             room_total_watts = 0.0
@@ -3744,18 +3804,22 @@ class EnergyMonitor:
                 boost_tmpl = (tts_settings.get("phase1_warn_msg_boost_day") or "").strip()
                 room_uses_kwh_boost = room.get("kwh_budget_use_boost", True) is not False
                 if (
-                    self._is_budget_boost_day(now_p1, tts_settings)
+                    ConfigManager._is_budget_boost_day(now_p1, tts_settings, room)
                     and boost_tmpl
                     and room_uses_kwh_boost
                     and self._tts_line_enabled(tts_settings, "phase1_warn_boost_day")
                 ):
                     base_b = float(room.get("kwh_budget", 5) or 5)
                     eff_b = self._effective_kwh_budget(
-                        base_b, now_p1, tts_settings, use_room_boost=True
+                        base_b,
+                        now_p1,
+                        tts_settings,
+                        use_room_boost=True,
+                        room=room,
                     )
                     mult = float(tts_settings.get("budget_boost_multiplier") or 2)
                     mult_s = self._budget_multiplier_tts_str(max(1.0, min(5.0, mult)))
-                    weekdays = tts_settings.get("budget_boost_weekdays") or []
+                    weekdays = resolve_budget_boost_weekdays(room, tts_settings)
                     period = self._budget_boost_period_label(weekdays)
                     try:
                         message = boost_tmpl.format(
@@ -4210,6 +4274,7 @@ class EnergyMonitor:
                 now_pe,
                 tts_settings,
                 use_room_budget_boost=room_uses_kwh_boost,
+                room=room,
             )
             interval_hit = None
             if filtered_intervals:
