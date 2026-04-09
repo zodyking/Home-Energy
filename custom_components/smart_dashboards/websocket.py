@@ -2103,18 +2103,54 @@ async def async_build_statistics_payload(
     else:
         stat_day_keys = []
 
+    # Build all_room_ids to match billing logic (ensures we iterate all rooms)
+    all_room_ids = [
+        r.get("id", r["name"].lower().replace(" ", "_"))
+        for r in config_manager.energy_config.get("rooms", [])
+    ]
+
+    # Merge daily_totals with recorder/LTS data using the SAME rules as billing:
+    # - For today: use live ledger
+    # - For past days with snapshot: use max(snapshot, recorder) per room
+    # - When snapshot total is ~0 but recorder has data: prefer recorder
+    # - For days without snapshot: leave recorder/LTS data as-is
     for d in stat_day_keys:
         if d == today:
+            # Today: use live ledger values
             snap = config_manager._build_today_totals()
-        else:
-            snap = daily_totals.get(d)
-        if snap is not None:
+            if snap is not None:
+                snap_rooms = snap.get("rooms") or {}
+                for rid in all_room_ids:
+                    wh = float((snap_rooms.get(rid) or {}).get("wh", 0.0))
+                    rmap = room_day_wh_map.setdefault(rid, {})
+                    rmap[d] = wh
+        elif d in daily_totals:
+            # Past day with snapshot: apply max merge logic (same as billing)
+            snap = daily_totals[d]
+            snap_total_wh = float(snap.get("total_wh", 0.0))
             snap_rooms = snap.get("rooms") or {}
-            for rid, rdata in snap_rooms.items():
-                wh = float(rdata.get("wh", 0.0))
-                rmap = room_day_wh_map.setdefault(rid, {})
-                rmap[d] = wh
 
+            # Sum recorder/LTS values for this day across all rooms
+            rec_total = sum(
+                float(room_day_wh_map.get(rid, {}).get(d, 0.0))
+                for rid in all_room_ids
+            )
+            snap_total_zero = snap_total_wh <= 1e-6
+
+            for rid in all_room_ids:
+                wh_snap = float((snap_rooms.get(rid) or {}).get("wh", 0.0))
+                wh_rec = float(room_day_wh_map.get(rid, {}).get(d, 0.0))
+                rmap = room_day_wh_map.setdefault(rid, {})
+
+                if snap_total_zero and rec_total > 1e-6:
+                    # Snapshot total is ~0 but recorder has data: use recorder
+                    rmap[d] = wh_rec
+                else:
+                    # Use max of snapshot and recorder
+                    rmap[d] = max(wh_snap, wh_rec)
+        # else: no snapshot for this day, leave room_day_wh_map from recorder/LTS
+
+    # Rebuild totals from merged room_day_wh_map
     room_wh_map = {}
     total_wh = 0.0
     for rid, dmap in room_day_wh_map.items():

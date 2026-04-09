@@ -1845,6 +1845,10 @@ class EnergyPanel extends HTMLElement {
       .statistics-table th, .statistics-table td { padding: clamp(6px, 1.5vw, 10px) clamp(6px, 2vw, 10px); text-align: left; border-bottom: 1px solid var(--card-border); }
       .statistics-table th { font-weight: 600; color: var(--secondary-text-color); }
       .statistics-table th abbr { text-decoration: none; border-bottom: 1px dotted var(--secondary-text-color); cursor: help; }
+      .statistics-table tfoot { background: var(--table-row-alternative-background-color, rgba(var(--rgb-primary-text-color), 0.03)); }
+      .statistics-table tfoot tr { border-top: 2px solid var(--divider-color, var(--card-border)); }
+      .statistics-table tfoot th, .statistics-table tfoot td { font-weight: 600; }
+      .statistics-table-totals-row th { color: var(--primary-text-color); }
       .statistics-empty { color: var(--secondary-text-color); text-align: center; padding: 16px !important; }
 
       .stat-rooms-segment-wrap {
@@ -7984,6 +7988,28 @@ class EnergyPanel extends HTMLElement {
                   </tr>`;
                 }).join('')}
                 </tbody>
+                ${rooms.length > 0 ? (() => {
+                  const kc = kwhCost;
+                  const costOk = kc != null && Number.isFinite(Number(kc));
+                  const totalCostStr = costOk && Number.isFinite(totalKwh * Number(kc))
+                    ? `$${(totalKwh * Number(kc)).toFixed(2)}`
+                    : '—';
+                  return `<tfoot>
+                  <tr class="statistics-table-totals-row">
+                    <th scope="row">Total</th>
+                    <td>—</td>
+                    <td>${totalKwh.toFixed(2)} kWh</td>
+                    <td>100.0%</td>
+                    <td>${totalWarnings}</td>
+                    <td>${totalShutoffs}</td>
+                    <td>${totalPowerCycles}</td>
+                    <td>—</td>
+                    <td>—</td>
+                    <td>—</td>
+                    <td>${totalCostStr}</td>
+                  </tr>
+                </tfoot>`;
+                })() : ''}
               </table>
             </div>
           </div>
