@@ -262,6 +262,7 @@ class EnergyPanel extends HTMLElement {
     }
     this.shadowRoot?.querySelector('.room-rating-modal-overlay')?.remove();
     this._removeStatisticsDiscrepancyModal();
+    this._removeHardRefreshModal();
     this._closeApplianceMenu();
     this._teardownBillingBarChartNative();
     this._unsubscribeFromStatisticsUpdates();
@@ -395,6 +396,168 @@ class EnergyPanel extends HTMLElement {
       this._statsDiscrepancyModalEsc = null;
     }
     this.shadowRoot?.querySelector('.statistics-discrepancy-modal-overlay')?.remove();
+  }
+
+  /**
+   * Show the hard refresh progress modal and start the refresh process.
+   */
+  _showHardRefreshModal() {
+    this._removeHardRefreshModal();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'hard-refresh-modal-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'hard-refresh-title');
+
+    overlay.innerHTML = `
+      <div class="hard-refresh-modal-dialog">
+        <div class="hard-refresh-modal-header">
+          <h2 class="hard-refresh-modal-title" id="hard-refresh-title">Hard Refresh Statistics</h2>
+          <button class="hard-refresh-modal-close" id="hard-refresh-close" title="Close" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="hard-refresh-modal-body">
+          <div class="hard-refresh-progress-section">
+            <div class="hard-refresh-step-label" id="hard-refresh-step">Initializing...</div>
+            <div class="hard-refresh-progress-bar">
+              <div class="hard-refresh-progress-fill" id="hard-refresh-fill" style="width: 0%;"></div>
+            </div>
+            <div class="hard-refresh-progress-pct" id="hard-refresh-pct">0%</div>
+          </div>
+          <div class="hard-refresh-log-section">
+            <div class="hard-refresh-log-label">Progress Log</div>
+            <div class="hard-refresh-log-container" id="hard-refresh-log"></div>
+          </div>
+        </div>
+        <div class="hard-refresh-modal-footer">
+          <button class="btn btn-secondary" id="hard-refresh-done" disabled>Done</button>
+        </div>
+      </div>
+    `;
+
+    this.shadowRoot.appendChild(overlay);
+
+    const closeBtn = overlay.querySelector('#hard-refresh-close');
+    const doneBtn = overlay.querySelector('#hard-refresh-done');
+
+    const close = () => {
+      this._removeHardRefreshModal();
+      this._loadStatistics();
+    };
+
+    doneBtn.addEventListener('click', close);
+    closeBtn.addEventListener('click', close);
+
+    this._hardRefreshModalEsc = (e) => {
+      if (e.key === 'Escape' && !closeBtn.disabled) close();
+    };
+    window.addEventListener('keydown', this._hardRefreshModalEsc);
+
+    this._doHardRefresh(overlay);
+  }
+
+  _removeHardRefreshModal() {
+    if (this._hardRefreshModalEsc) {
+      window.removeEventListener('keydown', this._hardRefreshModalEsc);
+      this._hardRefreshModalEsc = null;
+    }
+    if (this._hardRefreshUnsubscribe) {
+      this._hardRefreshUnsubscribe();
+      this._hardRefreshUnsubscribe = null;
+    }
+    this.shadowRoot?.querySelector('.hard-refresh-modal-overlay')?.remove();
+  }
+
+  async _doHardRefresh(overlay) {
+    const stepEl = overlay.querySelector('#hard-refresh-step');
+    const fillEl = overlay.querySelector('#hard-refresh-fill');
+    const pctEl = overlay.querySelector('#hard-refresh-pct');
+    const logEl = overlay.querySelector('#hard-refresh-log');
+    const closeBtn = overlay.querySelector('#hard-refresh-close');
+    const doneBtn = overlay.querySelector('#hard-refresh-done');
+
+    const addLog = (msg, type = 'info') => {
+      const entry = document.createElement('div');
+      entry.className = `hard-refresh-log-entry ${type}`;
+      const now = new Date().toLocaleTimeString();
+      entry.textContent = `[${now}] ${msg}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    };
+
+    const updateProgress = (step, progress) => {
+      const stepLabel = step.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      stepEl.textContent = stepLabel;
+      fillEl.style.width = `${progress}%`;
+      pctEl.textContent = `${progress}%`;
+    };
+
+    addLog('Starting hard refresh...');
+
+    try {
+      const result = await new Promise((resolve, reject) => {
+        let msgId = null;
+        let resolved = false;
+
+        const handleMessage = (msg) => {
+          if (msg.id !== msgId) return;
+
+          if (msg.type === 'event' && msg.event) {
+            const { step, progress, log } = msg.event;
+            if (step) updateProgress(step, progress || 0);
+            if (log) {
+              const type = step === 'error' ? 'error' : (step === 'complete' ? 'success' : 'info');
+              addLog(log, type);
+            }
+          } else if (msg.type === 'result') {
+            resolved = true;
+            this._hass.connection.removeEventListener('message', handleMessage);
+            if (msg.success) {
+              resolve(msg.result);
+            } else {
+              reject(new Error(msg.error?.message || 'Unknown error'));
+            }
+          }
+        };
+
+        this._hass.connection.addEventListener('message', handleMessage);
+
+        this._hass.connection.sendMessagePromise({
+          type: 'smart_dashboards/hard_refresh_statistics',
+        }).then(result => {
+          msgId = result;
+        }).catch(err => {
+          this._hass.connection.removeEventListener('message', handleMessage);
+          reject(err);
+        });
+
+        // Store unsubscribe function
+        this._hardRefreshUnsubscribe = () => {
+          this._hass.connection.removeEventListener('message', handleMessage);
+        };
+      });
+
+      addLog(`Completed! Total: ${(result.total_kwh || 0).toFixed(2)} kWh`, 'success');
+      addLog(`Date range: ${result.date_start} to ${result.date_end}`, 'success');
+      addLog(`Recorder days: ${result.recorder_days}/${result.total_days}`, 'success');
+
+      updateProgress('complete', 100);
+      this._statsDiscrepancyModalShownThisVisit = false;
+      this._removeStatisticsDiscrepancyModal();
+
+    } catch (err) {
+      addLog(`Error: ${err.message || err}`, 'error');
+      updateProgress('error', 0);
+    } finally {
+      closeBtn.disabled = false;
+      doneBtn.disabled = false;
+      this._hardRefreshUnsubscribe = null;
+    }
   }
 
   /**
@@ -2198,6 +2361,183 @@ class EnergyPanel extends HTMLElement {
         .room-rating-modal-metric-fill {
           transition: none;
         }
+      }
+
+      /* Hard Refresh Progress Modal */
+      .hard-refresh-modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10100;
+        background: rgba(0, 0, 0, 0.75);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+
+      .hard-refresh-modal-dialog {
+        background: var(--card-bg, #1c1c1c);
+        border: 1px solid var(--card-border);
+        border-radius: 16px;
+        width: min(520px, 100%);
+        max-height: min(85vh, 600px);
+        display: flex;
+        flex-direction: column;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.5),
+          0 24px 64px rgba(0, 0, 0, 0.6);
+        overflow: hidden;
+      }
+
+      .hard-refresh-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 18px 20px 14px;
+        border-bottom: 1px solid var(--card-border);
+        background: var(--panel-header-background, var(--card-bg, #1c1c1c));
+      }
+
+      .hard-refresh-modal-title {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 700;
+        color: var(--primary-text-color);
+        letter-spacing: -0.01em;
+      }
+
+      .hard-refresh-modal-close {
+        background: rgba(255, 255, 255, 0.08);
+        border: none;
+        border-radius: 50%;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        color: var(--secondary-text-color);
+        transition: background 0.15s, color 0.15s;
+      }
+
+      .hard-refresh-modal-close:hover {
+        background: rgba(255, 255, 255, 0.14);
+        color: var(--primary-text-color);
+      }
+
+      .hard-refresh-modal-close:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+
+      .hard-refresh-modal-body {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 20px;
+        gap: 16px;
+        overflow: hidden;
+      }
+
+      .hard-refresh-progress-section {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .hard-refresh-step-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        text-transform: capitalize;
+      }
+
+      .hard-refresh-progress-bar {
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+        border: 1px solid var(--card-border);
+      }
+
+      .hard-refresh-progress-fill {
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #0288d1 0%, #29b6f6 50%, #81d4fa 100%);
+        transition: width 0.25s ease-out;
+        box-shadow: 0 0 12px rgba(3, 169, 244, 0.4);
+      }
+
+      .hard-refresh-progress-pct {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--secondary-text-color);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .hard-refresh-log-section {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-height: 0;
+      }
+
+      .hard-refresh-log-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--secondary-text-color);
+        opacity: 0.8;
+      }
+
+      .hard-refresh-log-container {
+        flex: 1;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--card-border);
+        border-radius: 8px;
+        padding: 12px;
+        overflow-y: auto;
+        min-height: 180px;
+        max-height: 280px;
+        font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.55;
+        color: var(--secondary-text-color);
+      }
+
+      .hard-refresh-log-entry {
+        margin: 0 0 4px 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .hard-refresh-log-entry.error {
+        color: var(--error-color, #f44336);
+      }
+
+      .hard-refresh-log-entry.success {
+        color: var(--success-color, #4caf50);
+      }
+
+      .hard-refresh-modal-footer {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 14px 20px;
+        border-top: 1px solid var(--card-border);
+        background: var(--card-bg, #1c1c1c);
+      }
+
+      .hard-refresh-modal-footer .btn {
+        min-width: 90px;
       }
 
       .room-efficiency-stars {
@@ -13558,23 +13898,9 @@ class EnergyPanel extends HTMLElement {
     }
     const statRefreshBtn = this.shadowRoot.querySelector('#stat-refresh-cache');
     if (statRefreshBtn) {
-      statRefreshBtn.addEventListener('click', async (e) => {
+      statRefreshBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        statRefreshBtn.disabled = true;
-        statRefreshBtn.textContent = 'Refreshing...';
-        try {
-          await this._hass.callWS({ type: 'smart_dashboards/clear_statistics_cache' });
-          this._statsDiscrepancyModalShownThisVisit = false;
-          this._removeStatisticsDiscrepancyModal();
-          await this._loadStatistics();
-          this._showToast('Statistics cache cleared and refreshed');
-        } catch (err) {
-          console.error('Failed to refresh statistics:', err);
-          this._showToast('Failed to refresh statistics');
-        } finally {
-          statRefreshBtn.disabled = false;
-          statRefreshBtn.textContent = 'Refresh Statistics';
-        }
+        this._showHardRefreshModal();
       });
     }
     this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((seg) => {
