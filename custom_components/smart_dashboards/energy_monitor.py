@@ -2859,7 +2859,7 @@ class EnergyMonitor:
                             {"room_name": room_name},
                             "Set boost days",
                             f"{room_name}: Open Home Energy and tap your room icon to choose up to two days when your higher kWh budget applies.",
-                            integration_auto=True,
+                            integration_auto=False,
                         )
                         self._room_boost_days_last_reminder_at[room_id] = now
                     except Exception as e:

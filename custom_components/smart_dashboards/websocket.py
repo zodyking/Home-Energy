@@ -1445,6 +1445,7 @@ async def async_build_billing_daily_history_from_recorder(
     ]
     result: dict[str, Any] = {
         "dates": [],
+        "sources": [],
         "total_wh": [],
         "total_warnings": [],
         "total_shutoffs": [],
@@ -1477,6 +1478,7 @@ async def async_build_billing_daily_history_from_recorder(
         if d > today:
             break
         if d == today:
+            day_source = "today"
             row = config_manager._build_today_totals()
             total_wh_day = float(row.get("total_wh", 0.0))
             row_rooms = row.get("rooms") or {}
@@ -1484,6 +1486,7 @@ async def async_build_billing_daily_history_from_recorder(
                 wh = float((row_rooms.get(rid) or {}).get("wh", 0.0))
                 result["rooms"][rid]["wh"].append(round(wh, 2))
         elif d in daily_snapshots:
+            day_source = "snapshot"
             row = daily_snapshots[d]
             total_wh_day = float(row.get("total_wh", 0.0))
             row_rooms = row.get("rooms") or {}
@@ -1509,6 +1512,7 @@ async def async_build_billing_daily_history_from_recorder(
             elif d < today:
                 total_wh_day = max(total_wh_day, rec_total)
         else:
+            day_source = "recorder"
             total_wh_day = sum(
                 float(rdays.get(d, 0.0)) for rdays in room_day_wh_map.values()
             )
@@ -1524,6 +1528,7 @@ async def async_build_billing_daily_history_from_recorder(
             }
 
         result["dates"].append(d)
+        result["sources"].append(day_source)
         result["total_wh"].append(round(total_wh_day, 2))
         result["total_warnings"].append(int(row.get("total_warnings", 0)))
         result["total_shutoffs"].append(int(row.get("total_shutoffs", 0)))
@@ -1537,6 +1542,12 @@ async def async_build_billing_daily_history_from_recorder(
 
     n_dates = len(result["dates"])
     if n_dates:
+        if len(result.get("sources", [])) != n_dates:
+            _LOGGER.warning(
+                "Billing daily history length mismatch: dates=%d sources=%d",
+                n_dates,
+                len(result.get("sources", [])),
+            )
         for key in (
             "total_wh",
             "total_warnings",
