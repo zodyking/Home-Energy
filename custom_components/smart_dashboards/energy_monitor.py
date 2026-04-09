@@ -18,6 +18,7 @@ from .const import (
     DEFAULT_BUDGET_EXCEEDED_MSG,
     DEFAULT_BUDGET_BOOST_SCHEDULED_MSG,
     ENERGY_CHECK_INTERVAL,
+    ROOM_BOOST_DAYS_REMINDER_INTERVAL_SECONDS,
     SHUTOFF_RESET_DELAY,
     STOVE_WARNING_TIMER,
     STOVE_SHUTOFF_TIMER,
@@ -170,7 +171,7 @@ class EnergyMonitor:
         self._presence_listener_unsub: list = []  # person.* + zone.* for presence automation
         self._room_budget_announced: set[str] = set()
         self._room_budget_announced_date: str = ""
-        self._room_boost_days_reminder_sent: dict[str, str] = {}
+        self._room_boost_days_last_reminder_at: dict[str, datetime] = {}
         self._budget_boost_scheduled_fired_date: str = ""
         self._budget_boost_slots_fired: dict[str, list[int]] = {}
         self._stove_progress_last_boundary: dict[str, int] = {}
@@ -2754,7 +2755,6 @@ class EnergyMonitor:
         if self._room_budget_announced_date != today:
             self._room_budget_announced.clear()
             self._room_budget_announced_date = today
-            self._room_boost_days_reminder_sent.clear()
         energy_config = self.config_manager.energy_config
         rooms = energy_config.get("rooms", [])
         tts_settings = energy_config.get("tts_settings", {})
@@ -2825,6 +2825,7 @@ class EnergyMonitor:
             weekdays_res = resolve_budget_boost_weekdays(room, tts_settings)
             room_mult = room.get("room_budget_boost_multiplier")
             eff_mult = float(room_mult) if room_mult is not None else float(tts_settings.get("budget_boost_multiplier") or 1)
+            # First eligible pass after monitor start sends immediately (last_rem None); then hourly until weekdays set.
             wants_boost_days_reminder = (
                 bool(room.get("presence_person_entity"))
                 and room_uses_kwh_boost
@@ -2834,16 +2835,19 @@ class EnergyMonitor:
                 and not weekdays_res
             )
             if wants_boost_days_reminder:
-                already_sent = self._room_boost_days_reminder_sent.get(room_id) == today
+                last_rem = self._room_boost_days_last_reminder_at.get(room_id)
+                due = last_rem is None or (
+                    now - last_rem
+                ).total_seconds() >= ROOM_BOOST_DAYS_REMINDER_INTERVAL_SECONDS
                 _LOGGER.debug(
-                    "room_boost_days room_id=%s room_name=%s weekdays=%s already_sent_today=%s",
+                    "room_boost_days room_id=%s room_name=%s weekdays=%s last_reminder=%s due=%s",
                     room_id,
                     room_name,
                     weekdays_res,
-                    already_sent,
+                    last_rem,
+                    due,
                 )
-                if not already_sent:
-                    self._room_boost_days_reminder_sent[room_id] = today
+                if due:
                     _LOGGER.debug(
                         "room_boost_days: sending notification for room_id=%s",
                         room_id,
@@ -2857,12 +2861,15 @@ class EnergyMonitor:
                             f"{room_name}: Open Home Energy and tap your room icon to choose up to two days when your higher kWh budget applies.",
                             integration_auto=True,
                         )
+                        self._room_boost_days_last_reminder_at[room_id] = now
                     except Exception as e:
                         _LOGGER.warning(
                             "Boost days reminder notification failed for %s: %s",
                             room_name,
                             e,
                         )
+            else:
+                self._room_boost_days_last_reminder_at.pop(room_id, None)
 
             # Calculate total room watts and track energy
             room_total_watts = 0.0
