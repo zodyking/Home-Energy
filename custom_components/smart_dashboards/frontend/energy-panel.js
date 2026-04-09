@@ -266,6 +266,7 @@ class EnergyPanel extends HTMLElement {
     this._closeApplianceMenu();
     this._teardownBillingBarChartNative();
     this._unsubscribeFromStatisticsUpdates();
+    this._unsubscribeFromHardRefreshProgress();
   }
 
   _statisticsRefreshMs() {
@@ -384,6 +385,8 @@ class EnergyPanel extends HTMLElement {
 
     // Subscribe to live updates (only once)
     this._subscribeToStatisticsUpdates();
+    // Subscribe to hard refresh progress (broadcasts to ALL clients)
+    this._subscribeToHardRefreshProgress();
 
     if (this._dashboardView === 'statistics') {
       queueMicrotask(() => this._maybeShowStatisticsDiscrepancyModal());
@@ -399,9 +402,22 @@ class EnergyPanel extends HTMLElement {
   }
 
   /**
-   * Show the hard refresh progress modal and start the refresh process.
+   * Trigger hard refresh (called when user clicks button).
+   * The backend will broadcast progress events to ALL clients via event bus.
    */
-  _showHardRefreshModal() {
+  async _triggerHardRefresh() {
+    try {
+      await this._hass.callWS({ type: 'smart_dashboards/hard_refresh_statistics' });
+    } catch (e) {
+      console.error('Failed to trigger hard refresh:', e);
+    }
+  }
+
+  /**
+   * Show the hard refresh progress modal UI only (no WebSocket call).
+   * Called by _handleHardRefreshProgressEvent when 'started' event received.
+   */
+  _showHardRefreshModalUI() {
     this._removeHardRefreshModal();
 
     const overlay = document.createElement('div');
@@ -457,8 +473,29 @@ class EnergyPanel extends HTMLElement {
       if (e.key === 'Escape' && !closeBtn.disabled) close();
     };
     window.addEventListener('keydown', this._hardRefreshModalEsc);
+  }
 
-    this._doHardRefresh(overlay);
+  /**
+   * Show modal AND trigger hard refresh (called when button clicked).
+   * The modal will be shown immediately, and progress events will update it.
+   */
+  _showHardRefreshModal() {
+    // Show modal UI immediately
+    this._showHardRefreshModalUI();
+    // Add initial log
+    const overlay = this.shadowRoot?.querySelector('.hard-refresh-modal-overlay');
+    if (overlay) {
+      const logEl = overlay.querySelector('#hard-refresh-log');
+      if (logEl) {
+        const entry = document.createElement('div');
+        entry.className = 'hard-refresh-log-entry info';
+        const now = new Date().toLocaleTimeString();
+        entry.textContent = `[${now}] Requesting hard refresh...`;
+        logEl.appendChild(entry);
+      }
+    }
+    // Trigger the refresh (backend will broadcast progress to all clients)
+    this._triggerHardRefresh();
   }
 
   _removeHardRefreshModal() {
@@ -466,87 +503,7 @@ class EnergyPanel extends HTMLElement {
       window.removeEventListener('keydown', this._hardRefreshModalEsc);
       this._hardRefreshModalEsc = null;
     }
-    if (this._hardRefreshUnsubscribe) {
-      this._hardRefreshUnsubscribe();
-      this._hardRefreshUnsubscribe = null;
-    }
     this.shadowRoot?.querySelector('.hard-refresh-modal-overlay')?.remove();
-  }
-
-  async _doHardRefresh(overlay) {
-    const stepEl = overlay.querySelector('#hard-refresh-step');
-    const fillEl = overlay.querySelector('#hard-refresh-fill');
-    const pctEl = overlay.querySelector('#hard-refresh-pct');
-    const logEl = overlay.querySelector('#hard-refresh-log');
-    const closeBtn = overlay.querySelector('#hard-refresh-close');
-    const doneBtn = overlay.querySelector('#hard-refresh-done');
-
-    const addLog = (msg, type = 'info') => {
-      const entry = document.createElement('div');
-      entry.className = `hard-refresh-log-entry ${type}`;
-      const now = new Date().toLocaleTimeString();
-      entry.textContent = `[${now}] ${msg}`;
-      logEl.appendChild(entry);
-      logEl.scrollTop = logEl.scrollHeight;
-    };
-
-    const updateProgress = (step, progress) => {
-      const stepLabel = step.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      stepEl.textContent = stepLabel;
-      fillEl.style.width = `${progress}%`;
-      pctEl.textContent = `${progress}%`;
-    };
-
-    addLog('Starting hard refresh...');
-
-    try {
-      const result = await new Promise((resolve, reject) => {
-        let unsubscribe = null;
-
-        this._hass.connection.subscribeMessage(
-          (event) => {
-            const { step, progress, log, complete, success, error } = event;
-
-            if (step) updateProgress(step, progress || 0);
-            if (log) {
-              const type = step === 'error' ? 'error' : (step === 'complete' ? 'success' : 'info');
-              addLog(log, type);
-            }
-
-            if (complete) {
-              if (unsubscribe) unsubscribe();
-              if (success) {
-                resolve(event);
-              } else {
-                reject(new Error(error || 'Hard refresh failed'));
-              }
-            }
-          },
-          { type: 'smart_dashboards/hard_refresh_statistics' }
-        ).then(unsub => {
-          unsubscribe = unsub;
-          this._hardRefreshUnsubscribe = unsub;
-        }).catch(err => {
-          reject(err);
-        });
-      });
-
-      addLog(`Completed! Total: ${(result.total_kwh || 0).toFixed(2)} kWh`, 'success');
-      addLog(`Date range: ${result.date_start} to ${result.date_end}`, 'success');
-      addLog(`Recorder days: ${result.recorder_days}/${result.total_days}`, 'success');
-
-      updateProgress('complete', 100);
-      this._statsDiscrepancyModalShownThisVisit = false;
-      this._removeStatisticsDiscrepancyModal();
-
-    } catch (err) {
-      addLog(`Error: ${err.message || err}`, 'error');
-      updateProgress('error', 0);
-    } finally {
-      closeBtn.disabled = false;
-      doneBtn.disabled = false;
-      this._hardRefreshUnsubscribe = null;
-    }
   }
 
   /**
@@ -727,6 +684,107 @@ class EnergyPanel extends HTMLElement {
     if (this._statsSubscription) {
       this._statsSubscription();
       this._statsSubscription = null;
+    }
+  }
+
+  /**
+   * Subscribe to hard refresh progress events (broadcast to ALL clients).
+   * When any client triggers a hard refresh, all sessions see the modal.
+   */
+  async _subscribeToHardRefreshProgress() {
+    if (this._hardRefreshProgressSub || !this._hass) return;
+
+    try {
+      this._hardRefreshProgressSub = await this._hass.connection.subscribeMessage(
+        (event) => this._handleHardRefreshProgressEvent(event),
+        { type: 'smart_dashboards/subscribe_hard_refresh_progress' }
+      );
+    } catch (e) {
+      console.error('Failed to subscribe to hard refresh progress:', e);
+    }
+  }
+
+  _unsubscribeFromHardRefreshProgress() {
+    if (this._hardRefreshProgressSub) {
+      this._hardRefreshProgressSub();
+      this._hardRefreshProgressSub = null;
+    }
+  }
+
+  /**
+   * Handle hard refresh progress event (broadcast from backend).
+   * Shows modal on start, updates progress, and enables close on complete.
+   */
+  _handleHardRefreshProgressEvent(event) {
+    const { step, progress, log, started, complete, success, error, total_kwh, date_start, date_end, recorder_days, total_days } = event;
+
+    // If this is the "started" event, show the modal (on ALL clients)
+    if (started) {
+      if (!this.shadowRoot?.querySelector('.hard-refresh-modal-overlay')) {
+        this._showHardRefreshModalUI();
+      }
+    }
+
+    const overlay = this.shadowRoot?.querySelector('.hard-refresh-modal-overlay');
+    if (!overlay) return;
+
+    const stepEl = overlay.querySelector('#hard-refresh-step');
+    const fillEl = overlay.querySelector('#hard-refresh-fill');
+    const pctEl = overlay.querySelector('#hard-refresh-pct');
+    const logEl = overlay.querySelector('#hard-refresh-log');
+    const closeBtn = overlay.querySelector('#hard-refresh-close');
+    const doneBtn = overlay.querySelector('#hard-refresh-done');
+
+    // Update progress UI
+    if (step && stepEl && fillEl && pctEl) {
+      const stepLabel = step.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      stepEl.textContent = stepLabel;
+      fillEl.style.width = `${progress || 0}%`;
+      pctEl.textContent = `${progress || 0}%`;
+    }
+
+    // Add log entry
+    if (log && logEl) {
+      const entry = document.createElement('div');
+      const type = step === 'error' ? 'error' : (step === 'complete' ? 'success' : 'info');
+      entry.className = `hard-refresh-log-entry ${type}`;
+      const now = new Date().toLocaleTimeString();
+      entry.textContent = `[${now}] ${log}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Handle completion
+    if (complete) {
+      if (success) {
+        // Add final summary logs
+        if (logEl) {
+          const addSuccessLog = (msg) => {
+            const entry = document.createElement('div');
+            entry.className = 'hard-refresh-log-entry success';
+            const now = new Date().toLocaleTimeString();
+            entry.textContent = `[${now}] ${msg}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+          };
+          if (total_kwh != null) addSuccessLog(`Total: ${Number(total_kwh).toFixed(2)} kWh`);
+          if (date_start && date_end) addSuccessLog(`Date range: ${date_start} to ${date_end}`);
+          if (recorder_days != null && total_days != null) addSuccessLog(`Recorder days: ${recorder_days}/${total_days}`);
+        }
+        this._statsDiscrepancyModalShownThisVisit = false;
+        this._removeStatisticsDiscrepancyModal();
+      } else if (error && logEl) {
+        const entry = document.createElement('div');
+        entry.className = 'hard-refresh-log-entry error';
+        const now = new Date().toLocaleTimeString();
+        entry.textContent = `[${now}] Error: ${error}`;
+        logEl.appendChild(entry);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      // Enable close buttons
+      if (closeBtn) closeBtn.disabled = false;
+      if (doneBtn) doneBtn.disabled = false;
     }
   }
 

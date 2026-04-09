@@ -246,6 +246,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_event_log)
     websocket_api.async_register_command(hass, websocket_get_statistics)
     websocket_api.async_register_command(hass, websocket_subscribe_statistics)
+    websocket_api.async_register_command(hass, websocket_subscribe_hard_refresh_progress)
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
     websocket_api.async_register_command(hass, websocket_get_areas)
     websocket_api.async_register_command(hass, websocket_get_switches)
@@ -2437,6 +2438,33 @@ def websocket_subscribe_statistics(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): "smart_dashboards/subscribe_hard_refresh_progress",
+    }
+)
+@callback
+def websocket_subscribe_hard_refresh_progress(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Subscribe to hard refresh progress events for live broadcast to all clients."""
+
+    @callback
+    def forward_progress(event) -> None:
+        """Forward hard refresh progress event to WebSocket."""
+        connection.send_message(
+            websocket_api.event_message(msg["id"], event.data)
+        )
+
+    unsub = hass.bus.async_listen(
+        "smart_dashboards_hard_refresh_progress", forward_progress
+    )
+    connection.subscriptions[msg["id"]] = unsub
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): "smart_dashboards/get_entities_by_area",
         vol.Required("area_id"): str,
     }
@@ -3353,25 +3381,18 @@ async def websocket_hard_refresh_statistics(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Hard refresh statistics with progress streaming.
+    """Hard refresh statistics with progress streaming to ALL connected clients.
 
-    Sends progress events during refresh so frontend can display real-time status.
-    Uses websocket_api.event_message() for proper event formatting that works with
-    subscribeMessage() on the frontend.
+    Fires progress events to the event bus so all subscribed clients see the modal
+    and progress in real-time, not just the client that initiated the refresh.
     """
     msg_id = msg["id"]
 
-    def send_progress(step: str, progress: int, log: str) -> None:
-        """Send progress event to frontend using proper event_message format."""
-        connection.send_message(
-            websocket_api.event_message(
-                msg_id,
-                {
-                    "step": step,
-                    "progress": progress,
-                    "log": log,
-                },
-            )
+    def send_progress(step: str, progress: int, log: str, **extra) -> None:
+        """Fire progress event to bus for broadcast to all clients."""
+        hass.bus.async_fire(
+            "smart_dashboards_hard_refresh_progress",
+            {"step": step, "progress": progress, "log": log, **extra},
         )
 
     config_manager = hass.data[DOMAIN].get("config_manager")
@@ -3379,11 +3400,19 @@ async def websocket_hard_refresh_statistics(
         connection.send_error(msg_id, "not_ready", "Config manager not initialized")
         return
 
-    # Acknowledge subscription immediately so frontend's subscribeMessage() resolves
-    # This allows progress events to be received properly
-    connection.send_result(msg_id)
+    # Acknowledge the command immediately
+    connection.send_result(msg_id, {"success": True})
+
+    # Build room name lookup for detailed logging
+    room_names: dict[str, str] = {}
+    for room in config_manager.energy_config.get("rooms", []):
+        rid = room.get("id", room["name"].lower().replace(" ", "_"))
+        room_names[rid] = room.get("name", rid)
 
     try:
+        # Fire "started" event so ALL clients show the modal
+        send_progress("initializing", 0, "Hard refresh started...", started=True)
+
         # Step 1: Clear caches
         send_progress("clear_cache", 5, "Clearing statistics caches...")
         _clear_recorder_derived_caches()
@@ -3430,16 +3459,17 @@ async def websocket_hard_refresh_statistics(
 
         recorder_wh = 0.0
         recorder_days: set[str] = set()
+        all_expected_days: set[str] = set()
+        room_day_wh: dict[str, dict[str, float]] = {}
 
         if start_dt and end_dt and (entity_to_room or switch_specs):
-            # Query each entity and track progress
+            # Query each entity and track progress with per-appliance logging
             total_sources = num_entities + num_switches
             completed = 0
-            room_day_wh: dict[str, dict[str, float]] = {}
 
             sem = asyncio.Semaphore(_STATISTICS_QUERY_CONCURRENCY)
 
-            async def query_entity(eid: str, room_id: str) -> tuple[str, float, dict[str, float]]:
+            async def query_entity(eid: str, room_id: str) -> tuple[str, str, float, dict[str, float]]:
                 async with sem:
                     wh, by_day = await hass.async_add_executor_job(
                         _sync_integrate_entity_wh_total_and_by_day,
@@ -3448,9 +3478,9 @@ async def websocket_hard_refresh_statistics(
                         start_dt,
                         end_dt,
                     )
-                return room_id, float(wh), by_day
+                return eid, room_id, float(wh), by_day
 
-            async def query_switch(spec: dict[str, Any]) -> tuple[str, float, dict[str, float]]:
+            async def query_switch(spec: dict[str, Any]) -> tuple[str, str, float, dict[str, float]]:
                 async with sem:
                     wh, by_day = await hass.async_add_executor_job(
                         _sync_integrate_switch_constant_wh_total_and_by_day,
@@ -3460,41 +3490,49 @@ async def websocket_hard_refresh_statistics(
                         start_dt,
                         end_dt,
                     )
-                return spec["room_id"], float(wh), by_day
+                return spec["switch_entity"], spec["room_id"], float(wh), by_day
 
             # Run queries in batches for progress updates
             all_coros = []
-            all_coros.extend((eid, query_entity(eid, rid)) for eid, rid in entity_to_room.items())
-            all_coros.extend((s["switch_entity"], query_switch(s)) for s in switch_specs)
+            all_coros.extend(query_entity(eid, rid) for eid, rid in entity_to_room.items())
+            all_coros.extend(query_switch(s) for s in switch_specs)
 
-            for i, (source_id, coro) in enumerate(all_coros):
+            send_progress("appliance_calc", 22, "Calculating appliance usage...")
+
+            for i, coro in enumerate(all_coros):
                 try:
-                    room_id, wh, by_day = await coro
+                    source_id, room_id, wh, by_day = await coro
                     recorder_wh += wh
                     recorder_days.update(by_day.keys())
                     rmap = room_day_wh.setdefault(room_id, {})
                     for dkey, dwh in by_day.items():
                         rmap[dkey] = rmap.get(dkey, 0.0) + float(dwh)
-                except Exception as err:
-                    _LOGGER.warning("Hard refresh: error querying %s: %s", source_id, err)
 
-                completed += 1
-                pct = 22 + int((completed / total_sources) * 40)  # 22% to 62%
-                if completed % 5 == 0 or completed == total_sources:
+                    # Log each appliance calculation
+                    room_name = room_names.get(room_id, room_id)
+                    kwh = wh / 1000.0
                     send_progress(
-                        "recorder_query",
-                        pct,
-                        f"Queried {completed}/{total_sources} sources ({recorder_wh/1000:.2f} kWh so far)",
+                        "appliance_calc",
+                        22 + int(((i + 1) / total_sources) * 38),  # 22% to 60%
+                        f"  {source_id}: {kwh:.3f} kWh → {room_name}",
+                    )
+                except Exception as err:
+                    _LOGGER.warning("Hard refresh: error querying source: %s", err)
+                    send_progress(
+                        "appliance_calc",
+                        22 + int(((i + 1) / total_sources) * 38),
+                        f"  Error: {err}",
                     )
 
+                completed += 1
+
             send_progress(
-                "recorder_query",
-                62,
-                f"Recorder done: {recorder_wh/1000:.2f} kWh across {len(recorder_days)} days",
+                "appliance_calc",
+                60,
+                f"Appliances done: {recorder_wh/1000:.2f} kWh from {completed} sources",
             )
 
             # Step 5: LTS fallback for missing days
-            all_expected_days: set[str] = set()
             cur = start_dt
             while cur <= end_dt:
                 all_expected_days.add(cur.strftime("%Y-%m-%d"))
@@ -3505,7 +3543,7 @@ async def websocket_hard_refresh_statistics(
             if missing_days and entity_to_room:
                 send_progress(
                     "lts_fallback",
-                    65,
+                    62,
                     f"LTS fallback: {len(missing_days)} days missing, querying Long-Term Statistics...",
                 )
 
@@ -3532,20 +3570,32 @@ async def websocket_hard_refresh_statistics(
 
                 send_progress(
                     "lts_fallback",
-                    75,
+                    68,
                     f"LTS added {lts_wh_added/1000:.2f} kWh for {len(lts_days_filled)} days",
                 )
             else:
-                send_progress("lts_fallback", 75, "No LTS fallback needed (all days have data)")
+                send_progress("lts_fallback", 68, "No LTS fallback needed (all days have data)")
 
-        # Step 6: Build full statistics payload
+            # Step 6: Room summaries
+            send_progress("room_summary", 70, "Room summaries:")
+            for rid, day_map in room_day_wh.items():
+                room_total_kwh = sum(day_map.values()) / 1000.0
+                room_name = room_names.get(rid, rid)
+                send_progress("room_summary", 72, f"  {room_name}: {room_total_kwh:.2f} kWh")
+
+            # Whole home total
+            whole_home_wh = sum(sum(d.values()) for d in room_day_wh.values())
+            whole_home_kwh = whole_home_wh / 1000.0
+            send_progress("whole_home", 75, f"Whole home (recorder): {whole_home_kwh:.2f} kWh")
+
+        # Step 7: Build full statistics payload
         send_progress("build_payload", 78, "Building statistics payload...")
         result = await async_build_statistics_payload(
             hass, config_manager, date_start=None, date_end=None
         )
         send_progress("build_payload", 85, f"Payload built: {result.get('total_kwh', 0):.2f} kWh total")
 
-        # Step 7: Build billing daily history
+        # Step 8: Build billing daily history
         send_progress("daily_history", 88, "Building daily billing history...")
         try:
             daily_history = await async_build_billing_daily_history_from_recorder(
@@ -3558,45 +3608,39 @@ async def websocket_hard_refresh_statistics(
             _LOGGER.warning("Hard refresh: daily_history failed: %s", err)
             send_progress("daily_history", 92, f"Daily history warning: {err}")
 
-        # Step 8: Save to JSON cache
+        # Step 9: Save to JSON cache
         send_progress("save_cache", 95, "Saving to statistics cache...")
         to_save = dict(result)
         to_save.pop("statistics_pending", None)
         await config_manager.async_save_statistics_cache(to_save)
         send_progress("save_cache", 98, "Cache saved")
 
-        # Step 9: Fire event for live UI push
+        # Step 10: Fire event for live UI push (statistics data)
         hass.bus.async_fire("smart_dashboards_statistics_updated", {"data": to_save})
 
-        # Send final complete event with result data (frontend watches for complete=True)
-        final_data = {
-            "step": "complete",
-            "progress": 100,
-            "log": "Hard refresh complete!",
-            "complete": True,
-            "success": True,
-            "total_kwh": result.get("total_kwh", 0),
-            "date_start": start,
-            "date_end": end,
-            "recorder_days": len(recorder_days),
-            "total_days": len(all_expected_days) if start_dt and end_dt else 0,
-        }
-        connection.send_message(websocket_api.event_message(msg_id, final_data))
+        # Send final complete event (broadcast to all clients)
+        send_progress(
+            "complete",
+            100,
+            "Hard refresh complete!",
+            complete=True,
+            success=True,
+            total_kwh=result.get("total_kwh", 0),
+            date_start=start,
+            date_end=end,
+            recorder_days=len(recorder_days),
+            total_days=len(all_expected_days),
+        )
 
     except Exception as err:
         _LOGGER.exception("Hard refresh failed: %s", err)
-        connection.send_message(
-            websocket_api.event_message(
-                msg_id,
-                {
-                    "step": "error",
-                    "progress": 0,
-                    "log": f"Error: {err}",
-                    "complete": True,
-                    "success": False,
-                    "error": str(err),
-                },
-            )
+        send_progress(
+            "error",
+            0,
+            f"Error: {err}",
+            complete=True,
+            success=False,
+            error=str(err),
         )
 
 
