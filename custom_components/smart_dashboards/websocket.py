@@ -1266,6 +1266,13 @@ def _sync_integrate_entity_wh_total_and_by_day(
             no_attributes=False,
         )
     states = states_dict.get(entity_id) or []
+    if not states:
+        _LOGGER.debug(
+            "Recorder returned no states for %s in %s..%s (kWh integration will be 0)",
+            entity_id,
+            start_dt.isoformat(),
+            end_dt.isoformat(),
+        )
     total = _integrate_power_to_wh_clipped(states, start_dt, end_dt)
     by_day = _integrate_power_to_wh_by_local_date(states, start_dt, end_dt)
     return total, by_day
@@ -1296,6 +1303,13 @@ def _sync_integrate_switch_constant_wh_total_and_by_day(
             no_attributes=False,
         )
     states = states_dict.get(switch_entity) or []
+    if not states:
+        _LOGGER.debug(
+            "Recorder returned no states for switch %s in %s..%s (constant-W integration will be 0)",
+            switch_entity,
+            start_dt.isoformat(),
+            end_dt.isoformat(),
+        )
     total = _integrate_switch_constant_wh(states, start_dt, end_dt, watts)
     by_day = _integrate_switch_constant_wh_by_local_date(
         states, start_dt, end_dt, watts
