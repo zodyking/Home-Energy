@@ -13885,13 +13885,6 @@ class EnergyPanel extends HTMLElement {
         this._openGraph('stat_total_wh', null, null, this._statisticsGraphDateRange());
       });
     }
-    const statRefreshBtn = this.shadowRoot.querySelector('#stat-refresh-cache');
-    if (statRefreshBtn) {
-      statRefreshBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._showHardRefreshModal();
-      });
-    }
     this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((seg) => {
       seg.addEventListener('click', (e) => {
         e.preventDefault();
@@ -14068,6 +14061,15 @@ class EnergyPanel extends HTMLElement {
         });
       });
     });
+
+    // Statistics hard refresh button
+    const statRefreshBtn = this.shadowRoot.querySelector('#stat-refresh-cache');
+    if (statRefreshBtn) {
+      statRefreshBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._showHardRefreshModal();
+      });
+    }
 
     // Toggle room details
     this.shadowRoot.querySelectorAll('.toggle-room-btn').forEach(btn => {
