@@ -1281,6 +1281,27 @@ def _sync_integrate_entity_wh_total_and_by_day(
         )
     total = _integrate_power_to_wh_clipped(states, start_dt, end_dt)
     by_day = _integrate_power_to_wh_by_local_date(states, start_dt, end_dt)
+
+    if total > 0 or by_day:
+        _LOGGER.debug(
+            "Entity %s integrated: total=%.2f Wh, days=%s",
+            entity_id,
+            total,
+            list(by_day.keys()),
+        )
+    elif states:
+        bad_states = sum(
+            1 for s in states if str(s.state) in ("unknown", "unavailable", "")
+        )
+        first_st = states[0].state if states else "none"
+        _LOGGER.debug(
+            "Entity %s integrated: 0 Wh (states=%d, bad=%d, first_state=%s)",
+            entity_id,
+            len(states),
+            bad_states,
+            first_st,
+        )
+
     return total, by_day
 
 
@@ -1320,6 +1341,25 @@ def _sync_integrate_switch_constant_wh_total_and_by_day(
     by_day = _integrate_switch_constant_wh_by_local_date(
         states, start_dt, end_dt, watts
     )
+
+    if total > 0 or by_day:
+        _LOGGER.debug(
+            "Switch %s integrated: total=%.2f Wh, days=%s",
+            switch_entity,
+            total,
+            list(by_day.keys()),
+        )
+    elif states:
+        on_states = sum(1 for s in states if str(s.state).lower() in ("on", "true", "1"))
+        first_st = states[0].state if states else "none"
+        _LOGGER.debug(
+            "Switch %s integrated: 0 Wh (states=%d, on=%d, first_state=%s)",
+            switch_entity,
+            len(states),
+            on_states,
+            first_st,
+        )
+
     return total, by_day
 
 
@@ -1611,6 +1651,70 @@ async def async_build_billing_daily_history_from_recorder(
                     )
 
     return result
+
+
+def _fetch_statistics_sensor_values(
+    hass: HomeAssistant,
+    config_manager,
+) -> dict[str, Any]:
+    """Fetch fresh sensor values for statistics (used to refresh stale cache).
+
+    Returns a dict with 'sensor_values' and 'sensor_meta' keys.
+    This is a lightweight synchronous function that only reads current states.
+    """
+    stats_settings = config_manager.energy_config.get("statistics_settings", {})
+    sensor_values: dict[str, float | None] = {
+        "current_usage": None,
+        "projected_usage": None,
+        "kwh_cost": None,
+    }
+    sensor_meta: dict[str, Any] = {
+        "supplier_last_updated": None,
+        "sensor_states": {},
+    }
+
+    usage_last_changed: datetime | None = None
+    fallback_last_changed: datetime | None = None
+
+    for key, sensor_key in [
+        ("current_usage", "current_usage_sensor"),
+        ("projected_usage", "projected_usage_sensor"),
+        ("kwh_cost", "kwh_cost_sensor"),
+    ]:
+        ent = (stats_settings.get(sensor_key) or "").strip()
+        if not ent:
+            sensor_meta["sensor_states"][key] = {"entity": None, "raw": None}
+            continue
+        state = hass.states.get(ent)
+        if state is None:
+            sensor_meta["sensor_states"][key] = {"entity": ent, "raw": "entity_not_found"}
+            continue
+        raw_state = state.state
+        sensor_meta["sensor_states"][key] = {"entity": ent, "raw": raw_state}
+        lc = state.last_changed
+        if lc:
+            if key == "current_usage":
+                usage_last_changed = lc
+            elif key in ("projected_usage", "kwh_cost"):
+                if fallback_last_changed is None or lc > fallback_last_changed:
+                    fallback_last_changed = lc
+        if raw_state not in ("unknown", "unavailable", ""):
+            try:
+                val = str(raw_state).strip()
+                if key == "kwh_cost":
+                    val = val.replace("$", "").replace(",", "").strip()
+                sensor_values[key] = float(val)
+            except (ValueError, TypeError):
+                pass
+
+    supplier_meta_ts = usage_last_changed or fallback_last_changed
+    if supplier_meta_ts is not None:
+        sensor_meta["supplier_last_updated"] = dt_util.as_local(supplier_meta_ts).isoformat()
+
+    return {
+        "sensor_values": sensor_values,
+        "sensor_meta": sensor_meta,
+    }
 
 
 async def async_build_statistics_payload(
@@ -1993,9 +2097,12 @@ async def websocket_get_statistics(
     if date_start is None and date_end is None:
         json_cache = config_manager.statistics_cache_data
         if json_cache:
-            connection.send_result(
-                msg["id"], {**json_cache, "period_source": period_source}
-            )
+            # Always fetch fresh sensor values (they may have become available since cache was saved)
+            fresh_sensors = _fetch_statistics_sensor_values(hass, config_manager)
+            merged = {**json_cache, "period_source": period_source}
+            merged["sensor_values"] = fresh_sensors["sensor_values"]
+            merged["sensor_meta"] = fresh_sensors["sensor_meta"]
+            connection.send_result(msg["id"], merged)
             return
         # No snapshot yet: return fast shell (no recorder) and prime full build in background
         shell = await async_build_statistics_payload(
