@@ -1614,7 +1614,8 @@ async def _compute_kwh_from_history(
 
     sem = asyncio.Semaphore(_STATISTICS_QUERY_CONCURRENCY)
 
-    async def one_plug(eid: str, room_id: str) -> tuple[str, float, dict[str, float]]:
+    # Return (entity_id, room_id, wh, by_day) to track per-entity data
+    async def one_plug(eid: str, room_id: str) -> tuple[str, str, float, dict[str, float]]:
         async with sem:
             wh, by_day = await hass.async_add_executor_job(
                 _sync_integrate_entity_wh_total_and_by_day,
@@ -1623,9 +1624,9 @@ async def _compute_kwh_from_history(
                 start_dt,
                 end_dt,
             )
-        return room_id, float(wh), by_day
+        return eid, room_id, float(wh), by_day
 
-    async def one_switch(spec: dict[str, Any]) -> tuple[str, float, dict[str, float]]:
+    async def one_switch(spec: dict[str, Any]) -> tuple[str, str, float, dict[str, float]]:
         async with sem:
             wh, by_day = await hass.async_add_executor_job(
                 _sync_integrate_switch_constant_wh_total_and_by_day,
@@ -1635,7 +1636,7 @@ async def _compute_kwh_from_history(
                 start_dt,
                 end_dt,
             )
-        return spec["room_id"], float(wh), by_day
+        return spec["switch_entity"], spec["room_id"], float(wh), by_day
 
     coros: list = [one_plug(eid, rid) for eid, rid in entity_to_room.items()]
     coros.extend(one_switch(s) for s in switch_specs)
@@ -1647,21 +1648,17 @@ async def _compute_kwh_from_history(
     room_day_wh: dict[str, dict[str, float]] = {}
     total_wh = 0.0
 
-    # Track which entities have data for which days (for LTS fallback)
+    # Track which days EACH entity has data for (for per-entity LTS fallback)
     entity_days_with_data: dict[str, set[str]] = {}
 
-    for room_id, wh, by_day in results:
+    for entity_id, room_id, wh, by_day in results:
         total_wh += wh
         room_wh[room_id] = room_wh.get(room_id, 0.0) + wh
         rmap = room_day_wh.setdefault(room_id, {})
         for dkey, dwh in by_day.items():
             rmap[dkey] = rmap.get(dkey, 0.0) + float(dwh)
-
-    # Store entity -> days mapping for LTS fallback detection
-    # (results are indexed by room, so we need to track via entity_to_room)
-    for eid in entity_to_room:
-        entity_days_with_data[eid] = set()
-    # We'll detect missing days from room_day_wh below
+        # Track which days this specific entity has data
+        entity_days_with_data[entity_id] = set(by_day.keys())
 
     # Generate all expected days in the date range
     all_expected_days: set[str] = set()
@@ -1670,54 +1667,69 @@ async def _compute_kwh_from_history(
         all_expected_days.add(cur.strftime("%Y-%m-%d"))
         cur += timedelta(days=1)
 
-    # Find days with no recorder data across ALL rooms
-    days_with_any_data: set[str] = set()
-    for rmap in room_day_wh.values():
-        days_with_any_data.update(rmap.keys())
+    # PER-ENTITY LTS fallback: Find entities missing days and query LTS for each
+    # This is critical: different entities may have different missing days
+    entities_needing_lts: list[str] = []
+    for eid in entity_to_room:
+        entity_days = entity_days_with_data.get(eid, set())
+        missing_for_entity = all_expected_days - entity_days
+        if missing_for_entity:
+            entities_needing_lts.append(eid)
 
-    missing_days = all_expected_days - days_with_any_data
-
-    # LTS fallback: query Long-Term Statistics for missing days
-    if missing_days and entity_to_room:
+    if entities_needing_lts:
         _LOGGER.debug(
-            "LTS fallback triggered: %d days missing from recorder (%s), querying LTS for %d entities",
-            len(missing_days),
-            sorted(missing_days)[:5],
+            "LTS fallback: %d/%d entities have missing days, querying LTS",
+            len(entities_needing_lts),
             len(entity_to_room),
         )
 
-        # Query LTS for ALL days (it will return whatever it has)
+        # Query LTS for ALL entities that have ANY missing days
         lts_result = await hass.async_add_executor_job(
             _sync_fetch_lts_wh_by_day,
             hass,
-            list(entity_to_room.keys()),
+            entities_needing_lts,
             start_dt,
             end_dt,
         )
 
-        # Merge LTS data ONLY for missing days
+        # Merge LTS data for each entity's missing days
         lts_wh_added = 0.0
         lts_days_filled: set[str] = set()
+        lts_entities_filled = 0
+
         for eid, lts_day_wh in lts_result.items():
             room_id = entity_to_room.get(eid)
             if not room_id:
                 continue
+
+            # Get days this entity already has from recorder
+            entity_recorder_days = entity_days_with_data.get(eid, set())
+            # Missing days for THIS entity specifically
+            missing_for_entity = all_expected_days - entity_recorder_days
+
             rmap = room_day_wh.setdefault(room_id, {})
+            entity_wh_added = 0.0
+
             for day_key, wh in lts_day_wh.items():
-                if day_key in missing_days and rmap.get(day_key, 0.0) == 0.0:
-                    # Only fill in if recorder had no data for this day
+                # Only add if this day is missing for THIS entity
+                if day_key in missing_for_entity:
                     rmap[day_key] = rmap.get(day_key, 0.0) + wh
                     room_wh[room_id] = room_wh.get(room_id, 0.0) + wh
                     total_wh += wh
                     lts_wh_added += wh
+                    entity_wh_added += wh
                     lts_days_filled.add(day_key)
+
+            if entity_wh_added > 0:
+                lts_entities_filled += 1
 
         if lts_wh_added > 0:
             _LOGGER.debug(
-                "LTS fallback added %.2f Wh across %d days: %s",
+                "LTS fallback added %.2f Wh from %d entities across %d days: %s",
                 lts_wh_added,
+                lts_entities_filled,
                 len(lts_days_filled),
-                sorted(lts_days_filled),
+                sorted(lts_days_filled)[:10],
             )
 
     if ds_key[0] and ds_key[1]:
