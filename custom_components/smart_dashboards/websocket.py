@@ -39,6 +39,12 @@ from .room_ratings import (
     recompute_room_ratings,
     save_ratings,
 )
+from .statistics_aggregation import (
+    MODE_ENERGY_CHANGE,
+    MODE_POWER_INTEGRATION,
+    entity_statistics_mode,
+    sync_sum_energy_change_wh,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -261,6 +267,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_clear_statistics_cache)
     websocket_api.async_register_command(hass, websocket_hard_refresh_statistics)
     websocket_api.async_register_command(hass, websocket_get_statistics_sources)
+    websocket_api.async_register_command(hass, websocket_get_statistics_source_breakdown)
     websocket_api.async_register_command(hass, websocket_get_zone_health_status)
     websocket_api.async_register_command(hass, websocket_refresh_zone_health)
     websocket_api.async_register_command(hass, websocket_get_room_ratings)
@@ -1233,14 +1240,30 @@ def _collect_statistics_energy_sources(
                     })
             else:
                 # For outlet/single_outlet/stove/microwave/minisplit/fridge:
-                # 1. Check explicit power_sensor_entity (preferred if user configured it)
+                # Dedupe: same entity_id as both power_sensor and plug must count once only.
+                seen_eids: set[str] = set()
                 pe = outlet.get("power_sensor_entity")
                 if pe and isinstance(pe, str) and pe.strip():
-                    entity_to_room[pe.strip()] = room_id
-                # 2. Also collect plug entities (may be sensor.* or switch.* with current_power_w)
+                    e = pe.strip()
+                    entity_to_room[e] = room_id
+                    seen_eids.add(e)
                 for eid in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
                     if eid and isinstance(eid, str) and eid.strip():
-                        entity_to_room[eid.strip()] = room_id
+                        e = eid.strip()
+                        if e in seen_eids:
+                            continue
+                        entity_to_room[e] = room_id
+                        seen_eids.add(e)
+                ps = (pe.strip() if pe and isinstance(pe, str) else "") or ""
+                p1 = (outlet.get("plug1_entity") or "").strip()
+                p2 = (outlet.get("plug2_entity") or "").strip()
+                if ps and ((p1 and p1 != ps) or (p2 and p2 != ps)):
+                    _LOGGER.warning(
+                        "Outlet %s in room %s has power_sensor_entity plus different plug "
+                        "entities — if they measure the same load, statistics will double count",
+                        outlet.get("name", "?"),
+                        room_id,
+                    )
 
     return entity_to_room, switch_specs
 
@@ -1465,6 +1488,24 @@ def _sync_integrate_entity_wh_total_and_by_day(
     return total, by_day
 
 
+def _sync_compute_plug_wh_total_and_by_day(
+    hass: HomeAssistant,
+    entity_id: str,
+    start_dt,
+    end_dt,
+) -> tuple[float, dict[str, float], dict[str, Any]]:
+    """Energy sensors: sum hourly statistics *change*; else recorder power integration."""
+    if entity_statistics_mode(hass, entity_id) == MODE_ENERGY_CHANGE:
+        total_wh, by_day, meta = sync_sum_energy_change_wh(
+            hass, entity_id, start_dt, end_dt
+        )
+        return total_wh, by_day, meta
+    total_wh, by_day = _sync_integrate_entity_wh_total_and_by_day(
+        hass, entity_id, start_dt, end_dt
+    )
+    return total_wh, by_day, {"method": MODE_POWER_INTEGRATION}
+
+
 def _sync_integrate_switch_constant_wh_total_and_by_day(
     hass: HomeAssistant,
     switch_entity: str,
@@ -1559,20 +1600,27 @@ async def _compute_kwh_from_history(
     config_manager,
     start_date: str,
     end_date: str,
-) -> tuple[float, dict[str, float], dict[str, dict[str, float]]]:
-    """Compute kWh from HA recorder history over start_date..end_date (monitored loads).
-    Returns (total_wh, room_wh_map, room_day_wh_map) with room_day_wh_map[room_id][YYYY-MM-DD] = Wh."""
+    *,
+    return_breakdown: bool = False,
+) -> tuple[float, dict[str, float], dict[str, dict[str, float]], list[dict[str, Any]] | None]:
+    """Compute kWh over start_date..end_date for monitored loads.
+
+    Energy sensors use hourly statistics *change*; others use recorder power integration.
+    Returns (total_wh, room_wh_map, room_day_wh_map, source_breakdown); breakdown is None
+    unless return_breakdown is True. room_day_wh_map[room_id][YYYY-MM-DD] = Wh.
+    """
     from homeassistant.util import dt as dt_util
 
     ds_key = (str(start_date or "").strip(), str(end_date or "").strip())
-    if ds_key[0] and ds_key[1]:
+    if ds_key[0] and ds_key[1] and not return_breakdown:
         now_m = time.monotonic()
         ttl = _statistics_cache_ttl_seconds(ds_key[1], config_manager)
         hit = _KWH_HISTORY_CACHE.get(ds_key)
         if hit:
             cached_at, payload = hit
             if now_m - cached_at < ttl:
-                return payload
+                tw, rw, rd = payload
+                return tw, rw, rd, None
 
     entity_to_room, switch_specs = _collect_statistics_energy_sources(config_manager)
 
@@ -1597,37 +1645,40 @@ async def _compute_kwh_from_history(
         start_dt = dt_util.parse_datetime(f"{start_date} 00:00:00")
         end_dt = dt_util.parse_datetime(f"{end_date} 23:59:59")
         if start_dt is None or end_dt is None:
-            return 0.0, {}, {}
+            return 0.0, {}, {}, None
         start_dt = dt_util.as_utc(start_dt)
         end_dt = dt_util.as_utc(end_dt)
     except (ValueError, TypeError):
-        return 0.0, {}, {}
+        return 0.0, {}, {}, None
 
     now_utc = dt_util.utcnow()
     if start_dt > now_utc:
-        return 0.0, {}, {}
+        return 0.0, {}, {}, None
     end_dt = min(end_dt, now_utc)
     if end_dt < start_dt:
-        return 0.0, {}, {}
+        return 0.0, {}, {}, None
 
     if not entity_to_room and not switch_specs:
-        return 0.0, {}, {}
+        return 0.0, {}, {}, None
 
     sem = asyncio.Semaphore(_STATISTICS_QUERY_CONCURRENCY)
 
-    # Return (entity_id, room_id, wh, by_day) to track per-entity data
-    async def one_plug(eid: str, room_id: str) -> tuple[str, str, float, dict[str, float]]:
+    async def one_plug(
+        eid: str, room_id: str
+    ) -> tuple[str, str, float, dict[str, float], dict[str, Any]]:
         async with sem:
-            wh, by_day = await hass.async_add_executor_job(
-                _sync_integrate_entity_wh_total_and_by_day,
+            wh, by_day, meta = await hass.async_add_executor_job(
+                _sync_compute_plug_wh_total_and_by_day,
                 hass,
                 eid,
                 start_dt,
                 end_dt,
             )
-        return eid, room_id, float(wh), by_day
+        return eid, room_id, float(wh), by_day, meta
 
-    async def one_switch(spec: dict[str, Any]) -> tuple[str, str, float, dict[str, float]]:
+    async def one_switch(
+        spec: dict[str, Any],
+    ) -> tuple[str, str, float, dict[str, float], dict[str, Any]]:
         async with sem:
             wh, by_day = await hass.async_add_executor_job(
                 _sync_integrate_switch_constant_wh_total_and_by_day,
@@ -1637,12 +1688,16 @@ async def _compute_kwh_from_history(
                 start_dt,
                 end_dt,
             )
-        return spec["switch_entity"], spec["room_id"], float(wh), by_day
+        meta = {
+            "method": "switch_constant",
+            "watts": float(spec["watts"]),
+        }
+        return spec["switch_entity"], spec["room_id"], float(wh), by_day, meta
 
     coros: list = [one_plug(eid, rid) for eid, rid in entity_to_room.items()]
     coros.extend(one_switch(s) for s in switch_specs)
     if not coros:
-        return 0.0, {}, {}
+        return 0.0, {}, {}, None
 
     results = await asyncio.gather(*coros)
     room_wh: dict[str, float] = {}
@@ -1652,14 +1707,23 @@ async def _compute_kwh_from_history(
     # Track which days EACH entity has data for (for per-entity LTS fallback)
     entity_days_with_data: dict[str, set[str]] = {}
 
-    for entity_id, room_id, wh, by_day in results:
+    source_breakdown: list[dict[str, Any]] = []
+    for entity_id, room_id, wh, by_day, meta in results:
         total_wh += wh
         room_wh[room_id] = room_wh.get(room_id, 0.0) + wh
         rmap = room_day_wh.setdefault(room_id, {})
         for dkey, dwh in by_day.items():
             rmap[dkey] = rmap.get(dkey, 0.0) + float(dwh)
-        # Track which days this specific entity has data
         entity_days_with_data[entity_id] = set(by_day.keys())
+        if return_breakdown:
+            row: dict[str, Any] = {
+                "entity_id": entity_id,
+                "room_id": room_id,
+                "wh": wh,
+                "kwh": round(wh / 1000.0, 4),
+            }
+            row.update(meta)
+            source_breakdown.append(row)
 
     # Generate all expected days in the date range
     all_expected_days: set[str] = set()
@@ -1672,6 +1736,8 @@ async def _compute_kwh_from_history(
     # This is critical: different entities may have different missing days
     entities_needing_lts: list[str] = []
     for eid in entity_to_room:
+        if entity_statistics_mode(hass, eid) == MODE_ENERGY_CHANGE:
+            continue
         entity_days = entity_days_with_data.get(eid, set())
         missing_for_entity = all_expected_days - entity_days
         if missing_for_entity:
@@ -1679,7 +1745,7 @@ async def _compute_kwh_from_history(
 
     if entities_needing_lts:
         _LOGGER.debug(
-            "LTS fallback: %d/%d entities have missing days, querying LTS",
+            "LTS fallback: %d/%d power-integration entities have missing days, querying LTS",
             len(entities_needing_lts),
             len(entity_to_room),
         )
@@ -1723,6 +1789,11 @@ async def _compute_kwh_from_history(
 
             if entity_wh_added > 0:
                 lts_entities_filled += 1
+            if return_breakdown and entity_wh_added > 0:
+                for row in source_breakdown:
+                    if row.get("entity_id") == eid:
+                        row["lts_fallback_wh_added"] = round(entity_wh_added, 2)
+                        break
 
         if lts_wh_added > 0:
             _LOGGER.debug(
@@ -1733,10 +1804,12 @@ async def _compute_kwh_from_history(
                 sorted(lts_days_filled)[:10],
             )
 
-    if ds_key[0] and ds_key[1]:
+    if ds_key[0] and ds_key[1] and not return_breakdown:
         _KWH_HISTORY_CACHE[ds_key] = (time.monotonic(), (total_wh, room_wh, room_day_wh))
 
-    return total_wh, room_wh, room_day_wh
+    return total_wh, room_wh, room_day_wh, (
+        source_breakdown if return_breakdown else None
+    )
 
 
 async def async_build_billing_daily_history_from_recorder(
@@ -1784,7 +1857,7 @@ async def async_build_billing_daily_history_from_recorder(
     room_day_wh_map: dict[str, dict[str, float]] = {}
     if needs_recorder:
         try:
-            _, _, room_day_wh_map = await _compute_kwh_from_history(
+            _, _, room_day_wh_map, _ = await _compute_kwh_from_history(
                 hass, config_manager, date_start, effective_end
             )
         except Exception as err:
@@ -2084,7 +2157,7 @@ async def async_build_statistics_payload(
         room_day_wh_map: dict[str, dict[str, float]] = {}
     else:
         try:
-            total_wh, room_wh_map, room_day_wh_map = await _compute_kwh_from_history(
+            total_wh, room_wh_map, room_day_wh_map, _ = await _compute_kwh_from_history(
                 hass, config_manager, start, end
             )
         except Exception as err:  # recorder not ready or history unavailable
@@ -2111,20 +2184,29 @@ async def async_build_statistics_payload(
     ]
 
     # Merge daily_totals with recorder/LTS data using the SAME rules as billing:
-    # - For today: use live ledger
+    # - For today: max(live ledger, recorder) per room — ledger can omit sources statistics includes
     # - For past days with snapshot: use max(snapshot, recorder) per room
     # - When snapshot total is ~0 but recorder has data: prefer recorder
     # - For days without snapshot: leave recorder/LTS data as-is
     for d in stat_day_keys:
         if d == today:
-            # Today: use live ledger values
             snap = config_manager._build_today_totals()
             if snap is not None:
                 snap_rooms = snap.get("rooms") or {}
+                snap_total_wh = float(snap.get("total_wh", 0.0))
+                rec_total = sum(
+                    float(room_day_wh_map.get(rid, {}).get(d, 0.0))
+                    for rid in all_room_ids
+                )
+                snap_total_zero = snap_total_wh <= 1e-6
                 for rid in all_room_ids:
-                    wh = float((snap_rooms.get(rid) or {}).get("wh", 0.0))
+                    wh_snap = float((snap_rooms.get(rid) or {}).get("wh", 0.0))
+                    wh_rec = float(room_day_wh_map.get(rid, {}).get(d, 0.0))
                     rmap = room_day_wh_map.setdefault(rid, {})
-                    rmap[d] = wh
+                    if snap_total_zero and rec_total > 1e-6:
+                        rmap[d] = wh_rec
+                    else:
+                        rmap[d] = max(wh_snap, wh_rec)
         elif d in daily_totals:
             # Past day with snapshot: apply max merge logic (same as billing)
             snap = daily_totals[d]
@@ -3471,8 +3553,8 @@ async def websocket_hard_refresh_statistics(
 
             async def query_entity(eid: str, room_id: str) -> tuple[str, str, float, dict[str, float]]:
                 async with sem:
-                    wh, by_day = await hass.async_add_executor_job(
-                        _sync_integrate_entity_wh_total_and_by_day,
+                    wh, by_day, _meta = await hass.async_add_executor_job(
+                        _sync_compute_plug_wh_total_and_by_day,
                         hass,
                         eid,
                         start_dt,
@@ -3588,6 +3670,26 @@ async def websocket_hard_refresh_statistics(
             whole_home_kwh = whole_home_wh / 1000.0
             send_progress("whole_home", 75, f"Whole home (recorder): {whole_home_kwh:.2f} kWh")
 
+        else:
+            if not (start_dt and end_dt):
+                send_progress(
+                    "recorder_query",
+                    35,
+                    "Skipping appliance recorder queries (invalid or missing billing date range).",
+                )
+            elif not entity_to_room and not switch_specs:
+                send_progress(
+                    "recorder_query",
+                    35,
+                    "No energy sources configured for statistics (no room power sensors or switch loads).",
+                )
+            else:
+                send_progress(
+                    "recorder_query",
+                    35,
+                    "Skipping per-appliance recorder pass.",
+                )
+
         # Step 7: Build full statistics payload
         send_progress("build_payload", 78, "Building statistics payload...")
         result = await async_build_statistics_payload(
@@ -3685,6 +3787,58 @@ async def websocket_get_statistics_sources(
         "power_sensors": power_sensors,
         "switch_sources": switch_sources,
     })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_statistics_source_breakdown",
+        vol.Optional("date_start"): str,
+        vol.Optional("date_end"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_statistics_source_breakdown(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Per-entity Wh/kWh and aggregation method for the statistics date range."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    ds = (msg.get("date_start") or "").strip() or None
+    de = (msg.get("date_end") or "").strip() or None
+    start, end, _ = config_manager.get_statistics_date_range(
+        date_start=ds, date_end=de
+    )
+    if not start or not end:
+        today = dt_util.now().strftime("%Y-%m-%d")
+        start = (dt_util.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        end = today
+
+    try:
+        _tw, _rw, _rd, breakdown = await _compute_kwh_from_history(
+            hass,
+            config_manager,
+            start,
+            end,
+            return_breakdown=True,
+        )
+    except Exception as err:
+        _LOGGER.warning("Statistics source breakdown failed: %s", err)
+        connection.send_error(msg["id"], "stats_failed", str(err))
+        return
+
+    connection.send_result(
+        msg["id"],
+        {
+            "date_start": start,
+            "date_end": end,
+            "sources": breakdown or [],
+        },
+    )
 
 
 @websocket_api.websocket_command(

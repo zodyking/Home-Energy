@@ -2415,9 +2415,19 @@ class ConfigManager:
                         key = vent_like_energy_tracking_key(room_id, outlet)
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
+                    seen_e: set[str] = set()
+                    pe = outlet.get("power_sensor_entity")
+                    if pe and isinstance(pe, str) and pe.strip():
+                        e = pe.strip()
+                        seen_e.add(e)
+                        room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
-                        if e:
-                            room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
+                        if e and isinstance(e, str) and e.strip():
+                            e2 = e.strip()
+                            if e2 in seen_e:
+                                continue
+                            seen_e.add(e2)
+                            room_wh += self._day_energy_data.get(e2, {}).get("energy", 0.0)
 
             rooms_data[room_id] = {
                 "wh": round(room_wh, 2),
@@ -2476,9 +2486,19 @@ class ConfigManager:
                         key = vent_like_energy_tracking_key(rid, outlet)
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
+                    seen_e: set[str] = set()
+                    pe = outlet.get("power_sensor_entity")
+                    if pe and isinstance(pe, str) and pe.strip():
+                        e = pe.strip()
+                        seen_e.add(e)
+                        room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
-                        if e:
-                            room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
+                        if e and isinstance(e, str) and e.strip():
+                            e2 = e.strip()
+                            if e2 in seen_e:
+                                continue
+                            seen_e.add(e2)
+                            room_wh += self._day_energy_data.get(e2, {}).get("energy", 0.0)
             rooms_data[rid] = {
                 "wh": round(room_wh, 2),
                 "warnings": self._event_counts.get("room_warnings", {}).get(rid, 0),

@@ -880,9 +880,14 @@ export const lockIcon = `<svg viewBox="0 0 24 24"><path d="M18,8h-1V6c0-2.76-2.2
  * Show passcode modal and verify with backend
  * @param {ShadowRoot} shadowRoot - The shadow root to attach modal to
  * @param {object} hass - Home Assistant object for WS calls
+ * @param {{ title?: string, description?: string, submitLabel?: string, zIndex?: number }} [options] - Optional copy / stacking
  * @returns {Promise<boolean>} - True if passcode verified, false if cancelled
  */
-export function showPasscodeModal(shadowRoot, hass) {
+export function showPasscodeModal(shadowRoot, hass, options = {}) {
+  const title = options.title ?? 'Settings Locked';
+  const description = options.description ?? 'Enter your 4-digit passcode to access settings';
+  const submitLabel = options.submitLabel ?? 'Unlock';
+
   return new Promise((resolve) => {
     // Create modal HTML
     const modalOverlay = document.createElement('div');
@@ -892,11 +897,11 @@ export function showPasscodeModal(shadowRoot, hass) {
         <div class="passcode-header">
           <h3 class="passcode-title">
             ${lockIcon}
-            Settings Locked
+            <span class="passcode-title-label"></span>
           </h3>
         </div>
         <div class="passcode-body">
-          <p class="passcode-desc">Enter your 4-digit passcode to access settings</p>
+          <p class="passcode-desc"></p>
           <div class="passcode-input-wrapper">
             <input type="tel" class="passcode-digit" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
             <input type="tel" class="passcode-digit" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
@@ -913,11 +918,20 @@ export function showPasscodeModal(shadowRoot, hass) {
     `;
 
     shadowRoot.appendChild(modalOverlay);
+    if (options.zIndex != null) {
+      modalOverlay.style.zIndex = String(options.zIndex);
+    }
+
+    const titleLabel = modalOverlay.querySelector('.passcode-title-label');
+    const descEl = modalOverlay.querySelector('.passcode-desc');
+    if (titleLabel) titleLabel.textContent = title;
+    if (descEl) descEl.textContent = description;
 
     const digits = modalOverlay.querySelectorAll('.passcode-digit');
     const errorEl = modalOverlay.querySelector('.passcode-error');
     const cancelBtn = modalOverlay.querySelector('.passcode-cancel');
     const submitBtn = modalOverlay.querySelector('.passcode-submit');
+    submitBtn.textContent = submitLabel;
 
     // Focus first digit
     setTimeout(() => digits[0].focus(), 100);
@@ -1007,13 +1021,13 @@ export function showPasscodeModal(shadowRoot, hass) {
           });
           digits[0].focus();
           submitBtn.disabled = false;
-          submitBtn.textContent = 'Unlock';
+          submitBtn.textContent = submitLabel;
         }
       } catch (e) {
         console.error('Passcode verification failed:', e);
         errorEl.textContent = 'Verification failed';
         submitBtn.disabled = false;
-        submitBtn.textContent = 'Unlock';
+        submitBtn.textContent = submitLabel;
       }
     });
   });

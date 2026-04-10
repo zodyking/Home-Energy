@@ -2968,17 +2968,28 @@ class EnergyMonitor:
                         )
                     continue
 
-                # Get plug 1 power (state-change listener handles daily energy accumulation)
+                # Generic outlets: power_sensor_entity (matches statistics sources) + plug1/plug2, dedupe entity ids
+                seen_oe: set[str] = set()
+                pe = (outlet.get("power_sensor_entity") or "").strip()
+                if pe:
+                    seen_oe.add(pe)
+                    w_pe = self._get_power_value(pe)
+                    outlet_total_watts += w_pe
+                    self.config_manager.record_intraday_power(pe, w_pe)
+                    await self.config_manager.async_add_energy_reading(pe, w_pe, elapsed_seconds=1.0)
+
                 plug1_watts = 0.0
                 if outlet.get("plug1_entity"):
-                    plug1_watts = self._get_power_value(outlet["plug1_entity"])
-                    outlet_total_watts += plug1_watts
-                    # Record for intraday 24-hour charts
-                    self.config_manager.record_intraday_power(outlet["plug1_entity"], plug1_watts)
-                    # Add energy from actual reading (poll every 1s; state_change misses switch power + infrequent sensors)
-                    await self.config_manager.async_add_energy_reading(outlet["plug1_entity"], plug1_watts, elapsed_seconds=1.0)
+                    p1 = str(outlet["plug1_entity"]).strip()
+                    if p1 not in seen_oe:
+                        seen_oe.add(p1)
+                        plug1_watts = self._get_power_value(outlet["plug1_entity"])
+                        outlet_total_watts += plug1_watts
+                        self.config_manager.record_intraday_power(outlet["plug1_entity"], plug1_watts)
+                        await self.config_manager.async_add_energy_reading(
+                            outlet["plug1_entity"], plug1_watts, elapsed_seconds=1.0
+                        )
 
-                    # Check plug 1 shutoff threshold (only when budget exceeded)
                     plug1_shutoff = outlet.get("plug1_shutoff", 0)
                     plug1_switch = outlet.get("plug1_switch")
                     if budget_exceeded and plug1_shutoff > 0 and plug1_watts > plug1_shutoff and plug1_switch:
@@ -2996,17 +3007,18 @@ class EnergyMonitor:
                             plug_shutoff_threshold=int(plug1_shutoff),
                         )
 
-                # Get plug 2 power (state-change listener handles daily energy accumulation)
                 plug2_watts = 0.0
                 if outlet.get("plug2_entity"):
-                    plug2_watts = self._get_power_value(outlet["plug2_entity"])
-                    outlet_total_watts += plug2_watts
-                    # Record for intraday 24-hour charts
-                    self.config_manager.record_intraday_power(outlet["plug2_entity"], plug2_watts)
-                    # Add energy from actual reading (poll every 1s)
-                    await self.config_manager.async_add_energy_reading(outlet["plug2_entity"], plug2_watts, elapsed_seconds=1.0)
+                    p2 = str(outlet["plug2_entity"]).strip()
+                    if p2 not in seen_oe:
+                        seen_oe.add(p2)
+                        plug2_watts = self._get_power_value(outlet["plug2_entity"])
+                        outlet_total_watts += plug2_watts
+                        self.config_manager.record_intraday_power(outlet["plug2_entity"], plug2_watts)
+                        await self.config_manager.async_add_energy_reading(
+                            outlet["plug2_entity"], plug2_watts, elapsed_seconds=1.0
+                        )
 
-                    # Check plug 2 shutoff threshold (only when budget exceeded)
                     plug2_shutoff = outlet.get("plug2_shutoff", 0)
                     plug2_switch = outlet.get("plug2_switch")
                     if budget_exceeded and plug2_shutoff > 0 and plug2_watts > plug2_shutoff and plug2_switch:

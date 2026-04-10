@@ -149,6 +149,10 @@ class EnergyPanel extends HTMLElement {
     this._statsDiscrepancyModalEsc = null;
     this._statsRoomsPieInstance = null;
     this._statsPieRoomRows = null; // aligned with pie series for tooltips / selection
+    /** Per-entity kWh from get_statistics_source_breakdown (debug). */
+    this._statsSourceBreakdown = null;
+    this._statsSourceBreakdownLoading = false;
+    this._statsSourceBreakdownErr = null;
     /** Serializes async pie mount so concurrent _render() passes cannot stack ApexCharts. */
     this._statsPieSyncChain = Promise.resolve();
     this._statPieBillingDelegation = false;
@@ -333,6 +337,7 @@ class EnergyPanel extends HTMLElement {
       this._loading = false;
       this._render();
       this._startRefresh();
+      void this._subscribeToHardRefreshProgress();
       this._syncZoneHealthPollingFromConfig();
       queueMicrotask(() => {
         if (!this._showSettings && this._hass) {
@@ -385,11 +390,34 @@ class EnergyPanel extends HTMLElement {
 
     // Subscribe to live updates (only once)
     this._subscribeToStatisticsUpdates();
-    // Subscribe to hard refresh progress (broadcasts to ALL clients)
-    this._subscribeToHardRefreshProgress();
 
     if (this._dashboardView === 'statistics') {
       queueMicrotask(() => this._maybeShowStatisticsDiscrepancyModal());
+    }
+  }
+
+  async _loadStatisticsSourceBreakdown() {
+    if (!this._hass || this._showSettings) return;
+    const s = this._statsData || {};
+    this._statsSourceBreakdownLoading = true;
+    this._statsSourceBreakdownErr = null;
+    this._render();
+    try {
+      const payload = await this._hass.callWS({
+        type: 'smart_dashboards/get_statistics_source_breakdown',
+        date_start: s.date_start || undefined,
+        date_end: s.date_end || undefined,
+      });
+      this._statsSourceBreakdown = payload.sources || [];
+    } catch (e) {
+      console.error('Statistics source breakdown failed:', e);
+      this._statsSourceBreakdownErr = e.message || String(e);
+      this._statsSourceBreakdown = null;
+    } finally {
+      this._statsSourceBreakdownLoading = false;
+      if (this._dashboardView === 'statistics') {
+        this._render();
+      }
     }
   }
 
@@ -430,12 +458,6 @@ class EnergyPanel extends HTMLElement {
       <div class="hard-refresh-modal-dialog">
         <div class="hard-refresh-modal-header">
           <h2 class="hard-refresh-modal-title" id="hard-refresh-title">Hard Refresh Statistics</h2>
-          <button class="hard-refresh-modal-close" id="hard-refresh-close" title="Close" disabled>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
         </div>
         <div class="hard-refresh-modal-body">
           <div class="hard-refresh-progress-section">
@@ -451,28 +473,26 @@ class EnergyPanel extends HTMLElement {
           </div>
         </div>
         <div class="hard-refresh-modal-footer">
-          <button class="btn btn-secondary" id="hard-refresh-done" disabled>Done</button>
+          <button type="button" class="btn btn-secondary" id="hard-refresh-cancel">Cancel</button>
         </div>
       </div>
     `;
 
     this.shadowRoot.appendChild(overlay);
+    this.classList.add('hard-refresh-lock');
 
-    const closeBtn = overlay.querySelector('#hard-refresh-close');
-    const doneBtn = overlay.querySelector('#hard-refresh-done');
-
-    const close = () => {
+    const cancelBtn = overlay.querySelector('#hard-refresh-cancel');
+    cancelBtn.addEventListener('click', async () => {
+      const verified = await showPasscodeModal(this.shadowRoot, this._hass, {
+        title: 'Dismiss hard refresh',
+        description: 'Enter your 4-digit passcode to close this dialog.',
+        submitLabel: 'Confirm',
+        zIndex: 10200,
+      });
+      if (!verified) return;
       this._removeHardRefreshModal();
-      this._loadStatistics();
-    };
-
-    doneBtn.addEventListener('click', close);
-    closeBtn.addEventListener('click', close);
-
-    this._hardRefreshModalEsc = (e) => {
-      if (e.key === 'Escape' && !closeBtn.disabled) close();
-    };
-    window.addEventListener('keydown', this._hardRefreshModalEsc);
+      void this._loadStatistics();
+    });
   }
 
   /**
@@ -499,11 +519,22 @@ class EnergyPanel extends HTMLElement {
   }
 
   _removeHardRefreshModal() {
-    if (this._hardRefreshModalEsc) {
-      window.removeEventListener('keydown', this._hardRefreshModalEsc);
-      this._hardRefreshModalEsc = null;
-    }
+    this.classList.remove('hard-refresh-lock');
     this.shadowRoot?.querySelector('.hard-refresh-modal-overlay')?.remove();
+  }
+
+  /** Detach hard-refresh overlay before shadowRoot.innerHTML replaces content (keeps log + listeners). */
+  _takeHardRefreshOverlay() {
+    const el = this.shadowRoot?.querySelector('.hard-refresh-modal-overlay');
+    if (!el) return null;
+    el.remove();
+    return el;
+  }
+
+  _putHardRefreshOverlay(overlay) {
+    if (overlay && this.shadowRoot) {
+      this.shadowRoot.appendChild(overlay);
+    }
   }
 
   /**
@@ -716,7 +747,8 @@ class EnergyPanel extends HTMLElement {
    * Shows modal on start, updates progress, and enables close on complete.
    */
   _handleHardRefreshProgressEvent(event) {
-    const { step, progress, log, started, complete, success, error, total_kwh, date_start, date_end, recorder_days, total_days } = event;
+    const p = event?.event ?? event;
+    const { step, progress, log, started, complete, success, error, total_kwh, date_start, date_end, recorder_days, total_days } = p;
 
     // If this is the "started" event, show the modal (on ALL clients)
     if (started) {
@@ -732,8 +764,6 @@ class EnergyPanel extends HTMLElement {
     const fillEl = overlay.querySelector('#hard-refresh-fill');
     const pctEl = overlay.querySelector('#hard-refresh-pct');
     const logEl = overlay.querySelector('#hard-refresh-log');
-    const closeBtn = overlay.querySelector('#hard-refresh-close');
-    const doneBtn = overlay.querySelector('#hard-refresh-done');
 
     // Update progress UI
     if (step && stepEl && fillEl && pctEl) {
@@ -781,10 +811,6 @@ class EnergyPanel extends HTMLElement {
         logEl.appendChild(entry);
         logEl.scrollTop = logEl.scrollHeight;
       }
-
-      // Enable close buttons
-      if (closeBtn) closeBtn.disabled = false;
-      if (doneBtn) doneBtn.disabled = false;
     }
   }
 
@@ -2415,6 +2441,16 @@ class EnergyPanel extends HTMLElement {
       }
 
       /* Hard Refresh Progress Modal */
+      :host(.hard-refresh-lock) .panel-container {
+        pointer-events: none;
+        user-select: none;
+      }
+
+      :host(.hard-refresh-lock) .hard-refresh-modal-overlay {
+        pointer-events: auto;
+        user-select: auto;
+      }
+
       .hard-refresh-modal-overlay {
         position: fixed;
         inset: 0;
@@ -2446,7 +2482,7 @@ class EnergyPanel extends HTMLElement {
       .hard-refresh-modal-header {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-start;
         gap: 12px;
         padding: 18px 20px 14px;
         border-bottom: 1px solid var(--card-border);
@@ -2459,30 +2495,6 @@ class EnergyPanel extends HTMLElement {
         font-weight: 700;
         color: var(--primary-text-color);
         letter-spacing: -0.01em;
-      }
-
-      .hard-refresh-modal-close {
-        background: rgba(255, 255, 255, 0.08);
-        border: none;
-        border-radius: 50%;
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        color: var(--secondary-text-color);
-        transition: background 0.15s, color 0.15s;
-      }
-
-      .hard-refresh-modal-close:hover {
-        background: rgba(255, 255, 255, 0.14);
-        color: var(--primary-text-color);
-      }
-
-      .hard-refresh-modal-close:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
       }
 
       .hard-refresh-modal-body {
@@ -6590,6 +6602,7 @@ class EnergyPanel extends HTMLElement {
     this._destroyStatsRoomsPie();
 
     if (this._loading) {
+      const hrOverlay = this._takeHardRefreshOverlay();
       this.shadowRoot.innerHTML = `
         <style>${styles}</style>
         <div class="panel-container">
@@ -6610,10 +6623,12 @@ class EnergyPanel extends HTMLElement {
           </div>
         </div>
       `;
+      this._putHardRefreshOverlay(hrOverlay);
       return;
     }
 
     if (this._error) {
+      const hrOverlay = this._takeHardRefreshOverlay();
       this.shadowRoot.innerHTML = `
         <style>${styles}</style>
         <div class="panel-container">
@@ -6640,6 +6655,7 @@ class EnergyPanel extends HTMLElement {
       `;
       const retryBtn = this.shadowRoot.querySelector('#retry-btn');
       if (retryBtn) retryBtn.addEventListener('click', () => this._loadConfig());
+      this._putHardRefreshOverlay(hrOverlay);
       return;
     }
 
@@ -6668,6 +6684,7 @@ class EnergyPanel extends HTMLElement {
     const totalShutoffs = this._powerData?.total_shutoffs || 0;
     const totalPowerCycles = this._powerData?.total_power_cycles || 0;
 
+    const hrOverlay = this._takeHardRefreshOverlay();
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
       <div class="panel-container">
@@ -6729,6 +6746,7 @@ class EnergyPanel extends HTMLElement {
     this._attachEventListeners();
     this._syncGraphModalAfterRender();
     this._syncRoomsGridTitleFitObserver();
+    this._putHardRefreshOverlay(hrOverlay);
     if (this._dashboardView === 'rooms' && rooms.length > 0 && !showStatistics) {
       queueMicrotask(() => this._scheduleRoomHeaderTitleFit());
     }
@@ -7960,6 +7978,27 @@ class EnergyPanel extends HTMLElement {
                 </div>
                 <div class="statistics-chart-actions">
                   ${dateStart && dateEnd ? `<button type="button" class="btn-stat-chart" id="stat-chart-billing-home" title="Daily kWh per day for the date range at the top">Open usage graph (whole home)</button>` : ''}
+                </div>
+                <div class="statistics-source-breakdown-wrap" style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(127,127,127,0.2)">
+                  <p style="margin:0 0 6px;font-size:11px;opacity:0.85">Source breakdown (debug)</p>
+                  <button type="button" class="btn-stat-chart btn-stat-source-breakdown" id="stat-source-breakdown-load" ${!dateStart || !dateEnd ? 'disabled' : ''}>Load per-entity totals</button>
+                  ${this._statsSourceBreakdownLoading ? '<p class="statistics-breakdown-status" style="margin:8px 0 0;font-size:12px;opacity:0.9">Loading…</p>' : ''}
+                  ${this._statsSourceBreakdownErr ? `<p class="statistics-breakdown-err" style="margin:8px 0 0;font-size:12px;color:var(--error-color, #c62828)">${String(this._statsSourceBreakdownErr).replace(/</g, '&lt;')}</p>` : ''}
+                  ${Array.isArray(this._statsSourceBreakdown) && this._statsSourceBreakdown.length > 0 ? `
+                  <div class="statistics-breakdown-table-wrap" style="margin-top:10px;overflow-x:auto">
+                    <table class="statistics-table" style="font-size:12px">
+                      <thead><tr><th>Entity</th><th>Room</th><th>kWh</th><th>Method</th></tr></thead>
+                      <tbody>
+                        ${this._statsSourceBreakdown.map((row) => {
+                          const eid = String(row.entity_id || '').replace(/</g, '&lt;');
+                          const rid = String(row.room_id || '').replace(/</g, '&lt;');
+                          const meth = String(row.method || '—').replace(/</g, '&lt;');
+                          const k = row.kwh != null ? Number(row.kwh).toFixed(3) : '—';
+                          return `<tr><td><code style="font-size:11px">${eid}</code></td><td>${rid}</td><td>${k}</td><td>${meth}</td></tr>`;
+                        }).join('')}
+                      </tbody>
+                    </table>
+                  </div>` : ''}
                 </div>
               </div>
             </div>
@@ -9421,6 +9460,7 @@ class EnergyPanel extends HTMLElement {
     const ttsDefaultMpVal =
       (ttsSettings.tts_default_media_player || ttsSettings.budget_boost_announce_media_player || '').trim();
 
+    const hrOverlay = this._takeHardRefreshOverlay();
     this.shadowRoot.innerHTML = `
       <style>
         ${styles}
@@ -10850,6 +10890,7 @@ class EnergyPanel extends HTMLElement {
     this.shadowRoot.querySelectorAll('.room-settings-card').forEach((c) => this._syncRoomPresenceLiveStrip(c));
     this._updateRoomPresenceLiveLabels();
     initCustomSelects(this.shadowRoot);
+    this._putHardRefreshOverlay(hrOverlay);
   }
 
   _getAllOutlets() {
@@ -13967,6 +14008,13 @@ class EnergyPanel extends HTMLElement {
       statHomeChart.addEventListener('click', (e) => {
         e.stopPropagation();
         this._openGraph('stat_total_wh', null, null, this._statisticsGraphDateRange());
+      });
+    }
+    const statSourceBreakdown = this.shadowRoot.querySelector('#stat-source-breakdown-load');
+    if (statSourceBreakdown) {
+      statSourceBreakdown.addEventListener('click', (e) => {
+        e.stopPropagation();
+        void this._loadStatisticsSourceBreakdown();
       });
     }
     this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((seg) => {
