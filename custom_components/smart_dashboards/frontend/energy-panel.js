@@ -1785,7 +1785,7 @@ class EnergyPanel extends HTMLElement {
       .statistics-banner {
         font-size: clamp(12px, 2.5vw, 14px);
         color: var(--secondary-text-color);
-        padding: 10px 14px;
+        padding: 12px 14px 14px;
         background: var(--input-bg);
         border-radius: 8px;
         border: 1px solid var(--card-border);
@@ -2034,31 +2034,36 @@ class EnergyPanel extends HTMLElement {
       .statistics-table-panel .statistics-table {
         min-width: 520px;
       }
-      .statistics-event-bar {
+      /* Event chips inside combined statistics banner (same surface as billing row) */
+      .statistics-banner .statistics-event-bar {
         display: flex;
         flex-wrap: wrap;
-        gap: 12px 16px;
+        gap: 10px 14px;
         justify-content: center;
         align-items: center;
-        padding: 14px 16px;
-        background: rgba(140, 145, 160, 0.22);
-        border-radius: 10px;
-        border: 1px solid rgba(180, 185, 200, 0.28);
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--card-border);
+        background: transparent;
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
       }
-      .statistics-event-item {
+      .statistics-banner .statistics-event-item {
         display: inline-flex;
         align-items: center;
         justify-content: center;
         gap: 8px;
-        padding: 8px 16px;
-        background: rgba(185, 190, 205, 0.38);
+        padding: 8px 14px;
+        background: rgba(var(--rgb-primary-text-color), 0.08);
         border-radius: 999px;
-        border: 1px solid rgba(200, 205, 220, 0.35);
+        border: 1px solid rgba(var(--rgb-primary-text-color), 0.12);
         transition: background 0.2s, transform 0.15s, border-color 0.2s;
       }
-      .statistics-event-item:hover {
-        background: rgba(200, 205, 218, 0.48);
-        border-color: rgba(215, 220, 235, 0.45);
+      .statistics-banner .statistics-event-item:hover {
+        background: rgba(var(--rgb-primary-text-color), 0.12);
+        border-color: rgba(var(--rgb-primary-text-color), 0.18);
       }
       .statistics-event-item.graph-clickable {
         cursor: pointer;
@@ -8514,9 +8519,7 @@ class EnergyPanel extends HTMLElement {
               <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Narrowed to dates you picked.</span>
             </div>
             ${s.statistics_pending ? `<div class="statistics-pending-banner" id="stat-pending-banner">Building usage totals — numbers update automatically when the snapshot is ready.</div>` : ''}
-          </div>
-
-          <div class="statistics-event-bar">
+            <div class="statistics-event-bar">
             <div class="statistics-event-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_warnings" title="Open threshold warning log"' : ''}>
               ${warningIcon}
               <span class="statistics-event-value" id="stat-total-warnings">${totalWarnings}</span>
@@ -8531,6 +8534,7 @@ class EnergyPanel extends HTMLElement {
               ${cycleIcon}
               <span class="statistics-event-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
               <span class="statistics-event-label">Cycles</span>
+            </div>
             </div>
           </div>
 
@@ -11906,7 +11910,7 @@ class EnergyPanel extends HTMLElement {
   }
 
   async _openLightAutomationModal(roomId, outlet) {
-    const room = this._rooms?.find(r => this._canonicalRoomId(r) === roomId);
+    const room = (this._config?.rooms || []).find(r => this._canonicalRoomId(r) === roomId);
     if (!room) {
       this._showToast('Room not found');
       return;
@@ -12407,7 +12411,7 @@ class EnergyPanel extends HTMLElement {
     const overlay = this.shadowRoot?.querySelector('.light-auto-modal-overlay');
     if (!overlay) return;
     const state = this._lightAutoState;
-    const room = this._rooms?.find(r => this._canonicalRoomId(r) === state.roomId);
+    const room = (this._config?.rooms || []).find(r => this._canonicalRoomId(r) === state.roomId);
     const roomName = room?.name || state.roomId;
     const outletName = state.outlet?.name || 'Light';
     overlay.innerHTML = this._renderLightAutomationModal(roomName, outletName);
