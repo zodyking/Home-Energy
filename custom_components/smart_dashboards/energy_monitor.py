@@ -2420,7 +2420,7 @@ class EnergyMonitor:
         is_wrgb: bool = False,
         is_tuya: bool = False,
     ) -> None:
-        """Apply light action from automation segment."""
+        """Apply light action from automation segment with continuous enforcement."""
         import json as json_mod
 
         action = segment.get("action", "on")
@@ -2428,11 +2428,10 @@ class EnergyMonitor:
 
         current_state = self.hass.states.get(entity_id)
         current_on = current_state and current_state.state == "on"
-
-        last_action = self._light_automation_state.get(state_key)
+        attrs = current_state.attributes if current_state else {}
 
         if action == "off":
-            if current_on and last_action != "off":
+            if current_on:
                 try:
                     await self.hass.services.async_call(
                         "light",
@@ -2445,41 +2444,64 @@ class EnergyMonitor:
                     _LOGGER.warning("Light automation failed to turn off %s: %s", entity_id, e)
             return
 
+        if action == "mode" and not current_on:
+            return
+
         brightness_pct = segment.get("brightness")
         color_temp = segment.get("color_temp")
         hs_color = segment.get("hs_color")
         tuya_scene = segment.get("tuya_scene")
 
         if is_tuya and tuya_scene and self.hass.services.has_service("tuya_local", "set_dp"):
-            try:
-                await self.hass.services.async_call(
-                    "tuya_local",
-                    "set_dp",
-                    {
-                        "entity_id": entity_id,
-                        "dp": 25,
-                        "value": json_mod.dumps(tuya_scene),
-                    },
-                )
-                self._light_automation_state[state_key] = f"tuya_scene_{hash(json_mod.dumps(tuya_scene))}"
-                _LOGGER.debug("Light automation: applied Tuya scene to %s", entity_id)
-                return
-            except Exception as e:
-                _LOGGER.warning("Light automation failed to apply Tuya scene to %s: %s", entity_id, e)
+            scene_hash = f"tuya_scene_{hash(json_mod.dumps(tuya_scene))}"
+            if current_on and self._light_automation_state.get(state_key) != scene_hash:
+                try:
+                    await self.hass.services.async_call(
+                        "tuya_local",
+                        "set_dp",
+                        {
+                            "entity_id": entity_id,
+                            "dp": 25,
+                            "value": json_mod.dumps(tuya_scene),
+                        },
+                    )
+                    self._light_automation_state[state_key] = scene_hash
+                    _LOGGER.debug("Light automation: applied Tuya scene to %s", entity_id)
+                except Exception as e:
+                    _LOGGER.warning("Light automation failed to apply Tuya scene to %s: %s", entity_id, e)
+            return
 
+        needs_update = False
         service_data: dict = {"entity_id": entity_id}
 
         if is_wrgb:
             if brightness_pct is not None:
-                service_data["brightness_pct"] = brightness_pct
-            if hs_color is not None:
-                service_data["hs_color"] = hs_color
-            elif color_temp is not None:
-                service_data["color_temp_kelvin"] = color_temp
+                current_brightness = attrs.get("brightness")
+                target_brightness = int(brightness_pct * 255 / 100)
+                if current_brightness is None or abs(current_brightness - target_brightness) > 5:
+                    service_data["brightness_pct"] = brightness_pct
+                    needs_update = True
 
-        action_hash = f"on_{brightness_pct}_{color_temp}_{hs_color}"
-        if last_action == action_hash:
+            if hs_color is not None:
+                current_hs = attrs.get("hs_color")
+                if current_hs is None or (
+                    abs(current_hs[0] - hs_color[0]) > 5 or abs(current_hs[1] - hs_color[1]) > 5
+                ):
+                    service_data["hs_color"] = hs_color
+                    needs_update = True
+            elif color_temp is not None:
+                current_temp = attrs.get("color_temp_kelvin") or attrs.get("color_temp")
+                if current_temp is None or abs(current_temp - color_temp) > 100:
+                    service_data["color_temp_kelvin"] = color_temp
+                    needs_update = True
+
+        if action == "on" and not current_on:
+            needs_update = True
+
+        if not needs_update:
             return
+
+        action_hash = f"{action}_{brightness_pct}_{color_temp}_{hs_color}"
 
         try:
             await self.hass.services.async_call(
@@ -2488,9 +2510,9 @@ class EnergyMonitor:
                 service_data,
             )
             self._light_automation_state[state_key] = action_hash
-            _LOGGER.debug("Light automation: turned on %s with %s", entity_id, service_data)
+            _LOGGER.debug("Light automation: applied to %s with %s", entity_id, service_data)
         except Exception as e:
-            _LOGGER.warning("Light automation failed to turn on %s: %s", entity_id, e)
+            _LOGGER.warning("Light automation failed to apply to %s: %s", entity_id, e)
 
     def _presence_auto_off_configured_switch_ids(self, room: dict) -> list[str]:
         """switch.* IDs marked for presence auto-off (on or off), for restore eligibility."""
