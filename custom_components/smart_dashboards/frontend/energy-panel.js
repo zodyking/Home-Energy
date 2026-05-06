@@ -2300,6 +2300,9 @@ class EnergyPanel extends HTMLElement {
       .light-auto-segment:hover {
         background: rgba(3, 169, 244, 0.85);
       }
+      .light-auto-segment:active {
+        cursor: grabbing;
+      }
       .light-auto-segment.selected {
         border-color: #fff;
         box-shadow: 0 0 0 2px var(--panel-accent);
@@ -6532,6 +6535,20 @@ class EnergyPanel extends HTMLElement {
           gap: 10px;
           align-items: start;
         }
+      }
+
+      .light-entity-wrgb-tuya-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 24px;
+        align-items: flex-start;
+      }
+      .light-entity-wrgb-tuya-row .light-entity-wrgb-block,
+      .light-entity-wrgb-tuya-row .light-entity-tuya-block {
+        margin-bottom: 0;
+      }
+      .light-entity-wrgb-tuya-row .tts-msg-desc {
+        display: none;
       }
 
       .light-test-switch-btn {
@@ -12264,42 +12281,95 @@ class EnergyPanel extends HTMLElement {
   }
 
   _attachSegmentDragHandlers(segEl, timeline) {
+    const idx = parseInt(segEl.dataset.segmentIndex, 10);
+    const getSeg = () => this._lightAutoState.automation.group_automation?.segments?.[idx];
+
     const handles = segEl.querySelectorAll('.light-auto-segment-handle');
     handles.forEach(handle => {
       let dragging = false;
-      let startX = 0;
-      let originalPct = 0;
       const isLeft = handle.dataset.handle === 'left';
 
       const onMouseMove = (e) => {
         if (!dragging) return;
         const rect = timeline.getBoundingClientRect();
         const pct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-        const idx = parseInt(segEl.dataset.segmentIndex, 10);
-        const seg = this._lightAutoState.automation.group_automation.segments[idx];
+        const seg = getSeg();
         if (seg) {
           if (isLeft) {
             seg.start = this._percentToTime(pct);
+            const endPct = this._timeToPercent(seg.end);
+            segEl.style.left = pct + '%';
+            segEl.style.width = Math.max(2, endPct - pct) + '%';
           } else {
             seg.end = this._percentToTime(pct);
+            const startPct = this._timeToPercent(seg.start);
+            segEl.style.width = Math.max(2, pct - startPct) + '%';
           }
-          this._refreshLightAutomationModal();
         }
       };
 
       const onMouseUp = () => {
-        dragging = false;
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
+        if (dragging) {
+          dragging = false;
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          this._refreshLightAutomationModal();
+        }
       };
 
       handle.addEventListener('mousedown', (e) => {
         e.stopPropagation();
+        e.preventDefault();
         dragging = true;
-        startX = e.clientX;
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
       });
+    });
+
+    let bodyDragging = false;
+    let bodyStartX = 0;
+    let originalStartPct = 0;
+    let originalEndPct = 0;
+
+    const onBodyMouseMove = (e) => {
+      if (!bodyDragging) return;
+      const rect = timeline.getBoundingClientRect();
+      const deltaPct = ((e.clientX - bodyStartX) / rect.width) * 100;
+      const seg = getSeg();
+      if (seg) {
+        const segWidth = originalEndPct - originalStartPct;
+        let newStart = originalStartPct + deltaPct;
+        let newEnd = originalEndPct + deltaPct;
+        if (newStart < 0) { newStart = 0; newEnd = segWidth; }
+        if (newEnd > 100) { newEnd = 100; newStart = 100 - segWidth; }
+        seg.start = this._percentToTime(newStart);
+        seg.end = this._percentToTime(newEnd);
+        segEl.style.left = newStart + '%';
+        segEl.style.width = (newEnd - newStart) + '%';
+      }
+    };
+
+    const onBodyMouseUp = () => {
+      if (bodyDragging) {
+        bodyDragging = false;
+        document.removeEventListener('mousemove', onBodyMouseMove);
+        document.removeEventListener('mouseup', onBodyMouseUp);
+        this._refreshLightAutomationModal();
+      }
+    };
+
+    segEl.addEventListener('mousedown', (e) => {
+      if (e.target.classList.contains('light-auto-segment-handle')) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const seg = getSeg();
+      if (!seg) return;
+      bodyDragging = true;
+      bodyStartX = e.clientX;
+      originalStartPct = this._timeToPercent(seg.start);
+      originalEndPct = this._timeToPercent(seg.end);
+      document.addEventListener('mousemove', onBodyMouseMove);
+      document.addEventListener('mouseup', onBodyMouseUp);
     });
   }
 
@@ -14400,19 +14470,21 @@ class EnergyPanel extends HTMLElement {
             <input type="number" class="form-input light-entity-watts" value="${w}" min="0" max="500" step="1" placeholder="0" title="Running power when on">
             <div class="tts-msg-desc" style="margin-top: 4px;">Used when measuring power from configured wattage (not sensor mode).</div>
           </div>
-          <div class="form-group light-entity-wrgb-block">
-            <label class="toggle-row" style="margin-bottom: 0;">
-              <input type="checkbox" class="form-checkbox light-entity-wrgb-toggle" ${wrgb} title="WRGB-capable light">
-              <span class="toggle-label">WRGB light</span>
-            </label>
-            <div class="tts-msg-desc" style="margin-top: 6px;">Enable for responsive color warnings on white/RGB-capable lights.</div>
-          </div>
-          <div class="form-group light-entity-tuya-block" style="${tuyaDisplay}">
-            <label class="toggle-row" style="margin-bottom: 0;">
-              <input type="checkbox" class="form-checkbox light-entity-tuya-toggle" ${tuya} title="Tuya light with scene support">
-              <span class="toggle-label">Tuya</span>
-            </label>
-            <div class="tts-msg-desc" style="margin-top: 6px;">Enable for Tuya scene builder in light automation editor.</div>
+          <div class="light-entity-wrgb-tuya-row">
+            <div class="light-entity-wrgb-block">
+              <label class="toggle-row" style="margin-bottom: 0;">
+                <input type="checkbox" class="form-checkbox light-entity-wrgb-toggle" ${wrgb} title="WRGB-capable light">
+                <span class="toggle-label">WRGB light</span>
+              </label>
+              <div class="tts-msg-desc" style="margin-top: 6px;">Enable for responsive color warnings on white/RGB-capable lights.</div>
+            </div>
+            <div class="light-entity-tuya-block" style="${tuyaDisplay}">
+              <label class="toggle-row" style="margin-bottom: 0;">
+                <input type="checkbox" class="form-checkbox light-entity-tuya-toggle" ${tuya} title="Tuya light with scene support">
+                <span class="toggle-label">Tuya</span>
+              </label>
+              <div class="tts-msg-desc" style="margin-top: 6px;">Enable for Tuya scene builder in light automation editor.</div>
+            </div>
           </div>
         </div>
       </div>
