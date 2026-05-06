@@ -2287,7 +2287,7 @@ class EnergyPanel extends HTMLElement {
         position: absolute;
         top: 4px;
         bottom: 4px;
-        background: rgba(3, 169, 244, 0.7);
+        background: var(--panel-accent-bg, rgba(3, 169, 244, 0.7));
         border: 2px solid var(--panel-accent);
         border-radius: 6px;
         cursor: grab;
@@ -2298,7 +2298,7 @@ class EnergyPanel extends HTMLElement {
         transition: background 0.15s;
       }
       .light-auto-segment:hover {
-        background: rgba(3, 169, 244, 0.85);
+        background: var(--panel-accent-bg-hover, rgba(3, 169, 244, 0.85));
       }
       .light-auto-segment:active {
         cursor: grabbing;
@@ -2308,12 +2308,14 @@ class EnergyPanel extends HTMLElement {
         box-shadow: 0 0 0 2px var(--panel-accent);
       }
       .light-auto-segment.off {
-        background: rgba(100, 100, 100, 0.6);
-        border-color: #666;
+        background: var(--card-bg);
+        border-color: var(--card-border);
+        opacity: 0.7;
       }
       .light-auto-segment.mode {
-        background: linear-gradient(135deg, rgba(156, 39, 176, 0.7), rgba(103, 58, 183, 0.7));
-        border-color: #9c27b0;
+        background: var(--panel-accent-bg, rgba(3, 169, 244, 0.7));
+        border-color: var(--panel-accent);
+        border-style: dashed;
       }
       .light-auto-segment-label {
         font-size: 10px;
@@ -2342,78 +2344,48 @@ class EnergyPanel extends HTMLElement {
         margin-top: 6px;
       }
       .light-auto-segment-editor {
-        background: linear-gradient(145deg, rgba(30, 40, 60, 0.95), rgba(20, 28, 45, 0.98));
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        padding: 20px 24px;
-        margin-top: 20px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-        position: relative;
-        overflow: hidden;
-      }
-      .light-auto-segment-editor::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 3px;
-        background: linear-gradient(90deg, var(--panel-accent), #9c27b0, #ff9800);
-        opacity: 0.8;
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--card-border);
+        padding: 16px;
+        margin-top: 16px;
       }
       .light-auto-segment-editor-title {
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 600;
-        margin: 0 0 18px;
+        margin: 0 0 12px;
         color: var(--primary-text-color);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .light-auto-segment-editor-title::before {
-        content: '';
-        display: inline-block;
-        width: 18px;
-        height: 18px;
-        background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%2303a9f4" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="5"/></svg>') no-repeat center;
-        background-size: contain;
       }
       .light-auto-segment-row {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 16px;
-        margin-bottom: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 12px;
+        margin-bottom: 12px;
       }
       .light-auto-segment-field {
         position: relative;
       }
       .light-auto-segment-field label {
-        display: flex;
-        align-items: center;
-        gap: 6px;
+        display: block;
         font-size: 11px;
-        font-weight: 600;
-        color: rgba(255, 255, 255, 0.6);
-        margin-bottom: 6px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+        font-weight: 500;
+        color: var(--secondary-text-color);
+        margin-bottom: 4px;
       }
       .light-auto-segment-field input,
       .light-auto-segment-field select {
         width: 100%;
-        padding: 10px 12px;
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        background: rgba(0, 0, 0, 0.25);
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--card-border);
+        background: var(--input-bg, var(--card-bg));
         color: var(--primary-text-color);
-        font-size: 13px;
-        transition: border-color 0.2s, box-shadow 0.2s;
+        font-size: 12px;
       }
       .light-auto-segment-field input:focus,
       .light-auto-segment-field select:focus {
         outline: none;
         border-color: var(--panel-accent);
-        box-shadow: 0 0 0 3px rgba(3, 169, 244, 0.15);
       }
       .light-auto-color-preview {
         width: 100%;
@@ -2430,40 +2402,20 @@ class EnergyPanel extends HTMLElement {
       .light-auto-slider-row {
         display: flex;
         align-items: center;
-        gap: 14px;
-        background: rgba(0, 0, 0, 0.2);
-        padding: 10px 14px;
-        border-radius: 10px;
+        gap: 10px;
       }
       .light-auto-slider-row input[type="range"] {
         flex: 1;
-        height: 6px;
-        border-radius: 3px;
-        -webkit-appearance: none;
-        background: linear-gradient(90deg, rgba(255,255,255,0.1), rgba(255,255,255,0.2));
-      }
-      .light-auto-slider-row input[type="range"]::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
-        background: var(--panel-accent);
-        cursor: pointer;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-        transition: transform 0.15s;
-      }
-      .light-auto-slider-row input[type="range"]::-webkit-slider-thumb:hover {
-        transform: scale(1.15);
       }
       .light-auto-slider-value {
-        min-width: 50px;
+        min-width: 40px;
         text-align: right;
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--panel-accent);
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--primary-text-color);
       }
       .light-auto-temp-slider input[type="range"] {
-        background: linear-gradient(90deg, #ff9800, #ffeb3b 30%, #fff 50%, #b3e5fc 70%, #64b5f6);
+        background: linear-gradient(90deg, #ffecd2, #ffffff 50%, #e3f2fd);
       }
       .light-auto-seg-delete {
         background: rgba(244, 67, 54, 0.15);
@@ -2514,27 +2466,17 @@ class EnergyPanel extends HTMLElement {
       }
 
       .light-auto-tuya-btn {
-        margin-top: 16px;
-        padding: 12px 20px;
-        border-radius: 12px;
+        margin-top: 12px;
+        padding: 8px 14px;
+        border-radius: 6px;
         border: 1px solid var(--panel-accent);
-        background: linear-gradient(135deg, rgba(3, 169, 244, 0.15), rgba(156, 39, 176, 0.1));
+        background: var(--card-bg);
         color: var(--panel-accent);
-        font-size: 13px;
-        font-weight: 600;
+        font-size: 12px;
         cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 10px;
-        transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
       }
       .light-auto-tuya-btn:hover {
-        background: linear-gradient(135deg, rgba(3, 169, 244, 0.25), rgba(156, 39, 176, 0.2));
-        transform: translateY(-2px);
-        box-shadow: 0 4px 16px rgba(3, 169, 244, 0.2);
-      }
-      .light-auto-tuya-btn:hover {
-        background: rgba(var(--rgb-primary-color), 0.2);
+        background: var(--input-bg, var(--card-bg));
       }
       .light-auto-tuya-btn svg {
         width: 16px;
@@ -2574,12 +2516,12 @@ class EnergyPanel extends HTMLElement {
         text-transform: uppercase;
       }
       .light-auto-badge.wrgb {
-        background: rgba(156, 39, 176, 0.2);
-        color: #ce93d8;
+        background: var(--panel-accent-bg, rgba(3, 169, 244, 0.2));
+        color: var(--panel-accent);
       }
       .light-auto-badge.tuya {
-        background: rgba(255, 152, 0, 0.2);
-        color: #ffb74d;
+        background: var(--panel-accent-bg, rgba(3, 169, 244, 0.2));
+        color: var(--panel-accent);
       }
       .light-auto-no-segments {
         text-align: center;
@@ -2616,240 +2558,68 @@ class EnergyPanel extends HTMLElement {
         gap: 16px;
       }
       .tuya-scene-unit {
-        background: linear-gradient(145deg, rgba(30, 40, 60, 0.95), rgba(20, 28, 45, 0.98));
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        padding: 20px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+        background: var(--card-bg);
+        border-radius: 8px;
+        border: 1px solid var(--card-border);
+        padding: 12px;
+        margin-bottom: 8px;
       }
       .tuya-scene-unit-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 16px;
-        padding-bottom: 12px;
-        border-bottom: 1px solid rgba(255,255,255,0.08);
+        margin-bottom: 12px;
       }
       .tuya-scene-unit-title {
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 600;
         color: var(--primary-text-color);
       }
       .tuya-scene-unit-remove {
-        background: rgba(244, 67, 54, 0.15);
+        background: none;
         border: none;
         color: var(--error-color, #ef5350);
         cursor: pointer;
-        padding: 6px;
-        border-radius: 6px;
-        transition: background 0.15s;
-      }
-      .tuya-scene-unit-remove:hover {
-        background: rgba(244, 67, 54, 0.3);
-      }
-      .tuya-scene-unit-content {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 24px;
-        align-items: start;
-      }
-      .tuya-scene-color-section {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 12px;
-      }
-      .tuya-scene-settings-section {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
+        padding: 4px;
       }
       .tuya-scene-unit-row {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+        gap: 10px;
+        margin-bottom: 10px;
       }
       .tuya-scene-unit-field label {
         display: block;
         font-size: 10px;
-        font-weight: 600;
-        color: rgba(255,255,255,0.5);
-        margin-bottom: 6px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+        color: var(--secondary-text-color);
+        margin-bottom: 4px;
       }
       .tuya-scene-unit-field input,
       .tuya-scene-unit-field select {
         width: 100%;
-        padding: 10px 12px;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        background: rgba(0, 0, 0, 0.25);
+        padding: 6px 8px;
+        border-radius: 5px;
+        border: 1px solid var(--card-border);
+        background: var(--input-bg, var(--card-bg));
         color: var(--primary-text-color);
-        font-size: 12px;
+        font-size: 11px;
       }
       .tuya-scene-unit-field input:focus,
       .tuya-scene-unit-field select:focus {
         outline: none;
         border-color: var(--panel-accent);
       }
-
-      /* Color Wheel */
-      .color-wheel-container {
-        position: relative;
-        width: 140px;
-        height: 140px;
+      .tuya-scene-color-row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 10px;
       }
-      .color-wheel {
-        width: 140px;
-        height: 140px;
-        border-radius: 50%;
-        background: conic-gradient(
-          hsl(0, 100%, 50%),
-          hsl(60, 100%, 50%),
-          hsl(120, 100%, 50%),
-          hsl(180, 100%, 50%),
-          hsl(240, 100%, 50%),
-          hsl(300, 100%, 50%),
-          hsl(360, 100%, 50%)
-        );
-        position: relative;
-        cursor: crosshair;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), inset 0 0 0 2px rgba(255,255,255,0.1);
-      }
-      .color-wheel::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        border-radius: 50%;
-        background: radial-gradient(circle at center, white 0%, transparent 70%);
-        pointer-events: none;
-      }
-      .color-wheel-picker {
-        position: absolute;
-        width: 16px;
-        height: 16px;
-        border: 3px solid #fff;
-        border-radius: 50%;
-        transform: translate(-50%, -50%);
-        box-shadow: 0 2px 6px rgba(0,0,0,0.5);
-        pointer-events: none;
-        z-index: 1;
-      }
-      .color-wheel-center {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
+      .tuya-scene-color-preview {
         width: 40px;
         height: 40px;
-        border-radius: 50%;
-        border: 3px solid rgba(255,255,255,0.2);
-        background: currentColor;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-      }
-
-      /* Saturation/Brightness Slider */
-      .color-sat-bright-slider {
-        width: 100%;
-        height: 24px;
-        border-radius: 12px;
-        position: relative;
-        cursor: pointer;
-        margin-top: 8px;
-      }
-      .color-sat-slider {
-        background: linear-gradient(90deg, #808080, currentColor);
-      }
-      .color-bright-slider {
-        background: linear-gradient(90deg, #000, currentColor);
-      }
-      .color-slider-thumb {
-        position: absolute;
-        top: 50%;
-        width: 20px;
-        height: 20px;
-        border: 3px solid #fff;
-        border-radius: 50%;
-        transform: translate(-50%, -50%);
-        box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-        pointer-events: none;
-        background: inherit;
-      }
-
-      /* Temperature Slider with Visual Gradient */
-      .temp-slider-container {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .temp-slider-visual {
-        height: 32px;
-        border-radius: 16px;
-        background: linear-gradient(90deg, 
-          #ff8a00 0%, 
-          #ffb347 15%, 
-          #ffd89b 30%, 
-          #fff5e6 45%,
-          #ffffff 50%,
-          #e8f4f8 55%,
-          #cce5ff 70%,
-          #99ccff 85%,
-          #66b3ff 100%
-        );
-        position: relative;
-        cursor: pointer;
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
-        border: 1px solid rgba(255,255,255,0.1);
-      }
-      .temp-slider-thumb {
-        position: absolute;
-        top: 50%;
-        width: 24px;
-        height: 24px;
-        border: 3px solid #fff;
-        border-radius: 50%;
-        transform: translate(-50%, -50%);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        pointer-events: none;
-        background: inherit;
-      }
-      .temp-slider-labels {
-        display: flex;
-        justify-content: space-between;
-        font-size: 10px;
-        color: rgba(255,255,255,0.5);
-      }
-      .temp-slider-labels span:first-child { color: #ff8a00; }
-      .temp-slider-labels span:last-child { color: #66b3ff; }
-
-      /* Brightness Slider Visual */
-      .brightness-slider-container {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-      .brightness-slider-visual {
-        flex: 1;
-        height: 24px;
-        border-radius: 12px;
-        background: linear-gradient(90deg, #1a1a1a, var(--panel-accent, #03a9f4));
-        position: relative;
-        cursor: pointer;
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
-        border: 1px solid rgba(255,255,255,0.1);
-      }
-      .brightness-slider-thumb {
-        position: absolute;
-        top: 50%;
-        width: 20px;
-        height: 20px;
-        border: 3px solid #fff;
-        border-radius: 50%;
-        transform: translate(-50%, -50%);
-        box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-        pointer-events: none;
-        background: var(--panel-accent);
+        border-radius: 8px;
+        border: 2px solid var(--card-border);
       }
       .brightness-value {
         min-width: 45px;
@@ -12416,32 +12186,42 @@ class EnergyPanel extends HTMLElement {
     return false;
   }
 
+  _findAdjacentSegment(segments, idx, edge) {
+    const seg = segments[idx];
+    if (!seg) return -1;
+    const targetTime = edge === 'left' ? seg.start : seg.end;
+    for (let i = 0; i < segments.length; i++) {
+      if (i === idx) continue;
+      if (edge === 'left' && segments[i].end === targetTime) return i;
+      if (edge === 'right' && segments[i].start === targetTime) return i;
+    }
+    return -1;
+  }
+
   _renderSegmentEditor(seg, index) {
     if (!seg) return '';
     const state = this._lightAutoState;
     const isOnOrMode = seg.action !== 'off';
     const showAdvanced = state.hasWrgb && isOnOrMode;
     const showTuya = state.hasTuya && isOnOrMode;
-
-    const clockIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
-    const actionIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
-    const sunIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2"/></svg>';
-    const paletteIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="8" r="2" fill="currentColor"/><circle cx="8" cy="14" r="2" fill="currentColor"/><circle cx="16" cy="14" r="2" fill="currentColor"/></svg>';
+    const brightness = seg.brightness ?? 100;
+    const colorTemp = seg.color_temp ?? 4000;
+    const isColorMode = !!seg.hs_color;
 
     return `
       <div class="light-auto-segment-editor" data-editing-index="${index}">
         <h4 class="light-auto-segment-editor-title">Edit Segment</h4>
         <div class="light-auto-segment-row">
           <div class="light-auto-segment-field">
-            <label>${clockIcon} Start Time</label>
+            <label>Start Time</label>
             <input type="time" class="light-auto-seg-start" value="${seg.start || '00:00'}">
           </div>
           <div class="light-auto-segment-field">
-            <label>${clockIcon} End Time</label>
+            <label>End Time</label>
             <input type="time" class="light-auto-seg-end" value="${seg.end || '00:00'}">
           </div>
           <div class="light-auto-segment-field">
-            <label>${actionIcon} Action</label>
+            <label>Action</label>
             <select class="light-auto-seg-action">
               <option value="on" ${seg.action === 'on' ? 'selected' : ''}>Turn On</option>
               <option value="off" ${seg.action === 'off' ? 'selected' : ''}>Turn Off</option>
@@ -12449,86 +12229,43 @@ class EnergyPanel extends HTMLElement {
             </select>
           </div>
         </div>
-        ${showAdvanced ? (() => {
-          const brightness = seg.brightness ?? 100;
-          const colorTemp = seg.color_temp ?? 4000;
-          const tempPct = ((colorTemp - 2700) / (6500 - 2700)) * 100;
-          const hsColor = seg.hs_color || [0, 0];
-          const hue = hsColor[0] || 0;
-          const sat = hsColor[1] || 0;
-          const previewColor = `hsl(${hue}, ${sat}%, 50%)`;
-          const wheelX = 60 + 45 * (sat/100) * Math.cos((hue - 90) * Math.PI / 180);
-          const wheelY = 60 + 45 * (sat/100) * Math.sin((hue - 90) * Math.PI / 180);
-          const isColorMode = !!seg.hs_color;
-
-          return `
+        ${showAdvanced ? `
         <div class="light-auto-segment-row">
           <div class="light-auto-segment-field" style="grid-column: 1 / -1;">
-            <label>${sunIcon} Brightness</label>
-            <div class="brightness-slider-container">
-              <div class="brightness-slider-visual light-auto-brightness-slider">
-                <div class="brightness-slider-thumb" style="left: ${brightness}%;"></div>
-              </div>
-              <span class="brightness-value light-auto-brightness-value">${brightness}%</span>
+            <label>Brightness</label>
+            <div class="light-auto-slider-row">
+              <input type="range" class="light-auto-seg-brightness" min="1" max="100" value="${brightness}">
+              <span class="light-auto-slider-value">${brightness}%</span>
             </div>
           </div>
         </div>
         <div class="light-auto-segment-row">
           <div class="light-auto-segment-field">
-            <label>${paletteIcon} Light Mode</label>
+            <label>Mode</label>
             <select class="light-auto-seg-mode">
               <option value="temp" ${!isColorMode ? 'selected' : ''}>Color Temperature</option>
               <option value="color" ${isColorMode ? 'selected' : ''}>Color</option>
             </select>
           </div>
-        </div>
-        <div class="light-auto-temp-section" style="${isColorMode ? 'display:none;' : ''}">
-          <div class="light-auto-segment-field">
-            <label>Color Temperature</label>
-            <div class="temp-slider-container">
-              <div class="temp-slider-visual light-auto-temp-slider">
-                <div class="temp-slider-thumb" style="left: ${tempPct}%;"></div>
-              </div>
-              <div class="temp-slider-labels">
-                <span>2700K Warm</span>
-                <span class="light-auto-temp-value">${colorTemp}K</span>
-                <span>6500K Cool</span>
-              </div>
+          <div class="light-auto-segment-field light-auto-temp-field" style="${isColorMode ? 'display:none' : ''}">
+            <label>Temp (2700K-6500K)</label>
+            <div class="light-auto-slider-row light-auto-temp-slider">
+              <input type="range" class="light-auto-seg-temp" min="2700" max="6500" value="${colorTemp}">
+              <span class="light-auto-slider-value">${colorTemp}K</span>
             </div>
           </div>
-        </div>
-        <div class="light-auto-color-section" style="${!isColorMode ? 'display:none;' : ''}">
-          <div class="light-auto-segment-field">
+          <div class="light-auto-segment-field light-auto-color-field" style="${!isColorMode ? 'display:none' : ''}">
             <label>Color</label>
-            <div class="light-auto-color-controls">
-              <div class="color-wheel-container" style="width:120px;height:120px;">
-                <div class="color-wheel light-auto-color-wheel" style="width:120px;height:120px;">
-                  <div class="color-wheel-picker" style="left: ${wheelX}px; top: ${wheelY}px; background: ${previewColor};"></div>
-                  <div class="color-wheel-center" style="background: ${previewColor}; width:30px;height:30px;"></div>
-                </div>
-              </div>
-              <div class="light-auto-color-info">
-                <div class="light-auto-color-preview-box" style="background: ${previewColor};"></div>
-                <span class="light-auto-color-label">H: ${hue}° S: ${sat}%</span>
-              </div>
-            </div>
+            <input type="color" class="light-auto-seg-color light-auto-color-preview" value="${this._hsToHex(seg.hs_color)}">
           </div>
         </div>
-        <input type="hidden" class="light-auto-seg-brightness-hidden" value="${brightness}">
-        <input type="hidden" class="light-auto-seg-temp-hidden" value="${colorTemp}">
-        <input type="hidden" class="light-auto-seg-hue-hidden" value="${hue}">
-        <input type="hidden" class="light-auto-seg-sat-hidden" value="${sat}">
-        `;
-        })() : ''}
+        ` : ''}
         ${showTuya ? `
         <button type="button" class="light-auto-tuya-btn" data-segment-index="${index}">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-          </svg>
-          ${seg.tuya_scene ? 'Edit Tuya Scene' : 'Create Tuya Scene'}
+          Create Tuya Scene
         </button>
         ` : ''}
-        <div style="margin-top:20px; display:flex; justify-content:flex-end;">
+        <div style="margin-top:12px; display:flex; justify-content:flex-end;">
           <button type="button" class="light-auto-seg-delete">Delete Segment</button>
         </div>
       </div>
@@ -12654,96 +12391,181 @@ class EnergyPanel extends HTMLElement {
   _attachSegmentDragHandlers(segEl, timeline) {
     const idx = parseInt(segEl.dataset.segmentIndex, 10);
     const getSeg = () => this._lightAutoState.automation.group_automation?.segments?.[idx];
-
     const allSegments = () => this._lightAutoState.automation.group_automation?.segments || [];
+    const MIN_WIDTH_PCT = 4.17;
+    const CLICK_THRESHOLD = 5;
 
     const handles = segEl.querySelectorAll('.light-auto-segment-handle');
     handles.forEach(handle => {
+      let mouseDownX = 0;
       let dragging = false;
+      let didDrag = false;
       let origStart = '', origEnd = '';
+      let adjacentIdx = -1;
+      let adjacentOrigStart = '', adjacentOrigEnd = '';
       const isLeft = handle.dataset.handle === 'left';
 
       const onMouseMove = (e) => {
+        const dx = Math.abs(e.clientX - mouseDownX);
+        if (!dragging && dx > CLICK_THRESHOLD) {
+          dragging = true;
+          didDrag = true;
+        }
         if (!dragging) return;
+
         const rect = timeline.getBoundingClientRect();
-        const rawPct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-        const pct = this._snapToGrid(rawPct);
+        const segments = allSegments();
+        let rawPct = ((e.clientX - rect.left) / rect.width) * 100;
+        rawPct = Math.max(0, Math.min(100, rawPct));
+        let pct = this._snapToGrid(rawPct);
+
         const seg = getSeg();
-        if (seg) {
-          if (isLeft) {
-            seg.start = this._percentToTime(pct);
-            const endPct = this._timeToPercent(seg.end);
-            segEl.style.left = pct + '%';
-            segEl.style.width = Math.max(2, endPct - pct) + '%';
-          } else {
-            seg.end = this._percentToTime(pct);
-            const startPct = this._timeToPercent(seg.start);
-            segEl.style.width = Math.max(2, pct - startPct) + '%';
+        if (!seg) return;
+
+        if (isLeft) {
+          const endPct = this._timeToPercent(seg.end);
+          pct = Math.min(pct, endPct - MIN_WIDTH_PCT);
+          pct = Math.max(0, pct);
+
+          if (adjacentIdx >= 0 && segments[adjacentIdx]) {
+            const adjStartPct = this._timeToPercent(adjacentOrigStart);
+            pct = Math.max(pct, adjStartPct + MIN_WIDTH_PCT);
+            segments[adjacentIdx].end = this._percentToTime(pct);
           }
+
+          seg.start = this._percentToTime(pct);
+          segEl.style.left = pct + '%';
+          segEl.style.width = Math.max(MIN_WIDTH_PCT, endPct - pct) + '%';
+        } else {
+          const startPct = this._timeToPercent(seg.start);
+          pct = Math.max(pct, startPct + MIN_WIDTH_PCT);
+          pct = Math.min(100, pct);
+
+          if (adjacentIdx >= 0 && segments[adjacentIdx]) {
+            const adjEndPct = this._timeToPercent(adjacentOrigEnd);
+            pct = Math.min(pct, adjEndPct - MIN_WIDTH_PCT);
+            segments[adjacentIdx].start = this._percentToTime(pct);
+          }
+
+          seg.end = this._percentToTime(pct);
+          segEl.style.width = Math.max(MIN_WIDTH_PCT, pct - startPct) + '%';
         }
       };
 
       const onMouseUp = () => {
-        if (dragging) {
-          dragging = false;
-          document.removeEventListener('mousemove', onMouseMove);
-          document.removeEventListener('mouseup', onMouseUp);
-          const seg = getSeg();
-          if (seg && this._wouldOverlapOthers(seg, idx, allSegments())) {
-            seg.start = origStart;
-            seg.end = origEnd;
-          }
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        if (didDrag) {
           this._refreshLightAutomationModal();
         }
+        dragging = false;
+        didDrag = false;
       };
 
       handle.addEventListener('mousedown', (e) => {
         e.stopPropagation();
         e.preventDefault();
+        mouseDownX = e.clientX;
+        dragging = false;
+        didDrag = false;
         const seg = getSeg();
-        if (seg) { origStart = seg.start; origEnd = seg.end; }
-        dragging = true;
+        const segments = allSegments();
+        if (seg) {
+          origStart = seg.start;
+          origEnd = seg.end;
+          adjacentIdx = this._findAdjacentSegment(segments, idx, isLeft ? 'left' : 'right');
+          if (adjacentIdx >= 0 && segments[adjacentIdx]) {
+            adjacentOrigStart = segments[adjacentIdx].start;
+            adjacentOrigEnd = segments[adjacentIdx].end;
+          }
+        }
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
       });
     });
 
+    let mouseDownX = 0;
     let bodyDragging = false;
-    let bodyStartX = 0;
+    let didBodyDrag = false;
     let originalStartPct = 0;
     let originalEndPct = 0;
     let bodyOrigStart = '', bodyOrigEnd = '';
 
     const onBodyMouseMove = (e) => {
-      if (!bodyDragging) return;
-      const rect = timeline.getBoundingClientRect();
-      const deltaPct = ((e.clientX - bodyStartX) / rect.width) * 100;
-      const seg = getSeg();
-      if (seg) {
-        const segWidth = originalEndPct - originalStartPct;
-        let newStart = this._snapToGrid(originalStartPct + deltaPct);
-        let newEnd = newStart + segWidth;
-        if (newStart < 0) { newStart = 0; newEnd = segWidth; }
-        if (newEnd > 100) { newEnd = 100; newStart = 100 - segWidth; }
-        seg.start = this._percentToTime(newStart);
-        seg.end = this._percentToTime(newEnd);
-        segEl.style.left = newStart + '%';
-        segEl.style.width = (newEnd - newStart) + '%';
+      const dx = Math.abs(e.clientX - mouseDownX);
+      if (!bodyDragging && dx > CLICK_THRESHOLD) {
+        bodyDragging = true;
+        didBodyDrag = true;
       }
+      if (!bodyDragging) return;
+
+      const rect = timeline.getBoundingClientRect();
+      const deltaPct = ((e.clientX - mouseDownX) / rect.width) * 100;
+      const seg = getSeg();
+      const segments = allSegments();
+      if (!seg) return;
+
+      const segWidth = originalEndPct - originalStartPct;
+      let newStart = this._snapToGrid(originalStartPct + deltaPct);
+      let newEnd = newStart + segWidth;
+
+      newStart = Math.max(0, newStart);
+      newEnd = Math.min(100, newEnd);
+      if (newEnd - newStart < segWidth) {
+        if (deltaPct < 0) {
+          newStart = 0;
+          newEnd = segWidth;
+        } else {
+          newEnd = 100;
+          newStart = 100 - segWidth;
+        }
+      }
+
+      const leftNeighbor = this._findAdjacentSegment(segments, idx, 'left');
+      const rightNeighbor = this._findAdjacentSegment(segments, idx, 'right');
+
+      if (leftNeighbor >= 0 && segments[leftNeighbor]) {
+        const neighborStartPct = this._timeToPercent(segments[leftNeighbor].start);
+        const neighborWidth = this._timeToPercent(segments[leftNeighbor].end) - neighborStartPct;
+        if (newStart < neighborStartPct + MIN_WIDTH_PCT) {
+          const pushAmount = (neighborStartPct + MIN_WIDTH_PCT) - newStart;
+          const newNeighborStart = Math.max(0, neighborStartPct - pushAmount);
+          segments[leftNeighbor].start = this._percentToTime(newNeighborStart);
+          segments[leftNeighbor].end = this._percentToTime(newNeighborStart + neighborWidth);
+          newStart = newNeighborStart + neighborWidth;
+          newEnd = newStart + segWidth;
+        }
+      }
+
+      if (rightNeighbor >= 0 && segments[rightNeighbor]) {
+        const neighborEndPct = this._timeToPercent(segments[rightNeighbor].end);
+        const neighborWidth = neighborEndPct - this._timeToPercent(segments[rightNeighbor].start);
+        if (newEnd > neighborEndPct - MIN_WIDTH_PCT) {
+          const pushAmount = newEnd - (neighborEndPct - MIN_WIDTH_PCT);
+          const newNeighborEnd = Math.min(100, neighborEndPct + pushAmount);
+          segments[rightNeighbor].end = this._percentToTime(newNeighborEnd);
+          segments[rightNeighbor].start = this._percentToTime(newNeighborEnd - neighborWidth);
+          newEnd = newNeighborEnd - neighborWidth;
+          newStart = newEnd - segWidth;
+        }
+      }
+
+      seg.start = this._percentToTime(newStart);
+      seg.end = this._percentToTime(newEnd);
+      segEl.style.left = newStart + '%';
+      segEl.style.width = segWidth + '%';
     };
 
     const onBodyMouseUp = () => {
-      if (bodyDragging) {
-        bodyDragging = false;
-        document.removeEventListener('mousemove', onBodyMouseMove);
-        document.removeEventListener('mouseup', onBodyMouseUp);
-        const seg = getSeg();
-        if (seg && this._wouldOverlapOthers(seg, idx, allSegments())) {
-          seg.start = bodyOrigStart;
-          seg.end = bodyOrigEnd;
-        }
-        this._refreshLightAutomationModal();
+      document.removeEventListener('mousemove', onBodyMouseMove);
+      document.removeEventListener('mouseup', onBodyMouseUp);
+
+      if (!didBodyDrag) {
+        this._lightAutoState.selectedSegment = idx;
       }
+      this._refreshLightAutomationModal();
+      bodyDragging = false;
+      didBodyDrag = false;
     };
 
     segEl.addEventListener('mousedown', (e) => {
@@ -12752,8 +12574,9 @@ class EnergyPanel extends HTMLElement {
       e.preventDefault();
       const seg = getSeg();
       if (!seg) return;
-      bodyDragging = true;
-      bodyStartX = e.clientX;
+      mouseDownX = e.clientX;
+      bodyDragging = false;
+      didBodyDrag = false;
       bodyOrigStart = seg.start;
       bodyOrigEnd = seg.end;
       originalStartPct = this._timeToPercent(seg.start);
@@ -12792,27 +12615,21 @@ class EnergyPanel extends HTMLElement {
       this._refreshLightAutomationModal();
     });
 
-    const brightnessSlider = editor.querySelector('.light-auto-brightness-slider');
+    const brightnessSlider = editor.querySelector('.light-auto-seg-brightness');
     if (brightnessSlider) {
-      const handleBrightDrag = (e) => {
-        const rect = brightnessSlider.getBoundingClientRect();
-        const pct = Math.max(1, Math.min(100, Math.round(((e.clientX - rect.left) / rect.width) * 100)));
-        seg.brightness = pct;
-        brightnessSlider.querySelector('.brightness-slider-thumb').style.left = pct + '%';
-        editor.querySelector('.light-auto-brightness-value').textContent = pct + '%';
-      };
-      let brightDragging = false;
-      brightnessSlider.addEventListener('mousedown', (e) => { brightDragging = true; handleBrightDrag(e); });
-      document.addEventListener('mousemove', (e) => { if (brightDragging) handleBrightDrag(e); });
-      document.addEventListener('mouseup', () => { brightDragging = false; });
+      brightnessSlider.addEventListener('input', (e) => {
+        seg.brightness = parseInt(e.target.value, 10);
+        const valSpan = e.target.closest('.light-auto-slider-row')?.querySelector('.light-auto-slider-value');
+        if (valSpan) valSpan.textContent = `${seg.brightness}%`;
+      });
     }
 
     const modeSelect = editor.querySelector('.light-auto-seg-mode');
     if (modeSelect) {
       modeSelect.addEventListener('change', (e) => {
         const isColor = e.target.value === 'color';
-        editor.querySelector('.light-auto-temp-section').style.display = isColor ? 'none' : '';
-        editor.querySelector('.light-auto-color-section').style.display = isColor ? '' : 'none';
+        editor.querySelector('.light-auto-temp-field').style.display = isColor ? 'none' : '';
+        editor.querySelector('.light-auto-color-field').style.display = isColor ? '' : 'none';
         if (isColor) {
           delete seg.color_temp;
           seg.hs_color = seg.hs_color || [0, 100];
@@ -12820,45 +12637,23 @@ class EnergyPanel extends HTMLElement {
           delete seg.hs_color;
           seg.color_temp = seg.color_temp || 4000;
         }
-        this._refreshLightAutomationModal();
       });
     }
 
-    const tempSlider = editor.querySelector('.light-auto-temp-slider');
+    const tempSlider = editor.querySelector('.light-auto-seg-temp');
     if (tempSlider) {
-      const handleTempDrag = (e) => {
-        const rect = tempSlider.getBoundingClientRect();
-        const pct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-        const temp = Math.round(2700 + (pct / 100) * (6500 - 2700));
-        seg.color_temp = temp;
-        tempSlider.querySelector('.temp-slider-thumb').style.left = pct + '%';
-        editor.querySelector('.light-auto-temp-value').textContent = temp + 'K';
-      };
-      let tempDragging = false;
-      tempSlider.addEventListener('mousedown', (e) => { tempDragging = true; handleTempDrag(e); });
-      document.addEventListener('mousemove', (e) => { if (tempDragging) handleTempDrag(e); });
-      document.addEventListener('mouseup', () => { tempDragging = false; });
+      tempSlider.addEventListener('input', (e) => {
+        seg.color_temp = parseInt(e.target.value, 10);
+        const valSpan = e.target.closest('.light-auto-slider-row')?.querySelector('.light-auto-slider-value');
+        if (valSpan) valSpan.textContent = `${seg.color_temp}K`;
+      });
     }
 
-    const colorWheel = editor.querySelector('.light-auto-color-wheel');
-    if (colorWheel) {
-      const handleWheelInteraction = (e) => {
-        const rect = colorWheel.getBoundingClientRect();
-        const centerX = rect.width / 2;
-        const centerY = rect.height / 2;
-        const x = e.clientX - rect.left - centerX;
-        const y = e.clientY - rect.top - centerY;
-        const angle = Math.atan2(y, x) * 180 / Math.PI + 90;
-        const hue = Math.round(angle < 0 ? angle + 360 : angle);
-        const dist = Math.min(1, Math.sqrt(x*x + y*y) / (rect.width / 2));
-        const sat = Math.round(dist * 100);
-        seg.hs_color = [hue, sat];
-        this._refreshLightAutomationModal();
-      };
-      let wheelDragging = false;
-      colorWheel.addEventListener('mousedown', (e) => { wheelDragging = true; handleWheelInteraction(e); });
-      document.addEventListener('mousemove', (e) => { if (wheelDragging) handleWheelInteraction(e); });
-      document.addEventListener('mouseup', () => { wheelDragging = false; });
+    const colorInput = editor.querySelector('.light-auto-seg-color');
+    if (colorInput) {
+      colorInput.addEventListener('input', (e) => {
+        seg.hs_color = this._hexToHs(e.target.value);
+      });
     }
 
     editor.querySelector('.light-auto-seg-delete')?.addEventListener('click', () => {
@@ -13001,85 +12796,55 @@ class EnergyPanel extends HTMLElement {
   _renderTuyaSceneUnit(unit, index) {
     const hue = unit.h || 0;
     const sat = (unit.s || 500) / 10;
-    const val = (unit.v || 1000) / 10;
     const bright = (unit.bright || 1000) / 10;
     const temp = (unit.temperature || 500) / 10;
-    const previewColor = `hsl(${hue}, ${sat}%, ${50 + val/4}%)`;
-    const wheelX = 70 + 55 * (sat/100) * Math.cos((hue - 90) * Math.PI / 180);
-    const wheelY = 70 + 55 * (sat/100) * Math.sin((hue - 90) * Math.PI / 180);
+    const previewColor = `hsl(${hue}, ${sat}%, 50%)`;
 
     return `
       <div class="tuya-scene-unit" data-unit-index="${index}">
         <div class="tuya-scene-unit-header">
-          <span class="tuya-scene-unit-title">Scene Step ${index + 1}</span>
-          <button type="button" class="tuya-scene-unit-remove" title="Remove step">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+          <span class="tuya-scene-unit-title">Step ${index + 1}</span>
+          <button type="button" class="tuya-scene-unit-remove" title="Remove">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
         </div>
-        <div class="tuya-scene-unit-content">
-          <div class="tuya-scene-color-section">
-            <div class="color-wheel-container">
-              <div class="color-wheel tuya-color-wheel" data-unit="${index}">
-                <div class="color-wheel-picker" style="left: ${wheelX}px; top: ${wheelY}px; background: ${previewColor};"></div>
-                <div class="color-wheel-center" style="background: ${previewColor};"></div>
-              </div>
-            </div>
-            <div class="tuya-scene-unit-field" style="width: 140px;">
-              <label>Saturation</label>
-              <div class="color-sat-slider tuya-sat-slider" data-unit="${index}" style="--current-color: hsl(${hue}, 100%, 50%);">
-                <div class="color-slider-thumb" style="left: ${sat}%; background: ${previewColor};"></div>
-              </div>
-            </div>
+        <div class="tuya-scene-color-row">
+          <div class="tuya-scene-color-preview" style="background: ${previewColor};"></div>
+          <input type="color" class="tuya-unit-color" value="${this._hsToHex([hue, sat])}">
+        </div>
+        <div class="tuya-scene-unit-row">
+          <div class="tuya-scene-unit-field">
+            <label>Mode</label>
+            <select class="tuya-unit-mode">
+              <option value="static" ${unit.unit_change_mode === 'static' ? 'selected' : ''}>Static</option>
+              <option value="jump" ${unit.unit_change_mode === 'jump' ? 'selected' : ''}>Jump</option>
+              <option value="gradient" ${unit.unit_change_mode === 'gradient' ? 'selected' : ''}>Gradient</option>
+            </select>
           </div>
-          <div class="tuya-scene-settings-section">
-            <div class="tuya-scene-unit-row">
-              <div class="tuya-scene-unit-field">
-                <label>Transition Mode</label>
-                <select class="tuya-unit-mode">
-                  <option value="static" ${unit.unit_change_mode === 'static' ? 'selected' : ''}>Static (Hold)</option>
-                  <option value="jump" ${unit.unit_change_mode === 'jump' ? 'selected' : ''}>Jump (Instant)</option>
-                  <option value="gradient" ${unit.unit_change_mode === 'gradient' ? 'selected' : ''}>Gradient (Fade)</option>
-                </select>
-              </div>
-              <div class="tuya-scene-unit-field">
-                <label>Step Duration</label>
-                <input type="number" class="tuya-unit-switch" value="${unit.unit_switch_duration || 50}" min="0" max="1000" placeholder="ms">
-              </div>
-              <div class="tuya-scene-unit-field">
-                <label>Fade Duration</label>
-                <input type="number" class="tuya-unit-gradient" value="${unit.unit_gradient_duration || 100}" min="0" max="5000" placeholder="ms">
-              </div>
-            </div>
-            <div class="tuya-scene-unit-field">
-              <label>Brightness</label>
-              <div class="brightness-slider-container">
-                <div class="brightness-slider-visual tuya-bright-slider" data-unit="${index}">
-                  <div class="brightness-slider-thumb" style="left: ${bright}%;"></div>
-                </div>
-                <span class="brightness-value tuya-bright-value">${Math.round(bright)}%</span>
-              </div>
-            </div>
-            <div class="tuya-scene-unit-field">
-              <label>Color Temperature</label>
-              <div class="temp-slider-container">
-                <div class="temp-slider-visual tuya-temp-slider" data-unit="${index}">
-                  <div class="temp-slider-thumb" style="left: ${temp}%;"></div>
-                </div>
-                <div class="temp-slider-labels">
-                  <span>Warm</span>
-                  <span>Cool</span>
-                </div>
-              </div>
-            </div>
+          <div class="tuya-scene-unit-field">
+            <label>Duration (ms)</label>
+            <input type="number" class="tuya-unit-switch" value="${unit.unit_switch_duration || 50}" min="0" max="1000">
+          </div>
+          <div class="tuya-scene-unit-field">
+            <label>Fade (ms)</label>
+            <input type="number" class="tuya-unit-gradient" value="${unit.unit_gradient_duration || 100}" min="0" max="5000">
+          </div>
+        </div>
+        <div class="tuya-scene-unit-row">
+          <div class="tuya-scene-unit-field">
+            <label>Brightness (0-1000)</label>
+            <input type="number" class="tuya-unit-bright" value="${unit.bright || 1000}" min="0" max="1000">
+          </div>
+          <div class="tuya-scene-unit-field">
+            <label>Temp (0-1000)</label>
+            <input type="number" class="tuya-unit-temp" value="${unit.temperature || 500}" min="0" max="1000">
           </div>
         </div>
         <input type="hidden" class="tuya-unit-hue" value="${unit.h || 0}">
         <input type="hidden" class="tuya-unit-sat" value="${unit.s || 500}">
         <input type="hidden" class="tuya-unit-val" value="${unit.v || 1000}">
-        <input type="hidden" class="tuya-unit-bright" value="${unit.bright || 1000}">
-        <input type="hidden" class="tuya-unit-temp" value="${unit.temperature || 500}">
       </div>
     `;
   }
@@ -13118,68 +12883,18 @@ class EnergyPanel extends HTMLElement {
       unitEl.querySelector('.tuya-unit-mode')?.addEventListener('change', e => { unit.unit_change_mode = e.target.value; });
       unitEl.querySelector('.tuya-unit-switch')?.addEventListener('input', e => { unit.unit_switch_duration = parseInt(e.target.value, 10) || 0; });
       unitEl.querySelector('.tuya-unit-gradient')?.addEventListener('input', e => { unit.unit_gradient_duration = parseInt(e.target.value, 10) || 0; });
+      unitEl.querySelector('.tuya-unit-bright')?.addEventListener('input', e => { unit.bright = parseInt(e.target.value, 10) || 0; });
+      unitEl.querySelector('.tuya-unit-temp')?.addEventListener('input', e => { unit.temperature = parseInt(e.target.value, 10) || 0; });
 
-      const colorWheel = unitEl.querySelector('.tuya-color-wheel');
-      if (colorWheel) {
-        const handleWheelInteraction = (e) => {
-          const rect = colorWheel.getBoundingClientRect();
-          const centerX = rect.width / 2;
-          const centerY = rect.height / 2;
-          const x = e.clientX - rect.left - centerX;
-          const y = e.clientY - rect.top - centerY;
-          const angle = Math.atan2(y, x) * 180 / Math.PI + 90;
-          const hue = angle < 0 ? angle + 360 : angle;
-          const dist = Math.min(1, Math.sqrt(x*x + y*y) / (rect.width / 2));
-          unit.h = Math.round(hue);
-          unit.s = Math.round(dist * 1000);
-          this._refreshTuyaSceneModal();
-        };
-        let wheelDragging = false;
-        colorWheel.addEventListener('mousedown', (e) => { wheelDragging = true; handleWheelInteraction(e); });
-        document.addEventListener('mousemove', (e) => { if (wheelDragging) handleWheelInteraction(e); });
-        document.addEventListener('mouseup', () => { wheelDragging = false; });
-      }
-
-      const satSlider = unitEl.querySelector('.tuya-sat-slider');
-      if (satSlider) {
-        const handleSatDrag = (e) => {
-          const rect = satSlider.getBoundingClientRect();
-          const pct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-          unit.s = Math.round(pct * 10);
-          this._refreshTuyaSceneModal();
-        };
-        let satDragging = false;
-        satSlider.addEventListener('mousedown', (e) => { satDragging = true; handleSatDrag(e); });
-        document.addEventListener('mousemove', (e) => { if (satDragging) handleSatDrag(e); });
-        document.addEventListener('mouseup', () => { satDragging = false; });
-      }
-
-      const brightSlider = unitEl.querySelector('.tuya-bright-slider');
-      if (brightSlider) {
-        const handleBrightDrag = (e) => {
-          const rect = brightSlider.getBoundingClientRect();
-          const pct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-          unit.bright = Math.round(pct * 10);
-          this._refreshTuyaSceneModal();
-        };
-        let brightDragging = false;
-        brightSlider.addEventListener('mousedown', (e) => { brightDragging = true; handleBrightDrag(e); });
-        document.addEventListener('mousemove', (e) => { if (brightDragging) handleBrightDrag(e); });
-        document.addEventListener('mouseup', () => { brightDragging = false; });
-      }
-
-      const tempSlider = unitEl.querySelector('.tuya-temp-slider');
-      if (tempSlider) {
-        const handleTempDrag = (e) => {
-          const rect = tempSlider.getBoundingClientRect();
-          const pct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-          unit.temperature = Math.round(pct * 10);
-          this._refreshTuyaSceneModal();
-        };
-        let tempDragging = false;
-        tempSlider.addEventListener('mousedown', (e) => { tempDragging = true; handleTempDrag(e); });
-        document.addEventListener('mousemove', (e) => { if (tempDragging) handleTempDrag(e); });
-        document.addEventListener('mouseup', () => { tempDragging = false; });
+      const colorInput = unitEl.querySelector('.tuya-unit-color');
+      if (colorInput) {
+        colorInput.addEventListener('input', (e) => {
+          const hs = this._hexToHs(e.target.value);
+          unit.h = hs[0];
+          unit.s = hs[1] * 10;
+          const preview = unitEl.querySelector('.tuya-scene-color-preview');
+          if (preview) preview.style.background = `hsl(${hs[0]}, ${hs[1]}%, 50%)`;
+        });
       }
     });
 
