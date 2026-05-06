@@ -878,9 +878,6 @@ class EnergyPanel extends HTMLElement {
     const startFormatted = this._formatDateRange(dateStart);
     const endFormatted = this._formatDateRange(dateEnd);
     const rangeBanner = dateStart && dateEnd ? `${startFormatted} – ${endFormatted}` : 'No date range available';
-    const sensorValues = s.sensor_values || {};
-    const sensorMeta = s.sensor_meta || {};
-    const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
     const rangeEl = this.shadowRoot.querySelector('#stat-range-banner');
     const narrowedEl = this.shadowRoot.querySelector('#stat-narrowed');
     const periodLabelEl = this.shadowRoot.querySelector('#stat-period-label');
@@ -889,31 +886,15 @@ class EnergyPanel extends HTMLElement {
     if (periodLabelEl) {
       periodLabelEl.textContent =
         s.period_source === 'billing'
-          ? 'Current billing cycle (tracked totals)'
-          : 'Tracked totals window';
+          ? 'Current billing cycle'
+          : 'Statistics window';
     }
-    const curEl = this.shadowRoot.querySelector('#stat-current-usage');
-    const projEl = this.shadowRoot.querySelector('#stat-projected-usage');
-    const costEl = this.shadowRoot.querySelector('#stat-kwh-cost');
-    if (curEl) curEl.textContent = fmt(sensorValues.current_usage);
-    if (projEl) projEl.textContent = `${fmt(sensorValues.projected_usage)} kWh`;
-    if (costEl) costEl.textContent = `$${fmt(sensorValues.kwh_cost)}`;
-    const supUpd = this.shadowRoot.querySelector('#stat-supplier-updated');
-    if (supUpd) {
-      const iso = sensorMeta.supplier_last_updated;
-      supUpd.textContent = iso
-        ? `Bill cycle usage last changed · ${this._formatSupplierLastUpdated(iso)}`
-        : 'Configure supplier sensors in Settings to show live utility reads.';
-    }
-    const totalKwh = s.total_kwh ?? 0;
     const totalWarnings = s.total_warnings ?? 0;
     const totalShutoffs = s.total_shutoffs ?? 0;
     const totalPowerCycles = s.total_power_cycles ?? 0;
-    const kwhEl = this.shadowRoot.querySelector('#stat-total-kwh');
     const warnEl = this.shadowRoot.querySelector('#stat-total-warnings');
     const shutEl = this.shadowRoot.querySelector('#stat-total-shutoffs');
     const pcEl = this.shadowRoot.querySelector('#stat-total-power-cycles');
-    if (kwhEl) kwhEl.textContent = totalKwh.toFixed(2);
     if (warnEl) warnEl.textContent = totalWarnings;
     if (shutEl) shutEl.textContent = totalShutoffs;
     if (pcEl) pcEl.textContent = totalPowerCycles;
@@ -922,36 +903,40 @@ class EnergyPanel extends HTMLElement {
     if (tbody) {
       const ds = dateStart;
       const de = dateEnd;
-      const kwhCostNum = sensorValues.kwh_cost;
-      const costOk = kwhCostNum != null && Number.isFinite(Number(kwhCostNum));
-      const fmtTotalCost = (periodKwh) => {
-        if (!costOk) return '—';
-        const n = Number(periodKwh) * Number(kwhCostNum);
-        if (!Number.isFinite(n)) return '—';
-        return `$${n.toFixed(2)}`;
-      };
       tbody.innerHTML = rooms.length === 0
-        ? '<tr><td colspan="10" class="statistics-empty">No room data for this range.</td></tr>'
+        ? '<tr><td colspan="9" class="statistics-empty">No room data for this range.</td></tr>'
         : rooms.map((r) => {
           const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
           const rid = String(r.id || '').replace(/"/g, '&quot;');
+          const effRatings = r.ratings;
+          const effStars =
+            effRatings != null &&
+            effRatings.stars != null &&
+            Number.isFinite(Number(effRatings.stars))
+              ? Number(effRatings.stars)
+              : 0;
+          const effPrefix = `stat_upd_${String(r.id || 'room').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+          const effStarsHtml = this._formatEfficiencyStarsSvg(effStars, effPrefix);
+          const effCell = `<button type="button" class="stat-room-efficiency-rating has-tooltip" data-stat-room-rating="${rid}"
+            title="Efficiency — tap for details" aria-label="Room efficiency, tap for details">
+            <span class="room-efficiency-stars stat-room-efficiency-stars">${effStarsHtml}</span>
+          </button>`;
           const warnCell = ds && de
-            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log (billing period)">${r.warnings ?? 0}</span>`
+            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log">${r.warnings ?? 0}</span>`
             : `${r.warnings ?? 0}`;
           const shutCell = ds && de
-            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_shutoffs" data-room-id="${rid}" data-room-name="${rname}" title="Room shutoff log (billing period)">${r.shutoffs ?? 0}</span>`
+            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_shutoffs" data-room-id="${rid}" data-room-name="${rname}" title="Room shutoff log">${r.shutoffs ?? 0}</span>`
             : `${r.shutoffs ?? 0}`;
           const cycCell = ds && de
-            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_power_cycles" data-room-id="${rid}" data-room-name="${rname}" title="Room cycle log (billing period)">${r.power_cycles ?? 0}</span>`
+            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_power_cycles" data-room-id="${rid}" data-room-name="${rname}" title="Room cycle log">${r.power_cycles ?? 0}</span>`
             : `${r.power_cycles ?? 0}`;
           const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
           const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
           const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
-          const totalCost = fmtTotalCost(r.kwh);
           return `
           <tr>
             <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
-            <td>${(r.kwh ?? 0).toFixed(2)} kWh</td>
+            <td class="stat-efficiency-cell">${effCell}</td>
             <td>${(r.pct ?? 0).toFixed(1)}%</td>
             <td>${warnCell}</td>
             <td>${shutCell}</td>
@@ -959,7 +944,6 @@ class EnergyPanel extends HTMLElement {
             <td>${hi}</td>
             <td>${lo}</td>
             <td>${avg}</td>
-            <td>${totalCost}</td>
           </tr>`;
         }).join('');
     }
@@ -1016,10 +1000,6 @@ class EnergyPanel extends HTMLElement {
     }
     const container = this.shadowRoot?.getElementById('stat-rooms-pie-chart');
     if (!container) {
-      this._destroyStatsRoomsPie();
-      return;
-    }
-    if (this._statsRoomsView !== 'pie') {
       this._destroyStatsRoomsPie();
       return;
     }
@@ -2003,6 +1983,139 @@ class EnergyPanel extends HTMLElement {
       }
       .stat-pie-selection-actions {
         margin-top: 10px;
+      }
+
+      /* Integrated Statistics Page Layout */
+      .statistics-content-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 20px;
+      }
+      @media (min-width: 900px) {
+        .statistics-content-grid {
+          grid-template-columns: minmax(320px, 400px) 1fr;
+          gap: 28px;
+          align-items: start;
+        }
+      }
+      .statistics-pie-panel {
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--card-border);
+        padding: clamp(16px, 3vw, 24px);
+        display: flex;
+        flex-direction: column;
+      }
+      .statistics-pie-panel .stat-rooms-pie-mount {
+        min-height: 320px;
+        margin: 0 auto;
+        width: 100%;
+        max-width: 380px;
+      }
+      .statistics-table-panel {
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--card-border);
+        padding: clamp(12px, 2.5vw, 20px);
+        overflow: hidden;
+      }
+      .statistics-table-panel .statistics-table-wrap {
+        margin: 0;
+        padding: 0;
+      }
+      .statistics-table-panel .statistics-table {
+        min-width: 520px;
+      }
+      .statistics-event-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 24px;
+        justify-content: center;
+        align-items: center;
+        padding: 14px 16px;
+        background: linear-gradient(135deg, rgba(var(--rgb-primary-color), 0.08) 0%, rgba(var(--rgb-primary-color), 0.03) 100%);
+        border-radius: 10px;
+        border: 1px solid var(--card-border);
+      }
+      .statistics-event-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px;
+        background: rgba(0, 0, 0, 0.15);
+        border-radius: 20px;
+        transition: background 0.2s, transform 0.15s;
+      }
+      .statistics-event-item:hover {
+        background: rgba(0, 0, 0, 0.25);
+      }
+      .statistics-event-item.graph-clickable {
+        cursor: pointer;
+      }
+      .statistics-event-item.graph-clickable:hover {
+        transform: translateY(-1px);
+      }
+      .statistics-event-icon {
+        width: 18px;
+        height: 18px;
+        opacity: 0.85;
+      }
+      .statistics-event-label {
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .statistics-event-value {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--primary-text-color);
+        font-variant-numeric: tabular-nums;
+      }
+      .statistics-section-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .statistics-section-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        margin: 0;
+      }
+      .statistics-section-sub {
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        margin: 0;
+      }
+      .statistics-table-compact th,
+      .statistics-table-compact td {
+        padding: clamp(5px, 1.2vw, 8px) clamp(4px, 1.5vw, 8px);
+        font-size: clamp(10px, 2.2vw, 11px);
+      }
+      .statistics-table-compact th abbr {
+        border-bottom: none;
+      }
+      @media (max-width: 899px) {
+        .statistics-pie-panel {
+          order: 1;
+        }
+        .statistics-table-panel {
+          order: 2;
+        }
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
       }
 
       .rooms-grid {
@@ -6750,7 +6863,7 @@ class EnergyPanel extends HTMLElement {
     if (this._dashboardView === 'rooms' && rooms.length > 0 && !showStatistics) {
       queueMicrotask(() => this._scheduleRoomHeaderTitleFit());
     }
-    if (this._dashboardView === 'statistics' && this._statsRoomsView === 'pie') {
+    if (this._dashboardView === 'statistics') {
       queueMicrotask(() => void this._syncStatsRoomsPie());
     }
   }
@@ -7878,40 +7991,22 @@ class EnergyPanel extends HTMLElement {
     const rangeBanner = dateStart && dateEnd
       ? `${startFormatted} – ${endFormatted}`
       : 'No date range available';
-    const sensorValues = s.sensor_values || {};
-    const currentUsage = sensorValues.current_usage;
-    const projectedUsage = sensorValues.projected_usage;
-    const kwhCost = sensorValues.kwh_cost;
     const totalKwh = s.total_kwh ?? 0;
     const totalWarnings = s.total_warnings ?? 0;
     const totalShutoffs = s.total_shutoffs ?? 0;
     const totalPowerCycles = s.total_power_cycles ?? 0;
     const rooms = s.rooms || [];
-    const roomsPieView = this._statsRoomsView === 'pie';
-    const sensorMeta = s.sensor_meta || {};
-    const sensorStates = sensorMeta.sensor_states || {};
-    const showSupplier = this._statisticsSupplierConfigured();
-    const supplierUpdLine = sensorMeta.supplier_last_updated
-      ? `Bill cycle usage last changed · ${this._formatSupplierLastUpdated(sensorMeta.supplier_last_updated)}`
-      : 'Configure supplier sensors in Settings to show live utility reads.';
 
-    const fmt = (v) => (v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) : String(v)));
-    const sensorDiagnostic = (key, parsedVal) => {
-      if (parsedVal != null) return '';
-      const info = sensorStates[key];
-      if (!info) return '';
-      if (!info.entity) return '<span class="sensor-diagnostic">(not configured)</span>';
-      if (info.raw === 'entity_not_found') return '<span class="sensor-diagnostic">(entity not found)</span>';
-      if (info.raw === 'unknown' || info.raw === 'unavailable') return `<span class="sensor-diagnostic">(${info.raw})</span>`;
-      if (info.raw) return `<span class="sensor-diagnostic">(raw: ${String(info.raw).replace(/</g, '&lt;').substring(0, 20)})</span>`;
-      return '<span class="sensor-diagnostic">(empty)</span>';
-    };
     const showOverlay = this._statsLoading;
     const staleLine = s.statistics_pending
-      ? 'Full usage totals are building in the background — this page updates automatically when the snapshot is ready.'
+      ? 'Building usage totals — updates automatically when ready.'
       : this._statsFetchedAt
-        ? `Showing last known values · updated ${this._statsDataAgeLabel()} · refreshing in background`
+        ? `Updated ${this._statsDataAgeLabel()}`
         : 'Loading statistics…';
+
+    const warningIcon = `<svg class="statistics-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+    const shutoffIcon = `<svg class="statistics-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`;
+    const cycleIcon = `<svg class="statistics-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`;
 
     return `
       <div class="statistics-view-shell">
@@ -7924,200 +8019,113 @@ class EnergyPanel extends HTMLElement {
           </div>
         </div>
         <div class="statistics-view">
-        <div class="statistics-banner">
-          <div class="statistics-banner-row">
-            <span class="statistics-banner-label" id="stat-period-label">${s.period_source === 'billing' ? 'Current billing cycle (tracked totals)' : 'Tracked totals window'}</span>
-            <span class="statistics-range" id="stat-range-banner">${rangeBanner}</span>
-            <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Narrowed to dates you picked.</span>
+          <div class="statistics-banner">
+            <div class="statistics-banner-row">
+              <span class="statistics-banner-label" id="stat-period-label">${s.period_source === 'billing' ? 'Current billing cycle' : 'Statistics window'}</span>
+              <span class="statistics-range" id="stat-range-banner">${rangeBanner}</span>
+              <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Narrowed to dates you picked.</span>
+            </div>
+            ${s.statistics_pending ? `<div class="statistics-pending-banner" id="stat-pending-banner">Building usage totals — numbers update automatically when the snapshot is ready.</div>` : ''}
           </div>
-          ${s.statistics_pending ? `<div class="statistics-pending-banner" id="stat-pending-banner">Full usage totals are building in the background — numbers update automatically when the snapshot is ready.</div>` : ''}
-        </div>
-        <div class="statistics-cards">
-          <div class="statistics-overview-card card">
-            <div class="statistics-overview-grid${showSupplier ? '' : ' statistics-overview-grid--tracked-only'}">
-              ${showSupplier ? `
-              <div class="statistics-overview-col--supplier">
-                <p class="statistics-card-sub">Supplier</p>
-                <h3 class="statistics-card-title">Utility read</h3>
-                <div class="statistics-kpi-big">
-                  <span class="lbl">So far <span style="font-weight:500;opacity:0.85">(bill cycle)</span></span>
-                  <span class="val"><span id="stat-current-usage">${fmt(currentUsage)}</span> <span style="font-size:0.55em;font-weight:600;opacity:0.85">kWh</span> ${sensorDiagnostic('current_usage', currentUsage)}</span>
-                </div>
-                <div class="statistics-totals-grid">
-                  <div class="statistics-total-item">
-                    <span class="statistics-total-label">Estimate end <span style="font-weight:500;opacity:0.8;font-size:10px">(cycle)</span></span>
-                    <span class="statistics-total-value" id="stat-projected-usage">${fmt(projectedUsage)} kWh ${sensorDiagnostic('projected_usage', projectedUsage)}</span>
-                  </div>
-                  <div class="statistics-total-item">
-                    <span class="statistics-total-label">$/kWh</span>
-                    <span class="statistics-total-value" id="stat-kwh-cost">$${fmt(kwhCost)} ${sensorDiagnostic('kwh_cost', kwhCost)}</span>
-                  </div>
-                </div>
-                <p class="statistics-supplier-updated" id="stat-supplier-updated">${supplierUpdLine.replace(/</g, '&lt;')}</p>
-              </div>` : ''}
-              <div class="statistics-overview-col--tracked">
-                <p class="statistics-card-sub">What we measure</p>
-                <h3 class="statistics-card-title">Tracked usage</h3>
-                <div class="statistics-kpi-big">
-                  <span class="lbl">Tracked total for dates above</span>
-                  <span class="val"><span id="stat-total-kwh">${totalKwh.toFixed(2)}</span> <span style="font-size:0.55em;font-weight:600;opacity:0.85">kWh</span></span>
-                </div>
-                <div class="statistics-totals-grid">
-                  <div class="statistics-total-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_warnings" title="Open threshold warning log for dates above"' : ''}>
-                    <span class="statistics-total-label">Voice warnings</span>
-                    <span class="statistics-total-value" id="stat-total-warnings">${totalWarnings}</span>
-                  </div>
-                  <div class="statistics-total-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_shutoffs" title="Open safety shutoff log for dates above"' : ''}>
-                    <span class="statistics-total-label">Plug shutoffs</span>
-                    <span class="statistics-total-value" id="stat-total-shutoffs">${totalShutoffs}</span>
-                  </div>
-                  <div class="statistics-total-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_power_cycles" title="Open enforcement cycle log for dates above"' : ''}>
-                    <span class="statistics-total-label">Enforcement cycles</span>
-                    <span class="statistics-total-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
-                  </div>
-                </div>
-                <div class="statistics-chart-actions">
-                  ${dateStart && dateEnd ? `<button type="button" class="btn-stat-chart" id="stat-chart-billing-home" title="Daily kWh per day for the date range at the top">Open usage graph (whole home)</button>` : ''}
-                </div>
-                <div class="statistics-source-breakdown-wrap" style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(127,127,127,0.2)">
-                  <p style="margin:0 0 6px;font-size:11px;opacity:0.85">Source breakdown (debug)</p>
-                  <button type="button" class="btn-stat-chart btn-stat-source-breakdown" id="stat-source-breakdown-load" ${!dateStart || !dateEnd ? 'disabled' : ''}>Load per-entity totals</button>
-                  ${this._statsSourceBreakdownLoading ? '<p class="statistics-breakdown-status" style="margin:8px 0 0;font-size:12px;opacity:0.9">Loading…</p>' : ''}
-                  ${this._statsSourceBreakdownErr ? `<p class="statistics-breakdown-err" style="margin:8px 0 0;font-size:12px;color:var(--error-color, #c62828)">${String(this._statsSourceBreakdownErr).replace(/</g, '&lt;')}</p>` : ''}
-                  ${Array.isArray(this._statsSourceBreakdown) && this._statsSourceBreakdown.length > 0 ? `
-                  <div class="statistics-breakdown-table-wrap" style="margin-top:10px;overflow-x:auto">
-                    <table class="statistics-table" style="font-size:12px">
-                      <thead><tr><th>Entity</th><th>Room</th><th>kWh</th><th>Method</th></tr></thead>
-                      <tbody>
-                        ${this._statsSourceBreakdown.map((row) => {
-                          const eid = String(row.entity_id || '').replace(/</g, '&lt;');
-                          const rid = String(row.room_id || '').replace(/</g, '&lt;');
-                          const meth = String(row.method || '—').replace(/</g, '&lt;');
-                          const k = row.kwh != null ? Number(row.kwh).toFixed(3) : '—';
-                          return `<tr><td><code style="font-size:11px">${eid}</code></td><td>${rid}</td><td>${k}</td><td>${meth}</td></tr>`;
-                        }).join('')}
-                      </tbody>
-                    </table>
-                  </div>` : ''}
-                </div>
+
+          <div class="statistics-event-bar">
+            <div class="statistics-event-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_warnings" title="Open threshold warning log"' : ''}>
+              ${warningIcon}
+              <span class="statistics-event-value" id="stat-total-warnings">${totalWarnings}</span>
+              <span class="statistics-event-label">Warnings</span>
+            </div>
+            <div class="statistics-event-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_shutoffs" title="Open safety shutoff log"' : ''}>
+              ${shutoffIcon}
+              <span class="statistics-event-value" id="stat-total-shutoffs">${totalShutoffs}</span>
+              <span class="statistics-event-label">Shutoffs</span>
+            </div>
+            <div class="statistics-event-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_power_cycles" title="Open enforcement cycle log"' : ''}>
+              ${cycleIcon}
+              <span class="statistics-event-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
+              <span class="statistics-event-label">Cycles</span>
+            </div>
+          </div>
+
+          <div class="statistics-content-grid">
+            <div class="statistics-pie-panel">
+              <div class="statistics-section-header">
+                <h3 class="statistics-section-title">Room Distribution</h3>
+              </div>
+              <div id="stat-rooms-pie-chart" class="stat-rooms-pie-mount" aria-label="Room energy distribution pie chart"></div>
+              <div id="stat-pie-selection" class="stat-pie-selection" role="region" aria-live="polite">
+                <p class="stat-pie-selection-meta">Tap a slice for room details and to open a usage graph.</p>
+              </div>
+            </div>
+
+            <div class="statistics-table-panel">
+              <div class="statistics-section-header">
+                <h3 class="statistics-section-title">Room Details</h3>
+                <p class="statistics-section-sub">Efficiency and daily metrics for each room</p>
+              </div>
+              <div class="statistics-table-wrap">
+                <table class="statistics-table statistics-table-compact" aria-describedby="stat-table-desc">
+                  <caption id="stat-table-desc" class="sr-only">Room statistics showing efficiency ratings, percentage of total usage, event counts, and daily high/low/average metrics.</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Room</th>
+                      <th scope="col"><abbr title="Efficiency rating">Eff</abbr></th>
+                      <th scope="col"><abbr title="Percent of total">%</abbr></th>
+                      <th scope="col"><abbr title="Voice warnings">Warn</abbr></th>
+                      <th scope="col"><abbr title="Safety shutoffs">Shut</abbr></th>
+                      <th scope="col"><abbr title="Enforcement cycles">Cyc</abbr></th>
+                      <th scope="col"><abbr title="Highest daily kWh">High</abbr></th>
+                      <th scope="col"><abbr title="Lowest daily kWh">Low</abbr></th>
+                      <th scope="col"><abbr title="Average daily kWh">Avg</abbr></th>
+                    </tr>
+                  </thead>
+                  <tbody id="stat-rooms-tbody">
+                    ${rooms.length === 0 ? '<tr><td colspan="9" class="statistics-empty">No room data for this range.</td></tr>' : ''}
+                    ${rooms.map((r) => {
+                    const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+                    const rid = String(r.id || '').replace(/"/g, '&quot;');
+                    const effRatings = r.ratings;
+                    const effStars =
+                      effRatings != null &&
+                      effRatings.stars != null &&
+                      Number.isFinite(Number(effRatings.stars))
+                        ? Number(effRatings.stars)
+                        : 0;
+                    const effPrefix = `stat_${String(r.id || 'room').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+                    const effStarsHtml = this._formatEfficiencyStarsSvg(effStars, effPrefix);
+                    const effCell = `<button type="button" class="stat-room-efficiency-rating has-tooltip" data-stat-room-rating="${rid}"
+                      title="Efficiency — tap for details" aria-label="Room efficiency, tap for details">
+                      <span class="room-efficiency-stars stat-room-efficiency-stars">${effStarsHtml}</span>
+                    </button>`;
+                    const warnCell = dateStart && dateEnd
+                      ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log">${r.warnings ?? 0}</span>`
+                      : `${r.warnings ?? 0}`;
+                    const shutCell = dateStart && dateEnd
+                      ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_shutoffs" data-room-id="${rid}" data-room-name="${rname}" title="Room shutoff log">${r.shutoffs ?? 0}</span>`
+                      : `${r.shutoffs ?? 0}`;
+                    const cycCell = dateStart && dateEnd
+                      ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_power_cycles" data-room-id="${rid}" data-room-name="${rname}" title="Room cycle log">${r.power_cycles ?? 0}</span>`
+                      : `${r.power_cycles ?? 0}`;
+                    const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
+                    const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
+                    const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
+                    return `
+                    <tr>
+                      <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
+                      <td class="stat-efficiency-cell">${effCell}</td>
+                      <td>${(r.pct ?? 0).toFixed(1)}%</td>
+                      <td>${warnCell}</td>
+                      <td>${shutCell}</td>
+                      <td>${cycCell}</td>
+                      <td>${hi}</td>
+                      <td>${lo}</td>
+                      <td>${avg}</td>
+                    </tr>`;
+                  }).join('')}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
-        </div>
-        <div class="statistics-rooms-card card statistics-rooms-fullbleed">
-          <p class="statistics-card-sub">Rooms</p>
-          <h3 class="statistics-card-title">kWh and events</h3>
-          <div class="stat-rooms-segment-wrap" role="tablist" aria-label="Rooms data view">
-            <button type="button" role="tab" class="stat-rooms-segment ${roomsPieView ? 'active' : ''}" id="stat-rooms-tab-chart" data-stat-rooms-view="pie" aria-selected="${roomsPieView}" aria-controls="stat-rooms-panel-pie">Chart</button>
-            <button type="button" role="tab" class="stat-rooms-segment ${!roomsPieView ? 'active' : ''}" id="stat-rooms-tab-table" data-stat-rooms-view="table" aria-selected="${!roomsPieView}" aria-controls="stat-rooms-panel-table">Table</button>
-          </div>
-          <div id="stat-rooms-panel-table" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-table" style="display:${roomsPieView ? 'none' : 'block'}">
-            <div class="statistics-table-wrap">
-              <table class="statistics-table" aria-describedby="stat-table-desc">
-                <caption id="stat-table-desc" style="caption-side:bottom;text-align:left;padding-top:8px;font-size:11px;color:var(--secondary-text-color);">Usage and Percent apply to the same dates shown at the top of this page. High, low, and average are daily kWh (local days in range). Total cost is period Usage (kWh) × $/kWh from supplier when configured. Warnings, shutoffs, and cycles sum daily snapshots. Tap a count (when a date range is set) for the event log. Open a room graph from the pie chart.</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Room</th>
-                    <th scope="col"><abbr title="Efficiency (billing period)">Efficiency</abbr></th>
-                    <th scope="col"><abbr title="kWh this period">Usage</abbr></th>
-                    <th scope="col"><abbr title="Percent of tracked kWh this period">Percent</abbr></th>
-                    <th scope="col"><abbr title="Voice threshold warnings">Warnings</abbr></th>
-                    <th scope="col"><abbr title="Safety plug shutoffs">Shutoffs</abbr></th>
-                    <th scope="col"><abbr title="Enforcement outlet cycles">Cycles</abbr></th>
-                    <th scope="col"><abbr title="Highest kWh in a single local day">High</abbr></th>
-                    <th scope="col"><abbr title="Lowest kWh in a single local day">Low</abbr></th>
-                    <th scope="col"><abbr title="Average kWh per day (usage ÷ days in range)">Average</abbr></th>
-                    <th scope="col"><abbr title="Period Usage (kWh) × $/kWh">Total cost</abbr></th>
-                  </tr>
-                </thead>
-                <tbody id="stat-rooms-tbody">
-                  ${rooms.length === 0 ? '<tr><td colspan="11" class="statistics-empty">No room data for this range.</td></tr>' : ''}
-                  ${rooms.map((r) => {
-                  const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-                  const rid = String(r.id || '').replace(/"/g, '&quot;');
-                  const effRatings = r.ratings;
-                  const effStars =
-                    effRatings != null &&
-                    effRatings.stars != null &&
-                    Number.isFinite(Number(effRatings.stars))
-                      ? Number(effRatings.stars)
-                      : 0;
-                  const effPrefix = `stat_${String(r.id || 'room').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-                  const effStarsHtml = this._formatEfficiencyStarsSvg(effStars, effPrefix);
-                  const effCell = `<button type="button" class="stat-room-efficiency-rating has-tooltip" data-stat-room-rating="${rid}"
-                    title="Efficiency (billing period) — tap for details" aria-label="Room efficiency for this period, tap for details">
-                    <span class="room-efficiency-stars stat-room-efficiency-stars">${effStarsHtml}</span>
-                  </button>`;
-                  const warnCell = dateStart && dateEnd
-                    ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log (billing period)">${r.warnings ?? 0}</span>`
-                    : `${r.warnings ?? 0}`;
-                  const shutCell = dateStart && dateEnd
-                    ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_shutoffs" data-room-id="${rid}" data-room-name="${rname}" title="Room shutoff log (billing period)">${r.shutoffs ?? 0}</span>`
-                    : `${r.shutoffs ?? 0}`;
-                  const cycCell = dateStart && dateEnd
-                    ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_power_cycles" data-room-id="${rid}" data-room-name="${rname}" title="Room cycle log (billing period)">${r.power_cycles ?? 0}</span>`
-                    : `${r.power_cycles ?? 0}`;
-                  const kc = kwhCost;
-                  const costOk = kc != null && Number.isFinite(Number(kc));
-                  const fmtTotalCost = (periodKwh) => {
-                    if (!costOk) return '—';
-                    const n = Number(periodKwh) * Number(kc);
-                    if (!Number.isFinite(n)) return '—';
-                    return `$${n.toFixed(2)}`;
-                  };
-                  const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
-                  const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
-                  const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
-                  const totalCost = fmtTotalCost(r.kwh);
-                  return `
-                  <tr>
-                    <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
-                    <td class="stat-efficiency-cell">${effCell}</td>
-                    <td>${(r.kwh ?? 0).toFixed(2)} kWh</td>
-                    <td>${(r.pct ?? 0).toFixed(1)}%</td>
-                    <td>${warnCell}</td>
-                    <td>${shutCell}</td>
-                    <td>${cycCell}</td>
-                    <td>${hi}</td>
-                    <td>${lo}</td>
-                    <td>${avg}</td>
-                    <td>${totalCost}</td>
-                  </tr>`;
-                }).join('')}
-                </tbody>
-                ${rooms.length > 0 ? (() => {
-                  const kc = kwhCost;
-                  const costOk = kc != null && Number.isFinite(Number(kc));
-                  const totalCostStr = costOk && Number.isFinite(totalKwh * Number(kc))
-                    ? `$${(totalKwh * Number(kc)).toFixed(2)}`
-                    : '—';
-                  return `<tfoot>
-                  <tr class="statistics-table-totals-row">
-                    <th scope="row">Total</th>
-                    <td>—</td>
-                    <td>${totalKwh.toFixed(2)} kWh</td>
-                    <td>100.0%</td>
-                    <td>${totalWarnings}</td>
-                    <td>${totalShutoffs}</td>
-                    <td>${totalPowerCycles}</td>
-                    <td>—</td>
-                    <td>—</td>
-                    <td>—</td>
-                    <td>${totalCostStr}</td>
-                  </tr>
-                </tfoot>`;
-                })() : ''}
-              </table>
-            </div>
-          </div>
-          <div id="stat-rooms-panel-pie" class="stat-rooms-panel" role="tabpanel" aria-labelledby="stat-rooms-tab-chart" style="display:${roomsPieView ? 'block' : 'none'}">
-            <div id="stat-rooms-pie-chart" class="stat-rooms-pie-mount" aria-hidden="${roomsPieView ? 'false' : 'true'}"></div>
-            <div id="stat-pie-selection" class="stat-pie-selection" role="region" aria-live="polite">
-              <p class="stat-pie-selection-meta">Tap a slice for room details and to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>
-            </div>
-            <p id="stat-pie-desc" class="stat-pie-caption">Pie shares use the same tracked kWh total and dates as the banner above (non-zero rooms only). Use the table for every room, daily high/low/average, and zero-load rows; tap a slice here to open that room usage graph.</p>
-          </div>
-        </div>
         </div>
       </div>
     `;
