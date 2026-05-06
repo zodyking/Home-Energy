@@ -888,7 +888,7 @@ class ConfigManager:
                             item["plug2_shutoff"] = 0
                             item["switch_entity"] = outlet.get("switch_entity")
                             light_ents = outlet.get("light_entities")
-                            # Support list of {entity_id, watts} or legacy list of entity_id strings
+                            # Support list of {entity_id, watts, wrgb, tuya} or legacy list of entity_id strings
                             if isinstance(light_ents, list):
                                 by_entity = {}
                                 for e in light_ents:
@@ -898,15 +898,16 @@ class ConfigManager:
                                         eid = e["entity_id"]
                                         w = max(0, int(e.get("watts", 0)))
                                         wrgb = bool(e.get("wrgb", False))
-                                        by_entity[eid] = {"entity_id": eid, "watts": w, "wrgb": wrgb}
+                                        tuya = bool(e.get("tuya", False)) and wrgb
+                                        by_entity[eid] = {"entity_id": eid, "watts": w, "wrgb": wrgb, "tuya": tuya}
                                     elif isinstance(e, str) and e.strip().startswith("light."):
                                         eid, w = e.strip(), 0
                                         if eid:
-                                            by_entity[eid] = {"entity_id": eid, "watts": w, "wrgb": False}
+                                            by_entity[eid] = {"entity_id": eid, "watts": w, "wrgb": False, "tuya": False}
                                 item["light_entities"] = list(by_entity.values())
                             elif isinstance(light_ents, str):
                                 item["light_entities"] = [
-                                    {"entity_id": e.strip(), "watts": 0, "wrgb": False}
+                                    {"entity_id": e.strip(), "watts": 0, "wrgb": False, "tuya": False}
                                     for e in light_ents.split(",") if e.strip().startswith("light.")
                                 ]
                             else:
@@ -2991,3 +2992,144 @@ class ConfigManager:
             await self.hass.async_add_executor_job(_write_json_file, path, payload)
         except IOError as err:
             _LOGGER.error("Error saving intraday history: %s", err)
+
+    # Light automation storage
+    def _light_automations_path(self) -> str:
+        """Return path to light automations JSON file."""
+        return self._data_path("light_automations.json")
+
+    def get_light_automations(self, room_id: str) -> dict[str, Any]:
+        """Get light automation config for a room."""
+        path = self._light_automations_path()
+        try:
+            data = _load_json_file(path)
+            if data and room_id in data:
+                return data[room_id]
+        except (json.JSONDecodeError, IOError):
+            pass
+        return {
+            "group_automation": {"enabled": False, "segments": []},
+            "individual_automations": {},
+        }
+
+    def get_all_light_automations(self) -> dict[str, Any]:
+        """Get all light automations for all rooms."""
+        path = self._light_automations_path()
+        try:
+            data = _load_json_file(path)
+            if data:
+                return data
+        except (json.JSONDecodeError, IOError):
+            pass
+        return {}
+
+    def save_light_automations(self, room_id: str, automations: dict[str, Any]) -> None:
+        """Save light automation config for a room."""
+        path = self._light_automations_path()
+        try:
+            data = _load_json_file(path)
+            if data is None:
+                data = {}
+        except (json.JSONDecodeError, IOError):
+            data = {}
+
+        validated = self._validate_light_automation(automations)
+        data[room_id] = validated
+
+        try:
+            _write_json_file(path, data)
+        except IOError as err:
+            _LOGGER.error("Error saving light automations: %s", err)
+            raise
+
+    def _validate_light_automation(self, automation: dict[str, Any]) -> dict[str, Any]:
+        """Validate and normalize light automation structure."""
+        result = {
+            "group_automation": {"enabled": False, "segments": []},
+            "individual_automations": {},
+        }
+
+        group = automation.get("group_automation", {})
+        result["group_automation"]["enabled"] = bool(group.get("enabled", False))
+
+        for seg in group.get("segments", []):
+            validated_seg = self._validate_automation_segment(seg)
+            if validated_seg:
+                result["group_automation"]["segments"].append(validated_seg)
+
+        for entity_id, indiv in automation.get("individual_automations", {}).items():
+            if not entity_id.startswith("light."):
+                continue
+            validated_indiv = {
+                "enabled": bool(indiv.get("enabled", False)),
+                "segments": [],
+            }
+            for seg in indiv.get("segments", []):
+                validated_seg = self._validate_automation_segment(seg)
+                if validated_seg:
+                    validated_indiv["segments"].append(validated_seg)
+            result["individual_automations"][entity_id] = validated_indiv
+
+        return result
+
+    def _validate_automation_segment(self, seg: dict[str, Any]) -> dict[str, Any] | None:
+        """Validate a single automation segment."""
+        start = str(seg.get("start", "")).strip()
+        end = str(seg.get("end", "")).strip()
+        if not start or not end:
+            return None
+        if not re.match(r"^\d{2}:\d{2}$", start) or not re.match(r"^\d{2}:\d{2}$", end):
+            return None
+
+        action = seg.get("action", "on")
+        if action not in ("on", "off"):
+            action = "on"
+
+        validated = {
+            "start": start,
+            "end": end,
+            "action": action,
+        }
+
+        if action == "on":
+            if seg.get("brightness") is not None:
+                validated["brightness"] = max(1, min(100, int(seg.get("brightness", 100))))
+            if seg.get("color_temp") is not None:
+                validated["color_temp"] = max(2000, min(6500, int(seg.get("color_temp", 4000))))
+            if seg.get("hs_color") is not None:
+                hs = seg.get("hs_color")
+                if isinstance(hs, (list, tuple)) and len(hs) >= 2:
+                    validated["hs_color"] = [
+                        max(0, min(360, float(hs[0]))),
+                        max(0, min(100, float(hs[1]))),
+                    ]
+            if seg.get("tuya_scene") is not None:
+                validated["tuya_scene"] = self._validate_tuya_scene(seg.get("tuya_scene"))
+
+        return validated
+
+    def _validate_tuya_scene(self, scene: dict[str, Any]) -> dict[str, Any]:
+        """Validate Tuya scene_data_v2 structure."""
+        result = {
+            "scene_num": max(1, int(scene.get("scene_num", 1))),
+            "scene_units": [],
+        }
+
+        for unit in scene.get("scene_units", []):
+            mode = unit.get("unit_change_mode", "static")
+            if mode not in ("static", "jump", "gradient"):
+                mode = "static"
+
+            validated_unit = {
+                "unit_change_mode": mode,
+                "unit_switch_duration": max(0, min(5000, int(unit.get("unit_switch_duration", 50)))),
+                "unit_gradient_duration": max(0, min(10000, int(unit.get("unit_gradient_duration", 100)))),
+                "h": max(0, min(360, int(unit.get("h", 0)))),
+                "s": max(0, min(1000, int(unit.get("s", 500)))),
+                "v": max(0, min(1000, int(unit.get("v", 1000)))),
+                "bright": max(0, min(1000, int(unit.get("bright", 1000)))),
+                "temperature": max(0, min(1000, int(unit.get("temperature", 500)))),
+            }
+            result["scene_units"].append(validated_unit)
+
+        return result
