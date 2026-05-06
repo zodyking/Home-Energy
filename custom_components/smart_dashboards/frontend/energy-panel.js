@@ -7391,28 +7391,51 @@ class EnergyPanel extends HTMLElement {
     const go = this._graphOpen;
     if (!go) return 'History';
     const type = go.type;
-    const labels = {
-      total_wh: 'Load',
-      total_watts_intraday: 'Load',
-      total_wh_intraday: 'Load',
-      total_warnings: 'Warnings',
-      total_shutoffs: 'Shutoffs',
-      total_power_cycles: 'Cycles',
-      room_wh: 'Load',
-      room_warnings: 'Warnings',
-      room_shutoffs: 'Shutoffs',
-      room_power_cycles: 'Cycles',
-      outlet_wh: 'Load',
-      stat_total_wh: 'Load',
-      stat_room_wh: 'Load',
-      stat_total_warnings: 'Warnings',
-      stat_total_shutoffs: 'Shutoffs',
-      stat_total_power_cycles: 'Cycles',
-      stat_room_warnings: 'Warnings',
-      stat_room_shutoffs: 'Shutoffs',
-      stat_room_power_cycles: 'Cycles',
-    };
-    let title = labels[type] || 'History';
+    const roomName = go.roomName || '';
+    const outletLabel = go.outletSeriesLabel || '';
+
+    let title = 'History';
+
+    if (type === 'total_watts_intraday') {
+      title = 'Whole Home Load';
+    } else if (type === 'total_wh_intraday') {
+      title = 'Whole Home Usage';
+    } else if (type === 'total_wh') {
+      title = 'Whole Home Usage';
+    } else if (type === 'total_warnings') {
+      title = 'Whole Home Warnings';
+    } else if (type === 'total_shutoffs') {
+      title = 'Whole Home Shutoffs';
+    } else if (type === 'total_power_cycles') {
+      title = 'Whole Home Cycles';
+    } else if (type === 'room_wh') {
+      title = roomName ? `${roomName} Usage` : 'Room Usage';
+    } else if (type === 'room_warnings') {
+      title = roomName ? `${roomName} Warnings` : 'Room Warnings';
+    } else if (type === 'room_shutoffs') {
+      title = roomName ? `${roomName} Shutoffs` : 'Room Shutoffs';
+    } else if (type === 'room_power_cycles') {
+      title = roomName ? `${roomName} Cycles` : 'Room Cycles';
+    } else if (type === 'outlet_wh') {
+      title = outletLabel || 'Appliance Usage';
+    } else if (type === 'stat_total_wh') {
+      title = 'Whole Home Usage';
+    } else if (type === 'stat_room_wh') {
+      title = roomName ? `${roomName} Usage` : 'Room Usage';
+    } else if (type === 'stat_total_warnings') {
+      title = 'Whole Home Warnings';
+    } else if (type === 'stat_total_shutoffs') {
+      title = 'Whole Home Shutoffs';
+    } else if (type === 'stat_total_power_cycles') {
+      title = 'Whole Home Cycles';
+    } else if (type === 'stat_room_warnings') {
+      title = roomName ? `${roomName} Warnings` : 'Room Warnings';
+    } else if (type === 'stat_room_shutoffs') {
+      title = roomName ? `${roomName} Shutoffs` : 'Room Shutoffs';
+    } else if (type === 'stat_room_power_cycles') {
+      title = roomName ? `${roomName} Cycles` : 'Room Cycles';
+    }
+
     const statPeriodEvent =
       type === 'stat_total_warnings' || type === 'stat_total_shutoffs' || type === 'stat_total_power_cycles'
       || type === 'stat_room_warnings' || type === 'stat_room_shutoffs' || type === 'stat_room_power_cycles';
