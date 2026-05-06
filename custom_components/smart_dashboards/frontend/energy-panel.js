@@ -1785,16 +1785,19 @@ class EnergyPanel extends HTMLElement {
       .statistics-banner {
         font-size: clamp(12px, 2.5vw, 14px);
         color: var(--secondary-text-color);
-        padding: 8px 12px;
+        padding: 10px 14px;
         background: var(--input-bg);
         border-radius: 8px;
         border: 1px solid var(--card-border);
+        text-align: center;
       }
       .statistics-banner-row {
         display: flex;
         flex-wrap: wrap;
         align-items: baseline;
+        justify-content: center;
         gap: 6px 10px;
+        text-align: center;
       }
       .statistics-banner-label {
         font-weight: 600;
@@ -1812,6 +1815,7 @@ class EnergyPanel extends HTMLElement {
         line-height: 1.35;
         color: var(--primary-color, #03a9f4);
         opacity: 0.95;
+        text-align: center;
       }
       .statistics-cards {
         display: block;
@@ -1985,18 +1989,12 @@ class EnergyPanel extends HTMLElement {
         margin-top: 10px;
       }
 
-      /* Integrated Statistics Page Layout */
+      /* Integrated Statistics Page Layout — stacked pie + table at all breakpoints */
       .statistics-content-grid {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 20px;
-      }
-      @media (min-width: 900px) {
-        .statistics-content-grid {
-          grid-template-columns: minmax(320px, 400px) 1fr;
-          gap: 28px;
-          align-items: start;
-        }
+        display: flex;
+        flex-direction: column;
+        gap: clamp(16px, 3vw, 24px);
+        width: 100%;
       }
       .statistics-pie-panel {
         background: var(--card-bg);
@@ -2005,12 +2003,17 @@ class EnergyPanel extends HTMLElement {
         padding: clamp(16px, 3vw, 24px);
         display: flex;
         flex-direction: column;
+        align-items: center;
+        text-align: center;
+      }
+      .statistics-pie-panel .statistics-section-header {
+        width: 100%;
       }
       .statistics-pie-panel .stat-rooms-pie-mount {
-        min-height: 320px;
+        min-height: 300px;
         margin: 0 auto;
         width: 100%;
-        max-width: 380px;
+        max-width: min(420px, 100%);
       }
       .statistics-table-panel {
         background: var(--card-bg);
@@ -2018,10 +2021,15 @@ class EnergyPanel extends HTMLElement {
         border: 1px solid var(--card-border);
         padding: clamp(12px, 2.5vw, 20px);
         overflow: hidden;
+        text-align: center;
+      }
+      .statistics-table-panel .statistics-section-header {
+        text-align: center;
       }
       .statistics-table-panel .statistics-table-wrap {
         margin: 0;
         padding: 0;
+        text-align: initial;
       }
       .statistics-table-panel .statistics-table {
         min-width: 520px;
@@ -2029,25 +2037,28 @@ class EnergyPanel extends HTMLElement {
       .statistics-event-bar {
         display: flex;
         flex-wrap: wrap;
-        gap: 12px 24px;
+        gap: 12px 16px;
         justify-content: center;
         align-items: center;
         padding: 14px 16px;
-        background: linear-gradient(135deg, rgba(var(--rgb-primary-color), 0.08) 0%, rgba(var(--rgb-primary-color), 0.03) 100%);
+        background: rgba(140, 145, 160, 0.22);
         border-radius: 10px;
-        border: 1px solid var(--card-border);
+        border: 1px solid rgba(180, 185, 200, 0.28);
       }
       .statistics-event-item {
-        display: flex;
+        display: inline-flex;
         align-items: center;
+        justify-content: center;
         gap: 8px;
-        padding: 6px 14px;
-        background: rgba(0, 0, 0, 0.15);
-        border-radius: 20px;
-        transition: background 0.2s, transform 0.15s;
+        padding: 8px 16px;
+        background: rgba(185, 190, 205, 0.38);
+        border-radius: 999px;
+        border: 1px solid rgba(200, 205, 220, 0.35);
+        transition: background 0.2s, transform 0.15s, border-color 0.2s;
       }
       .statistics-event-item:hover {
-        background: rgba(0, 0, 0, 0.25);
+        background: rgba(200, 205, 218, 0.48);
+        border-color: rgba(215, 220, 235, 0.45);
       }
       .statistics-event-item.graph-clickable {
         cursor: pointer;
@@ -2075,36 +2086,48 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-section-header {
         display: flex;
+        flex-direction: column;
         align-items: center;
-        gap: 10px;
+        justify-content: center;
+        gap: 4px;
         margin-bottom: 14px;
+        text-align: center;
       }
       .statistics-section-title {
-        font-size: 14px;
+        font-size: 15px;
         font-weight: 600;
         color: var(--primary-text-color);
         margin: 0;
+        width: 100%;
       }
       .statistics-section-sub {
         font-size: 11px;
         color: var(--secondary-text-color);
         margin: 0;
+        max-width: 36em;
+        line-height: 1.4;
       }
       .statistics-table-compact th,
       .statistics-table-compact td {
         padding: clamp(5px, 1.2vw, 8px) clamp(4px, 1.5vw, 8px);
         font-size: clamp(10px, 2.2vw, 11px);
       }
+      .statistics-table-compact th:first-child,
+      .statistics-table-compact td:first-child {
+        text-align: left;
+      }
+      .statistics-table-compact th:not(:first-child),
+      .statistics-table-compact td:not(:first-child) {
+        text-align: center;
+      }
+      .statistics-table-compact .stat-efficiency-cell {
+        text-align: center;
+      }
+      .statistics-table-compact .stat-room-efficiency-rating {
+        margin: 0 auto;
+      }
       .statistics-table-compact th abbr {
         border-bottom: none;
-      }
-      @media (max-width: 899px) {
-        .statistics-pie-panel {
-          order: 1;
-        }
-        .statistics-table-panel {
-          order: 2;
-        }
       }
       .sr-only {
         position: absolute;
@@ -2116,6 +2139,448 @@ class EnergyPanel extends HTMLElement {
         clip: rect(0, 0, 0, 0);
         white-space: nowrap;
         border: 0;
+      }
+
+      /* Light Automation Modal */
+      .light-auto-modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1100;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        backdrop-filter: blur(2px);
+      }
+      .light-auto-modal {
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--card-border);
+        width: 100%;
+        max-width: 900px;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .light-auto-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--card-border);
+        background: rgba(var(--rgb-primary-color), 0.05);
+      }
+      .light-auto-modal-title {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+        color: var(--primary-text-color);
+      }
+      .light-auto-modal-subtitle {
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        margin: 4px 0 0;
+      }
+      .light-auto-modal-close {
+        background: none;
+        border: none;
+        color: var(--secondary-text-color);
+        cursor: pointer;
+        padding: 8px;
+        border-radius: 6px;
+        transition: background 0.2s;
+      }
+      .light-auto-modal-close:hover {
+        background: rgba(255,255,255,0.1);
+        color: var(--primary-text-color);
+      }
+      .light-auto-modal-close svg {
+        width: 20px;
+        height: 20px;
+      }
+      .light-auto-modal-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px;
+      }
+      .light-auto-modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 16px 20px;
+        border-top: 1px solid var(--card-border);
+        background: rgba(var(--rgb-primary-text-color), 0.02);
+      }
+      .light-auto-mode-toggle {
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+        margin-bottom: 20px;
+      }
+      .light-auto-mode-btn {
+        flex: 1;
+        padding: 10px 16px;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--secondary-text-color);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .light-auto-mode-btn:hover {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--primary-text-color);
+      }
+      .light-auto-mode-btn.active {
+        background: var(--panel-accent);
+        color: #fff;
+      }
+      .light-auto-timeline-wrap {
+        margin-bottom: 20px;
+      }
+      .light-auto-timeline-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .light-auto-timeline-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+      .light-auto-timeline-hours {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: var(--secondary-text-color);
+        margin-bottom: 4px;
+        padding: 0 2px;
+      }
+      .light-auto-timeline {
+        height: 60px;
+        background: linear-gradient(90deg, 
+          #1a237e 0%, #1a237e 20.8%,
+          #3f51b5 20.8%, #5c6bc0 29.2%,
+          #ffb74d 29.2%, #fff176 41.7%,
+          #fff59d 41.7%, #fff59d 58.3%,
+          #fff176 58.3%, #ffb74d 70.8%,
+          #5c6bc0 70.8%, #3f51b5 79.2%,
+          #1a237e 79.2%, #1a237e 100%);
+        border-radius: 8px;
+        position: relative;
+        cursor: crosshair;
+        border: 1px solid var(--card-border);
+      }
+      .light-auto-segment {
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        background: rgba(3, 169, 244, 0.7);
+        border: 2px solid var(--panel-accent);
+        border-radius: 6px;
+        cursor: grab;
+        min-width: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s;
+      }
+      .light-auto-segment:hover {
+        background: rgba(3, 169, 244, 0.85);
+      }
+      .light-auto-segment.selected {
+        border-color: #fff;
+        box-shadow: 0 0 0 2px var(--panel-accent);
+      }
+      .light-auto-segment.off {
+        background: rgba(100, 100, 100, 0.6);
+        border-color: #666;
+      }
+      .light-auto-segment-label {
+        font-size: 10px;
+        font-weight: 600;
+        color: #fff;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        pointer-events: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        padding: 0 4px;
+      }
+      .light-auto-segment-handle {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 8px;
+        cursor: ew-resize;
+      }
+      .light-auto-segment-handle.left { left: -4px; }
+      .light-auto-segment-handle.right { right: -4px; }
+      .light-auto-add-hint {
+        text-align: center;
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        margin-top: 6px;
+      }
+      .light-auto-segment-editor {
+        background: var(--input-bg);
+        border-radius: 10px;
+        border: 1px solid var(--card-border);
+        padding: 16px;
+        margin-top: 16px;
+      }
+      .light-auto-segment-editor-title {
+        font-size: 13px;
+        font-weight: 600;
+        margin: 0 0 12px;
+        color: var(--primary-text-color);
+      }
+      .light-auto-segment-row {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .light-auto-segment-field {
+        flex: 1;
+        min-width: 120px;
+      }
+      .light-auto-segment-field label {
+        display: block;
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--secondary-text-color);
+        margin-bottom: 4px;
+      }
+      .light-auto-segment-field input,
+      .light-auto-segment-field select {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--card-border);
+        background: var(--card-bg);
+        color: var(--primary-text-color);
+        font-size: 12px;
+      }
+      .light-auto-color-preview {
+        width: 100%;
+        height: 32px;
+        border-radius: 6px;
+        border: 1px solid var(--card-border);
+        cursor: pointer;
+      }
+      .light-auto-slider-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .light-auto-slider-row input[type="range"] {
+        flex: 1;
+      }
+      .light-auto-slider-value {
+        min-width: 40px;
+        text-align: right;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--primary-text-color);
+      }
+      .light-auto-tuya-btn {
+        margin-top: 12px;
+        padding: 10px 16px;
+        border-radius: 8px;
+        border: 1px solid var(--panel-accent);
+        background: rgba(var(--rgb-primary-color), 0.1);
+        color: var(--panel-accent);
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .light-auto-tuya-btn:hover {
+        background: rgba(var(--rgb-primary-color), 0.2);
+      }
+      .light-auto-tuya-btn svg {
+        width: 16px;
+        height: 16px;
+      }
+      .light-auto-individual-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .light-auto-individual-item {
+        background: var(--input-bg);
+        border-radius: 8px;
+        border: 1px solid var(--card-border);
+        padding: 12px;
+      }
+      .light-auto-individual-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .light-auto-individual-name {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--primary-text-color);
+      }
+      .light-auto-individual-badges {
+        display: flex;
+        gap: 6px;
+      }
+      .light-auto-badge {
+        font-size: 9px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .light-auto-badge.wrgb {
+        background: rgba(156, 39, 176, 0.2);
+        color: #ce93d8;
+      }
+      .light-auto-badge.tuya {
+        background: rgba(255, 152, 0, 0.2);
+        color: #ffb74d;
+      }
+      .light-auto-no-segments {
+        text-align: center;
+        padding: 20px;
+        color: var(--secondary-text-color);
+        font-size: 12px;
+      }
+
+      /* Tuya Scene Builder Modal */
+      .tuya-scene-modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1200;
+        background: rgba(0, 0, 0, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      .tuya-scene-modal {
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--card-border);
+        width: 100%;
+        max-width: 600px;
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .tuya-scene-units {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .tuya-scene-unit {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+        border: 1px solid var(--card-border);
+        padding: 12px;
+      }
+      .tuya-scene-unit-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .tuya-scene-unit-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+      .tuya-scene-unit-remove {
+        background: none;
+        border: none;
+        color: var(--error-color, #ef5350);
+        cursor: pointer;
+        padding: 4px;
+      }
+      .tuya-scene-unit-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .tuya-scene-unit-field label {
+        display: block;
+        font-size: 10px;
+        color: var(--secondary-text-color);
+        margin-bottom: 3px;
+      }
+      .tuya-scene-unit-field input,
+      .tuya-scene-unit-field select {
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 5px;
+        border: 1px solid var(--card-border);
+        background: var(--card-bg);
+        color: var(--primary-text-color);
+        font-size: 11px;
+      }
+      .tuya-scene-color-wheel {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        margin: 0 auto 12px;
+        background: conic-gradient(red, yellow, lime, aqua, blue, magenta, red);
+        position: relative;
+        cursor: crosshair;
+      }
+      .tuya-scene-color-picker {
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+        pointer-events: none;
+      }
+      .tuya-scene-add-unit {
+        padding: 10px;
+        border: 2px dashed var(--card-border);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--secondary-text-color);
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .tuya-scene-add-unit:hover {
+        border-color: var(--panel-accent);
+        color: var(--panel-accent);
+      }
+      .tuya-scene-test-btn {
+        padding: 10px 20px;
+        border-radius: 8px;
+        border: none;
+        background: linear-gradient(135deg, #7c4dff 0%, #536dfe 100%);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .tuya-scene-test-btn:hover {
+        opacity: 0.9;
       }
 
       .rooms-grid {
@@ -11417,6 +11882,747 @@ class EnergyPanel extends HTMLElement {
     this.shadowRoot?.querySelector('.appliance-context-menu-backdrop')?.remove();
   }
 
+  async _openLightAutomationModal(roomId, outlet) {
+    const room = this._rooms?.find(r => this._canonicalRoomId(r) === roomId);
+    if (!room) {
+      this._showToast('Room not found');
+      return;
+    }
+
+    const personEnt = (room.presence_person_entity || '').trim();
+    if (personEnt.startsWith('person.')) {
+      try {
+        const authResult = await this._hass.callWS({
+          type: 'smart_dashboards/verify_room_auth',
+          room_id: roomId
+        });
+        if (!authResult.authorized) {
+          this._showToast('Only the room assignee can configure automations');
+          return;
+        }
+      } catch (err) {
+        console.error('Auth check failed:', err);
+      }
+    }
+
+    let existingAutomation = null;
+    try {
+      existingAutomation = await this._hass.callWS({
+        type: 'smart_dashboards/get_light_automations',
+        room_id: roomId
+      });
+    } catch (err) {
+      console.warn('Failed to load existing automations:', err);
+      existingAutomation = { group_automation: { enabled: false, segments: [] }, individual_automations: {} };
+    }
+
+    const lightEntities = outlet.light_entities || [];
+    const hasWrgb = lightEntities.some(l => l.wrgb);
+    const hasTuya = lightEntities.some(l => l.tuya);
+    const roomName = room.name || roomId;
+    const outletName = outlet.name || 'Light';
+
+    this._lightAutoState = {
+      roomId,
+      outlet,
+      mode: 'group',
+      automation: existingAutomation || { group_automation: { enabled: false, segments: [] }, individual_automations: {} },
+      selectedSegment: null,
+      hasWrgb,
+      hasTuya,
+      lightEntities
+    };
+
+    const overlay = document.createElement('div');
+    overlay.className = 'light-auto-modal-overlay';
+    overlay.innerHTML = this._renderLightAutomationModal(roomName, outletName);
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) this._closeLightAutomationModal();
+    });
+
+    this.shadowRoot.appendChild(overlay);
+    this._attachLightAutomationListeners(overlay);
+  }
+
+  _closeLightAutomationModal() {
+    this._lightAutoState = null;
+    this.shadowRoot?.querySelector('.light-auto-modal-overlay')?.remove();
+  }
+
+  _renderLightAutomationModal(roomName, outletName) {
+    const state = this._lightAutoState;
+    const isGroup = state.mode === 'group';
+    const groupAuto = state.automation.group_automation || { enabled: false, segments: [] };
+    const segments = isGroup ? (groupAuto.segments || []) : [];
+
+    return `
+      <div class="light-auto-modal">
+        <div class="light-auto-modal-header">
+          <div>
+            <h2 class="light-auto-modal-title">Light Automation</h2>
+            <p class="light-auto-modal-subtitle">${roomName} · ${outletName}</p>
+          </div>
+          <button type="button" class="light-auto-modal-close" title="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="light-auto-modal-body">
+          <div class="light-auto-mode-toggle">
+            <button type="button" class="light-auto-mode-btn ${isGroup ? 'active' : ''}" data-mode="group">Group Automation</button>
+            <button type="button" class="light-auto-mode-btn ${!isGroup ? 'active' : ''}" data-mode="individual">Individual Lights</button>
+          </div>
+          
+          ${isGroup ? this._renderGroupAutomationEditor() : this._renderIndividualAutomationEditor()}
+        </div>
+        <div class="light-auto-modal-footer">
+          <button type="button" class="btn-secondary light-auto-cancel">Cancel</button>
+          <button type="button" class="btn-primary light-auto-save">Save Automation</button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderGroupAutomationEditor() {
+    const state = this._lightAutoState;
+    const groupAuto = state.automation.group_automation || { enabled: false, segments: [] };
+    const segments = groupAuto.segments || [];
+
+    return `
+      <div class="light-auto-timeline-wrap">
+        <div class="light-auto-timeline-header">
+          <span class="light-auto-timeline-title">24-Hour Schedule</span>
+          <label class="toggle-row" style="margin:0;">
+            <input type="checkbox" class="form-checkbox light-auto-enabled" ${groupAuto.enabled ? 'checked' : ''}>
+            <span class="toggle-label">Enabled</span>
+          </label>
+        </div>
+        <div class="light-auto-timeline-hours">
+          <span>12 AM</span><span>3 AM</span><span>6 AM</span><span>9 AM</span>
+          <span>12 PM</span><span>3 PM</span><span>6 PM</span><span>9 PM</span><span>12 AM</span>
+        </div>
+        <div class="light-auto-timeline" id="light-auto-timeline">
+          ${segments.map((seg, i) => this._renderTimelineSegment(seg, i)).join('')}
+        </div>
+        <p class="light-auto-add-hint">Click on the timeline to add a new segment. Drag edges to resize.</p>
+      </div>
+      ${state.selectedSegment !== null ? this._renderSegmentEditor(segments[state.selectedSegment], state.selectedSegment) : `
+        <div class="light-auto-no-segments">
+          <p>Select a segment on the timeline to edit, or click to create one.</p>
+        </div>
+      `}
+    `;
+  }
+
+  _renderTimelineSegment(seg, index) {
+    const startPct = this._timeToPercent(seg.start);
+    const endPct = this._timeToPercent(seg.end);
+    let width = endPct - startPct;
+    if (width < 0) width += 100;
+    const isOff = seg.action === 'off';
+    const selected = this._lightAutoState?.selectedSegment === index;
+    const label = isOff ? 'OFF' : (seg.brightness != null ? `${seg.brightness}%` : 'ON');
+    
+    return `
+      <div class="light-auto-segment ${isOff ? 'off' : ''} ${selected ? 'selected' : ''}" 
+           data-segment-index="${index}"
+           style="left: ${startPct}%; width: ${Math.max(2, width)}%;">
+        <div class="light-auto-segment-handle left" data-handle="left"></div>
+        <span class="light-auto-segment-label">${label}</span>
+        <div class="light-auto-segment-handle right" data-handle="right"></div>
+      </div>
+    `;
+  }
+
+  _timeToPercent(timeStr) {
+    if (!timeStr) return 0;
+    const [h, m] = timeStr.split(':').map(Number);
+    return ((h * 60 + m) / 1440) * 100;
+  }
+
+  _percentToTime(pct) {
+    const totalMins = Math.round((pct / 100) * 1440);
+    const h = Math.floor(totalMins / 60) % 24;
+    const m = totalMins % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+
+  _renderSegmentEditor(seg, index) {
+    if (!seg) return '';
+    const state = this._lightAutoState;
+    const isOn = seg.action !== 'off';
+    const showAdvanced = state.hasWrgb && isOn;
+    const showTuya = state.hasTuya && isOn;
+
+    return `
+      <div class="light-auto-segment-editor" data-editing-index="${index}">
+        <h4 class="light-auto-segment-editor-title">Edit Segment</h4>
+        <div class="light-auto-segment-row">
+          <div class="light-auto-segment-field">
+            <label>Start Time</label>
+            <input type="time" class="light-auto-seg-start" value="${seg.start || '00:00'}">
+          </div>
+          <div class="light-auto-segment-field">
+            <label>End Time</label>
+            <input type="time" class="light-auto-seg-end" value="${seg.end || '00:00'}">
+          </div>
+          <div class="light-auto-segment-field">
+            <label>Action</label>
+            <select class="light-auto-seg-action">
+              <option value="on" ${seg.action === 'on' ? 'selected' : ''}>Turn On</option>
+              <option value="off" ${seg.action === 'off' ? 'selected' : ''}>Turn Off</option>
+            </select>
+          </div>
+        </div>
+        ${showAdvanced ? `
+        <div class="light-auto-segment-row">
+          <div class="light-auto-segment-field" style="flex:2;">
+            <label>Brightness</label>
+            <div class="light-auto-slider-row">
+              <input type="range" class="light-auto-seg-brightness" min="1" max="100" value="${seg.brightness ?? 100}">
+              <span class="light-auto-slider-value">${seg.brightness ?? 100}%</span>
+            </div>
+          </div>
+        </div>
+        <div class="light-auto-segment-row">
+          <div class="light-auto-segment-field">
+            <label>Mode</label>
+            <select class="light-auto-seg-mode">
+              <option value="temp" ${!seg.hs_color ? 'selected' : ''}>Color Temperature</option>
+              <option value="color" ${seg.hs_color ? 'selected' : ''}>Color</option>
+            </select>
+          </div>
+          <div class="light-auto-segment-field light-auto-temp-field" style="${seg.hs_color ? 'display:none' : ''}">
+            <label>Color Temp (K)</label>
+            <div class="light-auto-slider-row">
+              <input type="range" class="light-auto-seg-temp" min="2700" max="6500" value="${seg.color_temp ?? 4000}">
+              <span class="light-auto-slider-value">${seg.color_temp ?? 4000}K</span>
+            </div>
+          </div>
+          <div class="light-auto-segment-field light-auto-color-field" style="${!seg.hs_color ? 'display:none' : ''}">
+            <label>Color</label>
+            <input type="color" class="light-auto-seg-color light-auto-color-preview" value="${this._hsToHex(seg.hs_color)}">
+          </div>
+        </div>
+        ` : ''}
+        ${showTuya ? `
+        <button type="button" class="light-auto-tuya-btn" data-segment-index="${index}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+          </svg>
+          ${seg.tuya_scene ? 'Edit Tuya Scene' : 'Create Tuya Scene'}
+        </button>
+        ` : ''}
+        <div style="margin-top:16px; display:flex; gap:8px;">
+          <button type="button" class="btn-danger light-auto-seg-delete" style="margin-left:auto;">Delete Segment</button>
+        </div>
+      </div>
+    `;
+  }
+
+  _hsToHex(hs) {
+    if (!hs || !Array.isArray(hs)) return '#ffffff';
+    const [h, s] = hs;
+    const c = (s / 100);
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    let r = 0, g = 0, b = 0;
+    if (h < 60) { r = c; g = x; }
+    else if (h < 120) { r = x; g = c; }
+    else if (h < 180) { g = c; b = x; }
+    else if (h < 240) { g = x; b = c; }
+    else if (h < 300) { r = x; b = c; }
+    else { r = c; b = x; }
+    const toHex = v => Math.round((v + (1 - c) / 2) * 255).toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+
+  _hexToHs(hex) {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h = 0, s = 0;
+    const d = max - min;
+    s = max === 0 ? 0 : (d / max) * 100;
+    if (d !== 0) {
+      if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+      else if (max === g) h = ((b - r) / d + 2) * 60;
+      else h = ((r - g) / d + 4) * 60;
+    }
+    return [Math.round(h), Math.round(s)];
+  }
+
+  _renderIndividualAutomationEditor() {
+    const state = this._lightAutoState;
+    const lights = state.lightEntities || [];
+    
+    if (lights.length === 0) {
+      return `<div class="light-auto-no-segments"><p>No light entities configured for this device.</p></div>`;
+    }
+
+    return `
+      <div class="light-auto-individual-list">
+        ${lights.map((light, idx) => {
+          const entityId = light.entity_id;
+          const indivAuto = state.automation.individual_automations?.[entityId] || { enabled: false, segments: [] };
+          const displayName = entityId.replace('light.', '').replace(/_/g, ' ');
+          return `
+            <div class="light-auto-individual-item" data-entity-id="${entityId}">
+              <div class="light-auto-individual-header">
+                <span class="light-auto-individual-name">${displayName}</span>
+                <div class="light-auto-individual-badges">
+                  ${light.wrgb ? '<span class="light-auto-badge wrgb">WRGB</span>' : ''}
+                  ${light.tuya ? '<span class="light-auto-badge tuya">Tuya</span>' : ''}
+                </div>
+              </div>
+              <label class="toggle-row" style="margin-bottom:8px;">
+                <input type="checkbox" class="form-checkbox light-auto-indiv-enabled" data-entity="${entityId}" ${indivAuto.enabled ? 'checked' : ''}>
+                <span class="toggle-label">Enable automation</span>
+              </label>
+              <div class="light-auto-timeline light-auto-indiv-timeline" data-entity="${entityId}" style="height:40px;">
+                ${(indivAuto.segments || []).map((seg, i) => this._renderTimelineSegment(seg, i)).join('')}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  _attachLightAutomationListeners(overlay) {
+    const modal = overlay.querySelector('.light-auto-modal');
+
+    overlay.querySelector('.light-auto-modal-close')?.addEventListener('click', () => this._closeLightAutomationModal());
+    overlay.querySelector('.light-auto-cancel')?.addEventListener('click', () => this._closeLightAutomationModal());
+
+    overlay.querySelectorAll('.light-auto-mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this._lightAutoState.mode = btn.dataset.mode;
+        this._lightAutoState.selectedSegment = null;
+        this._refreshLightAutomationModal();
+      });
+    });
+
+    overlay.querySelector('.light-auto-save')?.addEventListener('click', () => this._saveLightAutomation());
+
+    const timeline = overlay.querySelector('#light-auto-timeline');
+    if (timeline) {
+      timeline.addEventListener('click', (e) => {
+        if (e.target.classList.contains('light-auto-timeline')) {
+          const rect = timeline.getBoundingClientRect();
+          const pct = ((e.clientX - rect.left) / rect.width) * 100;
+          const time = this._percentToTime(pct);
+          const endTime = this._percentToTime(Math.min(100, pct + 8.33));
+          this._addTimelineSegment(time, endTime);
+        }
+      });
+
+      timeline.querySelectorAll('.light-auto-segment').forEach(seg => {
+        seg.addEventListener('click', (e) => {
+          if (!e.target.classList.contains('light-auto-segment-handle')) {
+            e.stopPropagation();
+            const idx = parseInt(seg.dataset.segmentIndex, 10);
+            this._lightAutoState.selectedSegment = idx;
+            this._refreshLightAutomationModal();
+          }
+        });
+
+        this._attachSegmentDragHandlers(seg, timeline);
+      });
+    }
+
+    this._attachSegmentEditorListeners(overlay);
+  }
+
+  _attachSegmentDragHandlers(segEl, timeline) {
+    const handles = segEl.querySelectorAll('.light-auto-segment-handle');
+    handles.forEach(handle => {
+      let dragging = false;
+      let startX = 0;
+      let originalPct = 0;
+      const isLeft = handle.dataset.handle === 'left';
+
+      const onMouseMove = (e) => {
+        if (!dragging) return;
+        const rect = timeline.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+        const idx = parseInt(segEl.dataset.segmentIndex, 10);
+        const seg = this._lightAutoState.automation.group_automation.segments[idx];
+        if (seg) {
+          if (isLeft) {
+            seg.start = this._percentToTime(pct);
+          } else {
+            seg.end = this._percentToTime(pct);
+          }
+          this._refreshLightAutomationModal();
+        }
+      };
+
+      const onMouseUp = () => {
+        dragging = false;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+
+      handle.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        dragging = true;
+        startX = e.clientX;
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+    });
+  }
+
+  _attachSegmentEditorListeners(overlay) {
+    const editor = overlay.querySelector('.light-auto-segment-editor');
+    if (!editor) return;
+
+    const idx = parseInt(editor.dataset.editingIndex, 10);
+    const seg = this._lightAutoState.automation.group_automation?.segments?.[idx];
+    if (!seg) return;
+
+    editor.querySelector('.light-auto-seg-start')?.addEventListener('change', (e) => {
+      seg.start = e.target.value;
+      this._refreshLightAutomationModal();
+    });
+
+    editor.querySelector('.light-auto-seg-end')?.addEventListener('change', (e) => {
+      seg.end = e.target.value;
+      this._refreshLightAutomationModal();
+    });
+
+    editor.querySelector('.light-auto-seg-action')?.addEventListener('change', (e) => {
+      seg.action = e.target.value;
+      if (seg.action === 'off') {
+        delete seg.brightness;
+        delete seg.color_temp;
+        delete seg.hs_color;
+        delete seg.tuya_scene;
+      }
+      this._refreshLightAutomationModal();
+    });
+
+    const brightnessSlider = editor.querySelector('.light-auto-seg-brightness');
+    if (brightnessSlider) {
+      brightnessSlider.addEventListener('input', (e) => {
+        seg.brightness = parseInt(e.target.value, 10);
+        const valSpan = e.target.closest('.light-auto-slider-row')?.querySelector('.light-auto-slider-value');
+        if (valSpan) valSpan.textContent = `${seg.brightness}%`;
+      });
+    }
+
+    const modeSelect = editor.querySelector('.light-auto-seg-mode');
+    if (modeSelect) {
+      modeSelect.addEventListener('change', (e) => {
+        const isColor = e.target.value === 'color';
+        editor.querySelector('.light-auto-temp-field').style.display = isColor ? 'none' : '';
+        editor.querySelector('.light-auto-color-field').style.display = isColor ? '' : 'none';
+        if (isColor) {
+          delete seg.color_temp;
+          seg.hs_color = seg.hs_color || [0, 100];
+        } else {
+          delete seg.hs_color;
+          seg.color_temp = seg.color_temp || 4000;
+        }
+      });
+    }
+
+    const tempSlider = editor.querySelector('.light-auto-seg-temp');
+    if (tempSlider) {
+      tempSlider.addEventListener('input', (e) => {
+        seg.color_temp = parseInt(e.target.value, 10);
+        const valSpan = e.target.closest('.light-auto-slider-row')?.querySelector('.light-auto-slider-value');
+        if (valSpan) valSpan.textContent = `${seg.color_temp}K`;
+      });
+    }
+
+    const colorInput = editor.querySelector('.light-auto-seg-color');
+    if (colorInput) {
+      colorInput.addEventListener('input', (e) => {
+        seg.hs_color = this._hexToHs(e.target.value);
+      });
+    }
+
+    editor.querySelector('.light-auto-seg-delete')?.addEventListener('click', () => {
+      this._lightAutoState.automation.group_automation.segments.splice(idx, 1);
+      this._lightAutoState.selectedSegment = null;
+      this._refreshLightAutomationModal();
+    });
+
+    editor.querySelector('.light-auto-tuya-btn')?.addEventListener('click', () => {
+      this._openTuyaSceneBuilder(idx, seg.tuya_scene);
+    });
+
+    const enabledCheckbox = overlay.querySelector('.light-auto-enabled');
+    if (enabledCheckbox) {
+      enabledCheckbox.addEventListener('change', (e) => {
+        this._lightAutoState.automation.group_automation.enabled = e.target.checked;
+      });
+    }
+  }
+
+  _addTimelineSegment(startTime, endTime) {
+    const segments = this._lightAutoState.automation.group_automation.segments;
+    const newSeg = {
+      start: startTime,
+      end: endTime,
+      action: 'on',
+      brightness: 100
+    };
+    if (this._lightAutoState.hasWrgb) {
+      newSeg.color_temp = 4000;
+    }
+    segments.push(newSeg);
+    this._lightAutoState.selectedSegment = segments.length - 1;
+    this._refreshLightAutomationModal();
+  }
+
+  _refreshLightAutomationModal() {
+    const overlay = this.shadowRoot?.querySelector('.light-auto-modal-overlay');
+    if (!overlay) return;
+    const state = this._lightAutoState;
+    const room = this._rooms?.find(r => this._canonicalRoomId(r) === state.roomId);
+    const roomName = room?.name || state.roomId;
+    const outletName = state.outlet?.name || 'Light';
+    overlay.innerHTML = this._renderLightAutomationModal(roomName, outletName);
+    this._attachLightAutomationListeners(overlay);
+  }
+
+  async _saveLightAutomation() {
+    const state = this._lightAutoState;
+    if (!state) return;
+
+    try {
+      await this._hass.callWS({
+        type: 'smart_dashboards/save_light_automations',
+        room_id: state.roomId,
+        automations: state.automation
+      });
+      this._showToast('Automation saved');
+      this._closeLightAutomationModal();
+    } catch (err) {
+      console.error('Failed to save automation:', err);
+      this._showToast('Failed to save automation');
+    }
+  }
+
+  _openTuyaSceneBuilder(segmentIndex, existingScene) {
+    const state = this._lightAutoState;
+    const scene = existingScene ? JSON.parse(JSON.stringify(existingScene)) : {
+      scene_num: 1,
+      scene_units: [{
+        unit_change_mode: 'static',
+        unit_switch_duration: 50,
+        unit_gradient_duration: 100,
+        h: 0,
+        s: 500,
+        v: 1000,
+        bright: 1000,
+        temperature: 500
+      }]
+    };
+
+    this._tuyaSceneState = { segmentIndex, scene };
+
+    const overlay = document.createElement('div');
+    overlay.className = 'tuya-scene-modal-overlay';
+    overlay.innerHTML = this._renderTuyaSceneModal(scene);
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) this._closeTuyaSceneBuilder();
+    });
+
+    this.shadowRoot.appendChild(overlay);
+    this._attachTuyaSceneListeners(overlay);
+  }
+
+  _closeTuyaSceneBuilder() {
+    this._tuyaSceneState = null;
+    this.shadowRoot?.querySelector('.tuya-scene-modal-overlay')?.remove();
+  }
+
+  _renderTuyaSceneModal(scene) {
+    const units = scene.scene_units || [];
+
+    return `
+      <div class="tuya-scene-modal">
+        <div class="light-auto-modal-header">
+          <div>
+            <h2 class="light-auto-modal-title">Tuya Scene Builder</h2>
+            <p class="light-auto-modal-subtitle">Create animated color effects</p>
+          </div>
+          <button type="button" class="light-auto-modal-close tuya-scene-close" title="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="light-auto-modal-body">
+          <div class="tuya-scene-units">
+            ${units.map((unit, i) => this._renderTuyaSceneUnit(unit, i)).join('')}
+          </div>
+          <button type="button" class="tuya-scene-add-unit">+ Add Scene Unit</button>
+        </div>
+        <div class="light-auto-modal-footer">
+          <button type="button" class="tuya-scene-test-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            Test Scene
+          </button>
+          <button type="button" class="btn-secondary tuya-scene-cancel">Cancel</button>
+          <button type="button" class="btn-primary tuya-scene-save">Apply Scene</button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderTuyaSceneUnit(unit, index) {
+    return `
+      <div class="tuya-scene-unit" data-unit-index="${index}">
+        <div class="tuya-scene-unit-header">
+          <span class="tuya-scene-unit-title">Unit ${index + 1}</span>
+          <button type="button" class="tuya-scene-unit-remove" title="Remove unit">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="tuya-scene-unit-row">
+          <div class="tuya-scene-unit-field">
+            <label>Mode</label>
+            <select class="tuya-unit-mode">
+              <option value="static" ${unit.unit_change_mode === 'static' ? 'selected' : ''}>Static</option>
+              <option value="jump" ${unit.unit_change_mode === 'jump' ? 'selected' : ''}>Jump</option>
+              <option value="gradient" ${unit.unit_change_mode === 'gradient' ? 'selected' : ''}>Gradient</option>
+            </select>
+          </div>
+          <div class="tuya-scene-unit-field">
+            <label>Switch Duration (ms)</label>
+            <input type="number" class="tuya-unit-switch" value="${unit.unit_switch_duration || 50}" min="0" max="1000">
+          </div>
+          <div class="tuya-scene-unit-field">
+            <label>Gradient Duration (ms)</label>
+            <input type="number" class="tuya-unit-gradient" value="${unit.unit_gradient_duration || 100}" min="0" max="5000">
+          </div>
+        </div>
+        <div class="tuya-scene-unit-row">
+          <div class="tuya-scene-unit-field">
+            <label>Hue (0-360)</label>
+            <input type="number" class="tuya-unit-hue" value="${unit.h || 0}" min="0" max="360">
+          </div>
+          <div class="tuya-scene-unit-field">
+            <label>Saturation (0-1000)</label>
+            <input type="number" class="tuya-unit-sat" value="${unit.s || 500}" min="0" max="1000">
+          </div>
+          <div class="tuya-scene-unit-field">
+            <label>Value (0-1000)</label>
+            <input type="number" class="tuya-unit-val" value="${unit.v || 1000}" min="0" max="1000">
+          </div>
+        </div>
+        <div class="tuya-scene-unit-row">
+          <div class="tuya-scene-unit-field">
+            <label>Brightness (0-1000)</label>
+            <input type="number" class="tuya-unit-bright" value="${unit.bright || 1000}" min="0" max="1000">
+          </div>
+          <div class="tuya-scene-unit-field">
+            <label>Temperature (0-1000)</label>
+            <input type="number" class="tuya-unit-temp" value="${unit.temperature || 500}" min="0" max="1000">
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _attachTuyaSceneListeners(overlay) {
+    overlay.querySelector('.tuya-scene-close')?.addEventListener('click', () => this._closeTuyaSceneBuilder());
+    overlay.querySelector('.tuya-scene-cancel')?.addEventListener('click', () => this._closeTuyaSceneBuilder());
+
+    overlay.querySelector('.tuya-scene-add-unit')?.addEventListener('click', () => {
+      this._tuyaSceneState.scene.scene_units.push({
+        unit_change_mode: 'gradient',
+        unit_switch_duration: 50,
+        unit_gradient_duration: 100,
+        h: Math.round(Math.random() * 360),
+        s: 700,
+        v: 1000,
+        bright: 1000,
+        temperature: 500
+      });
+      this._refreshTuyaSceneModal();
+    });
+
+    overlay.querySelectorAll('.tuya-scene-unit-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const unitEl = btn.closest('.tuya-scene-unit');
+        const idx = parseInt(unitEl.dataset.unitIndex, 10);
+        this._tuyaSceneState.scene.scene_units.splice(idx, 1);
+        this._refreshTuyaSceneModal();
+      });
+    });
+
+    overlay.querySelectorAll('.tuya-scene-unit').forEach(unitEl => {
+      const idx = parseInt(unitEl.dataset.unitIndex, 10);
+      const unit = this._tuyaSceneState.scene.scene_units[idx];
+
+      unitEl.querySelector('.tuya-unit-mode')?.addEventListener('change', e => { unit.unit_change_mode = e.target.value; });
+      unitEl.querySelector('.tuya-unit-switch')?.addEventListener('input', e => { unit.unit_switch_duration = parseInt(e.target.value, 10) || 0; });
+      unitEl.querySelector('.tuya-unit-gradient')?.addEventListener('input', e => { unit.unit_gradient_duration = parseInt(e.target.value, 10) || 0; });
+      unitEl.querySelector('.tuya-unit-hue')?.addEventListener('input', e => { unit.h = parseInt(e.target.value, 10) || 0; });
+      unitEl.querySelector('.tuya-unit-sat')?.addEventListener('input', e => { unit.s = parseInt(e.target.value, 10) || 0; });
+      unitEl.querySelector('.tuya-unit-val')?.addEventListener('input', e => { unit.v = parseInt(e.target.value, 10) || 0; });
+      unitEl.querySelector('.tuya-unit-bright')?.addEventListener('input', e => { unit.bright = parseInt(e.target.value, 10) || 0; });
+      unitEl.querySelector('.tuya-unit-temp')?.addEventListener('input', e => { unit.temperature = parseInt(e.target.value, 10) || 0; });
+    });
+
+    overlay.querySelector('.tuya-scene-test-btn')?.addEventListener('click', () => this._testTuyaScene());
+
+    overlay.querySelector('.tuya-scene-save')?.addEventListener('click', () => {
+      const state = this._tuyaSceneState;
+      const segIdx = state.segmentIndex;
+      const seg = this._lightAutoState.automation.group_automation.segments[segIdx];
+      if (seg) {
+        seg.tuya_scene = state.scene;
+      }
+      this._closeTuyaSceneBuilder();
+      this._refreshLightAutomationModal();
+    });
+  }
+
+  _refreshTuyaSceneModal() {
+    const overlay = this.shadowRoot?.querySelector('.tuya-scene-modal-overlay');
+    if (!overlay || !this._tuyaSceneState) return;
+    overlay.innerHTML = this._renderTuyaSceneModal(this._tuyaSceneState.scene);
+    this._attachTuyaSceneListeners(overlay);
+  }
+
+  async _testTuyaScene() {
+    const state = this._tuyaSceneState;
+    if (!state) return;
+
+    const tuyaLights = this._lightAutoState.lightEntities.filter(l => l.tuya);
+    if (tuyaLights.length === 0) {
+      this._showToast('No Tuya lights configured');
+      return;
+    }
+
+    const entityId = tuyaLights[0].entity_id;
+    try {
+      await this._hass.callWS({
+        type: 'smart_dashboards/test_tuya_scene',
+        entity_id: entityId,
+        scene_data: state.scene
+      });
+      this._showToast('Scene sent to light');
+    } catch (err) {
+      console.error('Failed to test scene:', err);
+      this._showToast('Failed to test scene');
+    }
+  }
+
   _openOutletUsageGraph(roomId, outletIndex, outlet, plugSlot) {
     const name = outlet.name || 'Appliance';
     let seriesLabel = name;
@@ -11466,11 +12672,13 @@ class EnergyPanel extends HTMLElement {
       b.textContent = label;
       b.dataset.applianceAction = action;
       if (slot != null) b.dataset.plugSlot = String(slot);
-      b.addEventListener('click', (ev) => {
+      b.addEventListener('click', async (ev) => {
         ev.stopPropagation();
         this._closeApplianceMenu();
         if (action === 'graph') {
           this._openOutletUsageGraph(roomId, outletIndex, outlet, slot);
+        } else if (action === 'automation') {
+          await this._openLightAutomationModal(roomId, outlet);
         } else {
           void this._executeApplianceToggle({ roomId, outletIndex, plugSlot: slot });
         }
@@ -11514,6 +12722,9 @@ class EnergyPanel extends HTMLElement {
       addItem('Open usage graph', 'graph', null);
       if (this._resolveApplianceToggleTarget(outlet, null)) {
         addItem(this._applianceToggleMenuLabel(outlet, null), 'toggle', null);
+      }
+      if (otype === 'light') {
+        addItem('Configure Automation', 'automation', null);
       }
     }
 
@@ -13143,6 +14354,8 @@ class EnergyPanel extends HTMLElement {
     );
     const w = Math.max(0, parseInt(row.watts, 10) || 0);
     const wrgb = row.wrgb ? 'checked' : '';
+    const tuya = row.tuya ? 'checked' : '';
+    const tuyaDisplay = row.wrgb ? '' : 'display:none;';
     return `
       <div class="light-entity-row light-entity-card" data-row-index="${zeroBasedIdx}">
         <div class="light-entity-card-header">
@@ -13167,6 +14380,13 @@ class EnergyPanel extends HTMLElement {
             </label>
             <div class="tts-msg-desc" style="margin-top: 6px;">Enable for responsive color warnings on white/RGB-capable lights.</div>
           </div>
+          <div class="form-group light-entity-tuya-block" style="${tuyaDisplay}">
+            <label class="toggle-row" style="margin-bottom: 0;">
+              <input type="checkbox" class="form-checkbox light-entity-tuya-toggle" ${tuya} title="Tuya light with scene support">
+              <span class="toggle-label">Tuya</span>
+            </label>
+            <div class="tts-msg-desc" style="margin-top: 6px;">Enable for Tuya scene builder in light automation editor.</div>
+          </div>
         </div>
       </div>
     `;
@@ -13181,13 +14401,13 @@ class EnergyPanel extends HTMLElement {
     const raw = device.light_entities;
     if (Array.isArray(raw)) {
       lightEntityRows = raw.map(e => typeof e === 'object' && e?.entity_id
-        ? { entity_id: e.entity_id, watts: Math.max(0, parseInt(e.watts, 10) || 0), wrgb: !!e.wrgb }
-        : typeof e === 'string' && e.startsWith('light.') ? { entity_id: e, watts: 0, wrgb: false } : null
+        ? { entity_id: e.entity_id, watts: Math.max(0, parseInt(e.watts, 10) || 0), wrgb: !!e.wrgb, tuya: !!e.tuya }
+        : typeof e === 'string' && e.startsWith('light.') ? { entity_id: e, watts: 0, wrgb: false, tuya: false } : null
       ).filter(Boolean);
     } else if (typeof raw === 'string' && raw.trim()) {
-      lightEntityRows = raw.split(',').map(e => e.trim()).filter(e => e.startsWith('light.')).map(e => ({ entity_id: e, watts: 0, wrgb: false }));
+      lightEntityRows = raw.split(',').map(e => e.trim()).filter(e => e.startsWith('light.')).map(e => ({ entity_id: e, watts: 0, wrgb: false, tuya: false }));
     }
-    if (lightEntityRows.length === 0) lightEntityRows = [{ entity_id: '', watts: 0, wrgb: false }];
+    if (lightEntityRows.length === 0) lightEntityRows = [{ entity_id: '', watts: 0, wrgb: false, tuya: false }];
 
     const lightRowsHtml = lightEntityRows
       .map((row, idx) => this._htmlLightMappedRow(idx, row, roomIndex))
@@ -14447,6 +15667,21 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _initLightEntityRowListeners(row) {
+    if (!row) return;
+    const wrgbToggle = row.querySelector('.light-entity-wrgb-toggle');
+    const tuyaBlock = row.querySelector('.light-entity-tuya-block');
+    const tuyaToggle = row.querySelector('.light-entity-tuya-toggle');
+    if (wrgbToggle && tuyaBlock) {
+      wrgbToggle.addEventListener('change', () => {
+        tuyaBlock.style.display = wrgbToggle.checked ? '' : 'none';
+        if (!wrgbToggle.checked && tuyaToggle) {
+          tuyaToggle.checked = false;
+        }
+      });
+    }
+  }
+
   _initEntityAutocompletes(container) {
     if (!container) return;
     container.querySelectorAll('.entity-datalist-input').forEach(input => {
@@ -14699,15 +15934,19 @@ class EnergyPanel extends HTMLElement {
     if (lightEntityRows && lightEntityAddBtn) {
       const addRow = () => {
         const idx = lightEntityRows.querySelectorAll('.light-entity-row').length;
-        const html = this._htmlLightMappedRow(idx, { entity_id: '', watts: 0, wrgb: false }, roomIndex);
+        const html = this._htmlLightMappedRow(idx, { entity_id: '', watts: 0, wrgb: false, tuya: false }, roomIndex);
         lightEntityRows.insertAdjacentHTML('beforeend', html);
         const row = lightEntityRows.lastElementChild;
         row.querySelector('.light-entity-remove-btn').addEventListener('click', () => row.remove());
+        this._initLightEntityRowListeners(row);
         this._initEntityAutocompletes(row);
       };
       lightEntityAddBtn.addEventListener('click', addRow);
       lightEntityRows.querySelectorAll('.light-entity-remove-btn').forEach(btn => {
         btn.addEventListener('click', () => btn.closest('.light-entity-row')?.remove());
+      });
+      lightEntityRows.querySelectorAll('.light-entity-row').forEach(row => {
+        this._initLightEntityRowListeners(row);
       });
     }
 
@@ -14986,8 +16225,9 @@ class EnergyPanel extends HTMLElement {
               const entityId = input?.value?.trim?.() || '';
               const watts = parseInt(row.querySelector('.light-entity-watts')?.value, 10) || 0;
               const wrgb = row.querySelector('.light-entity-wrgb-toggle')?.checked || false;
+              const tuya = row.querySelector('.light-entity-tuya-toggle')?.checked || false;
               if (entityId && entityId.startsWith('light.')) {
-                lightEntities.push({ entity_id: entityId, watts: Math.max(0, watts), wrgb });
+                lightEntities.push({ entity_id: entityId, watts: Math.max(0, watts), wrgb, tuya: wrgb && tuya });
               }
             });
             device.light_entities = lightEntities;
@@ -15512,8 +16752,9 @@ class EnergyPanel extends HTMLElement {
             const entityId = input?.value?.trim?.() || '';
             const watts = parseInt(row.querySelector('.light-entity-watts')?.value, 10) || 0;
             const wrgb = row.querySelector('.light-entity-wrgb-toggle')?.checked || false;
+            const tuya = row.querySelector('.light-entity-tuya-toggle')?.checked || false;
             if (entityId && entityId.startsWith('light.')) {
-              lightEntities.push({ entity_id: entityId, watts: Math.max(0, watts), wrgb });
+              lightEntities.push({ entity_id: entityId, watts: Math.max(0, watts), wrgb, tuya: wrgb && tuya });
             }
             });
             device.light_entities = lightEntities;

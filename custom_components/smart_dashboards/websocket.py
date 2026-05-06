@@ -273,6 +273,9 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_room_ratings)
     websocket_api.async_register_command(hass, websocket_dashboard_heartbeat)
     websocket_api.async_register_command(hass, websocket_send_efficiency_digest_test)
+    websocket_api.async_register_command(hass, websocket_get_light_automations)
+    websocket_api.async_register_command(hass, websocket_save_light_automations)
+    websocket_api.async_register_command(hass, websocket_test_tuya_scene)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -3977,3 +3980,111 @@ async def websocket_dashboard_heartbeat(
 
     await hass.async_add_executor_job(_beat)
     connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_light_automations",
+        vol.Required("room_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_light_automations(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get light automation config for a room."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    room_id = msg["room_id"]
+    automations = await hass.async_add_executor_job(
+        config_manager.get_light_automations, room_id
+    )
+    connection.send_result(msg["id"], automations)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/save_light_automations",
+        vol.Required("room_id"): str,
+        vol.Required("automations"): dict,
+    }
+)
+@websocket_api.async_response
+async def websocket_save_light_automations(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Save light automation config for a room."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    room_id = msg["room_id"]
+    automations = msg["automations"]
+
+    try:
+        await hass.async_add_executor_job(
+            config_manager.save_light_automations, room_id, automations
+        )
+        connection.send_result(msg["id"], {"success": True})
+    except Exception as e:
+        _LOGGER.error("Failed to save light automations for room %s: %s", room_id, e)
+        connection.send_error(msg["id"], "save_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/test_tuya_scene",
+        vol.Required("entity_id"): str,
+        vol.Required("scene_data"): dict,
+    }
+)
+@websocket_api.async_response
+async def websocket_test_tuya_scene(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Test a Tuya scene on a light (immediate preview)."""
+    import json
+
+    entity_id = msg["entity_id"]
+    scene_data = msg["scene_data"]
+
+    if not entity_id.startswith("light."):
+        connection.send_error(msg["id"], "invalid_entity", "Entity must be a light")
+        return
+
+    try:
+        # Try tuya_local service first
+        if hass.services.has_service("tuya_local", "set_dp"):
+            await hass.services.async_call(
+                "tuya_local",
+                "set_dp",
+                {
+                    "entity_id": entity_id,
+                    "dp": 25,
+                    "value": json.dumps(scene_data),
+                },
+            )
+        else:
+            # Fallback: try to set effect via light.turn_on
+            await hass.services.async_call(
+                "light",
+                "turn_on",
+                {
+                    "entity_id": entity_id,
+                    "effect": "scene",
+                },
+            )
+        connection.send_result(msg["id"], {"success": True})
+    except Exception as e:
+        _LOGGER.error("Failed to test Tuya scene on %s: %s", entity_id, e)
+        connection.send_error(msg["id"], "scene_test_failed", str(e))

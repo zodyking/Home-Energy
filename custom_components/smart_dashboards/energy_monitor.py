@@ -186,6 +186,8 @@ class EnergyMonitor:
         self._heater_automation_state: dict[str, dict] = {}
         # Smart heater state with thermal learning (key: room_id|outlet_name_slug)
         self._heater_smart_state: dict[str, dict] = {}
+        # Light automation state (tracks last applied action per light)
+        self._light_automation_state: dict[str, str] = {}
         # switch.* the integration toggled recently (exclude from external automation detection)
         self._integration_internal_switch_ids: set[str] = set()
         # Universal push: switch.* state listener + suppression during internal cycling
@@ -2307,6 +2309,189 @@ class EnergyMonitor:
         st["prev_sw_on"] = self._appliance_entity_is_on(switch)
         st["prev_presence"] = pres_ok if pres_ent else False
 
+    async def _tick_light_automation(self, now: datetime) -> None:
+        """Check and apply light automation schedules."""
+        import json as json_mod
+
+        try:
+            automations = self.config_manager.get_all_light_automations()
+        except Exception as e:
+            _LOGGER.debug("Failed to load light automations: %s", e)
+            return
+
+        if not automations:
+            return
+
+        current_time = now.strftime("%H:%M")
+        current_mins = now.hour * 60 + now.minute
+
+        for room_id, room_auto in automations.items():
+            room = self._find_room_by_id(room_id)
+            if not room:
+                continue
+
+            group_auto = room_auto.get("group_automation", {})
+            if group_auto.get("enabled"):
+                for segment in group_auto.get("segments", []):
+                    if self._time_in_segment(current_mins, segment):
+                        await self._apply_light_group_segment(room, segment)
+                        break
+
+            for entity_id, light_auto in room_auto.get("individual_automations", {}).items():
+                if light_auto.get("enabled"):
+                    for segment in light_auto.get("segments", []):
+                        if self._time_in_segment(current_mins, segment):
+                            await self._apply_light_single_segment(entity_id, segment)
+                            break
+
+    def _time_in_segment(self, current_mins: int, segment: dict) -> bool:
+        """Check if current time (in minutes) is within segment range."""
+        start_str = segment.get("start", "00:00")
+        end_str = segment.get("end", "00:00")
+
+        try:
+            sh, sm = map(int, start_str.split(":"))
+            eh, em = map(int, end_str.split(":"))
+        except (ValueError, AttributeError):
+            return False
+
+        start_mins = sh * 60 + sm
+        end_mins = eh * 60 + em
+
+        if start_mins <= end_mins:
+            return start_mins <= current_mins < end_mins
+        else:
+            return current_mins >= start_mins or current_mins < end_mins
+
+    def _find_room_by_id(self, room_id: str) -> dict | None:
+        """Find a room by its ID."""
+        rooms = self.config_manager.energy_config.get("rooms", [])
+        for room in rooms:
+            rid = room.get("id", room["name"].lower().replace(" ", "_"))
+            if rid == room_id:
+                return room
+        return None
+
+    async def _apply_light_group_segment(self, room: dict, segment: dict) -> None:
+        """Apply a light automation segment to all lights in a room."""
+        import json as json_mod
+
+        for outlet in room.get("outlets", []):
+            if outlet.get("type") != "light":
+                continue
+
+            light_entities = outlet.get("light_entities", [])
+            for light in light_entities:
+                entity_id = light.get("entity_id")
+                if not entity_id or not entity_id.startswith("light."):
+                    continue
+
+                await self._apply_light_action(
+                    entity_id,
+                    segment,
+                    is_wrgb=light.get("wrgb", False),
+                    is_tuya=light.get("tuya", False),
+                )
+
+    async def _apply_light_single_segment(self, entity_id: str, segment: dict) -> None:
+        """Apply a light automation segment to a single light."""
+        room_config = self._find_light_config(entity_id)
+        is_wrgb = room_config.get("wrgb", False) if room_config else False
+        is_tuya = room_config.get("tuya", False) if room_config else False
+
+        await self._apply_light_action(entity_id, segment, is_wrgb=is_wrgb, is_tuya=is_tuya)
+
+    def _find_light_config(self, entity_id: str) -> dict | None:
+        """Find light entity configuration."""
+        rooms = self.config_manager.energy_config.get("rooms", [])
+        for room in rooms:
+            for outlet in room.get("outlets", []):
+                if outlet.get("type") != "light":
+                    continue
+                for light in outlet.get("light_entities", []):
+                    if light.get("entity_id") == entity_id:
+                        return light
+        return None
+
+    async def _apply_light_action(
+        self,
+        entity_id: str,
+        segment: dict,
+        is_wrgb: bool = False,
+        is_tuya: bool = False,
+    ) -> None:
+        """Apply light action from automation segment."""
+        import json as json_mod
+
+        action = segment.get("action", "on")
+        state_key = f"light_auto_{entity_id}"
+
+        current_state = self.hass.states.get(entity_id)
+        current_on = current_state and current_state.state == "on"
+
+        last_action = self._light_automation_state.get(state_key)
+
+        if action == "off":
+            if current_on and last_action != "off":
+                try:
+                    await self.hass.services.async_call(
+                        "light",
+                        "turn_off",
+                        {"entity_id": entity_id},
+                    )
+                    self._light_automation_state[state_key] = "off"
+                    _LOGGER.debug("Light automation: turned off %s", entity_id)
+                except Exception as e:
+                    _LOGGER.warning("Light automation failed to turn off %s: %s", entity_id, e)
+            return
+
+        brightness_pct = segment.get("brightness")
+        color_temp = segment.get("color_temp")
+        hs_color = segment.get("hs_color")
+        tuya_scene = segment.get("tuya_scene")
+
+        if is_tuya and tuya_scene and self.hass.services.has_service("tuya_local", "set_dp"):
+            try:
+                await self.hass.services.async_call(
+                    "tuya_local",
+                    "set_dp",
+                    {
+                        "entity_id": entity_id,
+                        "dp": 25,
+                        "value": json_mod.dumps(tuya_scene),
+                    },
+                )
+                self._light_automation_state[state_key] = f"tuya_scene_{hash(json_mod.dumps(tuya_scene))}"
+                _LOGGER.debug("Light automation: applied Tuya scene to %s", entity_id)
+                return
+            except Exception as e:
+                _LOGGER.warning("Light automation failed to apply Tuya scene to %s: %s", entity_id, e)
+
+        service_data: dict = {"entity_id": entity_id}
+
+        if is_wrgb:
+            if brightness_pct is not None:
+                service_data["brightness_pct"] = brightness_pct
+            if hs_color is not None:
+                service_data["hs_color"] = hs_color
+            elif color_temp is not None:
+                service_data["color_temp_kelvin"] = color_temp
+
+        action_hash = f"on_{brightness_pct}_{color_temp}_{hs_color}"
+        if last_action == action_hash:
+            return
+
+        try:
+            await self.hass.services.async_call(
+                "light",
+                "turn_on",
+                service_data,
+            )
+            self._light_automation_state[state_key] = action_hash
+            _LOGGER.debug("Light automation: turned on %s with %s", entity_id, service_data)
+        except Exception as e:
+            _LOGGER.warning("Light automation failed to turn on %s: %s", entity_id, e)
+
     def _presence_auto_off_configured_switch_ids(self, room: dict) -> list[str]:
         """switch.* IDs marked for presence auto-off (on or off), for restore eligibility."""
         ids: list[str] = []
@@ -3085,6 +3270,9 @@ class EnergyMonitor:
 
         # Check zone health (hourly)
         await self._async_tick_zone_health_check(now)
+
+        # Check light automations (runs every tick)
+        await self._tick_light_automation(now)
 
         # Periodically save energy tracking data (every 15 seconds, survives restarts)
         self._save_counter += 1
