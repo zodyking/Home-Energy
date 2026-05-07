@@ -2651,14 +2651,50 @@ class EnergyMonitor:
             if not current_on:
                 self._mark_light_enforcement_run(entity_id)
                 return
+
+            # Set effect to "Scene" so the light accepts scene_data writes
+            effect_list = attrs.get("effect_list") or []
+            scene_effect = next(
+                (e for e in effect_list if str(e).lower() == "scene"), None
+            )
+            if scene_effect:
+                try:
+                    await self.hass.services.async_call(
+                        "light",
+                        "turn_on",
+                        {"entity_id": entity_id, "effect": scene_effect},
+                        blocking=True,
+                    )
+                except Exception as e:
+                    _LOGGER.warning(
+                        "Light automation: failed to set effect=%s on %s: %s",
+                        scene_effect,
+                        entity_id,
+                        e,
+                    )
+
+            # Enable the text.<object_id>_scene entity if it is disabled
+            light_name = entity_id.replace("light.", "", 1)
+            scene_text_entity = f"text.{light_name}_scene"
+            from homeassistant.helpers import entity_registry as er
+
+            ent_reg = er.async_get(self.hass)
+            entry = ent_reg.async_get(scene_text_entity)
+            if entry and entry.disabled_by is not None:
+                ent_reg.async_update_entity(scene_text_entity, disabled_by=None)
+                _LOGGER.info(
+                    "Light automation: enabled disabled entity %s for %s",
+                    scene_text_entity,
+                    entity_id,
+                )
+                await asyncio.sleep(0.5)
+
             scene_hex = self._encode_tuya_scene_hex(tuya_scene)
             if not scene_hex:
                 _LOGGER.warning("Light automation: empty scene hex for %s", entity_id)
                 self._mark_light_enforcement_run(entity_id)
                 return
             scene_hash = f"tuya_scene_{hash(scene_hex)}"
-            light_name = entity_id.replace("light.", "", 1)
-            scene_text_entity = f"text.{light_name}_scene"
             scene_state = self.hass.states.get(scene_text_entity)
             if scene_state is None:
                 _LOGGER.warning(
@@ -2737,6 +2773,15 @@ class EnergyMonitor:
             return
 
         action_hash = f"{action}_{brightness_pct}_{color_temp}_{hs_color}_{light_mode}"
+
+        # For Tuya lights in color/white mode, set effect to "off" to exit scene mode
+        if is_tuya and light_mode in ("color", "white"):
+            effect_list = attrs.get("effect_list") or []
+            off_effect = next(
+                (e for e in effect_list if str(e).lower() == "off"), None
+            )
+            if off_effect:
+                service_data["effect"] = off_effect
 
         try:
             await self.hass.services.async_call(
