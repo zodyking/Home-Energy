@@ -84,18 +84,22 @@ DEFAULT_VENT_AUTOMATION_ON_MSG = (
     "{prefix} {room_name} vent is on."
 )
 
-# Door/Window/Presence TTS message templates
-DEFAULT_DOOR_OPENED_MSG = "{prefix} {room_name} {door_type} door was opened."
-DEFAULT_DOOR_CLOSED_MSG = "{prefix} {room_name} {door_type} door was closed."
-DEFAULT_DOOR_LOCKED_MSG = "{prefix} {room_name} {door_type} door was locked."
-DEFAULT_DOOR_UNLOCKED_MSG = "{prefix} {room_name} {door_type} door was unlocked."
-DEFAULT_DOOR_STILL_OPEN_MSG = "{prefix} {room_name} {door_type} door is still open."
-DEFAULT_DOOR_STILL_UNLOCKED_MSG = "{prefix} {room_name} {door_type} door is still unlocked."
-DEFAULT_WINDOW_OPENED_MSG = "{prefix} {room_name} window was opened."
-DEFAULT_WINDOW_CLOSED_MSG = "{prefix} {room_name} window was closed."
-DEFAULT_WINDOW_STILL_OPEN_MSG = "{prefix} {room_name} window is still open."
-DEFAULT_PRESENCE_DETECTED_MSG = "{prefix} Presence detected in {room_name}."
-DEFAULT_PRESENCE_CLEARED_MSG = "{prefix} {room_name} cleared."
+# Door/Window/Presence TTS message templates (no prefix by default)
+DEFAULT_DOOR_OPENED_MSG = "{room_name} {door_type} door was opened."
+DEFAULT_DOOR_CLOSED_MSG = "{room_name} {door_type} door was closed."
+DEFAULT_DOOR_LOCKED_MSG = "{room_name} {door_type} door was locked."
+DEFAULT_DOOR_UNLOCKED_MSG = "{room_name} {door_type} door was unlocked."
+DEFAULT_DOOR_STILL_OPEN_MSG = "{room_name} {door_type} door is still open."
+DEFAULT_DOOR_STILL_UNLOCKED_MSG = "{room_name} {door_type} door is still unlocked."
+DEFAULT_WINDOW_OPENED_MSG = "{room_name} window was opened."
+DEFAULT_WINDOW_CLOSED_MSG = "{room_name} window was closed."
+DEFAULT_WINDOW_STILL_OPEN_MSG = "{room_name} window is still open."
+DEFAULT_PRESENCE_DETECTED_MSG = "Presence detected in {room_name}."
+DEFAULT_PRESENCE_CLEARED_MSG = "{room_name} cleared."
+
+# Battery monitoring TTS message templates
+DEFAULT_BATTERY_LOW_MSG = "{device_name} battery is low at {battery_level} percent."
+DEFAULT_BATTERY_REPLACED_MSG = "{device_name} battery has been successfully replaced."
 
 # Notification message templates (for mobile push notifications)
 DEFAULT_NOTIFICATION_TITLE = "Home Energy"
@@ -266,10 +270,14 @@ DEFAULT_CONFIG = {
             "window_still_open_msg": DEFAULT_WINDOW_STILL_OPEN_MSG,
             "presence_detected_msg": DEFAULT_PRESENCE_DETECTED_MSG,
             "presence_cleared_msg": DEFAULT_PRESENCE_CLEARED_MSG,
-            # Door/Window/Presence TTS enable flags
+            # Battery monitoring TTS messages
+            "battery_low_msg": DEFAULT_BATTERY_LOW_MSG,
+            "battery_replaced_msg": DEFAULT_BATTERY_REPLACED_MSG,
+            # Door/Window/Presence/Battery TTS enable flags
             "door_tts_enabled": True,
             "window_tts_enabled": True,
             "presence_tts_enabled": True,
+            "battery_tts_enabled": True,
         },
         "power_enforcement": {
             "enabled": False,

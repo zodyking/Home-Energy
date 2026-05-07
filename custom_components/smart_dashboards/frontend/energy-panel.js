@@ -7221,6 +7221,27 @@ class EnergyPanel extends HTMLElement {
         }
       }
 
+      .sensor-with-battery-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+      }
+      .sensor-with-battery-row > div:first-child {
+        flex: 2;
+      }
+      .sensor-with-battery-row > div:last-child {
+        flex: 1;
+      }
+      @media (max-width: 500px) {
+        .sensor-with-battery-row {
+          flex-direction: column;
+        }
+        .sensor-with-battery-row > div {
+          flex: 1 !important;
+          width: 100%;
+        }
+      }
+
       .plug-settings-card {
         background: rgba(0, 0, 0, 0.2);
         border-radius: 6px;
@@ -10810,7 +10831,17 @@ class EnergyPanel extends HTMLElement {
 
   /** Per-line TTS on/off (saved as `${lineKey}_tts_enabled`, default on). */
   _ttsLineEnableHtml(tsSettings, lineKey, controlsSelector = '') {
-    const storageKey = `${lineKey}_tts_enabled`;
+    // door_tts / window_tts / etc. map to door_tts_enabled (not door_tts_tts_enabled) for backend parity
+    const storageKey =
+      lineKey === 'door_tts'
+        ? 'door_tts_enabled'
+        : lineKey === 'window_tts'
+          ? 'window_tts_enabled'
+          : lineKey === 'presence_tts'
+            ? 'presence_tts_enabled'
+            : lineKey === 'battery_tts'
+              ? 'battery_tts_enabled'
+              : `${lineKey}_tts_enabled`;
     const on = tsSettings[storageKey] !== false;
     const id = `tts-enable-${lineKey.replace(/_/g, '-')}`;
     const dataAttr = controlsSelector
@@ -11533,6 +11564,130 @@ class EnergyPanel extends HTMLElement {
                       value="${(ttsSettings.zone_health_reminder_tts_msg || "{name}, your zone-based location setup needs attention. Please check your Companion app settings.").replace(/"/g, '&quot;')}"
                       placeholder="{name}, your zone-based location...">
                     <div class="tts-var-help">Variables: <code>{name}</code></div>
+                  </div>
+                </div>
+              </details>
+              <details class="settings-fold">
+                <summary class="settings-fold-summary">Doors & Windows</summary>
+                <div class="settings-fold-body">
+                  <p style="color: var(--secondary-text-color); font-size: 11px; margin-bottom: 12px;">
+                    Customize TTS messages for door/window events. By default these messages do not include the prefix — add <code>{prefix}</code> if desired.
+                  </p>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-header-row">
+                      <div>
+                        <div class="tts-msg-title">Door Opened</div>
+                        <div class="tts-msg-desc">Spoken when a door contact sensor detects open</div>
+                      </div>
+                      ${this._ttsLineEnableHtml(ttsSettings, 'door_tts')}
+                    </div>
+                    <input type="text" class="form-input" id="tts-door-opened"
+                      value="${(ttsSettings.door_opened_msg || '{room_name} {door_type} door was opened.').replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} {door_type} door was opened.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{door_type}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Door Closed</div>
+                    <input type="text" class="form-input" id="tts-door-closed"
+                      value="${(ttsSettings.door_closed_msg || '{room_name} {door_type} door was closed.').replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} {door_type} door was closed.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{door_type}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Door Locked</div>
+                    <input type="text" class="form-input" id="tts-door-locked"
+                      value="${(ttsSettings.door_locked_msg || '{room_name} {door_type} door was locked.').replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} {door_type} door was locked.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{door_type}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Door Unlocked</div>
+                    <input type="text" class="form-input" id="tts-door-unlocked"
+                      value="${(ttsSettings.door_unlocked_msg || '{room_name} {door_type} door was unlocked.').replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} {door_type} door was unlocked.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{door_type}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Door Still Open (Reminder)</div>
+                    <input type="text" class="form-input" id="tts-door-still-open"
+                      value="${(ttsSettings.door_still_open_msg || '{room_name} {door_type} door is still open.').replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} {door_type} door is still open.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{door_type}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Door Still Unlocked (Reminder)</div>
+                    <input type="text" class="form-input" id="tts-door-still-unlocked"
+                      value="${(ttsSettings.door_still_unlocked_msg || '{room_name} {door_type} door is still unlocked.').replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} {door_type} door is still unlocked.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{door_type}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group" style="margin-top: 16px;">
+                    <div class="tts-msg-header-row">
+                      <div>
+                        <div class="tts-msg-title">Window Opened</div>
+                        <div class="tts-msg-desc">Spoken when a window contact sensor detects open</div>
+                      </div>
+                      ${this._ttsLineEnableHtml(ttsSettings, 'window_tts')}
+                    </div>
+                    <input type="text" class="form-input" id="tts-window-opened"
+                      value="${(ttsSettings.window_opened_msg || '{room_name} window was opened.').replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} window was opened.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Window Closed</div>
+                    <input type="text" class="form-input" id="tts-window-closed"
+                      value="${(ttsSettings.window_closed_msg || '{room_name} window was closed.').replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} window was closed.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Window Still Open (Reminder)</div>
+                    <input type="text" class="form-input" id="tts-window-still-open"
+                      value="${(ttsSettings.window_still_open_msg || '{room_name} window is still open.').replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} window is still open.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group" style="margin-top: 16px;">
+                    <div class="tts-msg-header-row">
+                      <div>
+                        <div class="tts-msg-title">Presence Detected</div>
+                        <div class="tts-msg-desc">Spoken when presence sensor at door/window detects motion</div>
+                      </div>
+                      ${this._ttsLineEnableHtml(ttsSettings, 'presence_tts')}
+                    </div>
+                    <input type="text" class="form-input" id="tts-presence-detected"
+                      value="${(ttsSettings.presence_detected_msg || 'Presence detected in {room_name}.').replace(/"/g, '&quot;')}"
+                      placeholder="Presence detected in {room_name}.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Presence Cleared</div>
+                    <input type="text" class="form-input" id="tts-presence-cleared"
+                      value="${(ttsSettings.presence_cleared_msg || '{room_name} cleared.').replace(/"/g, '&quot;')}"
+                      placeholder="{room_name} cleared.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{room_name}</code> <code>{device_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group" style="margin-top: 16px;">
+                    <div class="tts-msg-header-row">
+                      <div>
+                        <div class="tts-msg-title">Battery Low Warning</div>
+                        <div class="tts-msg-desc">Hourly warning when sensor battery is at or below 25%</div>
+                      </div>
+                      ${this._ttsLineEnableHtml(ttsSettings, 'battery_tts')}
+                    </div>
+                    <input type="text" class="form-input" id="tts-battery-low"
+                      value="${(ttsSettings.battery_low_msg || '{device_name} battery is low at {battery_level} percent.').replace(/"/g, '&quot;')}"
+                      placeholder="{device_name} battery is low at {battery_level} percent.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{device_name}</code> <code>{battery_level}</code> <code>{room_name}</code></div>
+                  </div>
+                  <div class="tts-msg-group">
+                    <div class="tts-msg-title">Battery Replaced</div>
+                    <div class="tts-msg-desc">Spoken when battery level jumps from low to high (battery replaced)</div>
+                    <input type="text" class="form-input" id="tts-battery-replaced"
+                      value="${(ttsSettings.battery_replaced_msg || '{device_name} battery has been successfully replaced.').replace(/"/g, '&quot;')}"
+                      placeholder="{device_name} battery has been successfully replaced.">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{device_name}</code> <code>{room_name}</code></div>
                   </div>
                 </div>
               </details>
@@ -16416,18 +16571,27 @@ class EnergyPanel extends HTMLElement {
               <div class="plug-settings-title">Sensors & Lock</div>
               <div class="form-group">
                 <label class="form-label">Contact Sensor (required)</label>
-                ${this._renderEntityAutocomplete(device.contact_sensor || '', 'binary_sensor', roomIndex, 'door-contact-sensor', 'binary_sensor.front_door_contact')}
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">binary_sensor.* for door open/close state.</div>
+                <div class="sensor-with-battery-row">
+                  <div style="flex: 1;">${this._renderEntityAutocomplete(device.contact_sensor || '', 'binary_sensor', roomIndex, 'door-contact-sensor', 'binary_sensor.front_door_contact')}</div>
+                  <div style="flex: 1;">${this._renderEntityAutocomplete(device.contact_sensor_battery || '', 'sensor', roomIndex, 'door-contact-sensor-battery', 'sensor.front_door_battery')}</div>
+                </div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Contact sensor (binary_sensor.*) and its battery level sensor (sensor.*).</div>
               </div>
               <div class="form-group">
                 <label class="form-label">Smart Lock (optional)</label>
-                ${this._renderEntityAutocomplete(device.lock_entity || '', 'lock', roomIndex, 'door-lock-entity', 'lock.front_door')}
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">lock.* entity. Leave blank if no smart lock.</div>
+                <div class="sensor-with-battery-row">
+                  <div style="flex: 1;">${this._renderEntityAutocomplete(device.lock_entity || '', 'lock', roomIndex, 'door-lock-entity', 'lock.front_door')}</div>
+                  <div style="flex: 1;">${this._renderEntityAutocomplete(device.lock_battery || '', 'sensor', roomIndex, 'door-lock-battery', 'sensor.front_door_lock_battery')}</div>
+                </div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Lock entity (lock.*) and its battery sensor.</div>
               </div>
               <div class="form-group">
                 <label class="form-label">Presence Sensor (optional)</label>
-                ${this._renderEntityAutocomplete(device.presence_sensor || '', 'binary_sensor', roomIndex, 'door-presence-sensor', 'binary_sensor.hallway_motion')}
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">binary_sensor.* for motion/occupancy near this door.</div>
+                <div class="sensor-with-battery-row">
+                  <div style="flex: 1;">${this._renderEntityAutocomplete(device.presence_sensor || '', 'binary_sensor', roomIndex, 'door-presence-sensor', 'binary_sensor.hallway_motion')}</div>
+                  <div style="flex: 1;">${this._renderEntityAutocomplete(device.presence_sensor_battery || '', 'sensor', roomIndex, 'door-presence-sensor-battery', 'sensor.hallway_motion_battery')}</div>
+                </div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Motion sensor (binary_sensor.*) and its battery sensor.</div>
               </div>
             </div>
           </div>
@@ -16571,17 +16735,23 @@ class EnergyPanel extends HTMLElement {
               <div class="plug-settings-title">Sensors</div>
               <div class="form-group">
                 <label class="form-label">Contact Sensor (required)</label>
-                ${this._renderEntityAutocomplete(device.contact_sensor || '', 'binary_sensor', roomIndex, 'window-contact-sensor', 'binary_sensor.bedroom_window')}
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">binary_sensor.* for window open/close state.</div>
+                <div class="sensor-with-battery-row">
+                  <div style="flex: 1;">${this._renderEntityAutocomplete(device.contact_sensor || '', 'binary_sensor', roomIndex, 'window-contact-sensor', 'binary_sensor.bedroom_window')}</div>
+                  <div style="flex: 1;">${this._renderEntityAutocomplete(device.contact_sensor_battery || '', 'sensor', roomIndex, 'window-contact-sensor-battery', 'sensor.bedroom_window_battery')}</div>
+                </div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Contact sensor (binary_sensor.*) and its battery level sensor (sensor.*).</div>
               </div>
               <div class="form-group">
                 <label class="form-label">Presence Sensor (optional)</label>
-                ${this._renderEntityAutocomplete(device.presence_sensor || '', 'binary_sensor', roomIndex, 'window-presence-sensor', 'binary_sensor.bedroom_motion')}
-                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">binary_sensor.* for motion/occupancy near this window.</div>
+                <div class="sensor-with-battery-row">
+                  <div style="flex: 1;">${this._renderEntityAutocomplete(device.presence_sensor || '', 'binary_sensor', roomIndex, 'window-presence-sensor', 'binary_sensor.bedroom_motion')}</div>
+                  <div style="flex: 1;">${this._renderEntityAutocomplete(device.presence_sensor_battery || '', 'sensor', roomIndex, 'window-presence-sensor-battery', 'sensor.bedroom_motion_battery')}</div>
+                </div>
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Motion sensor (binary_sensor.*) and its battery sensor.</div>
               </div>
             </div>
           </div>
-          
+
           <div class="plugs-settings-grid single-plug" style="margin-top: 16px;">
             <div class="plug-settings-card">
               <div class="plug-settings-title">Announcements</div>
@@ -18722,10 +18892,16 @@ class EnergyPanel extends HTMLElement {
             device.plug2_shutoff = 0;
             const contactSensor = (item.querySelector('.entity-datalist-input.door-contact-sensor') || item.querySelector('input.door-contact-sensor'))?.value?.trim() || '';
             device.contact_sensor = contactSensor.startsWith('binary_sensor.') ? contactSensor : null;
+            const contactSensorBattery = (item.querySelector('.entity-datalist-input.door-contact-sensor-battery') || item.querySelector('input.door-contact-sensor-battery'))?.value?.trim() || '';
+            device.contact_sensor_battery = contactSensorBattery.startsWith('sensor.') ? contactSensorBattery : null;
             const lockEntity = (item.querySelector('.entity-datalist-input.door-lock-entity') || item.querySelector('input.door-lock-entity'))?.value?.trim() || '';
             device.lock_entity = lockEntity.startsWith('lock.') ? lockEntity : null;
+            const lockBattery = (item.querySelector('.entity-datalist-input.door-lock-battery') || item.querySelector('input.door-lock-battery'))?.value?.trim() || '';
+            device.lock_battery = lockBattery.startsWith('sensor.') ? lockBattery : null;
             const presenceSensor = (item.querySelector('.entity-datalist-input.door-presence-sensor') || item.querySelector('input.door-presence-sensor'))?.value?.trim() || '';
             device.presence_sensor = presenceSensor.startsWith('binary_sensor.') ? presenceSensor : null;
+            const presenceSensorBattery = (item.querySelector('.entity-datalist-input.door-presence-sensor-battery') || item.querySelector('input.door-presence-sensor-battery'))?.value?.trim() || '';
+            device.presence_sensor_battery = presenceSensorBattery.startsWith('sensor.') ? presenceSensorBattery : null;
             device.door_subtype = item.querySelector('.door-subtype')?.value || 'standard';
             device.announce_open_close = item.querySelector('.door-announce-open-close')?.checked !== false;
             device.announce_lock = item.querySelector('.door-announce-lock')?.checked !== false;
@@ -18752,8 +18928,12 @@ class EnergyPanel extends HTMLElement {
             device.plug2_shutoff = 0;
             const contactSensor = (item.querySelector('.entity-datalist-input.window-contact-sensor') || item.querySelector('input.window-contact-sensor'))?.value?.trim() || '';
             device.contact_sensor = contactSensor.startsWith('binary_sensor.') ? contactSensor : null;
+            const contactSensorBattery = (item.querySelector('.entity-datalist-input.window-contact-sensor-battery') || item.querySelector('input.window-contact-sensor-battery'))?.value?.trim() || '';
+            device.contact_sensor_battery = contactSensorBattery.startsWith('sensor.') ? contactSensorBattery : null;
             const presenceSensor = (item.querySelector('.entity-datalist-input.window-presence-sensor') || item.querySelector('input.window-presence-sensor'))?.value?.trim() || '';
             device.presence_sensor = presenceSensor.startsWith('binary_sensor.') ? presenceSensor : null;
+            const presenceSensorBattery = (item.querySelector('.entity-datalist-input.window-presence-sensor-battery') || item.querySelector('input.window-presence-sensor-battery'))?.value?.trim() || '';
+            device.presence_sensor_battery = presenceSensorBattery.startsWith('sensor.') ? presenceSensorBattery : null;
             device.announce_open_close = item.querySelector('.window-announce-open-close')?.checked !== false;
             device.announce_presence = item.querySelector('.window-announce-presence')?.checked === true;
             device.reminder_enabled = item.querySelector('.window-reminder-enabled')?.checked === true;
@@ -18992,6 +19172,10 @@ class EnergyPanel extends HTMLElement {
         phase_reset_tts_enabled: ttsLineOn('tts-enable-phase-reset'),
         room_kwh_warn_tts_enabled: ttsLineOn('tts-enable-room-kwh-warn'),
         home_kwh_warn_tts_enabled: ttsLineOn('tts-enable-home-kwh-warn'),
+        door_tts_enabled: ttsLineOn('tts-enable-door-tts'),
+        window_tts_enabled: ttsLineOn('tts-enable-window-tts'),
+        presence_tts_enabled: ttsLineOn('tts-enable-presence-tts'),
+        battery_tts_enabled: ttsLineOn('tts-enable-battery-tts'),
         room_warn_msg: ttsRoomWarn,
         outlet_warn_msg: ttsOutletWarn,
         budget_exceeded_msg: ttsBudgetExceeded,
@@ -19032,6 +19216,20 @@ class EnergyPanel extends HTMLElement {
         zone_health_reminder_hours: Math.max(1, Math.min(24, parseInt(this.shadowRoot.querySelector('#zone-health-reminder-hours')?.value, 10) || 1)),
         zone_health_notification_msg: this.shadowRoot.querySelector('#zone-health-notification-msg')?.value ?? '',
         zone_health_reminder_tts_msg: this.shadowRoot.querySelector('#zone-health-reminder-tts-msg')?.value ?? '',
+        // Door/Window/Presence/Battery TTS messages
+        door_opened_msg: this.shadowRoot.querySelector('#tts-door-opened')?.value ?? '',
+        door_closed_msg: this.shadowRoot.querySelector('#tts-door-closed')?.value ?? '',
+        door_locked_msg: this.shadowRoot.querySelector('#tts-door-locked')?.value ?? '',
+        door_unlocked_msg: this.shadowRoot.querySelector('#tts-door-unlocked')?.value ?? '',
+        door_still_open_msg: this.shadowRoot.querySelector('#tts-door-still-open')?.value ?? '',
+        door_still_unlocked_msg: this.shadowRoot.querySelector('#tts-door-still-unlocked')?.value ?? '',
+        window_opened_msg: this.shadowRoot.querySelector('#tts-window-opened')?.value ?? '',
+        window_closed_msg: this.shadowRoot.querySelector('#tts-window-closed')?.value ?? '',
+        window_still_open_msg: this.shadowRoot.querySelector('#tts-window-still-open')?.value ?? '',
+        presence_detected_msg: this.shadowRoot.querySelector('#tts-presence-detected')?.value ?? '',
+        presence_cleared_msg: this.shadowRoot.querySelector('#tts-presence-cleared')?.value ?? '',
+        battery_low_msg: this.shadowRoot.querySelector('#tts-battery-low')?.value ?? '',
+        battery_replaced_msg: this.shadowRoot.querySelector('#tts-battery-replaced')?.value ?? '',
         notify_budget_hit_title: this.shadowRoot.querySelector('#notify-budget-hit-title')?.value ?? '',
         notify_budget_hit_msg: this.shadowRoot.querySelector('#notify-budget-hit-msg')?.value ?? '',
         notify_room_boost_days_title: this.shadowRoot.querySelector('#notify-room-boost-days-title')?.value ?? '',

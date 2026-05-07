@@ -1106,10 +1106,16 @@ class ConfigManager:
                             item["plug2_shutoff"] = 0
                             contact_ent = str(outlet.get("contact_sensor") or "").strip()
                             item["contact_sensor"] = contact_ent if contact_ent.startswith("binary_sensor.") else None
+                            contact_batt = str(outlet.get("contact_sensor_battery") or "").strip()
+                            item["contact_sensor_battery"] = contact_batt if contact_batt.startswith("sensor.") else None
                             lock_ent = str(outlet.get("lock_entity") or "").strip()
                             item["lock_entity"] = lock_ent if lock_ent.startswith("lock.") else None
+                            lock_batt = str(outlet.get("lock_battery") or "").strip()
+                            item["lock_battery"] = lock_batt if lock_batt.startswith("sensor.") else None
                             presence_ent = str(outlet.get("presence_sensor") or "").strip()
                             item["presence_sensor"] = presence_ent if presence_ent.startswith("binary_sensor.") else None
+                            presence_batt = str(outlet.get("presence_sensor_battery") or "").strip()
+                            item["presence_sensor_battery"] = presence_batt if presence_batt.startswith("sensor.") else None
                             door_subtype = str(outlet.get("door_subtype") or "standard").strip().lower()
                             item["door_subtype"] = door_subtype if door_subtype in ("standard", "closet", "entrance") else "standard"
                             item["announce_open_close"] = bool(outlet.get("announce_open_close", True))
@@ -1137,8 +1143,12 @@ class ConfigManager:
                             item["plug2_shutoff"] = 0
                             contact_ent = str(outlet.get("contact_sensor") or "").strip()
                             item["contact_sensor"] = contact_ent if contact_ent.startswith("binary_sensor.") else None
+                            contact_batt = str(outlet.get("contact_sensor_battery") or "").strip()
+                            item["contact_sensor_battery"] = contact_batt if contact_batt.startswith("sensor.") else None
                             presence_ent = str(outlet.get("presence_sensor") or "").strip()
                             item["presence_sensor"] = presence_ent if presence_ent.startswith("binary_sensor.") else None
+                            presence_batt = str(outlet.get("presence_sensor_battery") or "").strip()
+                            item["presence_sensor_battery"] = presence_batt if presence_batt.startswith("sensor.") else None
                             item["announce_open_close"] = bool(outlet.get("announce_open_close", True))
                             item["announce_presence"] = bool(outlet.get("announce_presence", False))
                             item["reminder_enabled"] = bool(outlet.get("reminder_enabled", False))
@@ -1710,6 +1720,58 @@ class ConfigManager:
                 )
                 or ""
             ),
+            # Door / window / presence / battery TTS (persisted; used by energy_monitor door-window automation)
+            "door_tts_enabled": bool(
+                tts.get("door_tts_enabled", default_tts.get("door_tts_enabled", True))
+            ),
+            "window_tts_enabled": bool(
+                tts.get("window_tts_enabled", default_tts.get("window_tts_enabled", True))
+            ),
+            "presence_tts_enabled": bool(
+                tts.get("presence_tts_enabled", default_tts.get("presence_tts_enabled", True))
+            ),
+            "battery_tts_enabled": bool(
+                tts.get("battery_tts_enabled", default_tts.get("battery_tts_enabled", True))
+            ),
+            "door_opened_msg": str(
+                tts.get("door_opened_msg") or default_tts.get("door_opened_msg") or ""
+            ).strip(),
+            "door_closed_msg": str(
+                tts.get("door_closed_msg") or default_tts.get("door_closed_msg") or ""
+            ).strip(),
+            "door_locked_msg": str(
+                tts.get("door_locked_msg") or default_tts.get("door_locked_msg") or ""
+            ).strip(),
+            "door_unlocked_msg": str(
+                tts.get("door_unlocked_msg") or default_tts.get("door_unlocked_msg") or ""
+            ).strip(),
+            "door_still_open_msg": str(
+                tts.get("door_still_open_msg") or default_tts.get("door_still_open_msg") or ""
+            ).strip(),
+            "door_still_unlocked_msg": str(
+                tts.get("door_still_unlocked_msg") or default_tts.get("door_still_unlocked_msg") or ""
+            ).strip(),
+            "window_opened_msg": str(
+                tts.get("window_opened_msg") or default_tts.get("window_opened_msg") or ""
+            ).strip(),
+            "window_closed_msg": str(
+                tts.get("window_closed_msg") or default_tts.get("window_closed_msg") or ""
+            ).strip(),
+            "window_still_open_msg": str(
+                tts.get("window_still_open_msg") or default_tts.get("window_still_open_msg") or ""
+            ).strip(),
+            "presence_detected_msg": str(
+                tts.get("presence_detected_msg") or default_tts.get("presence_detected_msg") or ""
+            ).strip(),
+            "presence_cleared_msg": str(
+                tts.get("presence_cleared_msg") or default_tts.get("presence_cleared_msg") or ""
+            ).strip(),
+            "battery_low_msg": str(
+                tts.get("battery_low_msg") or default_tts.get("battery_low_msg") or ""
+            ).strip(),
+            "battery_replaced_msg": str(
+                tts.get("battery_replaced_msg") or default_tts.get("battery_replaced_msg") or ""
+            ).strip(),
         }
 
         # Validate power enforcement settings
