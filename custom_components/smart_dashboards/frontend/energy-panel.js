@@ -2951,17 +2951,76 @@ class EnergyPanel extends HTMLElement {
       }
       .inline-scene-transition-row {
         display: flex;
+        align-items: center;
         gap: 8px;
         width: 100%;
       }
       .inline-scene-transition-row select {
         flex: 1;
+        min-width: 0;
         padding: 6px 8px;
         border-radius: 6px;
         border: 1px solid var(--card-border);
         background: var(--input-bg, var(--card-bg));
         color: var(--primary-text-color);
         font-size: 11px;
+      }
+      .inline-scene-speed-inline {
+        flex: 1.15;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+      }
+      .inline-scene-speed-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 10px;
+        color: var(--secondary-text-color);
+        line-height: 1.2;
+      }
+      .inline-scene-speed-label .inline-scene-speed-val {
+        font-variant-numeric: tabular-nums;
+        color: var(--primary-text-color);
+        font-weight: 600;
+      }
+      .inline-scene-transition-row .inline-scene-speed {
+        width: 100%;
+        margin: 0;
+        height: 20px;
+        accent-color: #3b82f6;
+        --scene-speed-track: rgba(255, 255, 255, 0.14);
+      }
+      .inline-scene-transition-row .inline-scene-speed::-webkit-slider-runnable-track {
+        height: 4px;
+        border-radius: 2px;
+        background: var(--scene-speed-track);
+      }
+      .inline-scene-transition-row .inline-scene-speed::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        margin-top: -5px;
+        border-radius: 50%;
+        background: #3b82f6;
+        border: 2px solid rgba(255, 255, 255, 0.9);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      }
+      .inline-scene-transition-row .inline-scene-speed::-moz-range-track {
+        height: 4px;
+        border-radius: 2px;
+        background: var(--scene-speed-track);
+      }
+      .inline-scene-transition-row .inline-scene-speed::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #3b82f6;
+        border: 2px solid rgba(255, 255, 255, 0.9);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
       }
       .inline-scene-test-btn {
         margin-top: 8px;
@@ -3206,7 +3265,38 @@ class EnergyPanel extends HTMLElement {
       .tuya-scene-transition-field input[type="range"] {
         width: 100%;
         margin: 4px 0 0;
-        accent-color: var(--panel-accent, #3b82f6);
+        height: 20px;
+        accent-color: #3b82f6;
+        --scene-speed-track: rgba(255, 255, 255, 0.14);
+      }
+      .tuya-scene-transition-field input[type="range"].tuya-unit-speed::-webkit-slider-runnable-track {
+        height: 4px;
+        border-radius: 2px;
+        background: var(--scene-speed-track);
+      }
+      .tuya-scene-transition-field input[type="range"].tuya-unit-speed::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        margin-top: -5px;
+        border-radius: 50%;
+        background: #3b82f6;
+        border: 2px solid rgba(255, 255, 255, 0.9);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      }
+      .tuya-scene-transition-field input[type="range"].tuya-unit-speed::-moz-range-track {
+        height: 4px;
+        border-radius: 2px;
+        background: var(--scene-speed-track);
+      }
+      .tuya-scene-transition-field input[type="range"].tuya-unit-speed::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #3b82f6;
+        border: 2px solid rgba(255, 255, 255, 0.9);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
       }
       .tuya-scene-transition-field select:focus {
         outline: none;
@@ -13415,23 +13505,23 @@ class EnergyPanel extends HTMLElement {
             <input type="range" class="inline-scene-brightness" min="0" max="1000" value="${selectedUnit.bright || 1000}">
           </div>
 
-          <!-- Transition settings -->
+          <!-- Transition + speed (inline) -->
           <div class="inline-scene-transition-row">
             <select class="inline-scene-transition">
               <option value="static" ${selectedUnit.unit_change_mode === 'static' ? 'selected' : ''}>Static</option>
               <option value="jump" ${selectedUnit.unit_change_mode === 'jump' ? 'selected' : ''}>Flash</option>
               <option value="gradient" ${selectedUnit.unit_change_mode === 'gradient' ? 'selected' : ''}>Fade</option>
             </select>
+            <div class="inline-scene-speed-inline">
+              <div class="inline-scene-speed-label">
+                <span>Speed</span>
+                <span class="inline-scene-speed-val">${sceneSpeed}</span>
+              </div>
+              <input type="range" class="inline-scene-speed" min="0" max="100" step="1" value="${sceneSpeed}"
+                title="0 = instant, 100 = slow">
+            </div>
           </div>
-          <div class="inline-scene-speed-row" style="margin-top:8px;">
-            <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;">
-              <span>Transition speed</span>
-              <span class="inline-scene-speed-val">${sceneSpeed}</span>
-            </label>
-            <input type="range" class="inline-scene-speed" min="0" max="100" step="1" value="${sceneSpeed}"
-              title="0 = instant, 100 = slow (Tuya scene_data_v2)">
-            <div style="font-size:10px;color:var(--secondary-text-color);margin-top:2px;">0 fastest — 100 slowest</div>
-          </div>
+          <div style="font-size:10px;color:var(--secondary-text-color);margin-top:4px;">0 fastest — 100 slowest</div>
         </div>
 
         <!-- Test Scene Button -->
@@ -14324,7 +14414,7 @@ class EnergyPanel extends HTMLElement {
                    style="background: linear-gradient(90deg, var(--panel-accent) ${(selectedUnit.bright || 1000) / 10}%, rgba(255,255,255,0.12) ${(selectedUnit.bright || 1000) / 10}%);">
           </div>
 
-          <!-- Transition Settings -->
+          <!-- Transition + speed (inline, two columns) -->
           <div class="tuya-scene-transition-row">
             <div class="tuya-scene-transition-field">
               <label>Transition</label>
@@ -14334,13 +14424,13 @@ class EnergyPanel extends HTMLElement {
                 <option value="gradient" ${selectedUnit.unit_change_mode === 'gradient' ? 'selected' : ''}>Fade</option>
               </select>
             </div>
-            <div class="tuya-scene-transition-field" style="grid-column:1/-1;">
-              <label>Transition speed <span class="tuya-scene-speed-value">${sceneSpeed}</span></label>
+            <div class="tuya-scene-transition-field">
+              <label>Speed <span class="tuya-scene-speed-value">${sceneSpeed}</span></label>
               <input type="range" class="tuya-unit-speed" min="0" max="100" step="1" value="${sceneSpeed}"
                 title="0 = instant, 100 = slow">
-              <div style="font-size:10px;color:var(--secondary-text-color);margin-top:2px;">0 fastest — 100 slowest</div>
             </div>
           </div>
+          <div style="font-size:10px;color:var(--secondary-text-color);margin:-4px 0 0;padding:0 4px;">0 fastest — 100 slowest</div>
         </div>
 
         <div class="light-auto-modal-footer">
