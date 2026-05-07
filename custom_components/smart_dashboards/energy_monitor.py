@@ -2516,15 +2516,15 @@ class EnergyMonitor:
         enforcement_interval = segment.get("enforcement_interval", 60)
         state_key = f"light_auto_{entity_id}"
 
-        if self._should_skip_light_enforcement(entity_id, enforcement_interval):
-            return
-
         current_state = self.hass.states.get(entity_id)
         current_on = current_state and current_state.state == "on"
         attrs = current_state.attributes if current_state else {}
 
+        # For action "off": turn off if currently on, skip enforcement interval check
         if action == "off":
             if current_on:
+                if self._should_skip_light_enforcement(entity_id, enforcement_interval):
+                    return
                 try:
                     await self.hass.services.async_call(
                         "light",
@@ -2538,18 +2538,29 @@ class EnergyMonitor:
                     _LOGGER.warning("Light automation failed to turn off %s: %s", entity_id, e)
             return
 
+        # For action "mode": only apply settings if light is currently ON
+        # For action "on": turn on if off, or apply settings if already on
         if action == "mode" and not current_on:
+            # Mode only applies when light is on - nothing to do
+            return
+
+        # Only check enforcement interval if light is currently ON (we're enforcing settings)
+        # If light is OFF and action is "on", we should turn it on regardless of interval
+        if current_on and self._should_skip_light_enforcement(entity_id, enforcement_interval):
             return
 
         brightness_pct = segment.get("brightness")
         color_temp = segment.get("color_temp")
         hs_color = segment.get("hs_color")
         tuya_scene = segment.get("tuya_scene")
+        light_mode = segment.get("light_mode", "white")
 
-        if is_tuya and tuya_scene and self.hass.services.has_service("tuya_local", "set_dp"):
-            scene_hex = self._encode_tuya_scene_hex(tuya_scene)
-            scene_hash = f"tuya_scene_{hash(scene_hex)}"
-            if current_on and self._light_automation_state.get(state_key) != scene_hash:
+        # Tuya scene handling - only when light is ON
+        if is_tuya and tuya_scene and light_mode == "scene" and self.hass.services.has_service("tuya_local", "set_dp"):
+            if current_on:
+                scene_hex = self._encode_tuya_scene_hex(tuya_scene)
+                scene_hash = f"tuya_scene_{hash(scene_hex)}"
+                # Always re-apply scene on enforcement interval to handle external changes
                 try:
                     await self.hass.services.async_call(
                         "tuya_local",
@@ -2570,7 +2581,8 @@ class EnergyMonitor:
         needs_update = False
         service_data: dict = {"entity_id": entity_id}
 
-        if is_wrgb:
+        # For WRGB lights, check and apply brightness/color settings
+        if is_wrgb and current_on:
             if brightness_pct is not None:
                 current_brightness = attrs.get("brightness")
                 target_brightness = int(brightness_pct * 255 / 100)
@@ -2578,26 +2590,38 @@ class EnergyMonitor:
                     service_data["brightness_pct"] = brightness_pct
                     needs_update = True
 
-            if hs_color is not None:
+            # Apply color based on light_mode
+            if light_mode == "color" and hs_color is not None:
                 current_hs = attrs.get("hs_color")
                 if current_hs is None or (
                     abs(current_hs[0] - hs_color[0]) > 5 or abs(current_hs[1] - hs_color[1]) > 5
                 ):
                     service_data["hs_color"] = hs_color
                     needs_update = True
-            elif color_temp is not None:
+            elif light_mode == "white" and color_temp is not None:
                 current_temp = attrs.get("color_temp_kelvin") or attrs.get("color_temp")
                 if current_temp is None or abs(current_temp - color_temp) > 100:
                     service_data["color_temp_kelvin"] = color_temp
                     needs_update = True
 
+        # If action is "on" and light is currently off, turn it on
         if action == "on" and not current_on:
             needs_update = True
+            # Add settings to turn-on call if WRGB
+            if is_wrgb:
+                if brightness_pct is not None:
+                    service_data["brightness_pct"] = brightness_pct
+                if light_mode == "color" and hs_color is not None:
+                    service_data["hs_color"] = hs_color
+                elif light_mode == "white" and color_temp is not None:
+                    service_data["color_temp_kelvin"] = color_temp
 
         if not needs_update:
+            # Still mark that we checked, so interval tracking works
+            self._mark_light_enforcement_run(entity_id)
             return
 
-        action_hash = f"{action}_{brightness_pct}_{color_temp}_{hs_color}"
+        action_hash = f"{action}_{brightness_pct}_{color_temp}_{hs_color}_{light_mode}"
 
         try:
             await self.hass.services.async_call(
