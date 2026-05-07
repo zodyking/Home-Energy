@@ -2413,6 +2413,48 @@ class EnergyMonitor:
                         return light
         return None
 
+    def _encode_tuya_scene_hex(self, scene: dict) -> str:
+        """Encode Tuya scene data into hex string for scene_data_v2 format."""
+        units = scene.get("scene_units", [])
+        if not units:
+            return ""
+
+        scene_index = hex(max(1, scene.get("scene_num", 1)))[2:].zfill(2)
+        hex_str = scene_index
+
+        for unit in units:
+            is_white_mode = (
+                unit.get("temperature", 0) > 0
+                and unit.get("h", 0) == 0
+                and unit.get("s", 0) == 0
+            )
+            speed = max(0x29, min(0x64, round((unit.get("unit_switch_duration", 50) or 50) * 0.64 + 41)))
+            speed_hex = hex(speed)[2:].zfill(2)
+
+            transition_type = "00"
+            mode = unit.get("unit_change_mode", "static")
+            if mode == "jump":
+                transition_type = "01"
+            elif mode == "gradient":
+                transition_type = "02"
+
+            if is_white_mode:
+                brightness = max(0, min(1000, unit.get("bright", 1000) or 1000))
+                temperature = max(0, min(1000, unit.get("temperature", 500) or 500))
+                bright_hex = hex(brightness)[2:].zfill(4)
+                temp_hex = hex(temperature)[2:].zfill(4)
+                hex_str += speed_hex + speed_hex + transition_type + "0000" + "0000" + "0000" + bright_hex + temp_hex
+            else:
+                hue = max(0, min(359, unit.get("h", 0) or 0))
+                saturation = max(0, min(1000, unit.get("s", 500) or 500))
+                brightness = max(0, min(1000, unit.get("bright", 1000) or 1000))
+                hue_hex = hex(hue)[2:].zfill(4)
+                sat_hex = hex(saturation)[2:].zfill(4)
+                bright_hex = hex(brightness)[2:].zfill(4)
+                hex_str += speed_hex + speed_hex + transition_type + hue_hex + sat_hex + bright_hex + "0000" + "0000"
+
+        return hex_str
+
     async def _apply_light_action(
         self,
         entity_id: str,
@@ -2453,7 +2495,8 @@ class EnergyMonitor:
         tuya_scene = segment.get("tuya_scene")
 
         if is_tuya and tuya_scene and self.hass.services.has_service("tuya_local", "set_dp"):
-            scene_hash = f"tuya_scene_{hash(json_mod.dumps(tuya_scene))}"
+            scene_hex = self._encode_tuya_scene_hex(tuya_scene)
+            scene_hash = f"tuya_scene_{hash(scene_hex)}"
             if current_on and self._light_automation_state.get(state_key) != scene_hash:
                 try:
                     await self.hass.services.async_call(
@@ -2462,11 +2505,11 @@ class EnergyMonitor:
                         {
                             "entity_id": entity_id,
                             "dp": 25,
-                            "value": json_mod.dumps(tuya_scene),
+                            "value": scene_hex,
                         },
                     )
                     self._light_automation_state[state_key] = scene_hash
-                    _LOGGER.debug("Light automation: applied Tuya scene to %s", entity_id)
+                    _LOGGER.debug("Light automation: applied Tuya scene hex to %s: %s", entity_id, scene_hex)
                 except Exception as e:
                     _LOGGER.warning("Light automation failed to apply Tuya scene to %s: %s", entity_id, e)
             return
