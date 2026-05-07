@@ -3162,6 +3162,11 @@ class ConfigManager:
         }
 
         if action in ("on", "mode"):
+            # Save light_mode to remember user's explicit selection
+            light_mode = seg.get("light_mode")
+            if light_mode in ("scene", "color", "white"):
+                validated["light_mode"] = light_mode
+            
             if seg.get("brightness") is not None:
                 validated["brightness"] = max(1, min(100, int(seg.get("brightness", 100))))
             if seg.get("color_temp") is not None:

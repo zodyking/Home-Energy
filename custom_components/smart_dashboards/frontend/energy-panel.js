@@ -2383,11 +2383,37 @@ class EnergyPanel extends HTMLElement {
         position: absolute;
         top: 0;
         bottom: 0;
-        width: 8px;
+        width: 14px;
         cursor: ew-resize;
+        z-index: 5;
+        transition: background 0.15s;
       }
-      .light-auto-segment-handle.left { left: -4px; }
-      .light-auto-segment-handle.right { right: -4px; }
+      .light-auto-segment-handle::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 4px;
+        height: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 2px;
+        opacity: 0;
+        transition: opacity 0.15s;
+      }
+      .light-auto-segment-handle:hover::after {
+        opacity: 1;
+      }
+      .light-auto-segment-handle.left { left: -7px; }
+      .light-auto-segment-handle.right { right: -7px; }
+      .light-auto-segment.dragging {
+        opacity: 0.8;
+        box-shadow: 0 0 12px rgba(0, 188, 212, 0.5);
+      }
+      .light-auto-segment.selected {
+        outline: 2px solid var(--panel-accent);
+        outline-offset: 2px;
+      }
       .light-auto-add-hint {
         text-align: center;
         font-size: 11px;
@@ -13070,10 +13096,30 @@ class EnergyPanel extends HTMLElement {
     const showTuya = state.hasTuya && isOnOrMode;
     const brightness = seg.brightness ?? 100;
     const colorTemp = seg.color_temp ?? 4000;
-    const hasScene = !!seg.tuya_scene;
-    const isSceneMode = showTuya && hasScene;
-    const isColorMode = !isSceneMode && !!seg.hs_color;
-    const isWhiteMode = !isSceneMode && !isColorMode;
+    
+    // Determine mode from explicit light_mode property, fallback to detection
+    let isSceneMode = false;
+    let isColorMode = false;
+    let isWhiteMode = false;
+    
+    if (seg.light_mode) {
+      isSceneMode = seg.light_mode === 'scene' && showTuya;
+      isColorMode = seg.light_mode === 'color';
+      isWhiteMode = seg.light_mode === 'white';
+    } else {
+      // Fallback: detect from existing properties
+      const hasScene = !!seg.tuya_scene;
+      isSceneMode = showTuya && hasScene;
+      isColorMode = !isSceneMode && !!seg.hs_color;
+      isWhiteMode = !isSceneMode && !isColorMode;
+    }
+    
+    // If scene mode not available but was selected, fallback to white
+    if (isSceneMode && !showTuya) {
+      isSceneMode = false;
+      isWhiteMode = true;
+    }
+    
     const hue = seg.hs_color?.[0] ?? 0;
     const sat = seg.hs_color?.[1] ?? 100;
     const colorHex = this._hsToHex(seg.hs_color || [0, 100]);
@@ -13412,6 +13458,35 @@ class EnergyPanel extends HTMLElement {
     const MIN_WIDTH_PCT = 4.17;
     const CLICK_THRESHOLD = 5;
 
+    // Helper to check if a proposed position would overlap any other segment
+    const wouldOverlapAny = (newStart, newEnd, excludeIdx) => {
+      const segments = allSegments();
+      for (let i = 0; i < segments.length; i++) {
+        if (i === excludeIdx) continue;
+        const otherStart = this._timeToPercent(segments[i].start);
+        const otherEnd = this._timeToPercent(segments[i].end);
+        if (newStart < otherEnd && newEnd > otherStart) return true;
+      }
+      return false;
+    };
+
+    // Helper to find the nearest boundary when dragging would cause overlap
+    const findNearestBoundary = (pct, direction, excludeIdx) => {
+      const segments = allSegments();
+      let boundary = direction === 'left' ? 0 : 100;
+      for (let i = 0; i < segments.length; i++) {
+        if (i === excludeIdx) continue;
+        const otherStart = this._timeToPercent(segments[i].start);
+        const otherEnd = this._timeToPercent(segments[i].end);
+        if (direction === 'left') {
+          if (otherEnd <= pct && otherEnd > boundary) boundary = otherEnd;
+        } else {
+          if (otherStart >= pct && otherStart < boundary) boundary = otherStart;
+        }
+      }
+      return boundary;
+    };
+
     const handles = segEl.querySelectorAll('.light-auto-segment-handle');
     handles.forEach(handle => {
       let mouseDownX = 0;
@@ -13444,6 +13519,10 @@ class EnergyPanel extends HTMLElement {
           pct = Math.min(pct, endPct - MIN_WIDTH_PCT);
           pct = Math.max(0, pct);
 
+          // Check for overlap with non-adjacent segments
+          const leftBoundary = findNearestBoundary(pct, 'left', idx);
+          if (pct < leftBoundary) pct = leftBoundary;
+
           if (adjacentIdx >= 0 && segments[adjacentIdx]) {
             const adjStartPct = this._timeToPercent(adjacentOrigStart);
             pct = Math.max(pct, adjStartPct + MIN_WIDTH_PCT);
@@ -13457,6 +13536,10 @@ class EnergyPanel extends HTMLElement {
           const startPct = this._timeToPercent(seg.start);
           pct = Math.max(pct, startPct + MIN_WIDTH_PCT);
           pct = Math.min(100, pct);
+
+          // Check for overlap with non-adjacent segments
+          const rightBoundary = findNearestBoundary(pct, 'right', idx);
+          if (pct > rightBoundary) pct = rightBoundary;
 
           if (adjacentIdx >= 0 && segments[adjacentIdx]) {
             const adjEndPct = this._timeToPercent(adjacentOrigEnd);
@@ -13526,46 +13609,40 @@ class EnergyPanel extends HTMLElement {
       let newStart = this._snapToGrid(originalStartPct + deltaPct);
       let newEnd = newStart + segWidth;
 
+      // Clamp to timeline bounds
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = segWidth;
+      }
+      if (newEnd > 100) {
+        newEnd = 100;
+        newStart = 100 - segWidth;
+      }
+
+      // Check for collisions with all other segments and stop at boundaries
+      for (let i = 0; i < segments.length; i++) {
+        if (i === idx) continue;
+        const otherStart = this._timeToPercent(segments[i].start);
+        const otherEnd = this._timeToPercent(segments[i].end);
+        
+        // Would this segment overlap?
+        if (newStart < otherEnd && newEnd > otherStart) {
+          // Determine which direction we're moving and stop at the boundary
+          if (deltaPct < 0) {
+            // Moving left, stop at the right edge of the other segment
+            newStart = otherEnd;
+            newEnd = newStart + segWidth;
+          } else {
+            // Moving right, stop at the left edge of the other segment
+            newEnd = otherStart;
+            newStart = newEnd - segWidth;
+          }
+        }
+      }
+
+      // Final clamp
       newStart = Math.max(0, newStart);
       newEnd = Math.min(100, newEnd);
-      if (newEnd - newStart < segWidth) {
-        if (deltaPct < 0) {
-          newStart = 0;
-          newEnd = segWidth;
-        } else {
-          newEnd = 100;
-          newStart = 100 - segWidth;
-        }
-      }
-
-      const leftNeighbor = this._findAdjacentSegment(segments, idx, 'left');
-      const rightNeighbor = this._findAdjacentSegment(segments, idx, 'right');
-
-      if (leftNeighbor >= 0 && segments[leftNeighbor]) {
-        const neighborStartPct = this._timeToPercent(segments[leftNeighbor].start);
-        const neighborWidth = this._timeToPercent(segments[leftNeighbor].end) - neighborStartPct;
-        if (newStart < neighborStartPct + MIN_WIDTH_PCT) {
-          const pushAmount = (neighborStartPct + MIN_WIDTH_PCT) - newStart;
-          const newNeighborStart = Math.max(0, neighborStartPct - pushAmount);
-          segments[leftNeighbor].start = this._percentToTime(newNeighborStart);
-          segments[leftNeighbor].end = this._percentToTime(newNeighborStart + neighborWidth);
-          newStart = newNeighborStart + neighborWidth;
-          newEnd = newStart + segWidth;
-        }
-      }
-
-      if (rightNeighbor >= 0 && segments[rightNeighbor]) {
-        const neighborEndPct = this._timeToPercent(segments[rightNeighbor].end);
-        const neighborWidth = neighborEndPct - this._timeToPercent(segments[rightNeighbor].start);
-        if (newEnd > neighborEndPct - MIN_WIDTH_PCT) {
-          const pushAmount = newEnd - (neighborEndPct - MIN_WIDTH_PCT);
-          const newNeighborEnd = Math.min(100, neighborEndPct + pushAmount);
-          segments[rightNeighbor].end = this._percentToTime(newNeighborEnd);
-          segments[rightNeighbor].start = this._percentToTime(newNeighborEnd - neighborWidth);
-          newEnd = newNeighborEnd - neighborWidth;
-          newStart = newEnd - segWidth;
-        }
-      }
 
       seg.start = this._percentToTime(newStart);
       seg.end = this._percentToTime(newEnd);
@@ -13660,6 +13737,9 @@ class EnergyPanel extends HTMLElement {
         const mode = btn.dataset.mode;
         editor.querySelectorAll('.light-mode-toggle-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+
+        // Save the selected mode explicitly
+        seg.light_mode = mode;
 
         const sceneContainer = editor.querySelector('.light-scene-mode-container');
         const colorContainer = editor.querySelector('.light-color-wheel-container');
