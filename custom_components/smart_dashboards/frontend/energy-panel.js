@@ -5165,166 +5165,156 @@ class EnergyPanel extends HTMLElement {
         color: var(--primary-text-color);
       }
 
-      /* Door Card Styles - white 4-panel door with silver hardware */
-      .outlet-card.outlet-face.door-card {
-        width: 81px;
-        min-width: 81px;
-      }
-      .outlet-card.outlet-face.door-card .faceplate.door-faceplate {
+      /* Door Card Styles - clean door graphic without faceplate */
+      .door-card {
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding: 6px 6px 5px;
-        min-height: 200px;
-        position: relative;
+        gap: 6px;
+        padding: 8px;
+        cursor: pointer;
       }
-      .door-visual-container {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        padding: 8px 4px;
+      .door-card-name {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 80px;
       }
       .door-frame {
-        width: 52px;
-        height: 100px;
-        background: linear-gradient(135deg, #8b6914 0%, #6b4f0f 100%);
-        border-radius: 2px;
-        padding: 3px;
-        box-shadow: inset 0 0 4px rgba(0,0,0,0.4);
+        width: 60px;
+        height: 120px;
+        background: linear-gradient(135deg, #8b7355 0%, #6b5344 100%);
+        border-radius: 3px;
+        padding: 4px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3), inset 0 0 4px rgba(0,0,0,0.3);
       }
       .door-body {
         width: 100%;
         height: 100%;
-        background: linear-gradient(180deg, #ffffff 0%, #f5f5f5 50%, #e8e8e8 100%);
-        border-radius: 1px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8f8f8 50%, #f0f0f0 100%);
+        border-radius: 2px;
         position: relative;
         display: flex;
         flex-direction: column;
-        padding: 4px;
-        gap: 3px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(0,0,0,0.15);
+        padding: 5px;
+        gap: 4px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(0,0,0,0.1);
         transition: transform 0.3s ease, box-shadow 0.3s ease;
       }
       .door-body.open {
-        transform: perspective(100px) rotateY(-25deg);
+        transform: perspective(150px) rotateY(-30deg);
         transform-origin: left center;
-        box-shadow: 4px 0 8px rgba(0,0,0,0.3);
+        box-shadow: 6px 0 12px rgba(0,0,0,0.35);
       }
       .door-panel-row {
         display: flex;
-        gap: 3px;
+        gap: 4px;
         flex: 1;
       }
       .door-panel {
         flex: 1;
-        background: linear-gradient(180deg, #fafafa 0%, #eeeeee 100%);
-        border: 1px solid #d0d0d0;
-        border-radius: 1px;
-        box-shadow: inset 0 1px 2px rgba(0,0,0,0.08), inset 0 -1px 0 rgba(255,255,255,0.5);
+        background: linear-gradient(180deg, #fafafa 0%, #f0f0f0 100%);
+        border: 1px solid #d8d8d8;
+        border-radius: 2px;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.06), inset 0 -1px 0 rgba(255,255,255,0.6);
       }
       .door-hardware {
         position: absolute;
-        right: 5px;
+        right: 6px;
         top: 50%;
         transform: translateY(-50%);
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 3px;
+        gap: 4px;
       }
       .door-knob {
-        width: 8px;
-        height: 8px;
-        background: linear-gradient(135deg, #e0e0e0 0%, #a0a0a0 50%, #c0c0c0 100%);
+        width: 10px;
+        height: 10px;
+        background: linear-gradient(135deg, #d0d0d0 0%, #909090 50%, #b0b0b0 100%);
         border-radius: 50%;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.3), inset 0 1px 1px rgba(255,255,255,0.6);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 1px 1px rgba(255,255,255,0.5);
       }
       .door-lock-indicator {
-        width: 6px;
-        height: 10px;
-        background: linear-gradient(180deg, #d0d0d0 0%, #909090 100%);
-        border-radius: 1px;
-        box-shadow: 0 1px 1px rgba(0,0,0,0.2);
+        width: 8px;
+        height: 12px;
+        background: linear-gradient(180deg, #c0c0c0 0%, #808080 100%);
+        border-radius: 2px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.25);
         position: relative;
       }
       .door-lock-indicator::after {
         content: '';
         position: absolute;
-        width: 3px;
-        height: 3px;
+        width: 4px;
+        height: 4px;
         background: #4caf50;
         border-radius: 50%;
-        top: 2px;
+        top: 3px;
         left: 50%;
         transform: translateX(-50%);
-        box-shadow: 0 0 3px #4caf50;
+        box-shadow: 0 0 4px #4caf50;
       }
       .door-lock-indicator.unlocked::after {
         background: #ffc107;
-        box-shadow: 0 0 3px #ffc107;
+        box-shadow: 0 0 4px #ffc107;
       }
-      .door-card.door-open .door-faceplate {
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 0 12px rgba(255, 193, 7, 0.3);
+      .door-card.door-open .door-frame {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3), inset 0 0 4px rgba(0,0,0,0.3), 0 0 15px rgba(255, 193, 7, 0.4);
       }
       .door-status {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 1px;
-        font-size: 10px;
-        padding: 2px 0;
+        gap: 2px;
+        font-size: 11px;
       }
       .door-state-label {
-        color: rgba(0, 0, 0, 0.7);
+        color: var(--primary-text-color);
         font-weight: 600;
       }
       .door-card.door-open .door-state-label {
-        color: #e6a800;
+        color: #ffc107;
       }
       .door-lock-label {
-        color: rgba(0, 0, 0, 0.5);
-        font-size: 9px;
+        color: var(--secondary-text-color);
+        font-size: 10px;
       }
       .door-card.door-unlocked:not(.door-locked) .door-lock-label {
-        color: #e6a800;
+        color: #ffc107;
       }
 
-      /* Window Card Styles - white frame with blue glass, same width as minisplit */
-      .device-card.window-card {
-        min-width: 120px;
-      }
-      .window-faceplate {
-        background: linear-gradient(#f7f7f7, #e9e9e9);
-        border: 1px solid rgba(0, 0, 0, 0.18);
-        border-radius: 9px;
-        padding: 6px 8px 5px;
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      /* Window Card Styles - clean window graphic without faceplate */
+      .window-card {
         display: flex;
         flex-direction: column;
         align-items: center;
-        min-height: 200px;
+        gap: 6px;
+        padding: 8px;
+        cursor: pointer;
       }
-      .window-card.window-open .window-faceplate {
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 0 12px rgba(255, 193, 7, 0.3);
-      }
-      .window-visual-container {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        padding: 8px 4px;
+      .window-card-name {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100px;
       }
       .window-frame {
-        width: 80px;
-        height: 90px;
-        background: linear-gradient(180deg, #ffffff 0%, #f0f0f0 100%);
-        border: 3px solid #e0e0e0;
-        border-radius: 3px;
-        padding: 3px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.8);
+        width: 90px;
+        height: 100px;
+        background: linear-gradient(180deg, #ffffff 0%, #f5f5f5 100%);
+        border: 4px solid #e8e8e8;
+        border-radius: 4px;
+        padding: 4px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.9);
         display: flex;
         flex-direction: column;
       }
@@ -5332,34 +5322,37 @@ class EnergyPanel extends HTMLElement {
         flex: 1;
         display: flex;
         flex-direction: column;
-        gap: 2px;
+        gap: 3px;
         background: #fff;
-        padding: 2px;
+        padding: 3px;
         transition: transform 0.3s ease;
       }
       .window-sash.open {
-        transform: translateY(-8px);
+        transform: translateY(-10px);
       }
       .window-pane-row {
         display: flex;
-        gap: 2px;
+        gap: 3px;
         flex: 1;
       }
       .window-pane {
         flex: 1;
-        background: linear-gradient(180deg, #87ceeb 0%, #5dade2 30%, #3498db 70%, #2980b9 100%);
-        border: 1px solid #d0d0d0;
-        border-radius: 1px;
-        box-shadow: inset 0 0 8px rgba(255,255,255,0.3);
+        background: linear-gradient(180deg, #7ec8e3 0%, #4fa8c9 30%, #2980b9 70%, #1a5276 100%);
+        border: 1px solid #c0c0c0;
+        border-radius: 2px;
+        box-shadow: inset 0 0 10px rgba(255,255,255,0.25);
       }
       .window-card.window-open .window-pane {
-        background: linear-gradient(180deg, #a8e6cf 0%, #88d8b0 30%, #56c596 70%, #3eb489 100%);
+        background: linear-gradient(180deg, #a8e6cf 0%, #7dd3ae 30%, #52be80 70%, #27ae60 100%);
+      }
+      .window-card.window-open .window-frame {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.9), 0 0 15px rgba(255, 193, 7, 0.4);
       }
       .window-sill {
-        height: 6px;
-        background: linear-gradient(180deg, #f5f5f5 0%, #e0e0e0 100%);
+        height: 8px;
+        background: linear-gradient(180deg, #f0f0f0 0%, #d8d8d8 100%);
         border-radius: 0 0 2px 2px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        box-shadow: 0 2px 3px rgba(0,0,0,0.12);
       }
       .window-status {
         font-size: 11px;
@@ -10445,34 +10438,29 @@ class EnergyPanel extends HTMLElement {
     const isOpen = contactState === 'on';
     const isLocked = lockState === 'locked';
     const hasLock = !!lockEntity;
-    const doorType = device.door_subtype || 'standard';
     
     return `
-      <div class="outlet-card outlet-face door-card ${isOpen ? 'door-open' : 'door-closed'} ${hasLock ? (isLocked ? 'door-locked' : 'door-unlocked') : ''}" data-outlet-index="${index}" data-device-type="door" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}" data-lock-entity="${(lockEntity || '').replace(/"/g, '&quot;')}">
-        <div class="faceplate door-faceplate">
-          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || 'Door'}</div>
-          <div class="door-visual-container">
-            <div class="door-frame">
-              <div class="door-body ${isOpen ? 'open' : ''}">
-                <div class="door-panel-row">
-                  <div class="door-panel"></div>
-                  <div class="door-panel"></div>
-                </div>
-                <div class="door-panel-row">
-                  <div class="door-panel"></div>
-                  <div class="door-panel"></div>
-                </div>
-                <div class="door-hardware">
-                  <div class="door-knob"></div>
-                  ${hasLock ? `<div class="door-lock-indicator ${isLocked ? 'locked' : 'unlocked'}"></div>` : ''}
-                </div>
-              </div>
+      <div class="door-card ${isOpen ? 'door-open' : 'door-closed'} ${hasLock ? (isLocked ? 'door-locked' : 'door-unlocked') : ''}" data-outlet-index="${index}" data-device-type="door" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}" data-lock-entity="${(lockEntity || '').replace(/"/g, '&quot;')}">
+        <div class="door-card-name" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || 'Door'}</div>
+        <div class="door-frame">
+          <div class="door-body ${isOpen ? 'open' : ''}">
+            <div class="door-panel-row">
+              <div class="door-panel"></div>
+              <div class="door-panel"></div>
+            </div>
+            <div class="door-panel-row">
+              <div class="door-panel"></div>
+              <div class="door-panel"></div>
+            </div>
+            <div class="door-hardware">
+              <div class="door-knob"></div>
+              ${hasLock ? `<div class="door-lock-indicator ${isLocked ? 'locked' : 'unlocked'}"></div>` : ''}
             </div>
           </div>
-          <div class="door-status">
-            <span class="door-state-label">${isOpen ? 'Open' : 'Closed'}</span>
-            ${hasLock ? `<span class="door-lock-label">${isLocked ? 'Locked' : 'Unlocked'}</span>` : ''}
-          </div>
+        </div>
+        <div class="door-status">
+          <span class="door-state-label">${isOpen ? 'Open' : 'Closed'}</span>
+          ${hasLock ? `<span class="door-lock-label">${isLocked ? 'Locked' : 'Unlocked'}</span>` : ''}
         </div>
       </div>
     `;
@@ -10484,27 +10472,23 @@ class EnergyPanel extends HTMLElement {
     const isOpen = contactState === 'on';
 
     return `
-      <div class="device-card window-card ${isOpen ? 'window-open' : 'window-closed'}" data-outlet-index="${index}" data-device-type="window" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}">
-        <div class="window-faceplate">
-          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || 'Window'}</div>
-          <div class="window-visual-container">
-            <div class="window-frame">
-              <div class="window-sash ${isOpen ? 'open' : ''}">
-                <div class="window-pane-row">
-                  <div class="window-pane"></div>
-                  <div class="window-pane"></div>
-                </div>
-                <div class="window-pane-row">
-                  <div class="window-pane"></div>
-                  <div class="window-pane"></div>
-                </div>
-              </div>
-              <div class="window-sill"></div>
+      <div class="window-card ${isOpen ? 'window-open' : 'window-closed'}" data-outlet-index="${index}" data-device-type="window" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}">
+        <div class="window-card-name" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || 'Window'}</div>
+        <div class="window-frame">
+          <div class="window-sash ${isOpen ? 'open' : ''}">
+            <div class="window-pane-row">
+              <div class="window-pane"></div>
+              <div class="window-pane"></div>
+            </div>
+            <div class="window-pane-row">
+              <div class="window-pane"></div>
+              <div class="window-pane"></div>
             </div>
           </div>
-          <div class="window-status">
-            <span class="window-state-label">${isOpen ? 'Open' : 'Closed'}</span>
-          </div>
+          <div class="window-sill"></div>
+        </div>
+        <div class="window-status">
+          <span class="window-state-label">${isOpen ? 'Open' : 'Closed'}</span>
         </div>
       </div>
     `;
