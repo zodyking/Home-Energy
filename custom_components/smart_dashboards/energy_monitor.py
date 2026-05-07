@@ -2547,8 +2547,13 @@ class EnergyMonitor:
                 and unit.get("h", 0) == 0
                 and unit.get("s", 0) == 0
             )
-            speed = max(0x29, min(0x64, round((unit.get("unit_switch_duration", 50) or 50) * 0.64 + 41)))
-            speed_hex = hex(speed)[2:].zfill(2)
+            # Tuya scene_data_v2: unit_switch_duration / unit_gradient_duration are 0–100 (0 = fastest).
+            sw = int(float(unit.get("unit_switch_duration", 50) or 50))
+            gr = int(float(unit.get("unit_gradient_duration", sw) or sw))
+            byte_sw = max(0, min(100, sw))
+            byte_gr = max(0, min(100, gr))
+            switch_hex = hex(byte_sw)[2:].zfill(2)
+            gradient_hex = hex(byte_gr)[2:].zfill(2)
 
             transition_type = "00"
             mode = unit.get("unit_change_mode", "static")
@@ -2562,7 +2567,7 @@ class EnergyMonitor:
                 temperature = max(0, min(1000, unit.get("temperature", 500) or 500))
                 bright_hex = hex(brightness)[2:].zfill(4)
                 temp_hex = hex(temperature)[2:].zfill(4)
-                hex_str += speed_hex + speed_hex + transition_type + "0000" + "0000" + "0000" + bright_hex + temp_hex
+                hex_str += switch_hex + gradient_hex + transition_type + "0000" + "0000" + "0000" + bright_hex + temp_hex
             else:
                 hue = max(0, min(359, unit.get("h", 0) or 0))
                 saturation = max(0, min(1000, unit.get("s", 500) or 500))
@@ -2570,7 +2575,7 @@ class EnergyMonitor:
                 hue_hex = hex(hue)[2:].zfill(4)
                 sat_hex = hex(saturation)[2:].zfill(4)
                 bright_hex = hex(brightness)[2:].zfill(4)
-                hex_str += speed_hex + speed_hex + transition_type + hue_hex + sat_hex + bright_hex + "0000" + "0000"
+                hex_str += switch_hex + gradient_hex + transition_type + hue_hex + sat_hex + bright_hex + "0000" + "0000"
 
         return hex_str
 

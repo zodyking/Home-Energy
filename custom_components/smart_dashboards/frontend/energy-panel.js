@@ -3203,6 +3203,11 @@ class EnergyPanel extends HTMLElement {
         color: var(--primary-text-color);
         font-size: 12px;
       }
+      .tuya-scene-transition-field input[type="range"] {
+        width: 100%;
+        margin: 4px 0 0;
+        accent-color: var(--panel-accent, #3b82f6);
+      }
       .tuya-scene-transition-field select:focus {
         outline: none;
         border-color: var(--panel-accent);
@@ -13367,11 +13372,16 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderInlineSceneEditor(scene, segIndex) {
-    const sceneData = scene || { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 50, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
+    const sceneData = scene || { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
     const units = sceneData.scene_units || [];
     const selectedStep = this._lightAutoState?.sceneSelectedStep ?? 0;
     const selectedUnit = units[selectedStep] || units[0] || { h: 0, s: 500, bright: 1000, temperature: 0 };
     const isUnitColorMode = !(selectedUnit.temperature > 0 && selectedUnit.h === 0 && selectedUnit.s === 0);
+    const sceneSpeed = (() => {
+      const v = Number(selectedUnit.unit_switch_duration);
+      if (!Number.isFinite(v)) return 50;
+      return Math.max(0, Math.min(100, Math.round(v)));
+    })();
 
     return `
       <div class="inline-scene-editor" data-segment-index="${segIndex}">
@@ -13412,11 +13422,15 @@ class EnergyPanel extends HTMLElement {
               <option value="jump" ${selectedUnit.unit_change_mode === 'jump' ? 'selected' : ''}>Flash</option>
               <option value="gradient" ${selectedUnit.unit_change_mode === 'gradient' ? 'selected' : ''}>Fade</option>
             </select>
-            <select class="inline-scene-speed">
-              <option value="fast" ${(selectedUnit.unit_switch_duration || 50) <= 30 ? 'selected' : ''}>Fast</option>
-              <option value="medium" ${(selectedUnit.unit_switch_duration || 50) > 30 && (selectedUnit.unit_switch_duration || 50) <= 70 ? 'selected' : ''}>Medium</option>
-              <option value="slow" ${(selectedUnit.unit_switch_duration || 50) > 70 ? 'selected' : ''}>Slow</option>
-            </select>
+          </div>
+          <div class="inline-scene-speed-row" style="margin-top:8px;">
+            <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;">
+              <span>Transition speed</span>
+              <span class="inline-scene-speed-val">${sceneSpeed}</span>
+            </label>
+            <input type="range" class="inline-scene-speed" min="0" max="100" step="1" value="${sceneSpeed}"
+              title="0 = instant, 100 = slow (Tuya scene_data_v2)">
+            <div style="font-size:10px;color:var(--secondary-text-color);margin-top:2px;">0 fastest — 100 slowest</div>
           </div>
         </div>
 
@@ -13893,7 +13907,7 @@ class EnergyPanel extends HTMLElement {
           delete seg.hs_color;
           delete seg.color_temp;
           if (!seg.tuya_scene) {
-            seg.tuya_scene = { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 50, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
+            seg.tuya_scene = { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
           }
         } else if (mode === 'color') {
           if (sceneContainer) sceneContainer.style.display = 'none';
@@ -13985,13 +13999,13 @@ class EnergyPanel extends HTMLElement {
     if (!sceneEditor) return;
 
     if (!seg.tuya_scene) {
-      seg.tuya_scene = { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 50, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
+      seg.tuya_scene = { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
     }
     const scene = seg.tuya_scene;
     const units = scene.scene_units;
 
     sceneEditor.querySelector('.inline-scene-step.add-step')?.addEventListener('click', () => {
-      units.push({ unit_change_mode: 'gradient', unit_switch_duration: 50, h: Math.round(Math.random() * 360), s: 700, v: 1000, bright: 1000, temperature: 0 });
+      units.push({ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: Math.round(Math.random() * 360), s: 700, v: 1000, bright: 1000, temperature: 0 });
       this._lightAutoState.sceneSelectedStep = units.length - 1;
       this._refreshLightAutomationModal();
     });
@@ -14011,7 +14025,7 @@ class EnergyPanel extends HTMLElement {
         const stepIdx = parseInt(btn.dataset.stepIndex, 10);
         units.splice(stepIdx, 1);
         if (units.length === 0) {
-          units.push({ unit_change_mode: 'gradient', unit_switch_duration: 50, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 });
+          units.push({ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 });
         }
         if ((this._lightAutoState.sceneSelectedStep || 0) >= units.length) {
           this._lightAutoState.sceneSelectedStep = units.length - 1;
@@ -14115,12 +14129,16 @@ class EnergyPanel extends HTMLElement {
       unit.unit_change_mode = e.target.value;
     });
 
-    stepEditor.querySelector('.inline-scene-speed')?.addEventListener('change', (e) => {
-      const speed = e.target.value;
-      if (speed === 'fast') { unit.unit_switch_duration = 20; unit.unit_gradient_duration = 50; }
-      else if (speed === 'medium') { unit.unit_switch_duration = 50; unit.unit_gradient_duration = 100; }
-      else { unit.unit_switch_duration = 100; unit.unit_gradient_duration = 200; }
-    });
+    const speedSlider = stepEditor.querySelector('.inline-scene-speed');
+    if (speedSlider) {
+      speedSlider.addEventListener('input', (e) => {
+        const v = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
+        unit.unit_switch_duration = v;
+        unit.unit_gradient_duration = v;
+        const label = stepEditor.querySelector('.inline-scene-speed-val');
+        if (label) label.textContent = String(v);
+      });
+    }
 
     sceneEditor.querySelector('.inline-scene-test-btn')?.addEventListener('click', () => {
       this._testInlineScene(seg.tuya_scene);
@@ -14218,8 +14236,8 @@ class EnergyPanel extends HTMLElement {
       scene_num: 1,
       scene_units: [{
         unit_change_mode: 'static',
-        unit_switch_duration: 50,
-        unit_gradient_duration: 100,
+        unit_switch_duration: 25,
+        unit_gradient_duration: 25,
         h: 0,
         s: 500,
         v: 1000,
@@ -14252,6 +14270,11 @@ class EnergyPanel extends HTMLElement {
     const selectedIdx = this._tuyaSceneState?.selectedStep ?? 0;
     const selectedUnit = units[selectedIdx] || { h: 0, s: 500, v: 1000, bright: 1000, temperature: 500, unit_change_mode: 'gradient' };
     const isColorMode = !(selectedUnit.temperature > 0 && selectedUnit.h === 0 && selectedUnit.s === 0);
+    const sceneSpeed = (() => {
+      const v = Number(selectedUnit.unit_switch_duration);
+      if (!Number.isFinite(v)) return 50;
+      return Math.max(0, Math.min(100, Math.round(v)));
+    })();
 
     return `
       <div class="tuya-scene-modal">
@@ -14311,13 +14334,11 @@ class EnergyPanel extends HTMLElement {
                 <option value="gradient" ${selectedUnit.unit_change_mode === 'gradient' ? 'selected' : ''}>Fade</option>
               </select>
             </div>
-            <div class="tuya-scene-transition-field">
-              <label>Speed</label>
-              <select class="tuya-unit-speed">
-                <option value="fast" ${(selectedUnit.unit_switch_duration || 50) <= 30 ? 'selected' : ''}>Fast</option>
-                <option value="medium" ${(selectedUnit.unit_switch_duration || 50) > 30 && (selectedUnit.unit_switch_duration || 50) <= 70 ? 'selected' : ''}>Medium</option>
-                <option value="slow" ${(selectedUnit.unit_switch_duration || 50) > 70 ? 'selected' : ''}>Slow</option>
-              </select>
+            <div class="tuya-scene-transition-field" style="grid-column:1/-1;">
+              <label>Transition speed <span class="tuya-scene-speed-value">${sceneSpeed}</span></label>
+              <input type="range" class="tuya-unit-speed" min="0" max="100" step="1" value="${sceneSpeed}"
+                title="0 = instant, 100 = slow">
+              <div style="font-size:10px;color:var(--secondary-text-color);margin-top:2px;">0 fastest — 100 slowest</div>
             </div>
           </div>
         </div>
@@ -14378,8 +14399,8 @@ class EnergyPanel extends HTMLElement {
     overlay.querySelector('.tuya-scene-step-circle.add-step')?.addEventListener('click', () => {
       this._tuyaSceneState.scene.scene_units.push({
         unit_change_mode: 'gradient',
-        unit_switch_duration: 50,
-        unit_gradient_duration: 100,
+        unit_switch_duration: 25,
+        unit_gradient_duration: 25,
         h: Math.round(Math.random() * 360),
         s: 700,
         v: 1000,
@@ -14505,13 +14526,14 @@ class EnergyPanel extends HTMLElement {
       modeSelect.addEventListener('change', (e) => { unit.unit_change_mode = e.target.value; });
     }
 
-    const speedSelect = body.querySelector('.tuya-unit-speed');
-    if (speedSelect) {
-      speedSelect.addEventListener('change', (e) => {
-        const speed = e.target.value;
-        if (speed === 'fast') { unit.unit_switch_duration = 20; unit.unit_gradient_duration = 50; }
-        else if (speed === 'medium') { unit.unit_switch_duration = 50; unit.unit_gradient_duration = 100; }
-        else { unit.unit_switch_duration = 100; unit.unit_gradient_duration = 200; }
+    const speedSlider = body.querySelector('.tuya-unit-speed');
+    if (speedSlider) {
+      speedSlider.addEventListener('input', (e) => {
+        const v = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
+        unit.unit_switch_duration = v;
+        unit.unit_gradient_duration = v;
+        const label = overlay.querySelector('.tuya-scene-speed-value');
+        if (label) label.textContent = String(v);
       });
     }
 
@@ -14559,8 +14581,12 @@ class EnergyPanel extends HTMLElement {
 
     for (const unit of units) {
       const isWhiteMode = unit.temperature > 0 && (unit.h === 0 || unit.h === undefined) && (unit.s === 0 || unit.s === undefined);
-      const speed = Math.max(0x29, Math.min(0x64, Math.round((unit.unit_switch_duration || 50) * 0.64 + 41)));
-      const speedHex = speed.toString(16).padStart(2, '0');
+      const sw = Math.max(0, Math.min(100, Math.round(Number(unit.unit_switch_duration) || 50)));
+      let gr = Math.round(Number(unit.unit_gradient_duration));
+      if (!Number.isFinite(gr)) gr = sw;
+      gr = Math.max(0, Math.min(100, gr));
+      const switchHex = sw.toString(16).padStart(2, '0');
+      const gradientHex = gr.toString(16).padStart(2, '0');
       let transitionType = '00';
       if (unit.unit_change_mode === 'jump') transitionType = '01';
       else if (unit.unit_change_mode === 'gradient') transitionType = '02';
@@ -14570,7 +14596,7 @@ class EnergyPanel extends HTMLElement {
         const temperature = Math.max(0, Math.min(1000, unit.temperature || 500));
         const brightHex = brightness.toString(16).padStart(4, '0');
         const tempHex = temperature.toString(16).padStart(4, '0');
-        hexStr += speedHex + speedHex + transitionType + '0000' + '0000' + '0000' + brightHex + tempHex;
+        hexStr += switchHex + gradientHex + transitionType + '0000' + '0000' + '0000' + brightHex + tempHex;
       } else {
         const hue = Math.max(0, Math.min(359, unit.h || 0));
         const saturation = Math.max(0, Math.min(1000, unit.s || 500));
@@ -14578,7 +14604,7 @@ class EnergyPanel extends HTMLElement {
         const hueHex = hue.toString(16).padStart(4, '0');
         const satHex = saturation.toString(16).padStart(4, '0');
         const brightHex = brightness.toString(16).padStart(4, '0');
-        hexStr += speedHex + speedHex + transitionType + hueHex + satHex + brightHex + '0000' + '0000';
+        hexStr += switchHex + gradientHex + transitionType + hueHex + satHex + brightHex + '0000' + '0000';
       }
     }
     return hexStr;
