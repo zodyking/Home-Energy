@@ -98,6 +98,20 @@ def _format_tts_msg(template: str | None, **kwargs: object) -> str:
         return t.strip()
 
 
+def _normalize_light_entity_row(light: object) -> tuple[str | None, bool, bool]:
+    """Resolve (entity_id, wrgb, tuya) from a light_entities row (dict or legacy string)."""
+    if isinstance(light, str):
+        eid = light.strip()
+        if eid.startswith("light."):
+            return eid, False, False
+        return None, False, False
+    if isinstance(light, dict):
+        eid = str(light.get("entity_id") or "").strip()
+        if eid.startswith("light."):
+            return eid, bool(light.get("wrgb")), bool(light.get("tuya"))
+    return None, False, False
+
+
 def person_in_any_configured_zone(
     hass: HomeAssistant, person_entity_id: str, zone_entity_ids: list[str]
 ) -> bool:
@@ -2436,24 +2450,36 @@ class EnergyMonitor:
         return None
 
     async def _apply_light_group_segment(self, room: dict, segment: dict) -> None:
-        """Apply a light automation segment to all lights in a room."""
-        import json as json_mod
-
+        """Apply a light automation segment to all mapped lights on every light appliance in the room."""
+        by_entity: dict[str, tuple[bool, bool]] = {}
         for outlet in room.get("outlets", []):
             if outlet.get("type") != "light":
                 continue
-
-            light_entities = outlet.get("light_entities", [])
-            for light in light_entities:
-                entity_id = light.get("entity_id")
-                if not entity_id or not entity_id.startswith("light."):
+            for light in outlet.get("light_entities") or []:
+                entity_id, is_wrgb, is_tuya = _normalize_light_entity_row(light)
+                if not entity_id:
                     continue
-
-                await self._apply_light_action(
-                    entity_id,
-                    segment,
-                    is_wrgb=light.get("wrgb", False),
-                    is_tuya=light.get("tuya", False),
+                if entity_id in by_entity:
+                    ow, ot = by_entity[entity_id]
+                    by_entity[entity_id] = (ow or is_wrgb, ot or is_tuya)
+                else:
+                    by_entity[entity_id] = (is_wrgb, is_tuya)
+        targets = [(eid, w, t) for eid, (w, t) in by_entity.items()]
+        if not targets:
+            return
+        results = await asyncio.gather(
+            *[
+                self._apply_light_action(eid, segment, is_wrgb=w, is_tuya=t)
+                for eid, w, t in targets
+            ],
+            return_exceptions=True,
+        )
+        for (eid, _, _), res in zip(targets, results):
+            if isinstance(res, Exception):
+                _LOGGER.warning(
+                    "Light automation group: failed for %s: %s",
+                    eid,
+                    res,
                 )
 
     async def _apply_light_single_segment(self, entity_id: str, segment: dict) -> None:
@@ -2472,8 +2498,16 @@ class EnergyMonitor:
                 if outlet.get("type") != "light":
                     continue
                 for light in outlet.get("light_entities", []):
-                    if light.get("entity_id") == entity_id:
-                        return light
+                    eid, _, _ = _normalize_light_entity_row(light)
+                    if eid == entity_id:
+                        if isinstance(light, dict):
+                            return light
+                        return {
+                            "entity_id": eid,
+                            "watts": 0,
+                            "wrgb": False,
+                            "tuya": False,
+                        }
         return None
 
     def pause_light_enforcement(self, seconds: int = 30) -> None:
@@ -2593,48 +2627,72 @@ class EnergyMonitor:
         tuya_scene = segment.get("tuya_scene")
         light_mode = segment.get("light_mode", "white")
 
-        # Tuya scene handling - send to text.<light_name>_scene entity instead of tuya_local.set_dp
+        # Tuya scene: write scene hex to each light's text.<object_id>_scene (per-entity pairing)
         if is_tuya and tuya_scene and light_mode == "scene":
-            if current_on:
-                scene_hex = self._encode_tuya_scene_hex(tuya_scene)
-                scene_hash = f"tuya_scene_{hash(scene_hex)}"
-                # Derive scene text entity from light entity: light.bed_light -> text.bed_light_scene
-                light_name = entity_id.replace("light.", "")
-                scene_text_entity = f"text.{light_name}_scene"
-                
-                # Check if scene text entity exists
-                scene_state = self.hass.states.get(scene_text_entity)
-                if scene_state is None:
-                    # Entity doesn't exist - try to enable it if possible or log warning
+            if not current_on and action == "on":
+                try:
+                    await self.hass.services.async_call(
+                        "light",
+                        "turn_on",
+                        {"entity_id": entity_id},
+                        blocking=True,
+                    )
+                    current_state = self.hass.states.get(entity_id)
+                    current_on = current_state is not None and current_state.state == "on"
+                    attrs = current_state.attributes if current_state else {}
+                except Exception as e:
                     _LOGGER.warning(
-                        "Scene text entity %s does not exist for light %s. "
-                        "Please enable it in your Tuya Local integration.",
-                        scene_text_entity, entity_id
+                        "Light automation: cannot turn on %s before scene: %s",
+                        entity_id,
+                        e,
                     )
                     self._mark_light_enforcement_run(entity_id)
                     return
-                
-                # Always re-apply scene on enforcement interval to handle external changes
-                try:
-                    await self.hass.services.async_call(
-                        "text",
-                        "set_value",
-                        {
-                            "entity_id": scene_text_entity,
-                            "value": scene_hex,
-                        },
-                    )
-                    self._light_automation_state[state_key] = scene_hash
-                    self._mark_light_enforcement_run(entity_id)
-                    _LOGGER.debug("Light automation: applied Tuya scene to %s via %s: %s", entity_id, scene_text_entity, scene_hex)
-                except Exception as e:
-                    _LOGGER.warning("Light automation failed to apply Tuya scene to %s via %s: %s", entity_id, scene_text_entity, e)
+            if not current_on:
+                self._mark_light_enforcement_run(entity_id)
+                return
+            scene_hex = self._encode_tuya_scene_hex(tuya_scene)
+            if not scene_hex:
+                _LOGGER.warning("Light automation: empty scene hex for %s", entity_id)
+                self._mark_light_enforcement_run(entity_id)
+                return
+            scene_hash = f"tuya_scene_{hash(scene_hex)}"
+            light_name = entity_id.replace("light.", "", 1)
+            scene_text_entity = f"text.{light_name}_scene"
+            scene_state = self.hass.states.get(scene_text_entity)
+            if scene_state is None:
+                _LOGGER.warning(
+                    "Scene text entity %s does not exist for light %s.",
+                    scene_text_entity,
+                    entity_id,
+                )
+                self._mark_light_enforcement_run(entity_id)
+                return
+            try:
+                await self.hass.services.async_call(
+                    "text",
+                    "set_value",
+                    {"entity_id": scene_text_entity, "value": scene_hex},
+                )
+                self._light_automation_state[state_key] = scene_hash
+                self._mark_light_enforcement_run(entity_id)
+                _LOGGER.debug(
+                    "Light automation: scene for %s via %s",
+                    entity_id,
+                    scene_text_entity,
+                )
+            except Exception as e:
+                _LOGGER.warning(
+                    "Light automation: scene set failed for %s (%s): %s",
+                    entity_id,
+                    scene_text_entity,
+                    e,
+                )
             return
 
         needs_update = False
         service_data: dict = {"entity_id": entity_id}
 
-        # For WRGB lights, check and apply brightness/color settings
         if is_wrgb and current_on:
             if brightness_pct is not None:
                 current_brightness = attrs.get("brightness")
@@ -2642,8 +2700,6 @@ class EnergyMonitor:
                 if current_brightness is None or abs(current_brightness - target_brightness) > 5:
                     service_data["brightness_pct"] = brightness_pct
                     needs_update = True
-
-            # Apply color based on light_mode
             if light_mode == "color" and hs_color is not None:
                 current_hs = attrs.get("hs_color")
                 if current_hs is None or (
@@ -2656,11 +2712,15 @@ class EnergyMonitor:
                 if current_temp is None or abs(current_temp - color_temp) > 100:
                     service_data["color_temp_kelvin"] = color_temp
                     needs_update = True
+        elif not is_wrgb and current_on and brightness_pct is not None:
+            current_brightness = attrs.get("brightness")
+            target_brightness = int(brightness_pct * 255 / 100)
+            if current_brightness is None or abs(current_brightness - target_brightness) > 5:
+                service_data["brightness_pct"] = brightness_pct
+                needs_update = True
 
-        # If action is "on" and light is currently off, turn it on
         if action == "on" and not current_on:
             needs_update = True
-            # Add settings to turn-on call if WRGB
             if is_wrgb:
                 if brightness_pct is not None:
                     service_data["brightness_pct"] = brightness_pct
@@ -2668,6 +2728,8 @@ class EnergyMonitor:
                     service_data["hs_color"] = hs_color
                 elif light_mode == "white" and color_temp is not None:
                     service_data["color_temp_kelvin"] = color_temp
+            elif brightness_pct is not None:
+                service_data["brightness_pct"] = brightness_pct
 
         if not needs_update:
             # Still mark that we checked, so interval tracking works
@@ -3294,10 +3356,15 @@ class EnergyMonitor:
                             else:
                                 light_ents = outlet.get("light_entities") or []
                                 for le in light_ents:
-                                    if isinstance(le, dict) and le.get("entity_id", "").startswith(
-                                        "light."
-                                    ):
-                                        outlet_total_watts += float(le.get("watts", 0) or 0)
+                                    eid, _, _ = _normalize_light_entity_row(le)
+                                    if not eid:
+                                        continue
+                                    w = (
+                                        float(le.get("watts", 0) or 0)
+                                        if isinstance(le, dict)
+                                        else 0.0
+                                    )
+                                    outlet_total_watts += w
                                 if outlet_total_watts > 0:
                                     tracking_key = f"light_{room_id}_{(outlet.get('name') or 'light').lower().replace(' ', '_')}"
                                     await self.config_manager.async_add_energy_reading(
@@ -3546,10 +3613,15 @@ class EnergyMonitor:
                             outlet_total_watts = self._get_power_value(power_ent)
                         else:
                             for le in outlet.get("light_entities") or []:
-                                if isinstance(le, dict) and le.get("entity_id", "").startswith(
-                                    "light."
-                                ):
-                                    outlet_total_watts += float(le.get("watts", 0) or 0)
+                                eid, _, _ = _normalize_light_entity_row(le)
+                                if not eid:
+                                    continue
+                                w = (
+                                    float(le.get("watts", 0) or 0)
+                                    if isinstance(le, dict)
+                                    else 0.0
+                                )
+                                outlet_total_watts += w
                 room_total_watts += outlet_total_watts
                 continue
             if outlet.get("type") in ("vent", "wall_heater"):
@@ -3949,8 +4021,9 @@ class EnergyMonitor:
             if outlet.get("type") != "light":
                 continue
             for le in outlet.get("light_entities") or []:
-                if isinstance(le, dict) and le.get("wrgb") and le.get("entity_id", "").startswith("light."):
-                    entities.append(le["entity_id"])
+                eid, wrgb, _ = _normalize_light_entity_row(le)
+                if eid and wrgb:
+                    entities.append(eid)
         return list(dict.fromkeys(entities))
 
     def _get_light_restore_data(self, entity_ids: list[str]) -> dict[str, dict]:

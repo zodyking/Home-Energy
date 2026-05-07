@@ -4074,7 +4074,15 @@ async def websocket_test_tuya_scene(
         if energy_monitor:
             energy_monitor.pause_light_enforcement(pause_seconds)
 
-        if hass.services.has_service("tuya_local", "set_dp"):
+        light_name = entity_id.replace("light.", "", 1)
+        scene_text_entity = f"text.{light_name}_scene"
+        if hass.states.get(scene_text_entity) and hass.services.has_service("text", "set_value"):
+            await hass.services.async_call(
+                "text",
+                "set_value",
+                {"entity_id": scene_text_entity, "value": scene_hex},
+            )
+        elif hass.services.has_service("tuya_local", "set_dp"):
             await hass.services.async_call(
                 "tuya_local",
                 "set_dp",
