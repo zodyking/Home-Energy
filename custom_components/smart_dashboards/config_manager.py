@@ -3089,6 +3089,7 @@ class ConfigManager:
             "start": start,
             "end": end,
             "action": action,
+            "enforcement_interval": max(10, min(3600, int(seg.get("enforcement_interval", 60)))),
         }
 
         if action in ("on", "mode"):
