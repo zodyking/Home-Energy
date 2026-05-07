@@ -4054,6 +4054,7 @@ async def websocket_test_tuya_scene(
 ) -> None:
     """Test a Tuya scene on a light (immediate preview)."""
     import json
+    import time
 
     entity_id = msg["entity_id"]
     scene_data = msg["scene_data"]
@@ -4067,6 +4068,11 @@ async def websocket_test_tuya_scene(
         if not scene_hex:
             connection.send_error(msg["id"], "invalid_scene", "No scene_data_v2 hex string")
             return
+
+        pause_seconds = scene_data.get("pause_enforcement", 30)
+        energy_monitor = hass.data.get("smart_dashboards", {}).get("energy_monitor")
+        if energy_monitor:
+            energy_monitor.pause_light_enforcement(pause_seconds)
 
         if hass.services.has_service("tuya_local", "set_dp"):
             await hass.services.async_call(

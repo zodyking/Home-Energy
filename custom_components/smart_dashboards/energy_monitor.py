@@ -188,6 +188,10 @@ class EnergyMonitor:
         self._heater_smart_state: dict[str, dict] = {}
         # Light automation state (tracks last applied action per light)
         self._light_automation_state: dict[str, str] = {}
+        # Light automation enforcement pause (for testing scenes)
+        self._light_enforcement_paused_until: float = 0.0
+        # Light automation last enforcement time per entity
+        self._light_enforcement_last_run: dict[str, float] = {}
         # switch.* the integration toggled recently (exclude from external automation detection)
         self._integration_internal_switch_ids: set[str] = set()
         # Universal push: switch.* state listener + suppression during internal cycling
@@ -2413,6 +2417,28 @@ class EnergyMonitor:
                         return light
         return None
 
+    def pause_light_enforcement(self, seconds: int = 30) -> None:
+        """Pause light automation enforcement for a given number of seconds."""
+        import time
+        self._light_enforcement_paused_until = time.time() + seconds
+        _LOGGER.info("Light automation enforcement paused for %d seconds", seconds)
+
+    def _should_skip_light_enforcement(self, entity_id: str, enforcement_interval: int) -> bool:
+        """Check if light enforcement should be skipped due to pause or interval."""
+        import time
+        now = time.time()
+        if now < self._light_enforcement_paused_until:
+            return True
+        last_run = self._light_enforcement_last_run.get(entity_id, 0)
+        if now - last_run < enforcement_interval:
+            return True
+        return False
+
+    def _mark_light_enforcement_run(self, entity_id: str) -> None:
+        """Mark that enforcement ran for this light."""
+        import time
+        self._light_enforcement_last_run[entity_id] = time.time()
+
     def _encode_tuya_scene_hex(self, scene: dict) -> str:
         """Encode Tuya scene data into hex string for scene_data_v2 format."""
         units = scene.get("scene_units", [])
@@ -2466,7 +2492,11 @@ class EnergyMonitor:
         import json as json_mod
 
         action = segment.get("action", "on")
+        enforcement_interval = segment.get("enforcement_interval", 60)
         state_key = f"light_auto_{entity_id}"
+
+        if self._should_skip_light_enforcement(entity_id, enforcement_interval):
+            return
 
         current_state = self.hass.states.get(entity_id)
         current_on = current_state and current_state.state == "on"
@@ -2481,6 +2511,7 @@ class EnergyMonitor:
                         {"entity_id": entity_id},
                     )
                     self._light_automation_state[state_key] = "off"
+                    self._mark_light_enforcement_run(entity_id)
                     _LOGGER.debug("Light automation: turned off %s", entity_id)
                 except Exception as e:
                     _LOGGER.warning("Light automation failed to turn off %s: %s", entity_id, e)
@@ -2509,6 +2540,7 @@ class EnergyMonitor:
                         },
                     )
                     self._light_automation_state[state_key] = scene_hash
+                    self._mark_light_enforcement_run(entity_id)
                     _LOGGER.debug("Light automation: applied Tuya scene hex to %s: %s", entity_id, scene_hex)
                 except Exception as e:
                     _LOGGER.warning("Light automation failed to apply Tuya scene to %s: %s", entity_id, e)
@@ -2553,6 +2585,7 @@ class EnergyMonitor:
                 service_data,
             )
             self._light_automation_state[state_key] = action_hash
+            self._mark_light_enforcement_run(entity_id)
             _LOGGER.debug("Light automation: applied to %s with %s", entity_id, service_data)
         except Exception as e:
             _LOGGER.warning("Light automation failed to apply to %s: %s", entity_id, e)

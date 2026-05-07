@@ -2714,6 +2714,187 @@ class EnergyPanel extends HTMLElement {
         cursor: pointer;
       }
 
+      /* Inline Scene Editor (within segment editor) */
+      .inline-scene-editor {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+        padding: 12px;
+        margin-top: 8px;
+      }
+      .inline-scene-steps {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--card-border);
+      }
+      .inline-scene-step {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: 2px solid transparent;
+        cursor: pointer;
+        position: relative;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        transition: transform 0.15s, border-color 0.15s;
+      }
+      .inline-scene-step:hover {
+        transform: scale(1.05);
+      }
+      .inline-scene-step.selected {
+        border-color: #fff;
+        transform: scale(1.1);
+      }
+      .inline-scene-step.add-step {
+        background: var(--card-bg);
+        border: 2px dashed var(--secondary-text-color);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--secondary-text-color);
+        font-size: 18px;
+        font-weight: 300;
+      }
+      .inline-scene-step.add-step:hover {
+        border-color: var(--panel-accent);
+        color: var(--panel-accent);
+      }
+      .inline-scene-step-remove {
+        position: absolute;
+        top: -5px;
+        right: -5px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--error-color, #ef5350);
+        border: none;
+        color: #fff;
+        font-size: 11px;
+        line-height: 1;
+        cursor: pointer;
+        display: none;
+      }
+      .inline-scene-step.selected .inline-scene-step-remove {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .inline-scene-step-editor {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+      .inline-scene-mode-toggle {
+        display: flex;
+        gap: 4px;
+        padding: 3px;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 16px;
+      }
+      .inline-scene-mode-btn {
+        padding: 6px 14px;
+        border: none;
+        border-radius: 14px;
+        background: transparent;
+        color: var(--secondary-text-color);
+        font-size: 11px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .inline-scene-mode-btn.active {
+        background: var(--panel-accent);
+        color: #fff;
+      }
+      .inline-scene-color-wheel,
+      .inline-scene-temp-wheel {
+        width: 140px;
+        height: 140px;
+        border-radius: 50%;
+        position: relative;
+        cursor: crosshair;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+      }
+      .inline-scene-color-wheel {
+        background: conic-gradient(
+          hsl(0, 100%, 50%), hsl(60, 100%, 50%), hsl(120, 100%, 50%),
+          hsl(180, 100%, 50%), hsl(240, 100%, 50%), hsl(300, 100%, 50%), hsl(360, 100%, 50%)
+        );
+      }
+      .inline-scene-color-wheel::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: radial-gradient(circle at center, white 0%, transparent 70%);
+        pointer-events: none;
+      }
+      .inline-scene-temp-wheel {
+        background: linear-gradient(90deg, #ffcc80 0%, #fff 50%, #b3e5fc 100%);
+      }
+      .inline-scene-wheel-picker {
+        position: absolute;
+        width: 20px;
+        height: 20px;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        pointer-events: none;
+        z-index: 1;
+      }
+      .inline-scene-brightness-row {
+        width: 100%;
+      }
+      .inline-scene-brightness-row label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        margin-bottom: 4px;
+      }
+      .inline-scene-brightness {
+        width: 100%;
+        height: 6px;
+        border-radius: 3px;
+        -webkit-appearance: none;
+        appearance: none;
+        background: linear-gradient(90deg, var(--panel-accent) 100%, rgba(255,255,255,0.12) 100%);
+      }
+      .inline-scene-brightness::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        border: 2px solid var(--panel-accent);
+        cursor: pointer;
+      }
+      .inline-scene-transition-row {
+        display: flex;
+        gap: 8px;
+        width: 100%;
+      }
+      .inline-scene-transition-row select {
+        flex: 1;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--card-border);
+        background: var(--input-bg, var(--card-bg));
+        color: var(--primary-text-color);
+        font-size: 11px;
+      }
+      .inline-scene-test-btn {
+        margin-top: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        width: 100%;
+      }
+
       /* Tuya Scene Builder Modal - SmartLife Style */
       .tuya-scene-modal-overlay {
         position: fixed;
@@ -12512,11 +12693,15 @@ class EnergyPanel extends HTMLElement {
     const showTuya = state.hasTuya && isOnOrMode;
     const brightness = seg.brightness ?? 100;
     const colorTemp = seg.color_temp ?? 4000;
-    const isColorMode = !!seg.hs_color;
+    const hasScene = !!seg.tuya_scene;
+    const isSceneMode = showTuya && hasScene;
+    const isColorMode = !isSceneMode && !!seg.hs_color;
+    const isWhiteMode = !isSceneMode && !isColorMode;
     const hue = seg.hs_color?.[0] ?? 0;
     const sat = seg.hs_color?.[1] ?? 100;
     const colorHex = this._hsToHex(seg.hs_color || [0, 100]);
     const tempPct = ((colorTemp - 2700) / (6500 - 2700)) * 100;
+    const enforcementInterval = seg.enforcement_interval ?? 60;
 
     return `
       <div class="light-auto-segment-editor" data-editing-index="${index}">
@@ -12542,16 +12727,44 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         ${showAdvanced ? `
-        <!-- SmartLife-style Color/White Mode Toggle -->
+        <!-- Enforcement Interval Setting -->
+        <div class="light-auto-segment-row" style="margin-bottom: 12px;">
+          <div class="light-auto-segment-field" style="grid-column: 1 / -1;">
+            <label style="display: flex; justify-content: space-between; align-items: center;">
+              Check & Enforce Every
+              <span class="light-auto-enforce-label">${enforcementInterval}s</span>
+            </label>
+            <div class="light-auto-slider-row" style="margin-top: 6px;">
+              <input type="range" class="light-auto-seg-enforce-interval" min="10" max="3600" value="${enforcementInterval}" step="10"
+                     style="background: linear-gradient(90deg, var(--panel-accent) ${(enforcementInterval / 3600) * 100}%, rgba(255,255,255,0.12) ${(enforcementInterval / 3600) * 100}%);">
+            </div>
+            <span class="light-auto-enforce-hint" style="font-size: 10px; color: var(--secondary-text-color); margin-top: 2px;">
+              ${enforcementInterval >= 60 ? `${Math.round(enforcementInterval / 60)} min` : `${enforcementInterval} sec`} (10s - 60min)
+            </span>
+          </div>
+        </div>
+
+        <!-- SmartLife-style Scene/Color/White Mode Toggle -->
         <div class="light-mode-toggle">
+          ${showTuya ? `
+          <button type="button" class="light-mode-toggle-btn ${isSceneMode ? 'active' : ''}" data-mode="scene">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            Scene
+          </button>
+          ` : ''}
           <button type="button" class="light-mode-toggle-btn ${isColorMode ? 'active' : ''}" data-mode="color">
             <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" fill="url(#colorGrad)"/><defs><linearGradient id="colorGrad"><stop offset="0%" stop-color="#f44336"/><stop offset="50%" stop-color="#4caf50"/><stop offset="100%" stop-color="#2196f3"/></linearGradient></defs></svg>
             Color
           </button>
-          <button type="button" class="light-mode-toggle-btn ${!isColorMode ? 'active' : ''}" data-mode="white">
+          <button type="button" class="light-mode-toggle-btn ${isWhiteMode ? 'active' : ''}" data-mode="white">
             <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" fill="url(#whiteGrad)"/><defs><linearGradient id="whiteGrad" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#ffcc80"/><stop offset="100%" stop-color="#e3f2fd"/></linearGradient></defs></svg>
             White
           </button>
+        </div>
+
+        <!-- Scene Mode: Inline Tuya Scene Editor -->
+        <div class="light-scene-mode-container" style="${!isSceneMode ? 'display:none' : ''}">
+          ${this._renderInlineSceneEditor(seg.tuya_scene, index)}
         </div>
 
         <!-- Color Mode: Visual Color Wheel -->
@@ -12564,15 +12777,15 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <!-- White Mode: Visual Temperature Gradient Wheel -->
-        <div class="light-temp-wheel-container" style="${isColorMode ? 'display:none' : ''}">
+        <div class="light-temp-wheel-container" style="${isWhiteMode ? '' : 'display:none'}">
           <div class="light-temp-wheel" data-segment-index="${index}">
             <div class="light-temp-wheel-picker" style="left: ${tempPct}%; top: 50%; transform: translate(-50%, -50%);">${Math.round(colorTemp / 100) * 100}K</div>
           </div>
           <input type="hidden" class="light-auto-seg-temp-value" value="${colorTemp}">
         </div>
 
-        <!-- Brightness Slider -->
-        <div class="light-auto-segment-field" style="margin-top: 8px;">
+        <!-- Brightness Slider (hidden in scene mode) -->
+        <div class="light-auto-segment-field light-auto-brightness-field" style="margin-top: 8px; ${isSceneMode ? 'display:none' : ''}">
           <label style="display: flex; justify-content: space-between; align-items: center;">
             Brightness
             <span class="light-auto-brightness-label">${brightness}%</span>
@@ -12584,18 +12797,90 @@ class EnergyPanel extends HTMLElement {
         </div>
         ` : ''}
 
-        ${showTuya ? `
-        <button type="button" class="light-auto-tuya-btn" data-segment-index="${index}">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-          </svg>
-          Create Tuya Scene
-        </button>
-        ` : ''}
-
         <div style="margin-top:12px; display:flex; justify-content:flex-end;">
           <button type="button" class="btn btn-secondary light-auto-seg-delete">Delete Segment</button>
         </div>
+      </div>
+    `;
+  }
+
+  _renderInlineSceneEditor(scene, segIndex) {
+    const sceneData = scene || { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 50, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
+    const units = sceneData.scene_units || [];
+    const selectedStep = this._lightAutoState?.sceneSelectedStep ?? 0;
+    const selectedUnit = units[selectedStep] || units[0] || { h: 0, s: 500, bright: 1000, temperature: 0 };
+    const isUnitColorMode = !(selectedUnit.temperature > 0 && selectedUnit.h === 0 && selectedUnit.s === 0);
+
+    return `
+      <div class="inline-scene-editor" data-segment-index="${segIndex}">
+        <!-- Scene Step Circles -->
+        <div class="inline-scene-steps">
+          ${units.map((u, i) => this._renderInlineSceneStep(u, i, i === selectedStep)).join('')}
+          <div class="inline-scene-step add-step" title="Add Step">+</div>
+        </div>
+
+        <!-- Selected Step Editor -->
+        <div class="inline-scene-step-editor" data-step-index="${selectedStep}">
+          <!-- Color/White Toggle for this step -->
+          <div class="inline-scene-mode-toggle">
+            <button type="button" class="inline-scene-mode-btn ${isUnitColorMode ? 'active' : ''}" data-mode="color">Color</button>
+            <button type="button" class="inline-scene-mode-btn ${!isUnitColorMode ? 'active' : ''}" data-mode="white">White</button>
+          </div>
+
+          <!-- Color Wheel for step -->
+          <div class="inline-scene-color-wheel" style="${!isUnitColorMode ? 'display:none' : ''}">
+            <div class="inline-scene-wheel-picker" style="background: ${this._hsToHex([selectedUnit.h || 0, (selectedUnit.s || 500) / 10])}; left: ${this._hueToWheelX(selectedUnit.h || 0, (selectedUnit.s || 500) / 10)}%; top: ${this._hueToWheelY(selectedUnit.h || 0, (selectedUnit.s || 500) / 10)}%;"></div>
+          </div>
+
+          <!-- Temp Wheel for step -->
+          <div class="inline-scene-temp-wheel" style="${isUnitColorMode ? 'display:none' : ''}">
+            <div class="inline-scene-wheel-picker" style="left: ${((selectedUnit.temperature || 500) / 1000) * 100}%; top: 50%;"></div>
+          </div>
+
+          <!-- Brightness for step -->
+          <div class="inline-scene-brightness-row">
+            <label>Brightness <span class="inline-scene-bright-val">${Math.round((selectedUnit.bright || 1000) / 10)}%</span></label>
+            <input type="range" class="inline-scene-brightness" min="0" max="1000" value="${selectedUnit.bright || 1000}">
+          </div>
+
+          <!-- Transition settings -->
+          <div class="inline-scene-transition-row">
+            <select class="inline-scene-transition">
+              <option value="static" ${selectedUnit.unit_change_mode === 'static' ? 'selected' : ''}>Static</option>
+              <option value="jump" ${selectedUnit.unit_change_mode === 'jump' ? 'selected' : ''}>Flash</option>
+              <option value="gradient" ${selectedUnit.unit_change_mode === 'gradient' ? 'selected' : ''}>Fade</option>
+            </select>
+            <select class="inline-scene-speed">
+              <option value="fast" ${(selectedUnit.unit_switch_duration || 50) <= 30 ? 'selected' : ''}>Fast</option>
+              <option value="medium" ${(selectedUnit.unit_switch_duration || 50) > 30 && (selectedUnit.unit_switch_duration || 50) <= 70 ? 'selected' : ''}>Medium</option>
+              <option value="slow" ${(selectedUnit.unit_switch_duration || 50) > 70 ? 'selected' : ''}>Slow</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Test Scene Button -->
+        <button type="button" class="btn btn-secondary inline-scene-test-btn">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          Test Scene
+        </button>
+      </div>
+    `;
+  }
+
+  _renderInlineSceneStep(unit, idx, isSelected) {
+    const isWhite = unit.temperature > 0 && (unit.h === 0 || !unit.h) && (unit.s === 0 || !unit.s);
+    let bg;
+    if (isWhite) {
+      const t = (unit.temperature || 500) / 1000;
+      bg = `rgb(255, ${180 + Math.round(t * 75)}, ${120 + Math.round(t * 135)})`;
+    } else {
+      bg = `hsl(${unit.h || 0}, ${(unit.s || 500) / 10}%, 50%)`;
+    }
+    return `
+      <div class="inline-scene-step ${isSelected ? 'selected' : ''}" data-step-index="${idx}" style="background: ${bg};">
+        <button type="button" class="inline-scene-step-remove" data-step-index="${idx}">×</button>
       </div>
     `;
   }
@@ -12970,6 +13255,19 @@ class EnergyPanel extends HTMLElement {
       this._refreshLightAutomationModal();
     });
 
+    const enforceSlider = editor.querySelector('.light-auto-seg-enforce-interval');
+    if (enforceSlider) {
+      enforceSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value, 10);
+        seg.enforcement_interval = val;
+        const label = editor.querySelector('.light-auto-enforce-label');
+        const hint = editor.querySelector('.light-auto-enforce-hint');
+        if (label) label.textContent = `${val}s`;
+        if (hint) hint.textContent = `${val >= 60 ? `${Math.round(val / 60)} min` : `${val} sec`} (10s - 60min)`;
+        e.target.style.background = `linear-gradient(90deg, var(--panel-accent) ${(val / 3600) * 100}%, rgba(255,255,255,0.12) ${(val / 3600) * 100}%)`;
+      });
+    }
+
     const brightnessSlider = editor.querySelector('.light-auto-seg-brightness');
     if (brightnessSlider) {
       brightnessSlider.addEventListener('input', (e) => {
@@ -12981,17 +13279,40 @@ class EnergyPanel extends HTMLElement {
     }
 
     editor.querySelectorAll('.light-mode-toggle-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', () => {
         const mode = btn.dataset.mode;
-        const isColor = mode === 'color';
         editor.querySelectorAll('.light-mode-toggle-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        editor.querySelector('.light-color-wheel-container').style.display = isColor ? '' : 'none';
-        editor.querySelector('.light-temp-wheel-container').style.display = isColor ? 'none' : '';
-        if (isColor) {
+
+        const sceneContainer = editor.querySelector('.light-scene-mode-container');
+        const colorContainer = editor.querySelector('.light-color-wheel-container');
+        const tempContainer = editor.querySelector('.light-temp-wheel-container');
+        const brightnessField = editor.querySelector('.light-auto-brightness-field');
+
+        if (mode === 'scene') {
+          if (sceneContainer) sceneContainer.style.display = '';
+          if (colorContainer) colorContainer.style.display = 'none';
+          if (tempContainer) tempContainer.style.display = 'none';
+          if (brightnessField) brightnessField.style.display = 'none';
+          delete seg.hs_color;
+          delete seg.color_temp;
+          if (!seg.tuya_scene) {
+            seg.tuya_scene = { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 50, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
+          }
+        } else if (mode === 'color') {
+          if (sceneContainer) sceneContainer.style.display = 'none';
+          if (colorContainer) colorContainer.style.display = '';
+          if (tempContainer) tempContainer.style.display = 'none';
+          if (brightnessField) brightnessField.style.display = '';
+          delete seg.tuya_scene;
           delete seg.color_temp;
           seg.hs_color = seg.hs_color || [0, 100];
         } else {
+          if (sceneContainer) sceneContainer.style.display = 'none';
+          if (colorContainer) colorContainer.style.display = 'none';
+          if (tempContainer) tempContainer.style.display = '';
+          if (brightnessField) brightnessField.style.display = '';
+          delete seg.tuya_scene;
           delete seg.hs_color;
           seg.color_temp = seg.color_temp || 4000;
         }
@@ -13012,10 +13333,6 @@ class EnergyPanel extends HTMLElement {
           picker.style.top = `${this._hueToWheelY(hue, sat)}%`;
           picker.style.background = this._hsToHex([hue, sat]);
         }
-        const hueInput = editor.querySelector('.light-auto-seg-hue');
-        const satInput = editor.querySelector('.light-auto-seg-sat');
-        if (hueInput) hueInput.value = hue;
-        if (satInput) satInput.value = sat;
       };
 
       let draggingColor = false;
@@ -13040,8 +13357,6 @@ class EnergyPanel extends HTMLElement {
           picker.style.left = `${pct}%`;
           picker.textContent = `${Math.round(temp / 100) * 100}K`;
         }
-        const tempInput = editor.querySelector('.light-auto-seg-temp-value');
-        if (tempInput) tempInput.value = temp;
       };
 
       let draggingTemp = false;
@@ -13053,14 +13368,12 @@ class EnergyPanel extends HTMLElement {
       document.addEventListener('touchend', () => { draggingTemp = false; });
     }
 
+    this._attachInlineSceneEditorListeners(editor, seg, idx);
+
     editor.querySelector('.light-auto-seg-delete')?.addEventListener('click', () => {
       this._lightAutoState.automation.group_automation.segments.splice(idx, 1);
       this._lightAutoState.selectedSegment = null;
       this._refreshLightAutomationModal();
-    });
-
-    editor.querySelector('.light-auto-tuya-btn')?.addEventListener('click', () => {
-      this._openTuyaSceneBuilder(idx, seg.tuya_scene);
     });
 
     const enabledCheckbox = overlay.querySelector('.light-auto-enabled');
@@ -13068,6 +13381,190 @@ class EnergyPanel extends HTMLElement {
       enabledCheckbox.addEventListener('change', (e) => {
         this._lightAutoState.automation.group_automation.enabled = e.target.checked;
       });
+    }
+  }
+
+  _attachInlineSceneEditorListeners(editor, seg, segIdx) {
+    const sceneEditor = editor.querySelector('.inline-scene-editor');
+    if (!sceneEditor) return;
+
+    if (!seg.tuya_scene) {
+      seg.tuya_scene = { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 50, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
+    }
+    const scene = seg.tuya_scene;
+    const units = scene.scene_units;
+
+    sceneEditor.querySelector('.inline-scene-step.add-step')?.addEventListener('click', () => {
+      units.push({ unit_change_mode: 'gradient', unit_switch_duration: 50, h: Math.round(Math.random() * 360), s: 700, v: 1000, bright: 1000, temperature: 0 });
+      this._lightAutoState.sceneSelectedStep = units.length - 1;
+      this._refreshLightAutomationModal();
+    });
+
+    sceneEditor.querySelectorAll('.inline-scene-step:not(.add-step)').forEach(step => {
+      step.addEventListener('click', (e) => {
+        if (e.target.classList.contains('inline-scene-step-remove')) return;
+        const stepIdx = parseInt(step.dataset.stepIndex, 10);
+        this._lightAutoState.sceneSelectedStep = stepIdx;
+        this._refreshLightAutomationModal();
+      });
+    });
+
+    sceneEditor.querySelectorAll('.inline-scene-step-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const stepIdx = parseInt(btn.dataset.stepIndex, 10);
+        units.splice(stepIdx, 1);
+        if (units.length === 0) {
+          units.push({ unit_change_mode: 'gradient', unit_switch_duration: 50, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 });
+        }
+        if ((this._lightAutoState.sceneSelectedStep || 0) >= units.length) {
+          this._lightAutoState.sceneSelectedStep = units.length - 1;
+        }
+        this._refreshLightAutomationModal();
+      });
+    });
+
+    const stepEditor = sceneEditor.querySelector('.inline-scene-step-editor');
+    if (!stepEditor) return;
+
+    const selectedIdx = this._lightAutoState.sceneSelectedStep ?? 0;
+    const unit = units[selectedIdx];
+    if (!unit) return;
+
+    stepEditor.querySelectorAll('.inline-scene-mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.mode;
+        stepEditor.querySelectorAll('.inline-scene-mode-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const colorWheel = stepEditor.querySelector('.inline-scene-color-wheel');
+        const tempWheel = stepEditor.querySelector('.inline-scene-temp-wheel');
+        if (mode === 'color') {
+          if (colorWheel) colorWheel.style.display = '';
+          if (tempWheel) tempWheel.style.display = 'none';
+          unit.temperature = 0;
+          if (!unit.h && !unit.s) { unit.h = 0; unit.s = 500; }
+        } else {
+          if (colorWheel) colorWheel.style.display = 'none';
+          if (tempWheel) tempWheel.style.display = '';
+          unit.h = 0;
+          unit.s = 0;
+          unit.temperature = unit.temperature || 500;
+        }
+        this._updateInlineStepCircle(sceneEditor, selectedIdx, unit);
+      });
+    });
+
+    const colorWheel = stepEditor.querySelector('.inline-scene-color-wheel');
+    if (colorWheel) {
+      const handleEvent = (e) => {
+        const rect = colorWheel.getBoundingClientRect();
+        const x = (e.clientX || e.touches?.[0]?.clientX) - rect.left;
+        const y = (e.clientY || e.touches?.[0]?.clientY) - rect.top;
+        const [hue, sat] = this._wheelToHueSat(x, y, rect.width, rect.height);
+        unit.h = hue;
+        unit.s = sat * 10;
+        unit.temperature = 0;
+        const picker = colorWheel.querySelector('.inline-scene-wheel-picker');
+        if (picker) {
+          picker.style.left = `${this._hueToWheelX(hue, sat)}%`;
+          picker.style.top = `${this._hueToWheelY(hue, sat)}%`;
+          picker.style.background = this._hsToHex([hue, sat]);
+        }
+        this._updateInlineStepCircle(sceneEditor, selectedIdx, unit);
+      };
+      let dragging = false;
+      colorWheel.addEventListener('mousedown', (e) => { dragging = true; handleEvent(e); });
+      colorWheel.addEventListener('touchstart', (e) => { dragging = true; handleEvent(e); e.preventDefault(); });
+      document.addEventListener('mousemove', (e) => { if (dragging) handleEvent(e); });
+      document.addEventListener('touchmove', (e) => { if (dragging) handleEvent(e); });
+      document.addEventListener('mouseup', () => { dragging = false; });
+      document.addEventListener('touchend', () => { dragging = false; });
+    }
+
+    const tempWheel = stepEditor.querySelector('.inline-scene-temp-wheel');
+    if (tempWheel) {
+      const handleEvent = (e) => {
+        const rect = tempWheel.getBoundingClientRect();
+        const x = (e.clientX || e.touches?.[0]?.clientX) - rect.left;
+        const pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
+        const temp = Math.round((pct / 100) * 1000);
+        unit.temperature = temp;
+        unit.h = 0;
+        unit.s = 0;
+        const picker = tempWheel.querySelector('.inline-scene-wheel-picker');
+        if (picker) {
+          picker.style.left = `${pct}%`;
+        }
+        this._updateInlineStepCircle(sceneEditor, selectedIdx, unit);
+      };
+      let dragging = false;
+      tempWheel.addEventListener('mousedown', (e) => { dragging = true; handleEvent(e); });
+      tempWheel.addEventListener('touchstart', (e) => { dragging = true; handleEvent(e); e.preventDefault(); });
+      document.addEventListener('mousemove', (e) => { if (dragging) handleEvent(e); });
+      document.addEventListener('touchmove', (e) => { if (dragging) handleEvent(e); });
+      document.addEventListener('mouseup', () => { dragging = false; });
+      document.addEventListener('touchend', () => { dragging = false; });
+    }
+
+    const brightnessSlider = stepEditor.querySelector('.inline-scene-brightness');
+    if (brightnessSlider) {
+      brightnessSlider.addEventListener('input', (e) => {
+        unit.bright = parseInt(e.target.value, 10);
+        const label = stepEditor.querySelector('.inline-scene-bright-val');
+        if (label) label.textContent = `${Math.round(unit.bright / 10)}%`;
+      });
+    }
+
+    stepEditor.querySelector('.inline-scene-transition')?.addEventListener('change', (e) => {
+      unit.unit_change_mode = e.target.value;
+    });
+
+    stepEditor.querySelector('.inline-scene-speed')?.addEventListener('change', (e) => {
+      const speed = e.target.value;
+      if (speed === 'fast') { unit.unit_switch_duration = 20; unit.unit_gradient_duration = 50; }
+      else if (speed === 'medium') { unit.unit_switch_duration = 50; unit.unit_gradient_duration = 100; }
+      else { unit.unit_switch_duration = 100; unit.unit_gradient_duration = 200; }
+    });
+
+    sceneEditor.querySelector('.inline-scene-test-btn')?.addEventListener('click', () => {
+      this._testInlineScene(seg.tuya_scene);
+    });
+  }
+
+  _updateInlineStepCircle(sceneEditor, idx, unit) {
+    const circle = sceneEditor.querySelector(`.inline-scene-step[data-step-index="${idx}"]`);
+    if (!circle) return;
+    const isWhite = unit.temperature > 0 && (unit.h === 0 || !unit.h) && (unit.s === 0 || !unit.s);
+    if (isWhite) {
+      const t = (unit.temperature || 500) / 1000;
+      circle.style.background = `rgb(255, ${180 + Math.round(t * 75)}, ${120 + Math.round(t * 135)})`;
+    } else {
+      circle.style.background = `hsl(${unit.h || 0}, ${(unit.s || 500) / 10}%, 50%)`;
+    }
+  }
+
+  async _testInlineScene(scene) {
+    const tuyaLights = this._lightAutoState?.lightEntities?.filter(l => l.tuya) || [];
+    if (tuyaLights.length === 0) {
+      this._showToast('No Tuya lights configured');
+      return;
+    }
+
+    const entityId = tuyaLights[0].entity_id;
+    const sceneHex = this._encodeTuyaSceneHex(scene);
+
+    this._enforcementPausedUntil = Date.now() + 30000;
+
+    try {
+      await this._hass.callWS({
+        type: 'smart_dashboards/test_tuya_scene',
+        entity_id: entityId,
+        scene_data: { scene_data_v2: sceneHex }
+      });
+      this._showToast('Scene sent - enforcement paused 30s');
+    } catch (err) {
+      console.error('Failed to test scene:', err);
+      this._showToast('Failed to test scene');
     }
   }
 
@@ -13503,15 +14000,16 @@ class EnergyPanel extends HTMLElement {
 
     const entityId = tuyaLights[0].entity_id;
     const sceneHex = this._encodeTuyaSceneHex(state.scene);
-    console.log('Tuya scene hex:', sceneHex);
+
+    this._enforcementPausedUntil = Date.now() + 30000;
 
     try {
       await this._hass.callWS({
         type: 'smart_dashboards/test_tuya_scene',
         entity_id: entityId,
-        scene_data: { scene_data_v2: sceneHex }
+        scene_data: { scene_data_v2: sceneHex, pause_enforcement: 30 }
       });
-      this._showToast('Scene sent to light');
+      this._showToast('Scene sent - enforcement paused 30s');
     } catch (err) {
       console.error('Failed to test scene:', err);
       this._showToast('Failed to test scene');
