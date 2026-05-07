@@ -5081,9 +5081,155 @@ class EnergyPanel extends HTMLElement {
       .device-card.microwave-card .outlet-name-top,
       .device-card.minisplit-card .outlet-name-top,
       .device-card.fridge-card .outlet-name-top,
-      .device-card.ceiling-vent-card .outlet-name-top {
+      .device-card.ceiling-vent-card .outlet-name-top,
+      .device-card.door-card .outlet-name-top,
+      .device-card.window-card .outlet-name-top {
         font-size: 12px;
         color: var(--primary-text-color);
+      }
+
+      /* Door Card Styles */
+      .door-card {
+        min-width: 100px;
+        min-height: 130px;
+      }
+      .door-faceplate {
+        background: var(--input-bg);
+        border-radius: 8px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid var(--card-border);
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+      .door-card.door-open .door-faceplate {
+        border-color: var(--warning-color, #ffc107);
+        box-shadow: 0 0 8px rgba(255, 193, 7, 0.3);
+      }
+      .door-card.door-unlocked .door-faceplate {
+        border-color: var(--info-color, #2196f3);
+      }
+      .door-icon-container {
+        position: relative;
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .door-main-icon {
+        width: 40px;
+        height: 40px;
+        fill: var(--secondary-text-color);
+        transition: fill 0.2s;
+      }
+      .door-main-icon.open {
+        fill: var(--warning-color, #ffc107);
+      }
+      .door-main-icon svg {
+        width: 100%;
+        height: 100%;
+      }
+      .door-lock-icon {
+        position: absolute;
+        bottom: -2px;
+        right: -4px;
+        width: 20px;
+        height: 20px;
+        background: var(--card-bg);
+        border-radius: 50%;
+        padding: 2px;
+        fill: var(--secondary-text-color);
+        transition: fill 0.2s;
+      }
+      .door-lock-icon.locked {
+        fill: var(--success-color, #4caf50);
+      }
+      .door-lock-icon.unlocked {
+        fill: var(--warning-color, #ffc107);
+      }
+      .door-lock-icon svg {
+        width: 100%;
+        height: 100%;
+      }
+      .door-status {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        font-size: 10px;
+      }
+      .door-state-label {
+        color: var(--primary-text-color);
+        font-weight: 500;
+      }
+      .door-card.door-open .door-state-label {
+        color: var(--warning-color, #ffc107);
+      }
+      .door-lock-label {
+        color: var(--secondary-text-color);
+        font-size: 9px;
+      }
+      .door-card.door-unlocked .door-lock-label {
+        color: var(--warning-color, #ffc107);
+      }
+      .door-type-badge {
+        font-size: 8px;
+        color: var(--secondary-text-color);
+        text-transform: capitalize;
+      }
+
+      /* Window Card Styles */
+      .window-card {
+        min-width: 100px;
+        min-height: 120px;
+      }
+      .window-faceplate {
+        background: var(--input-bg);
+        border-radius: 8px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid var(--card-border);
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+      .window-card.window-open .window-faceplate {
+        border-color: var(--warning-color, #ffc107);
+        box-shadow: 0 0 8px rgba(255, 193, 7, 0.3);
+      }
+      .window-icon-container {
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .window-main-icon {
+        width: 40px;
+        height: 40px;
+        fill: var(--secondary-text-color);
+        transition: fill 0.2s;
+      }
+      .window-main-icon.open {
+        fill: var(--warning-color, #ffc107);
+      }
+      .window-main-icon svg {
+        width: 100%;
+        height: 100%;
+      }
+      .window-status {
+        font-size: 10px;
+      }
+      .window-state-label {
+        color: var(--primary-text-color);
+        font-weight: 500;
+      }
+      .window-card.window-open .window-state-label {
+        color: var(--warning-color, #ffc107);
       }
 
       .device-card.stove-card .outlet-meta,
@@ -6985,6 +7131,46 @@ class EnergyPanel extends HTMLElement {
       }
 
       .outlet-settings-item .form-input {
+        padding: 6px 8px;
+        font-size: 11px;
+      }
+
+      /* Multi-entity picker for door/window actions */
+      .multi-entity-picker {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .multi-entity-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        min-height: 22px;
+      }
+      .multi-entity-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: var(--panel-accent-dim);
+        color: var(--primary-text-color);
+        border-radius: 4px;
+        padding: 3px 6px;
+        font-size: 10px;
+        border: 1px solid var(--panel-accent);
+      }
+      .multi-entity-chip-remove {
+        background: none;
+        border: none;
+        color: var(--secondary-text-color);
+        font-size: 12px;
+        cursor: pointer;
+        padding: 0 2px;
+        line-height: 1;
+      }
+      .multi-entity-chip-remove:hover {
+        color: var(--error-color, #ff5252);
+      }
+      .multi-entity-picker .multi-entity-input {
         padding: 6px 8px;
         font-size: 11px;
       }
@@ -9955,6 +10141,8 @@ class EnergyPanel extends HTMLElement {
     if (type === 'fridge') return this._renderFridgeCard(device, index, deviceData);
     if (isVentLikeType(type)) return this._renderVentLikeCard(device, index, deviceData);
     if (type === 'light') return this._renderLightCard(device, index, deviceData);
+    if (type === 'door') return this._renderDoorCard(device, index);
+    if (type === 'window') return this._renderWindowCard(device, index);
     return this._renderOutletCard(device, index, deviceData);
   }
 
@@ -10101,6 +10289,72 @@ class EnergyPanel extends HTMLElement {
           <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="outlet-meta light-outlet-meta">
             <div class="outlet-total light-watts-display">${totalWatts.toFixed(1)} W</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderDoorCard(device, index) {
+    const contactSensor = device.contact_sensor;
+    const lockEntity = device.lock_entity;
+    const contactState = contactSensor ? this.hass?.states?.[contactSensor]?.state : null;
+    const lockState = lockEntity ? this.hass?.states?.[lockEntity]?.state : null;
+    const isOpen = contactState === 'on';
+    const isLocked = lockState === 'locked';
+    const hasLock = !!lockEntity;
+    const doorType = device.door_subtype || 'standard';
+    
+    // Door icon changes based on state
+    const doorIcon = isOpen 
+      ? '<svg viewBox="0 0 24 24"><path d="M19 19V5c0-1.1-.9-2-2-2H7c-1.1 0-2 .9-2 2v14H4v2h16v-2h-1zm-8-7.5c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zM7 5h8v14H7V5z"/></svg>'
+      : '<svg viewBox="0 0 24 24"><path d="M19 19V5c0-1.1-.9-2-2-2H7c-1.1 0-2 .9-2 2v14H4v2h16v-2h-1zm-8-7.5c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zM17 5v14H7V5h10z"/></svg>';
+    const lockIcon = isLocked
+      ? '<svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.8-2.2-5-5-5S7 3.2 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.7 1.3-3 3-3s3 1.3 3 3v2H9z"/></svg>'
+      : '<svg viewBox="0 0 24 24"><path d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.8-2.2-5-5-5S7 3.2 7 6h2c0-1.7 1.3-3 3-3s3 1.3 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2z"/></svg>';
+
+    const stateClass = isOpen ? 'door-open' : 'door-closed';
+    const lockClass = hasLock ? (isLocked ? 'door-locked' : 'door-unlocked') : '';
+    
+    return `
+      <div class="device-card door-card ${stateClass} ${lockClass}" data-outlet-index="${index}" data-device-type="door">
+        <div class="door-faceplate">
+          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || 'Door'}</div>
+          <div class="door-icon-container">
+            <div class="door-main-icon ${isOpen ? 'open' : 'closed'}">${doorIcon}</div>
+            ${hasLock ? `<div class="door-lock-icon ${isLocked ? 'locked' : 'unlocked'}">${lockIcon}</div>` : ''}
+          </div>
+          <div class="door-status">
+            <span class="door-state-label">${isOpen ? 'Open' : 'Closed'}</span>
+            ${hasLock ? `<span class="door-lock-label">${isLocked ? 'Locked' : 'Unlocked'}</span>` : ''}
+          </div>
+          <div class="door-type-badge">${doorType !== 'standard' ? doorType : ''}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderWindowCard(device, index) {
+    const contactSensor = device.contact_sensor;
+    const contactState = contactSensor ? this.hass?.states?.[contactSensor]?.state : null;
+    const isOpen = contactState === 'on';
+    
+    // Window icon (open vs closed)
+    const windowIcon = isOpen
+      ? '<svg viewBox="0 0 24 24"><path d="M3 4h18v16H3V4zm2 2v5h6V6H5zm8 0v5h6V6h-6zm-8 7v5h6v-5H5zm8 0v5h6v-5h-6z"/></svg>'
+      : '<svg viewBox="0 0 24 24"><path d="M3 4h18v16H3V4zm2 2v12h14V6H5zm2 2h4v3H7V8zm6 0h4v3h-4V8zm-6 5h4v3H7v-3zm6 0h4v3h-4v-3z"/></svg>';
+
+    const stateClass = isOpen ? 'window-open' : 'window-closed';
+    
+    return `
+      <div class="device-card window-card ${stateClass}" data-outlet-index="${index}" data-device-type="window">
+        <div class="window-faceplate">
+          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || 'Window'}</div>
+          <div class="window-icon-container">
+            <div class="window-main-icon ${isOpen ? 'open' : 'closed'}">${windowIcon}</div>
+          </div>
+          <div class="window-status">
+            <span class="window-state-label">${isOpen ? 'Open' : 'Closed'}</span>
           </div>
         </div>
       </div>
@@ -14072,6 +14326,10 @@ class EnergyPanel extends HTMLElement {
           this._openOutletUsageGraph(roomId, outletIndex, outlet, slot);
         } else if (action === 'automation') {
           await this._openLightAutomationModal(roomId, outlet);
+        } else if (action === 'lock' || action === 'unlock') {
+          await this._toggleDoorLock(outlet, action);
+        } else if (action === 'sensor_history') {
+          await this._openSensorHistory(outlet);
         } else {
           void this._executeApplianceToggle({ roomId, outletIndex, plugSlot: slot });
         }
@@ -14111,6 +14369,18 @@ class EnergyPanel extends HTMLElement {
       } else {
         addItem('Open usage graph', 'graph', 1);
       }
+    } else if (otype === 'door') {
+      // Door context menu
+      const lockEntity = outlet.lock_entity;
+      if (lockEntity) {
+        const lockState = this._hass?.states?.[lockEntity]?.state;
+        const isLocked = lockState === 'locked';
+        addItem(isLocked ? 'Unlock Door' : 'Lock Door', isLocked ? 'unlock' : 'lock', null);
+      }
+      addItem('View Sensor History', 'sensor_history', null);
+    } else if (otype === 'window') {
+      // Window context menu
+      addItem('View Sensor History', 'sensor_history', null);
     } else {
       addItem('Open usage graph', 'graph', null);
       if (this._resolveApplianceToggleTarget(outlet, null)) {
@@ -14417,6 +14687,38 @@ class EnergyPanel extends HTMLElement {
         return;
       }
       showToast(this.shadowRoot, `Failed to toggle: ${err.message || err}`, 'error');
+    }
+  }
+
+  async _toggleDoorLock(outlet, action) {
+    const lockEntity = outlet.lock_entity;
+    if (!lockEntity) {
+      showToast(this.shadowRoot, 'No lock entity configured for this door.', 'error');
+      return;
+    }
+    
+    try {
+      const service = action === 'lock' ? 'lock' : 'unlock';
+      await this._hass.callService('lock', service, { entity_id: lockEntity });
+      showToast(this.shadowRoot, `Door ${action === 'lock' ? 'locked' : 'unlocked'} successfully.`, 'success');
+    } catch (err) {
+      showToast(this.shadowRoot, `Failed to ${action} door: ${err.message || err}`, 'error');
+    }
+  }
+
+  async _openSensorHistory(outlet) {
+    const contactSensor = outlet.contact_sensor;
+    if (!contactSensor) {
+      showToast(this.shadowRoot, 'No contact sensor configured.', 'error');
+      return;
+    }
+    
+    // Open Home Assistant history for the contact sensor
+    try {
+      const historyUrl = `/history?entity_id=${contactSensor}`;
+      window.open(historyUrl, '_blank');
+    } catch (err) {
+      showToast(this.shadowRoot, 'Unable to open sensor history.', 'error');
     }
   }
 
@@ -15637,6 +15939,8 @@ class EnergyPanel extends HTMLElement {
                 <button class="add-device-option" data-type="vent">Vent</button>
                 <button class="add-device-option" data-type="wall_heater">Wall heater</button>
                 <button class="add-device-option" data-type="light">Light</button>
+                <button class="add-device-option" data-type="door">Door</button>
+                <button class="add-device-option" data-type="window">Window</button>
               </div>
             </div>
           </div>
@@ -15731,6 +16035,12 @@ class EnergyPanel extends HTMLElement {
     }
     if (type === 'light') {
       return this._renderLightSettings(device, deviceIndex, roomIndex, isCollapsed);
+    }
+    if (type === 'door') {
+      return this._renderDoorSettings(device, deviceIndex, roomIndex, isCollapsed);
+    }
+    if (type === 'window') {
+      return this._renderWindowSettings(device, deviceIndex, roomIndex, isCollapsed);
     }
     return this._renderOutletSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
   }
@@ -15870,6 +16180,287 @@ class EnergyPanel extends HTMLElement {
                 !!device.presence_auto_off,
                 'Uses room Presence & zones. Targets the switch entity above.',
               )}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderDoorSettings(device, deviceIndex, roomIndex, isCollapsed = true) {
+    const displayName = device.name || 'Unnamed Door';
+    const collapsedClass = isCollapsed ? 'collapsed' : '';
+    const doorSubtype = device.door_subtype || 'standard';
+    const hasLock = !!device.lock_entity;
+    const hasPresence = !!device.presence_sensor;
+    const reminderMode = device.reminder_mode || 'none';
+    
+    return `
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="door" draggable="true">
+        <div class="outlet-settings-bar">
+          <div class="outlet-drag-handle" title="Drag to reorder">
+            <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0 4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
+          </div>
+          <span class="outlet-name-display ${device.name ? '' : 'empty'}">${displayName}</span>
+          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${deviceIndex}" title="Delete">
+            <svg viewBox="0 0 24 24">${icons.delete}</svg>
+          </button>
+          <div class="outlet-expand-icon">
+            <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+          </div>
+        </div>
+        <div class="outlet-settings-body">
+          <div class="outlet-settings-header">
+            <div class="form-group" style="flex: 1;">
+              <label class="form-label">Door Name</label>
+              <input type="text" class="form-input outlet-name" value="${device.name || ''}" placeholder="Door name...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Type</label>
+              <select class="form-input door-subtype" style="width: 120px;">
+                <option value="standard" ${doorSubtype === 'standard' ? 'selected' : ''}>Standard</option>
+                <option value="closet" ${doorSubtype === 'closet' ? 'selected' : ''}>Closet</option>
+                <option value="entrance" ${doorSubtype === 'entrance' ? 'selected' : ''}>Entrance</option>
+              </select>
+            </div>
+          </div>
+          <div class="plugs-settings-grid single-plug">
+            <div class="plug-settings-card" data-plug="1">
+              <div class="plug-settings-title">Sensors & Lock</div>
+              <div class="form-group">
+                <label class="form-label">Contact Sensor (required)</label>
+                ${this._renderEntityAutocomplete(device.contact_sensor || '', 'binary_sensor', roomIndex, 'door-contact-sensor', 'binary_sensor.front_door_contact')}
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">binary_sensor.* for door open/close state.</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Smart Lock (optional)</label>
+                ${this._renderEntityAutocomplete(device.lock_entity || '', 'lock', roomIndex, 'door-lock-entity', 'lock.front_door')}
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">lock.* entity. Leave blank if no smart lock.</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Presence Sensor (optional)</label>
+                ${this._renderEntityAutocomplete(device.presence_sensor || '', 'binary_sensor', roomIndex, 'door-presence-sensor', 'binary_sensor.hallway_motion')}
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">binary_sensor.* for motion/occupancy near this door.</div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="plugs-settings-grid single-plug" style="margin-top: 16px;">
+            <div class="plug-settings-card">
+              <div class="plug-settings-title">Announcements</div>
+              <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" class="form-checkbox door-announce-open-close" ${device.announce_open_close !== false ? 'checked' : ''}>
+                  <span>Announce door open/close</span>
+                </label>
+              </div>
+              <div class="form-group door-lock-announce-row" style="${!hasLock ? 'display:none;' : ''}">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" class="form-checkbox door-announce-lock" ${device.announce_lock !== false ? 'checked' : ''}>
+                  <span>Announce lock/unlock</span>
+                </label>
+              </div>
+              <div class="form-group door-presence-announce-row" style="${!hasPresence ? 'display:none;' : ''}">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" class="form-checkbox door-announce-presence" ${device.announce_presence ? 'checked' : ''}>
+                  <span>Announce presence detected/cleared</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="plugs-settings-grid single-plug" style="margin-top: 16px;">
+            <div class="plug-settings-card">
+              <div class="plug-settings-title">Reminders</div>
+              <div class="form-group">
+                <label class="form-label">Reminder Mode</label>
+                <select class="form-input door-reminder-mode">
+                  <option value="none" ${reminderMode === 'none' ? 'selected' : ''}>None</option>
+                  <option value="open" ${reminderMode === 'open' ? 'selected' : ''}>Still Open reminder</option>
+                  <option value="unlocked" ${reminderMode === 'unlocked' ? 'selected' : ''}>Still Unlocked reminder</option>
+                </select>
+              </div>
+              <div class="form-group door-reminder-interval-row" style="${reminderMode === 'none' ? 'display:none;' : ''}">
+                <label class="form-label">Reminder Interval: <span class="door-reminder-interval-val">${device.reminder_interval || 30}</span>s</label>
+                <input type="range" class="form-input door-reminder-interval" min="15" max="120" step="5" value="${device.reminder_interval || 30}">
+              </div>
+            </div>
+          </div>
+
+          <div class="plugs-settings-grid single-plug door-auto-lock-section" style="margin-top: 16px; ${!hasLock ? 'display:none;' : ''}">
+            <div class="plug-settings-card">
+              <div class="plug-settings-title">Auto-Lock</div>
+              <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" class="form-checkbox door-auto-lock-enabled" ${device.auto_lock_enabled ? 'checked' : ''}>
+                  <span>Enable auto-lock after door closes</span>
+                </label>
+              </div>
+              <div class="form-group door-auto-lock-delay-row" style="${!device.auto_lock_enabled ? 'display:none;' : ''}">
+                <label class="form-label">Auto-lock delay: <span class="door-auto-lock-delay-val">${device.auto_lock_delay || 10}</span>s</label>
+                <input type="range" class="form-input door-auto-lock-delay" min="1" max="600" step="1" value="${device.auto_lock_delay || 10}">
+              </div>
+            </div>
+          </div>
+
+          <div class="plugs-settings-grid single-plug" style="margin-top: 16px;">
+            <div class="plug-settings-card">
+              <div class="plug-settings-title">Actions</div>
+              <p class="tts-msg-desc" style="margin: 0 0 12px;">Select lights/switches to turn on or off when events occur.</p>
+              
+              <div class="form-group">
+                <label class="form-label">Turn ON when door opens</label>
+                ${this._renderMultiEntityPicker(device.open_turn_on_entities || [], roomIndex, 'door-open-turn-on', ['light.', 'switch.'])}
+              </div>
+              <div class="form-group">
+                <label class="form-label">Turn OFF when door closes</label>
+                ${this._renderMultiEntityPicker(device.close_turn_off_entities || [], roomIndex, 'door-close-turn-off', ['light.', 'switch.'])}
+              </div>
+              
+              <div class="door-lock-actions-section" style="${!hasLock ? 'display:none;' : ''}">
+                <div class="form-group">
+                  <label class="form-label">Turn ON when unlocked</label>
+                  ${this._renderMultiEntityPicker(device.unlock_turn_on_entities || [], roomIndex, 'door-unlock-turn-on', ['light.', 'switch.'])}
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Turn OFF when locked</label>
+                  ${this._renderMultiEntityPicker(device.lock_turn_off_entities || [], roomIndex, 'door-lock-turn-off', ['light.', 'switch.'])}
+                </div>
+              </div>
+
+              <div class="door-presence-actions-section" style="${!hasPresence ? 'display:none;' : ''}">
+                <div class="form-group">
+                  <label class="form-label">Turn ON when presence detected</label>
+                  ${this._renderMultiEntityPicker(device.presence_on_entities || [], roomIndex, 'door-presence-on', ['light.', 'switch.'])}
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Presence ON hold time: <span class="door-presence-on-hold-val">${device.presence_on_hold_secs || 0}</span>s</label>
+                  <input type="range" class="form-input door-presence-on-hold" min="0" max="10" step="1" value="${device.presence_on_hold_secs || 0}">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Turn OFF when presence cleared</label>
+                  ${this._renderMultiEntityPicker(device.presence_off_entities || [], roomIndex, 'door-presence-off', ['light.', 'switch.'])}
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Presence OFF hold time: <span class="door-presence-off-hold-val">${device.presence_off_hold_secs || 0}</span>s</label>
+                  <input type="range" class="form-input door-presence-off-hold" min="0" max="10" step="1" value="${device.presence_off_hold_secs || 0}">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderWindowSettings(device, deviceIndex, roomIndex, isCollapsed = true) {
+    const displayName = device.name || 'Unnamed Window';
+    const collapsedClass = isCollapsed ? 'collapsed' : '';
+    const hasPresence = !!device.presence_sensor;
+    
+    return `
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="window" draggable="true">
+        <div class="outlet-settings-bar">
+          <div class="outlet-drag-handle" title="Drag to reorder">
+            <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0 4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
+          </div>
+          <span class="outlet-name-display ${device.name ? '' : 'empty'}">${displayName}</span>
+          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${deviceIndex}" title="Delete">
+            <svg viewBox="0 0 24 24">${icons.delete}</svg>
+          </button>
+          <div class="outlet-expand-icon">
+            <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+          </div>
+        </div>
+        <div class="outlet-settings-body">
+          <div class="outlet-settings-header">
+            <div class="form-group" style="flex: 1;">
+              <label class="form-label">Window Name</label>
+              <input type="text" class="form-input outlet-name" value="${device.name || ''}" placeholder="Window name...">
+            </div>
+          </div>
+          <div class="plugs-settings-grid single-plug">
+            <div class="plug-settings-card" data-plug="1">
+              <div class="plug-settings-title">Sensors</div>
+              <div class="form-group">
+                <label class="form-label">Contact Sensor (required)</label>
+                ${this._renderEntityAutocomplete(device.contact_sensor || '', 'binary_sensor', roomIndex, 'window-contact-sensor', 'binary_sensor.bedroom_window')}
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">binary_sensor.* for window open/close state.</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Presence Sensor (optional)</label>
+                ${this._renderEntityAutocomplete(device.presence_sensor || '', 'binary_sensor', roomIndex, 'window-presence-sensor', 'binary_sensor.bedroom_motion')}
+                <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">binary_sensor.* for motion/occupancy near this window.</div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="plugs-settings-grid single-plug" style="margin-top: 16px;">
+            <div class="plug-settings-card">
+              <div class="plug-settings-title">Announcements</div>
+              <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" class="form-checkbox window-announce-open-close" ${device.announce_open_close !== false ? 'checked' : ''}>
+                  <span>Announce window open/close</span>
+                </label>
+              </div>
+              <div class="form-group window-presence-announce-row" style="${!hasPresence ? 'display:none;' : ''}">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" class="form-checkbox window-announce-presence" ${device.announce_presence ? 'checked' : ''}>
+                  <span>Announce presence detected/cleared</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="plugs-settings-grid single-plug" style="margin-top: 16px;">
+            <div class="plug-settings-card">
+              <div class="plug-settings-title">Reminders</div>
+              <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" class="form-checkbox window-reminder-enabled" ${device.reminder_enabled ? 'checked' : ''}>
+                  <span>Enable "still open" reminder</span>
+                </label>
+              </div>
+              <div class="form-group window-reminder-interval-row" style="${!device.reminder_enabled ? 'display:none;' : ''}">
+                <label class="form-label">Reminder Interval: <span class="window-reminder-interval-val">${device.reminder_interval || 30}</span>s</label>
+                <input type="range" class="form-input window-reminder-interval" min="15" max="120" step="5" value="${device.reminder_interval || 30}">
+              </div>
+            </div>
+          </div>
+
+          <div class="plugs-settings-grid single-plug" style="margin-top: 16px;">
+            <div class="plug-settings-card">
+              <div class="plug-settings-title">Actions</div>
+              <p class="tts-msg-desc" style="margin: 0 0 12px;">Select lights/switches to turn on or off when events occur.</p>
+              
+              <div class="form-group">
+                <label class="form-label">Turn ON when window opens</label>
+                ${this._renderMultiEntityPicker(device.open_turn_on_entities || [], roomIndex, 'window-open-turn-on', ['light.', 'switch.'])}
+              </div>
+              <div class="form-group">
+                <label class="form-label">Turn OFF when window closes</label>
+                ${this._renderMultiEntityPicker(device.close_turn_off_entities || [], roomIndex, 'window-close-turn-off', ['light.', 'switch.'])}
+              </div>
+
+              <div class="window-presence-actions-section" style="${!hasPresence ? 'display:none;' : ''}">
+                <div class="form-group">
+                  <label class="form-label">Turn ON when presence detected</label>
+                  ${this._renderMultiEntityPicker(device.presence_on_entities || [], roomIndex, 'window-presence-on', ['light.', 'switch.'])}
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Presence ON hold time: <span class="window-presence-on-hold-val">${device.presence_on_hold_secs || 0}</span>s</label>
+                  <input type="range" class="form-input window-presence-on-hold" min="0" max="10" step="1" value="${device.presence_on_hold_secs || 0}">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Turn OFF when presence cleared</label>
+                  ${this._renderMultiEntityPicker(device.presence_off_entities || [], roomIndex, 'window-presence-off', ['light.', 'switch.'])}
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Presence OFF hold time: <span class="window-presence-off-hold-val">${device.presence_off_hold_secs || 0}</span>s</label>
+                  <input type="range" class="form-input window-presence-off-hold" min="0" max="10" step="1" value="${device.presence_off_hold_secs || 0}">
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -17062,6 +17653,71 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _renderMultiEntityPicker(entities, roomIndex, inputClass, prefixes = ['light.', 'switch.']) {
+    const entList = Array.isArray(entities) ? entities : [];
+    const safeEnts = entList.map(e => (e || '').replace(/"/g, '&quot;'));
+    const prefixStr = prefixes.join(',');
+    const chipsHtml = safeEnts.length > 0
+      ? safeEnts.map(e => `<span class="multi-entity-chip" data-entity="${e}">${e}<button type="button" class="multi-entity-chip-remove" title="Remove">&times;</button></span>`).join('')
+      : '';
+    this._entityDatalistId = (this._entityDatalistId || 0) + 1;
+    const dlId = `entity-dl-${this._entityDatalistId}`;
+    return `
+      <div class="multi-entity-picker ${inputClass}" data-prefixes="${prefixStr}">
+        <div class="multi-entity-chips">${chipsHtml}</div>
+        <input type="text" class="form-input multi-entity-input entity-datalist-input" placeholder="Type to add..." list="${dlId}" data-entity-type="light_switch" data-room-index="${roomIndex}" autocomplete="off">
+        <datalist id="${dlId}" data-entity-type="light_switch" data-room-index="${roomIndex}"></datalist>
+      </div>
+    `;
+  }
+
+  _initMultiEntityPicker(container) {
+    if (!container) return;
+    container.querySelectorAll('.multi-entity-picker').forEach(picker => {
+      const input = picker.querySelector('.multi-entity-input');
+      const chipsDiv = picker.querySelector('.multi-entity-chips');
+      const prefixes = (picker.dataset.prefixes || 'light.,switch.').split(',');
+
+      // Handle adding entity on Enter or selection
+      const addEntity = (val) => {
+        const trimmed = val.trim();
+        if (!trimmed) return;
+        const validPrefix = prefixes.some(p => trimmed.startsWith(p));
+        if (!validPrefix) return;
+        // Check if already exists
+        const existing = Array.from(chipsDiv.querySelectorAll('.multi-entity-chip')).map(c => c.dataset.entity);
+        if (existing.includes(trimmed)) return;
+        // Add chip
+        const chip = document.createElement('span');
+        chip.className = 'multi-entity-chip';
+        chip.dataset.entity = trimmed;
+        chip.innerHTML = `${trimmed}<button type="button" class="multi-entity-chip-remove" title="Remove">&times;</button>`;
+        chipsDiv.appendChild(chip);
+        chip.querySelector('.multi-entity-chip-remove').addEventListener('click', () => chip.remove());
+        input.value = '';
+      };
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          addEntity(input.value);
+        }
+      });
+      input.addEventListener('change', () => addEntity(input.value));
+
+      // Handle existing chip remove buttons
+      chipsDiv.querySelectorAll('.multi-entity-chip-remove').forEach(btn => {
+        btn.addEventListener('click', () => btn.closest('.multi-entity-chip').remove());
+      });
+    });
+  }
+
+  _collectMultiEntityPicker(picker) {
+    if (!picker) return [];
+    const chips = picker.querySelectorAll('.multi-entity-chip');
+    return Array.from(chips).map(c => c.dataset.entity).filter(Boolean);
+  }
+
   _initLightEntityRowListeners(row) {
     if (!row) return;
     const wrgbToggle = row.querySelector('.light-entity-wrgb-toggle');
@@ -17473,6 +18129,153 @@ class EnergyPanel extends HTMLElement {
         this._testToggleSwitch(btn);
       });
     });
+
+    // Door-specific event listeners
+    this._attachDoorSettingsListeners(outletItem);
+    // Window-specific event listeners
+    this._attachWindowSettingsListeners(outletItem);
+    // Initialize multi-entity pickers
+    this._initMultiEntityPicker(outletItem);
+  }
+
+  _attachDoorSettingsListeners(outletItem) {
+    const deviceType = outletItem.dataset.deviceType;
+    if (deviceType !== 'door') return;
+
+    // Lock entity visibility toggle
+    const lockInput = outletItem.querySelector('.door-lock-entity, [class*="door-lock-entity"]');
+    if (lockInput) {
+      const updateLockSections = () => {
+        const hasLock = !!lockInput.value.trim();
+        const lockAnnounce = outletItem.querySelector('.door-lock-announce-row');
+        const autoLockSection = outletItem.querySelector('.door-auto-lock-section');
+        const lockActionsSection = outletItem.querySelector('.door-lock-actions-section');
+        if (lockAnnounce) lockAnnounce.style.display = hasLock ? '' : 'none';
+        if (autoLockSection) autoLockSection.style.display = hasLock ? '' : 'none';
+        if (lockActionsSection) lockActionsSection.style.display = hasLock ? '' : 'none';
+      };
+      lockInput.addEventListener('input', updateLockSections);
+      lockInput.addEventListener('change', updateLockSections);
+    }
+
+    // Presence sensor visibility toggle
+    const presenceInput = outletItem.querySelector('.door-presence-sensor, [class*="door-presence-sensor"]');
+    if (presenceInput) {
+      const updatePresenceSections = () => {
+        const hasPresence = !!presenceInput.value.trim();
+        const presenceAnnounce = outletItem.querySelector('.door-presence-announce-row');
+        const presenceActions = outletItem.querySelector('.door-presence-actions-section');
+        if (presenceAnnounce) presenceAnnounce.style.display = hasPresence ? '' : 'none';
+        if (presenceActions) presenceActions.style.display = hasPresence ? '' : 'none';
+      };
+      presenceInput.addEventListener('input', updatePresenceSections);
+      presenceInput.addEventListener('change', updatePresenceSections);
+    }
+
+    // Reminder mode toggle
+    const reminderMode = outletItem.querySelector('.door-reminder-mode');
+    const reminderIntervalRow = outletItem.querySelector('.door-reminder-interval-row');
+    if (reminderMode && reminderIntervalRow) {
+      reminderMode.addEventListener('change', () => {
+        reminderIntervalRow.style.display = reminderMode.value === 'none' ? 'none' : '';
+      });
+    }
+
+    // Reminder interval slider label
+    const reminderSlider = outletItem.querySelector('.door-reminder-interval');
+    const reminderLabel = outletItem.querySelector('.door-reminder-interval-val');
+    if (reminderSlider && reminderLabel) {
+      reminderSlider.addEventListener('input', () => {
+        reminderLabel.textContent = reminderSlider.value;
+      });
+    }
+
+    // Auto-lock enabled toggle
+    const autoLockCb = outletItem.querySelector('.door-auto-lock-enabled');
+    const autoLockDelayRow = outletItem.querySelector('.door-auto-lock-delay-row');
+    if (autoLockCb && autoLockDelayRow) {
+      autoLockCb.addEventListener('change', () => {
+        autoLockDelayRow.style.display = autoLockCb.checked ? '' : 'none';
+      });
+    }
+
+    // Auto-lock delay slider label
+    const autoLockSlider = outletItem.querySelector('.door-auto-lock-delay');
+    const autoLockLabel = outletItem.querySelector('.door-auto-lock-delay-val');
+    if (autoLockSlider && autoLockLabel) {
+      autoLockSlider.addEventListener('input', () => {
+        autoLockLabel.textContent = autoLockSlider.value;
+      });
+    }
+
+    // Presence hold time sliders
+    const presenceOnSlider = outletItem.querySelector('.door-presence-on-hold');
+    const presenceOnLabel = outletItem.querySelector('.door-presence-on-hold-val');
+    if (presenceOnSlider && presenceOnLabel) {
+      presenceOnSlider.addEventListener('input', () => {
+        presenceOnLabel.textContent = presenceOnSlider.value;
+      });
+    }
+    const presenceOffSlider = outletItem.querySelector('.door-presence-off-hold');
+    const presenceOffLabel = outletItem.querySelector('.door-presence-off-hold-val');
+    if (presenceOffSlider && presenceOffLabel) {
+      presenceOffSlider.addEventListener('input', () => {
+        presenceOffLabel.textContent = presenceOffSlider.value;
+      });
+    }
+  }
+
+  _attachWindowSettingsListeners(outletItem) {
+    const deviceType = outletItem.dataset.deviceType;
+    if (deviceType !== 'window') return;
+
+    // Presence sensor visibility toggle
+    const presenceInput = outletItem.querySelector('.window-presence-sensor, [class*="window-presence-sensor"]');
+    if (presenceInput) {
+      const updatePresenceSections = () => {
+        const hasPresence = !!presenceInput.value.trim();
+        const presenceAnnounce = outletItem.querySelector('.window-presence-announce-row');
+        const presenceActions = outletItem.querySelector('.window-presence-actions-section');
+        if (presenceAnnounce) presenceAnnounce.style.display = hasPresence ? '' : 'none';
+        if (presenceActions) presenceActions.style.display = hasPresence ? '' : 'none';
+      };
+      presenceInput.addEventListener('input', updatePresenceSections);
+      presenceInput.addEventListener('change', updatePresenceSections);
+    }
+
+    // Reminder enabled toggle
+    const reminderCb = outletItem.querySelector('.window-reminder-enabled');
+    const reminderIntervalRow = outletItem.querySelector('.window-reminder-interval-row');
+    if (reminderCb && reminderIntervalRow) {
+      reminderCb.addEventListener('change', () => {
+        reminderIntervalRow.style.display = reminderCb.checked ? '' : 'none';
+      });
+    }
+
+    // Reminder interval slider label
+    const reminderSlider = outletItem.querySelector('.window-reminder-interval');
+    const reminderLabel = outletItem.querySelector('.window-reminder-interval-val');
+    if (reminderSlider && reminderLabel) {
+      reminderSlider.addEventListener('input', () => {
+        reminderLabel.textContent = reminderSlider.value;
+      });
+    }
+
+    // Presence hold time sliders
+    const presenceOnSlider = outletItem.querySelector('.window-presence-on-hold');
+    const presenceOnLabel = outletItem.querySelector('.window-presence-on-hold-val');
+    if (presenceOnSlider && presenceOnLabel) {
+      presenceOnSlider.addEventListener('input', () => {
+        presenceOnLabel.textContent = presenceOnSlider.value;
+      });
+    }
+    const presenceOffSlider = outletItem.querySelector('.window-presence-off-hold');
+    const presenceOffLabel = outletItem.querySelector('.window-presence-off-hold-val');
+    if (presenceOffSlider && presenceOffLabel) {
+      presenceOffSlider.addEventListener('input', () => {
+        presenceOffLabel.textContent = presenceOffSlider.value;
+      });
+    }
   }
 
   async _saveEnforcementSettings() {
@@ -17722,6 +18525,58 @@ class EnergyPanel extends HTMLElement {
               device.heater_door_sensor_entity = (item.querySelector('.entity-datalist-input.heater-door-sensor-entity') || item.querySelector('input.heater-door-sensor-entity'))?.value?.trim() || null;
               device.heater_window_sensor_entity = (item.querySelector('.entity-datalist-input.heater-window-sensor-entity') || item.querySelector('input.heater-window-sensor-entity'))?.value?.trim() || null;
             }
+          } else if (deviceTypeFromItem === 'door') {
+            device.type = 'door';
+            device.plug1_entity = null;
+            device.plug2_entity = null;
+            device.plug1_switch = null;
+            device.plug2_switch = null;
+            device.plug1_shutoff = 0;
+            device.plug2_shutoff = 0;
+            const contactSensor = (item.querySelector('.entity-datalist-input.door-contact-sensor') || item.querySelector('input.door-contact-sensor'))?.value?.trim() || '';
+            device.contact_sensor = contactSensor.startsWith('binary_sensor.') ? contactSensor : null;
+            const lockEntity = (item.querySelector('.entity-datalist-input.door-lock-entity') || item.querySelector('input.door-lock-entity'))?.value?.trim() || '';
+            device.lock_entity = lockEntity.startsWith('lock.') ? lockEntity : null;
+            const presenceSensor = (item.querySelector('.entity-datalist-input.door-presence-sensor') || item.querySelector('input.door-presence-sensor'))?.value?.trim() || '';
+            device.presence_sensor = presenceSensor.startsWith('binary_sensor.') ? presenceSensor : null;
+            device.door_subtype = item.querySelector('.door-subtype')?.value || 'standard';
+            device.announce_open_close = item.querySelector('.door-announce-open-close')?.checked !== false;
+            device.announce_lock = item.querySelector('.door-announce-lock')?.checked !== false;
+            device.announce_presence = item.querySelector('.door-announce-presence')?.checked === true;
+            device.reminder_mode = item.querySelector('.door-reminder-mode')?.value || 'none';
+            device.reminder_interval = Math.max(15, Math.min(120, parseInt(item.querySelector('.door-reminder-interval')?.value, 10) || 30));
+            device.auto_lock_enabled = item.querySelector('.door-auto-lock-enabled')?.checked === true;
+            device.auto_lock_delay = Math.max(1, Math.min(600, parseInt(item.querySelector('.door-auto-lock-delay')?.value, 10) || 10));
+            device.open_turn_on_entities = this._collectMultiEntityPicker(item.querySelector('.door-open-turn-on'));
+            device.close_turn_off_entities = this._collectMultiEntityPicker(item.querySelector('.door-close-turn-off'));
+            device.unlock_turn_on_entities = this._collectMultiEntityPicker(item.querySelector('.door-unlock-turn-on'));
+            device.lock_turn_off_entities = this._collectMultiEntityPicker(item.querySelector('.door-lock-turn-off'));
+            device.presence_on_entities = this._collectMultiEntityPicker(item.querySelector('.door-presence-on'));
+            device.presence_off_entities = this._collectMultiEntityPicker(item.querySelector('.door-presence-off'));
+            device.presence_on_hold_secs = Math.max(0, Math.min(10, parseInt(item.querySelector('.door-presence-on-hold')?.value, 10) || 0));
+            device.presence_off_hold_secs = Math.max(0, Math.min(10, parseInt(item.querySelector('.door-presence-off-hold')?.value, 10) || 0));
+          } else if (deviceTypeFromItem === 'window') {
+            device.type = 'window';
+            device.plug1_entity = null;
+            device.plug2_entity = null;
+            device.plug1_switch = null;
+            device.plug2_switch = null;
+            device.plug1_shutoff = 0;
+            device.plug2_shutoff = 0;
+            const contactSensor = (item.querySelector('.entity-datalist-input.window-contact-sensor') || item.querySelector('input.window-contact-sensor'))?.value?.trim() || '';
+            device.contact_sensor = contactSensor.startsWith('binary_sensor.') ? contactSensor : null;
+            const presenceSensor = (item.querySelector('.entity-datalist-input.window-presence-sensor') || item.querySelector('input.window-presence-sensor'))?.value?.trim() || '';
+            device.presence_sensor = presenceSensor.startsWith('binary_sensor.') ? presenceSensor : null;
+            device.announce_open_close = item.querySelector('.window-announce-open-close')?.checked !== false;
+            device.announce_presence = item.querySelector('.window-announce-presence')?.checked === true;
+            device.reminder_enabled = item.querySelector('.window-reminder-enabled')?.checked === true;
+            device.reminder_interval = Math.max(15, Math.min(120, parseInt(item.querySelector('.window-reminder-interval')?.value, 10) || 30));
+            device.open_turn_on_entities = this._collectMultiEntityPicker(item.querySelector('.window-open-turn-on'));
+            device.close_turn_off_entities = this._collectMultiEntityPicker(item.querySelector('.window-close-turn-off'));
+            device.presence_on_entities = this._collectMultiEntityPicker(item.querySelector('.window-presence-on'));
+            device.presence_off_entities = this._collectMultiEntityPicker(item.querySelector('.window-presence-off'));
+            device.presence_on_hold_secs = Math.max(0, Math.min(10, parseInt(item.querySelector('.window-presence-on-hold')?.value, 10) || 0));
+            device.presence_off_hold_secs = Math.max(0, Math.min(10, parseInt(item.querySelector('.window-presence-off-hold')?.value, 10) || 0));
           } else {
             device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
             device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
