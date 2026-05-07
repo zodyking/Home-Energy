@@ -2579,6 +2579,46 @@ class EnergyMonitor:
 
         return hex_str
 
+    async def _async_tuya_clear_scene_effect_if_active(
+        self, entity_id: str, attrs: dict
+    ) -> dict:
+        """If the light reports Scene effect, switch to the integration's off effect (exit scene mode)."""
+        effect_list = attrs.get("effect_list") or []
+        if not effect_list:
+            return attrs
+        current = attrs.get("effect")
+        scene_entry = next((e for e in effect_list if str(e).lower() == "scene"), None)
+        off_entry = next((e for e in effect_list if str(e).lower() == "off"), None)
+        if not off_entry:
+            return attrs
+        in_scene = False
+        if current is not None:
+            cur_l = str(current).strip().lower()
+            if cur_l == "scene":
+                in_scene = True
+            elif scene_entry is not None and str(current) == str(scene_entry):
+                in_scene = True
+        if not in_scene:
+            return attrs
+        try:
+            await self.hass.services.async_call(
+                "light",
+                "turn_on",
+                {"entity_id": entity_id, "effect": off_entry},
+                blocking=True,
+            )
+        except Exception as e:
+            _LOGGER.warning(
+                "Light automation: could not exit scene effect on %s: %s",
+                entity_id,
+                e,
+            )
+            return attrs
+        st = self.hass.states.get(entity_id)
+        if st and st.attributes:
+            return dict(st.attributes)
+        return attrs
+
     async def _apply_light_action(
         self,
         entity_id: str,
@@ -2621,6 +2661,13 @@ class EnergyMonitor:
             # Mode only applies when light is on - nothing to do
             return
 
+        light_mode = segment.get("light_mode", "white")
+        tuya_scene = segment.get("tuya_scene")
+
+        # Tuya: exit Scene effect whenever segment is not scene (before enforcement so segment switches always apply).
+        if is_tuya and current_on and light_mode != "scene":
+            attrs = await self._async_tuya_clear_scene_effect_if_active(entity_id, attrs)
+
         # Only check enforcement interval if light is currently ON (we're enforcing settings)
         # If light is OFF and action is "on", we should turn it on regardless of interval
         if current_on and self._should_skip_light_enforcement(entity_id, enforcement_interval):
@@ -2629,8 +2676,6 @@ class EnergyMonitor:
         brightness_pct = segment.get("brightness")
         color_temp = segment.get("color_temp")
         hs_color = segment.get("hs_color")
-        tuya_scene = segment.get("tuya_scene")
-        light_mode = segment.get("light_mode", "white")
 
         # Tuya scene: write scene hex to each light's text.<object_id>_scene (per-entity pairing)
         if is_tuya and tuya_scene and light_mode == "scene":
