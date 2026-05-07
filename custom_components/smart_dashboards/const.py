@@ -84,6 +84,19 @@ DEFAULT_VENT_AUTOMATION_ON_MSG = (
     "{prefix} {room_name} vent is on."
 )
 
+# Door/Window/Presence TTS message templates
+DEFAULT_DOOR_OPENED_MSG = "{prefix} {room_name} {door_type} door was opened."
+DEFAULT_DOOR_CLOSED_MSG = "{prefix} {room_name} {door_type} door was closed."
+DEFAULT_DOOR_LOCKED_MSG = "{prefix} {room_name} {door_type} door was locked."
+DEFAULT_DOOR_UNLOCKED_MSG = "{prefix} {room_name} {door_type} door was unlocked."
+DEFAULT_DOOR_STILL_OPEN_MSG = "{prefix} {room_name} {door_type} door is still open."
+DEFAULT_DOOR_STILL_UNLOCKED_MSG = "{prefix} {room_name} {door_type} door is still unlocked."
+DEFAULT_WINDOW_OPENED_MSG = "{prefix} {room_name} window was opened."
+DEFAULT_WINDOW_CLOSED_MSG = "{prefix} {room_name} window was closed."
+DEFAULT_WINDOW_STILL_OPEN_MSG = "{prefix} {room_name} window is still open."
+DEFAULT_PRESENCE_DETECTED_MSG = "{prefix} Presence detected in {room_name}."
+DEFAULT_PRESENCE_CLEARED_MSG = "{prefix} {room_name} cleared."
+
 # Notification message templates (for mobile push notifications)
 DEFAULT_NOTIFICATION_TITLE = "Home Energy"
 DEFAULT_NOTIFY_BUDGET_HIT_TITLE = "{notification_title} Budget Exceeded"
@@ -241,6 +254,22 @@ DEFAULT_CONFIG = {
             "zone_health_reminder_hours": 1,
             "zone_health_notification_msg": "Hi {name}, your Home Assistant Companion app location doesn't appear to be set up correctly. Zone-based presence isn't working.",
             "zone_health_reminder_tts_msg": "{name}, your zone-based location setup needs attention. Please check your Companion app settings.",
+            # Door/Window/Presence TTS messages
+            "door_opened_msg": DEFAULT_DOOR_OPENED_MSG,
+            "door_closed_msg": DEFAULT_DOOR_CLOSED_MSG,
+            "door_locked_msg": DEFAULT_DOOR_LOCKED_MSG,
+            "door_unlocked_msg": DEFAULT_DOOR_UNLOCKED_MSG,
+            "door_still_open_msg": DEFAULT_DOOR_STILL_OPEN_MSG,
+            "door_still_unlocked_msg": DEFAULT_DOOR_STILL_UNLOCKED_MSG,
+            "window_opened_msg": DEFAULT_WINDOW_OPENED_MSG,
+            "window_closed_msg": DEFAULT_WINDOW_CLOSED_MSG,
+            "window_still_open_msg": DEFAULT_WINDOW_STILL_OPEN_MSG,
+            "presence_detected_msg": DEFAULT_PRESENCE_DETECTED_MSG,
+            "presence_cleared_msg": DEFAULT_PRESENCE_CLEARED_MSG,
+            # Door/Window/Presence TTS enable flags
+            "door_tts_enabled": True,
+            "window_tts_enabled": True,
+            "presence_tts_enabled": True,
         },
         "power_enforcement": {
             "enabled": False,

@@ -46,6 +46,17 @@ from .const import (
     DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
     DEFAULT_NOTIFY_MANUAL_TOGGLE_MSG,
     DEFAULT_NOTIFICATION_TITLE,
+    DEFAULT_DOOR_OPENED_MSG,
+    DEFAULT_DOOR_CLOSED_MSG,
+    DEFAULT_DOOR_LOCKED_MSG,
+    DEFAULT_DOOR_UNLOCKED_MSG,
+    DEFAULT_DOOR_STILL_OPEN_MSG,
+    DEFAULT_DOOR_STILL_UNLOCKED_MSG,
+    DEFAULT_WINDOW_OPENED_MSG,
+    DEFAULT_WINDOW_CLOSED_MSG,
+    DEFAULT_WINDOW_STILL_OPEN_MSG,
+    DEFAULT_PRESENCE_DETECTED_MSG,
+    DEFAULT_PRESENCE_CLEARED_MSG,
 )
 from .mobile_notify_target import resolve_notify_target
 from .zone_health_storage import (
@@ -221,6 +232,16 @@ class EnergyMonitor:
         self._zone_health_earliest_alert_at: datetime | None = None
         # In-memory copy of JSON store (kept in sync with disk after each recorder refresh)
         self._zone_health_store_cache: dict | None = None
+
+        # Door/Window/Lock/Presence automation state
+        self._door_window_state: dict[str, dict] = {}  # contact sensor states
+        self._lock_state: dict[str, str] = {}  # lock entity states (locked/unlocked)
+        self._door_reminder_active: dict[str, asyncio.Task | None] = {}  # active reminder tasks
+        self._door_auto_lock_task: dict[str, asyncio.Task | None] = {}  # pending auto-lock tasks
+        self._presence_hold_state: dict[str, dict] = {}  # presence sensor hold timers
+        self._door_window_listener_unsub: list = []  # unsubscribe callbacks for contact sensors
+        self._lock_listener_unsub: list = []  # unsubscribe callbacks for lock entities
+        self._door_presence_listener_unsub: list = []  # unsubscribe callbacks for door/window presence sensors
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -2880,6 +2901,7 @@ class EnergyMonitor:
         self._setup_presence_listeners()
         self._setup_manual_toggle_switch_listeners()
         self._setup_zone_health_listeners()
+        self._setup_door_window_listeners()
 
     def _teardown_manual_toggle_switch_listeners(self) -> None:
         for unsub in self._manual_toggle_listener_unsub:
@@ -3003,6 +3025,7 @@ class EnergyMonitor:
                 pass
         self._presence_listener_unsub = []
         self._teardown_manual_toggle_switch_listeners()
+        self._teardown_door_window_listeners()
         for unsub in self._power_listener_unsub:
             unsub()
         self._power_listener_unsub = []
@@ -3012,6 +3035,15 @@ class EnergyMonitor:
             except Exception:
                 pass
         self._person_zone_health_listener_unsub = []
+        # Cancel door reminder and auto-lock tasks
+        for task in self._door_reminder_active.values():
+            if task:
+                task.cancel()
+        self._door_reminder_active.clear()
+        for task in self._door_auto_lock_task.values():
+            if task:
+                task.cancel()
+        self._door_auto_lock_task.clear()
         if self._task:
             self._task.cancel()
             try:
@@ -5127,6 +5159,495 @@ class EnergyMonitor:
                             self._stove_15min_warn_sent[key] = False
                             self._stove_30sec_warn_sent[key] = False
                             self._stove_progress_last_boundary[key] = 0
+
+    # -------------------------------------------------------------------------
+    # Door / Window / Lock / Presence Automation
+    # -------------------------------------------------------------------------
+
+    def _teardown_door_window_listeners(self) -> None:
+        """Remove door/window/lock/presence state listeners."""
+        for unsub in self._door_window_listener_unsub:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._door_window_listener_unsub.clear()
+        for unsub in self._lock_listener_unsub:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._lock_listener_unsub.clear()
+        for unsub in self._door_presence_listener_unsub:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._door_presence_listener_unsub.clear()
+
+    def _setup_door_window_listeners(self) -> None:
+        """Subscribe to door/window contact sensor, lock, and presence sensor state changes."""
+        self._teardown_door_window_listeners()
+        
+        contact_sensor_ids: set[str] = set()
+        lock_ids: set[str] = set()
+        presence_sensor_ids: set[str] = set()
+        
+        for room in self.config_manager.energy_config.get("rooms", []):
+            for outlet in room.get("outlets", []):
+                otype = outlet.get("type")
+                if otype in ("door", "window"):
+                    cs = outlet.get("contact_sensor")
+                    if cs and cs.startswith("binary_sensor."):
+                        contact_sensor_ids.add(cs)
+                    ps = outlet.get("presence_sensor")
+                    if ps and ps.startswith("binary_sensor."):
+                        presence_sensor_ids.add(ps)
+                    if otype == "door":
+                        lock = outlet.get("lock_entity")
+                        if lock and lock.startswith("lock."):
+                            lock_ids.add(lock)
+        
+        if contact_sensor_ids:
+            @callback
+            def _on_contact_change(event: Event) -> None:
+                self.hass.async_create_task(
+                    self._async_handle_contact_sensor_change(event)
+                )
+            unsub = async_track_state_change_event(
+                self.hass, list(contact_sensor_ids), _on_contact_change
+            )
+            self._door_window_listener_unsub.append(unsub)
+            _LOGGER.debug("Door/window contact listeners registered for %d sensors", len(contact_sensor_ids))
+        
+        if lock_ids:
+            @callback
+            def _on_lock_change(event: Event) -> None:
+                self.hass.async_create_task(
+                    self._async_handle_lock_state_change(event)
+                )
+            unsub = async_track_state_change_event(
+                self.hass, list(lock_ids), _on_lock_change
+            )
+            self._lock_listener_unsub.append(unsub)
+            _LOGGER.debug("Lock listeners registered for %d entities", len(lock_ids))
+        
+        if presence_sensor_ids:
+            @callback
+            def _on_door_presence_change(event: Event) -> None:
+                self.hass.async_create_task(
+                    self._async_handle_door_window_presence_change(event)
+                )
+            unsub = async_track_state_change_event(
+                self.hass, list(presence_sensor_ids), _on_door_presence_change
+            )
+            self._door_presence_listener_unsub.append(unsub)
+            _LOGGER.debug("Door/window presence listeners registered for %d sensors", len(presence_sensor_ids))
+
+    def _find_door_window_outlet_by_contact_sensor(self, entity_id: str) -> tuple[dict, dict, str] | None:
+        """Find the door/window outlet config and room for a contact sensor entity."""
+        for room in self.config_manager.energy_config.get("rooms", []):
+            for outlet in room.get("outlets", []):
+                if outlet.get("type") in ("door", "window"):
+                    if outlet.get("contact_sensor") == entity_id:
+                        return outlet, room, outlet.get("type")
+        return None
+
+    def _find_door_outlet_by_lock(self, entity_id: str) -> tuple[dict, dict] | None:
+        """Find the door outlet config and room for a lock entity."""
+        for room in self.config_manager.energy_config.get("rooms", []):
+            for outlet in room.get("outlets", []):
+                if outlet.get("type") == "door" and outlet.get("lock_entity") == entity_id:
+                    return outlet, room
+        return None
+
+    def _find_door_window_outlet_by_presence_sensor(self, entity_id: str) -> tuple[dict, dict, str] | None:
+        """Find the door/window outlet config and room for a presence sensor entity."""
+        for room in self.config_manager.energy_config.get("rooms", []):
+            for outlet in room.get("outlets", []):
+                if outlet.get("type") in ("door", "window"):
+                    if outlet.get("presence_sensor") == entity_id:
+                        return outlet, room, outlet.get("type")
+        return None
+
+    def _door_window_key(self, outlet: dict, room: dict) -> str:
+        """Generate unique key for door/window state tracking."""
+        room_id = room.get("id", room.get("name", "room").lower().replace(" ", "_"))
+        outlet_name = (outlet.get("name") or "device").lower().replace(" ", "_")
+        return f"{room_id}_{outlet_name}"
+
+    async def _async_handle_contact_sensor_change(self, event: Event) -> None:
+        """Handle door/window contact sensor state change."""
+        entity_id = event.data.get("entity_id")
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        
+        if not new_state or new_state.state in ("unknown", "unavailable"):
+            return
+        if not old_state or old_state.state in ("unknown", "unavailable"):
+            return
+        if new_state.state == old_state.state:
+            return
+        
+        result = self._find_door_window_outlet_by_contact_sensor(entity_id)
+        if not result:
+            return
+        
+        outlet, room, device_type = result
+        key = self._door_window_key(outlet, room)
+        is_open = new_state.state == "on"  # binary_sensor: on = open, off = closed
+        
+        room_name = room.get("name", "Room")
+        outlet_name = outlet.get("name", device_type.capitalize())
+        media_player = room.get("media_player")
+        volume = room.get("volume", 0.7)
+        tts_settings = self.config_manager.energy_config.get("tts_settings", {})
+        
+        _LOGGER.debug("%s %s state changed: %s -> %s (is_open=%s)",
+                      device_type.capitalize(), outlet_name, old_state.state, new_state.state, is_open)
+        
+        if device_type == "door":
+            await self._handle_door_contact_change(outlet, room, key, is_open, media_player, volume, tts_settings)
+        else:
+            await self._handle_window_contact_change(outlet, room, key, is_open, media_player, volume, tts_settings)
+
+    async def _handle_door_contact_change(
+        self, outlet: dict, room: dict, key: str, is_open: bool,
+        media_player: str | None, volume: float, tts_settings: dict
+    ) -> None:
+        """Handle door contact sensor state change."""
+        room_name = room.get("name", "Room")
+        door_type = outlet.get("door_subtype", "standard")
+        door_type_text = "" if door_type == "standard" else door_type
+        
+        # Cancel any pending auto-lock if door was opened
+        if is_open and key in self._door_auto_lock_task:
+            task = self._door_auto_lock_task.pop(key, None)
+            if task:
+                task.cancel()
+        
+        if is_open:
+            # Door opened
+            if outlet.get("announce_open_close", True) and media_player:
+                if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_opened"):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg = tts_settings.get("door_opened_msg", DEFAULT_DOOR_OPENED_MSG)
+                    message = msg.format(prefix=prefix, room_name=room_name, door_type=door_type_text).strip()
+                    await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
+            
+            # Turn on entities
+            await self._turn_on_entities(outlet.get("open_turn_on_entities", []))
+            
+            # Start reminder loop if configured
+            if outlet.get("reminder_mode") == "open":
+                await self._start_door_reminder(outlet, room, key, "open", media_player, volume, tts_settings)
+        else:
+            # Door closed
+            if outlet.get("announce_open_close", True) and media_player:
+                if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_closed"):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg = tts_settings.get("door_closed_msg", DEFAULT_DOOR_CLOSED_MSG)
+                    message = msg.format(prefix=prefix, room_name=room_name, door_type=door_type_text).strip()
+                    await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
+            
+            # Turn off entities
+            await self._turn_off_entities(outlet.get("close_turn_off_entities", []))
+            
+            # Stop "still open" reminder
+            await self._stop_door_reminder(key)
+            
+            # Start auto-lock timer if enabled
+            if outlet.get("auto_lock_enabled") and outlet.get("lock_entity"):
+                delay = outlet.get("auto_lock_delay", 10)
+                self._door_auto_lock_task[key] = self.hass.async_create_task(
+                    self._run_auto_lock(outlet, room, key, delay)
+                )
+
+    async def _handle_window_contact_change(
+        self, outlet: dict, room: dict, key: str, is_open: bool,
+        media_player: str | None, volume: float, tts_settings: dict
+    ) -> None:
+        """Handle window contact sensor state change."""
+        room_name = room.get("name", "Room")
+        
+        if is_open:
+            # Window opened
+            if outlet.get("announce_open_close", True) and media_player:
+                if tts_settings.get("window_tts_enabled", True) and self._tts_line_enabled(tts_settings, "window_opened"):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg = tts_settings.get("window_opened_msg", DEFAULT_WINDOW_OPENED_MSG)
+                    message = msg.format(prefix=prefix, room_name=room_name).strip()
+                    await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
+            
+            # Turn on entities
+            await self._turn_on_entities(outlet.get("open_turn_on_entities", []))
+            
+            # Start reminder loop if enabled
+            if outlet.get("reminder_enabled"):
+                await self._start_door_reminder(outlet, room, key, "window_open", media_player, volume, tts_settings)
+        else:
+            # Window closed
+            if outlet.get("announce_open_close", True) and media_player:
+                if tts_settings.get("window_tts_enabled", True) and self._tts_line_enabled(tts_settings, "window_closed"):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg = tts_settings.get("window_closed_msg", DEFAULT_WINDOW_CLOSED_MSG)
+                    message = msg.format(prefix=prefix, room_name=room_name).strip()
+                    await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
+            
+            # Turn off entities
+            await self._turn_off_entities(outlet.get("close_turn_off_entities", []))
+            
+            # Stop reminder
+            await self._stop_door_reminder(key)
+
+    async def _async_handle_lock_state_change(self, event: Event) -> None:
+        """Handle lock entity state change."""
+        entity_id = event.data.get("entity_id")
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        
+        if not new_state or new_state.state in ("unknown", "unavailable"):
+            return
+        if not old_state or old_state.state in ("unknown", "unavailable"):
+            return
+        if new_state.state == old_state.state:
+            return
+        
+        result = self._find_door_outlet_by_lock(entity_id)
+        if not result:
+            return
+        
+        outlet, room = result
+        key = self._door_window_key(outlet, room)
+        is_locked = new_state.state == "locked"
+        
+        room_name = room.get("name", "Room")
+        door_type = outlet.get("door_subtype", "standard")
+        door_type_text = "" if door_type == "standard" else door_type
+        media_player = room.get("media_player")
+        volume = room.get("volume", 0.7)
+        tts_settings = self.config_manager.energy_config.get("tts_settings", {})
+        
+        _LOGGER.debug("Lock %s state changed: %s -> %s (is_locked=%s)",
+                      entity_id, old_state.state, new_state.state, is_locked)
+        
+        if is_locked:
+            # Door locked
+            if outlet.get("announce_lock", True) and media_player:
+                if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_locked"):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg = tts_settings.get("door_locked_msg", DEFAULT_DOOR_LOCKED_MSG)
+                    message = msg.format(prefix=prefix, room_name=room_name, door_type=door_type_text).strip()
+                    await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
+            
+            # Turn off entities
+            await self._turn_off_entities(outlet.get("lock_turn_off_entities", []))
+            
+            # Stop "still unlocked" reminder
+            lock_key = f"{key}_lock"
+            await self._stop_door_reminder(lock_key)
+        else:
+            # Door unlocked
+            if outlet.get("announce_lock", True) and media_player:
+                if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_unlocked"):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg = tts_settings.get("door_unlocked_msg", DEFAULT_DOOR_UNLOCKED_MSG)
+                    message = msg.format(prefix=prefix, room_name=room_name, door_type=door_type_text).strip()
+                    await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
+            
+            # Turn on entities
+            await self._turn_on_entities(outlet.get("unlock_turn_on_entities", []))
+            
+            # Start "still unlocked" reminder if configured
+            if outlet.get("reminder_mode") == "unlocked":
+                lock_key = f"{key}_lock"
+                await self._start_door_reminder(outlet, room, lock_key, "unlocked", media_player, volume, tts_settings)
+
+    async def _async_handle_door_window_presence_change(self, event: Event) -> None:
+        """Handle door/window presence sensor state change."""
+        entity_id = event.data.get("entity_id")
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        
+        if not new_state or new_state.state in ("unknown", "unavailable"):
+            return
+        if not old_state or old_state.state in ("unknown", "unavailable"):
+            return
+        if new_state.state == old_state.state:
+            return
+        
+        result = self._find_door_window_outlet_by_presence_sensor(entity_id)
+        if not result:
+            return
+        
+        outlet, room, device_type = result
+        key = f"{self._door_window_key(outlet, room)}_presence"
+        is_detected = new_state.state == "on"  # binary_sensor: on = detected
+        
+        room_name = room.get("name", "Room")
+        media_player = room.get("media_player")
+        volume = room.get("volume", 0.7)
+        tts_settings = self.config_manager.energy_config.get("tts_settings", {})
+        
+        _LOGGER.debug("%s presence sensor %s: %s -> %s (detected=%s)",
+                      device_type.capitalize(), entity_id, old_state.state, new_state.state, is_detected)
+        
+        if is_detected:
+            # Presence detected
+            hold_secs = outlet.get("presence_on_hold_secs", 0)
+            if hold_secs > 0:
+                # Wait for hold time before acting
+                await asyncio.sleep(hold_secs)
+                # Re-check state after hold
+                current = self.hass.states.get(entity_id)
+                if not current or current.state != "on":
+                    return
+            
+            if outlet.get("announce_presence") and media_player:
+                if tts_settings.get("presence_tts_enabled", True) and self._tts_line_enabled(tts_settings, "presence_detected"):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg = tts_settings.get("presence_detected_msg", DEFAULT_PRESENCE_DETECTED_MSG)
+                    message = msg.format(prefix=prefix, room_name=room_name).strip()
+                    await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
+            
+            await self._turn_on_entities(outlet.get("presence_on_entities", []))
+        else:
+            # Presence cleared
+            hold_secs = outlet.get("presence_off_hold_secs", 0)
+            if hold_secs > 0:
+                await asyncio.sleep(hold_secs)
+                current = self.hass.states.get(entity_id)
+                if not current or current.state != "off":
+                    return
+            
+            if outlet.get("announce_presence") and media_player:
+                if tts_settings.get("presence_tts_enabled", True) and self._tts_line_enabled(tts_settings, "presence_cleared"):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg = tts_settings.get("presence_cleared_msg", DEFAULT_PRESENCE_CLEARED_MSG)
+                    message = msg.format(prefix=prefix, room_name=room_name).strip()
+                    await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
+            
+            await self._turn_off_entities(outlet.get("presence_off_entities", []))
+
+    async def _start_door_reminder(
+        self, outlet: dict, room: dict, key: str, reminder_type: str,
+        media_player: str | None, volume: float, tts_settings: dict
+    ) -> None:
+        """Start a reminder loop for open door/window or unlocked door."""
+        # Stop any existing reminder for this key
+        await self._stop_door_reminder(key)
+        
+        interval = outlet.get("reminder_interval", 30)
+        room_name = room.get("name", "Room")
+        door_type = outlet.get("door_subtype", "standard")
+        door_type_text = "" if door_type == "standard" else door_type
+        
+        async def reminder_loop():
+            while self._running:
+                await asyncio.sleep(interval)
+                
+                # Check if condition still applies
+                if reminder_type == "open":
+                    contact = outlet.get("contact_sensor")
+                    state = self.hass.states.get(contact)
+                    if not state or state.state != "on":
+                        break
+                    msg_key = "door_still_open"
+                    msg_template = tts_settings.get("door_still_open_msg", DEFAULT_DOOR_STILL_OPEN_MSG)
+                elif reminder_type == "window_open":
+                    contact = outlet.get("contact_sensor")
+                    state = self.hass.states.get(contact)
+                    if not state or state.state != "on":
+                        break
+                    msg_key = "window_still_open"
+                    msg_template = tts_settings.get("window_still_open_msg", DEFAULT_WINDOW_STILL_OPEN_MSG)
+                elif reminder_type == "unlocked":
+                    lock = outlet.get("lock_entity")
+                    state = self.hass.states.get(lock)
+                    if not state or state.state == "locked":
+                        break
+                    msg_key = "door_still_unlocked"
+                    msg_template = tts_settings.get("door_still_unlocked_msg", DEFAULT_DOOR_STILL_UNLOCKED_MSG)
+                else:
+                    break
+                
+                # Send TTS reminder
+                if media_player and self._tts_line_enabled(tts_settings, msg_key):
+                    tts_enabled_key = "door_tts_enabled" if "door" in reminder_type or reminder_type == "unlocked" else "window_tts_enabled"
+                    if tts_settings.get(tts_enabled_key, True):
+                        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                        message = msg_template.format(prefix=prefix, room_name=room_name, door_type=door_type_text).strip()
+                        await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
+        
+        self._door_reminder_active[key] = self.hass.async_create_task(reminder_loop())
+
+    async def _stop_door_reminder(self, key: str) -> None:
+        """Stop reminder loop for a given key."""
+        task = self._door_reminder_active.pop(key, None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _run_auto_lock(self, outlet: dict, room: dict, key: str, delay: int) -> None:
+        """Wait delay then lock the door if still closed."""
+        try:
+            await asyncio.sleep(delay)
+            
+            # Check if door is still closed
+            contact = outlet.get("contact_sensor")
+            state = self.hass.states.get(contact)
+            if not state or state.state == "on":  # Door is open
+                return
+            
+            lock_entity = outlet.get("lock_entity")
+            if lock_entity:
+                _LOGGER.info("Auto-locking door: %s after %ds", lock_entity, delay)
+                await self.hass.services.async_call(
+                    "lock", "lock",
+                    {"entity_id": lock_entity},
+                    blocking=True
+                )
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            _LOGGER.error("Auto-lock failed: %s", e)
+        finally:
+            self._door_auto_lock_task.pop(key, None)
+
+    async def _turn_on_entities(self, entities: list[str]) -> None:
+        """Turn on a list of light/switch entities."""
+        for entity_id in entities:
+            if not entity_id:
+                continue
+            domain = entity_id.split(".", 1)[0] if "." in entity_id else None
+            if domain in ("light", "switch"):
+                try:
+                    await self.hass.services.async_call(
+                        domain, "turn_on",
+                        {"entity_id": entity_id},
+                        blocking=False
+                    )
+                except Exception as e:
+                    _LOGGER.error("Failed to turn on %s: %s", entity_id, e)
+
+    async def _turn_off_entities(self, entities: list[str]) -> None:
+        """Turn off a list of light/switch entities."""
+        for entity_id in entities:
+            if not entity_id:
+                continue
+            domain = entity_id.split(".", 1)[0] if "." in entity_id else None
+            if domain in ("light", "switch"):
+                try:
+                    await self.hass.services.async_call(
+                        domain, "turn_off",
+                        {"entity_id": entity_id},
+                        blocking=False
+                    )
+                except Exception as e:
+                    _LOGGER.error("Failed to turn off %s: %s", entity_id, e)
 
 
 async def async_start_energy_monitor(

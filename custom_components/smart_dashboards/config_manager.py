@@ -326,6 +326,22 @@ def _normalize_binary_sensor_entity(val: Any) -> str | None:
     return s if s.startswith("binary_sensor.") else None
 
 
+def _validate_entity_list(val: Any, prefixes: tuple[str, ...]) -> list[str]:
+    """Validate a list of entity IDs against allowed prefixes."""
+    if not val:
+        return []
+    if isinstance(val, str):
+        val = [v.strip() for v in val.split(",") if v.strip()]
+    if not isinstance(val, list):
+        return []
+    result = []
+    for entity in val:
+        s = str(entity or "").strip()
+        if any(s.startswith(p) for p in prefixes):
+            result.append(s)
+    return result
+
+
 def vent_like_energy_tracking_key(room_id: str, outlet: dict) -> str:
     """Synthetic key for vent / wall heater static-watts energy when switch is on."""
     name = (outlet.get("name") or "device").lower().replace(" ", "_")
@@ -839,6 +855,7 @@ class ConfigManager:
                         if outlet_type not in (
                             "outlet", "single_outlet", "stove", "microwave",
                             "minisplit", "light", "fridge", "vent", "wall_heater",
+                            "door", "window",
                         ):
                             outlet_type = "outlet"
                         item = {
@@ -1080,6 +1097,58 @@ class ConfigManager:
                                 item["heater_door_sensor_entity"] = door_ent if door_ent.startswith("binary_sensor.") else None
                                 window_ent = str(outlet.get("heater_window_sensor_entity") or "").strip()
                                 item["heater_window_sensor_entity"] = window_ent if window_ent.startswith("binary_sensor.") else None
+                        elif outlet_type == "door":
+                            item["plug1_entity"] = None
+                            item["plug2_entity"] = None
+                            item["plug1_switch"] = None
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = 0
+                            item["plug2_shutoff"] = 0
+                            contact_ent = str(outlet.get("contact_sensor") or "").strip()
+                            item["contact_sensor"] = contact_ent if contact_ent.startswith("binary_sensor.") else None
+                            lock_ent = str(outlet.get("lock_entity") or "").strip()
+                            item["lock_entity"] = lock_ent if lock_ent.startswith("lock.") else None
+                            presence_ent = str(outlet.get("presence_sensor") or "").strip()
+                            item["presence_sensor"] = presence_ent if presence_ent.startswith("binary_sensor.") else None
+                            door_subtype = str(outlet.get("door_subtype") or "standard").strip().lower()
+                            item["door_subtype"] = door_subtype if door_subtype in ("standard", "closet", "entrance") else "standard"
+                            item["announce_open_close"] = bool(outlet.get("announce_open_close", True))
+                            item["announce_lock"] = bool(outlet.get("announce_lock", True))
+                            item["announce_presence"] = bool(outlet.get("announce_presence", False))
+                            reminder_mode = str(outlet.get("reminder_mode") or "none").strip().lower()
+                            item["reminder_mode"] = reminder_mode if reminder_mode in ("none", "open", "unlocked") else "none"
+                            item["reminder_interval"] = max(15, min(120, int(outlet.get("reminder_interval", 30))))
+                            item["auto_lock_enabled"] = bool(outlet.get("auto_lock_enabled", False))
+                            item["auto_lock_delay"] = max(1, min(600, int(outlet.get("auto_lock_delay", 10))))
+                            item["open_turn_on_entities"] = _validate_entity_list(outlet.get("open_turn_on_entities"), ("light.", "switch."))
+                            item["close_turn_off_entities"] = _validate_entity_list(outlet.get("close_turn_off_entities"), ("light.", "switch."))
+                            item["unlock_turn_on_entities"] = _validate_entity_list(outlet.get("unlock_turn_on_entities"), ("light.", "switch."))
+                            item["lock_turn_off_entities"] = _validate_entity_list(outlet.get("lock_turn_off_entities"), ("light.", "switch."))
+                            item["presence_on_entities"] = _validate_entity_list(outlet.get("presence_on_entities"), ("light.", "switch."))
+                            item["presence_off_entities"] = _validate_entity_list(outlet.get("presence_off_entities"), ("light.", "switch."))
+                            item["presence_on_hold_secs"] = max(0, min(10, int(outlet.get("presence_on_hold_secs", 0))))
+                            item["presence_off_hold_secs"] = max(0, min(10, int(outlet.get("presence_off_hold_secs", 0))))
+                        elif outlet_type == "window":
+                            item["plug1_entity"] = None
+                            item["plug2_entity"] = None
+                            item["plug1_switch"] = None
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = 0
+                            item["plug2_shutoff"] = 0
+                            contact_ent = str(outlet.get("contact_sensor") or "").strip()
+                            item["contact_sensor"] = contact_ent if contact_ent.startswith("binary_sensor.") else None
+                            presence_ent = str(outlet.get("presence_sensor") or "").strip()
+                            item["presence_sensor"] = presence_ent if presence_ent.startswith("binary_sensor.") else None
+                            item["announce_open_close"] = bool(outlet.get("announce_open_close", True))
+                            item["announce_presence"] = bool(outlet.get("announce_presence", False))
+                            item["reminder_enabled"] = bool(outlet.get("reminder_enabled", False))
+                            item["reminder_interval"] = max(15, min(120, int(outlet.get("reminder_interval", 30))))
+                            item["open_turn_on_entities"] = _validate_entity_list(outlet.get("open_turn_on_entities"), ("light.", "switch."))
+                            item["close_turn_off_entities"] = _validate_entity_list(outlet.get("close_turn_off_entities"), ("light.", "switch."))
+                            item["presence_on_entities"] = _validate_entity_list(outlet.get("presence_on_entities"), ("light.", "switch."))
+                            item["presence_off_entities"] = _validate_entity_list(outlet.get("presence_off_entities"), ("light.", "switch."))
+                            item["presence_on_hold_secs"] = max(0, min(10, int(outlet.get("presence_on_hold_secs", 0))))
+                            item["presence_off_hold_secs"] = max(0, min(10, int(outlet.get("presence_off_hold_secs", 0))))
                         else:
                             item["plug2_entity"] = None
                             item["plug1_switch"] = None
