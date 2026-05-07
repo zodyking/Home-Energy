@@ -1413,6 +1413,81 @@ class EnergyPanel extends HTMLElement {
           if (lightSwitchPlate) lightSwitchPlate.classList.toggle('active', isOn);
           deviceCard.classList.toggle('light-on', isOn);
         }
+        // Door card live state updates (every second)
+        if (deviceType === 'door') {
+          const contactSensor = deviceCard.dataset.contactSensor;
+          const lockEntity = deviceCard.dataset.lockEntity;
+          const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
+          const lockState = lockEntity ? this._hass?.states?.[lockEntity]?.state : null;
+          const isOpen = contactState === 'on';
+          const isLocked = lockState === 'locked';
+          const hasLock = !!lockEntity;
+
+          // Update card classes
+          deviceCard.classList.toggle('door-open', isOpen);
+          deviceCard.classList.toggle('door-closed', !isOpen);
+          deviceCard.classList.toggle('door-locked', hasLock && isLocked);
+          deviceCard.classList.toggle('door-unlocked', hasLock && !isLocked);
+
+          // Update door icon
+          const doorIcon = deviceCard.querySelector('.door-main-icon');
+          if (doorIcon) {
+            doorIcon.classList.toggle('open', isOpen);
+            doorIcon.classList.toggle('closed', !isOpen);
+            const svg = doorIcon.querySelector('svg path');
+            if (svg) {
+              svg.setAttribute('d', isOpen
+                ? 'M19 19V5c0-1.1-.9-2-2-2H7c-1.1 0-2 .9-2 2v14H4v2h16v-2h-1zm-8-7.5c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zM7 5h8v14H7V5z'
+                : 'M19 19V5c0-1.1-.9-2-2-2H7c-1.1 0-2 .9-2 2v14H4v2h16v-2h-1zm-8-7.5c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zM17 5v14H7V5h10z');
+            }
+          }
+
+          // Update lock icon
+          const lockIcon = deviceCard.querySelector('.door-lock-icon');
+          if (lockIcon && hasLock) {
+            lockIcon.classList.toggle('locked', isLocked);
+            lockIcon.classList.toggle('unlocked', !isLocked);
+            const svg = lockIcon.querySelector('svg path');
+            if (svg) {
+              svg.setAttribute('d', isLocked
+                ? 'M18 8h-1V6c0-2.8-2.2-5-5-5S7 3.2 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.7 1.3-3 3-3s3 1.3 3 3v2H9z'
+                : 'M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.8-2.2-5-5-5S7 3.2 7 6h2c0-1.7 1.3-3 3-3s3 1.3 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2z');
+            }
+          }
+
+          // Update text labels
+          const stateLabel = deviceCard.querySelector('.door-state-label');
+          if (stateLabel) stateLabel.textContent = isOpen ? 'Open' : 'Closed';
+          const lockLabel = deviceCard.querySelector('.door-lock-label');
+          if (lockLabel && hasLock) lockLabel.textContent = isLocked ? 'Locked' : 'Unlocked';
+        }
+        // Window card live state updates (every second)
+        if (deviceType === 'window') {
+          const contactSensor = deviceCard.dataset.contactSensor;
+          const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
+          const isOpen = contactState === 'on';
+
+          // Update card classes
+          deviceCard.classList.toggle('window-open', isOpen);
+          deviceCard.classList.toggle('window-closed', !isOpen);
+
+          // Update window icon
+          const windowIcon = deviceCard.querySelector('.window-main-icon');
+          if (windowIcon) {
+            windowIcon.classList.toggle('open', isOpen);
+            windowIcon.classList.toggle('closed', !isOpen);
+            const svg = windowIcon.querySelector('svg path');
+            if (svg) {
+              svg.setAttribute('d', isOpen
+                ? 'M3 4h18v16H3V4zm2 2v5h6V6H5zm8 0v5h6V6h-6zm-8 7v5h6v-5H5zm8 0v5h6v-5h-6z'
+                : 'M3 4h18v16H3V4zm2 2v12h14V6H5zm2 2h4v3H7V8zm6 0h4v3h-4V8zm-6 5h4v3H7v-3zm6 0h4v3h-4v-3z');
+            }
+          }
+
+          // Update text label
+          const stateLabel = deviceCard.querySelector('.window-state-label');
+          if (stateLabel) stateLabel.textContent = isOpen ? 'Open' : 'Closed';
+        }
       });
     });
 
@@ -5088,45 +5163,39 @@ class EnergyPanel extends HTMLElement {
         color: var(--primary-text-color);
       }
 
-      /* Door Card Styles */
-      .door-card {
-        min-width: 100px;
-        min-height: 130px;
-      }
-      .door-faceplate {
-        background: var(--input-bg);
-        border-radius: 8px;
-        padding: 10px;
+      /* Door Card Styles - matches outlet-face dimensions */
+      .outlet-card.outlet-face.door-card .faceplate.door-faceplate {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 6px;
-        border: 1px solid var(--card-border);
-        transition: border-color 0.2s, box-shadow 0.2s;
+        justify-content: flex-start;
+        gap: 4px;
+        padding: 6px 6px 5px;
+        min-height: 200px;
       }
       .door-card.door-open .door-faceplate {
-        border-color: var(--warning-color, #ffc107);
-        box-shadow: 0 0 8px rgba(255, 193, 7, 0.3);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 0 12px rgba(255, 193, 7, 0.4);
       }
-      .door-card.door-unlocked .door-faceplate {
-        border-color: var(--info-color, #2196f3);
+      .door-card.door-unlocked:not(.door-locked) .door-faceplate {
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 0 8px rgba(33, 150, 243, 0.3);
       }
       .door-icon-container {
         position: relative;
-        width: 48px;
-        height: 48px;
+        width: 56px;
+        height: 56px;
         display: flex;
         align-items: center;
         justify-content: center;
+        margin: 8px 0;
       }
       .door-main-icon {
-        width: 40px;
-        height: 40px;
-        fill: var(--secondary-text-color);
+        width: 48px;
+        height: 48px;
+        fill: rgba(0, 0, 0, 0.5);
         transition: fill 0.2s;
       }
       .door-main-icon.open {
-        fill: var(--warning-color, #ffc107);
+        fill: #ffc107;
       }
       .door-main-icon svg {
         width: 100%;
@@ -5134,21 +5203,22 @@ class EnergyPanel extends HTMLElement {
       }
       .door-lock-icon {
         position: absolute;
-        bottom: -2px;
-        right: -4px;
-        width: 20px;
-        height: 20px;
-        background: var(--card-bg);
+        bottom: 0;
+        right: 0;
+        width: 22px;
+        height: 22px;
+        background: #fff;
         border-radius: 50%;
-        padding: 2px;
-        fill: var(--secondary-text-color);
+        padding: 3px;
+        fill: rgba(0, 0, 0, 0.4);
         transition: fill 0.2s;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
       }
       .door-lock-icon.locked {
-        fill: var(--success-color, #4caf50);
+        fill: #4caf50;
       }
       .door-lock-icon.unlocked {
-        fill: var(--warning-color, #ffc107);
+        fill: #ffc107;
       }
       .door-lock-icon svg {
         width: 100%;
@@ -5159,77 +5229,77 @@ class EnergyPanel extends HTMLElement {
         flex-direction: column;
         align-items: center;
         gap: 2px;
-        font-size: 10px;
+        font-size: 11px;
+        margin-top: auto;
+        padding-bottom: 4px;
       }
       .door-state-label {
-        color: var(--primary-text-color);
-        font-weight: 500;
+        color: rgba(0, 0, 0, 0.7);
+        font-weight: 600;
       }
       .door-card.door-open .door-state-label {
-        color: var(--warning-color, #ffc107);
+        color: #e6a800;
       }
       .door-lock-label {
-        color: var(--secondary-text-color);
-        font-size: 9px;
+        color: rgba(0, 0, 0, 0.5);
+        font-size: 10px;
       }
-      .door-card.door-unlocked .door-lock-label {
-        color: var(--warning-color, #ffc107);
+      .door-card.door-unlocked:not(.door-locked) .door-lock-label {
+        color: #e6a800;
       }
       .door-type-badge {
         font-size: 8px;
-        color: var(--secondary-text-color);
+        color: rgba(0, 0, 0, 0.4);
         text-transform: capitalize;
+        position: absolute;
+        bottom: 8px;
       }
 
-      /* Window Card Styles */
-      .window-card {
-        min-width: 100px;
-        min-height: 120px;
-      }
-      .window-faceplate {
-        background: var(--input-bg);
-        border-radius: 8px;
-        padding: 10px;
+      /* Window Card Styles - matches outlet-face dimensions */
+      .outlet-card.outlet-face.window-card .faceplate.window-faceplate {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 6px;
-        border: 1px solid var(--card-border);
-        transition: border-color 0.2s, box-shadow 0.2s;
+        justify-content: flex-start;
+        gap: 4px;
+        padding: 6px 6px 5px;
+        min-height: 200px;
       }
       .window-card.window-open .window-faceplate {
-        border-color: var(--warning-color, #ffc107);
-        box-shadow: 0 0 8px rgba(255, 193, 7, 0.3);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 0 12px rgba(255, 193, 7, 0.4);
       }
       .window-icon-container {
-        width: 48px;
-        height: 48px;
+        width: 56px;
+        height: 56px;
         display: flex;
         align-items: center;
         justify-content: center;
+        margin: 8px 0;
       }
       .window-main-icon {
-        width: 40px;
-        height: 40px;
-        fill: var(--secondary-text-color);
+        width: 48px;
+        height: 48px;
+        fill: rgba(0, 0, 0, 0.5);
         transition: fill 0.2s;
       }
       .window-main-icon.open {
-        fill: var(--warning-color, #ffc107);
+        fill: #ffc107;
       }
       .window-main-icon svg {
         width: 100%;
         height: 100%;
       }
       .window-status {
-        font-size: 10px;
+        font-size: 11px;
+        margin-top: auto;
+        padding-bottom: 4px;
       }
       .window-state-label {
-        color: var(--primary-text-color);
-        font-weight: 500;
+        color: rgba(0, 0, 0, 0.7);
+        font-weight: 600;
       }
       .window-card.window-open .window-state-label {
-        color: var(--warning-color, #ffc107);
+        color: #e6a800;
       }
 
       .device-card.stove-card .outlet-meta,
@@ -10298,37 +10368,32 @@ class EnergyPanel extends HTMLElement {
   _renderDoorCard(device, index) {
     const contactSensor = device.contact_sensor;
     const lockEntity = device.lock_entity;
-    const contactState = contactSensor ? this.hass?.states?.[contactSensor]?.state : null;
-    const lockState = lockEntity ? this.hass?.states?.[lockEntity]?.state : null;
+    const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
+    const lockState = lockEntity ? this._hass?.states?.[lockEntity]?.state : null;
     const isOpen = contactState === 'on';
     const isLocked = lockState === 'locked';
     const hasLock = !!lockEntity;
     const doorType = device.door_subtype || 'standard';
     
-    // Door icon changes based on state
-    const doorIcon = isOpen 
-      ? '<svg viewBox="0 0 24 24"><path d="M19 19V5c0-1.1-.9-2-2-2H7c-1.1 0-2 .9-2 2v14H4v2h16v-2h-1zm-8-7.5c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zM7 5h8v14H7V5z"/></svg>'
-      : '<svg viewBox="0 0 24 24"><path d="M19 19V5c0-1.1-.9-2-2-2H7c-1.1 0-2 .9-2 2v14H4v2h16v-2h-1zm-8-7.5c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zM17 5v14H7V5h10z"/></svg>';
-    const lockIcon = isLocked
-      ? '<svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.8-2.2-5-5-5S7 3.2 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.7 1.3-3 3-3s3 1.3 3 3v2H9z"/></svg>'
-      : '<svg viewBox="0 0 24 24"><path d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.8-2.2-5-5-5S7 3.2 7 6h2c0-1.7 1.3-3 3-3s3 1.3 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2z"/></svg>';
-
-    const stateClass = isOpen ? 'door-open' : 'door-closed';
-    const lockClass = hasLock ? (isLocked ? 'door-locked' : 'door-unlocked') : '';
-    
     return `
-      <div class="device-card door-card ${stateClass} ${lockClass}" data-outlet-index="${index}" data-device-type="door">
-        <div class="door-faceplate">
+      <div class="outlet-card outlet-face door-card ${isOpen ? 'door-open' : 'door-closed'} ${hasLock ? (isLocked ? 'door-locked' : 'door-unlocked') : ''}" data-outlet-index="${index}" data-device-type="door" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}" data-lock-entity="${(lockEntity || '').replace(/"/g, '&quot;')}">
+        <div class="faceplate door-faceplate">
           <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || 'Door'}</div>
+          <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="door-icon-container">
-            <div class="door-main-icon ${isOpen ? 'open' : 'closed'}">${doorIcon}</div>
-            ${hasLock ? `<div class="door-lock-icon ${isLocked ? 'locked' : 'unlocked'}">${lockIcon}</div>` : ''}
+            <div class="door-main-icon ${isOpen ? 'open' : 'closed'}">
+              <svg viewBox="0 0 24 24"><path d="${isOpen ? 'M19 19V5c0-1.1-.9-2-2-2H7c-1.1 0-2 .9-2 2v14H4v2h16v-2h-1zm-8-7.5c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zM7 5h8v14H7V5z' : 'M19 19V5c0-1.1-.9-2-2-2H7c-1.1 0-2 .9-2 2v14H4v2h16v-2h-1zm-8-7.5c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zM17 5v14H7V5h10z'}"/></svg>
+            </div>
+            ${hasLock ? `<div class="door-lock-icon ${isLocked ? 'locked' : 'unlocked'}">
+              <svg viewBox="0 0 24 24"><path d="${isLocked ? 'M18 8h-1V6c0-2.8-2.2-5-5-5S7 3.2 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.7 1.3-3 3-3s3 1.3 3 3v2H9z' : 'M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.8-2.2-5-5-5S7 3.2 7 6h2c0-1.7 1.3-3 3-3s3 1.3 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2z'}"/></svg>
+            </div>` : ''}
           </div>
+          <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="door-status">
             <span class="door-state-label">${isOpen ? 'Open' : 'Closed'}</span>
             ${hasLock ? `<span class="door-lock-label">${isLocked ? 'Locked' : 'Unlocked'}</span>` : ''}
           </div>
-          <div class="door-type-badge">${doorType !== 'standard' ? doorType : ''}</div>
+          ${doorType !== 'standard' ? `<div class="door-type-badge">${doorType}</div>` : ''}
         </div>
       </div>
     `;
@@ -10336,23 +10401,20 @@ class EnergyPanel extends HTMLElement {
 
   _renderWindowCard(device, index) {
     const contactSensor = device.contact_sensor;
-    const contactState = contactSensor ? this.hass?.states?.[contactSensor]?.state : null;
+    const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
     const isOpen = contactState === 'on';
-    
-    // Window icon (open vs closed)
-    const windowIcon = isOpen
-      ? '<svg viewBox="0 0 24 24"><path d="M3 4h18v16H3V4zm2 2v5h6V6H5zm8 0v5h6V6h-6zm-8 7v5h6v-5H5zm8 0v5h6v-5h-6z"/></svg>'
-      : '<svg viewBox="0 0 24 24"><path d="M3 4h18v16H3V4zm2 2v12h14V6H5zm2 2h4v3H7V8zm6 0h4v3h-4V8zm-6 5h4v3H7v-3zm6 0h4v3h-4v-3z"/></svg>';
 
-    const stateClass = isOpen ? 'window-open' : 'window-closed';
-    
     return `
-      <div class="device-card window-card ${stateClass}" data-outlet-index="${index}" data-device-type="window">
-        <div class="window-faceplate">
+      <div class="outlet-card outlet-face window-card ${isOpen ? 'window-open' : 'window-closed'}" data-outlet-index="${index}" data-device-type="window" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}">
+        <div class="faceplate window-faceplate">
           <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || 'Window'}</div>
+          <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="window-icon-container">
-            <div class="window-main-icon ${isOpen ? 'open' : 'closed'}">${windowIcon}</div>
+            <div class="window-main-icon ${isOpen ? 'open' : 'closed'}">
+              <svg viewBox="0 0 24 24"><path d="${isOpen ? 'M3 4h18v16H3V4zm2 2v5h6V6H5zm8 0v5h6V6h-6zm-8 7v5h6v-5H5zm8 0v5h6v-5h-6z' : 'M3 4h18v16H3V4zm2 2v12h14V6H5zm2 2h4v3H7V8zm6 0h4v3h-4V8zm-6 5h4v3H7v-3zm6 0h4v3h-4v-3z'}"/></svg>
+            </div>
           </div>
+          <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="window-status">
             <span class="window-state-label">${isOpen ? 'Open' : 'Closed'}</span>
           </div>
