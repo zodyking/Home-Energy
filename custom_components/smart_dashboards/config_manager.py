@@ -3259,8 +3259,20 @@ class ConfigManager:
 
             validated_unit = {
                 "unit_change_mode": mode,
-                "unit_switch_duration": max(0, min(5000, int(unit.get("unit_switch_duration", 50)))),
-                "unit_gradient_duration": max(0, min(10000, int(unit.get("unit_gradient_duration", 100)))),
+                # Tuya scene_data_v2: both durations are 0–100 per platform docs.
+                "unit_switch_duration": max(0, min(100, int(unit.get("unit_switch_duration", 50)))),
+                "unit_gradient_duration": max(
+                    0,
+                    min(
+                        100,
+                        int(
+                            unit.get(
+                                "unit_gradient_duration",
+                                unit.get("unit_switch_duration", 50),
+                            )
+                        ),
+                    ),
+                ),
                 "h": max(0, min(360, int(unit.get("h", 0)))),
                 "s": max(0, min(1000, int(unit.get("s", 500)))),
                 "v": max(0, min(1000, int(unit.get("v", 1000)))),
