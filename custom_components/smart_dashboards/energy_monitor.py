@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import os
-from collections import deque
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
@@ -82,6 +82,20 @@ from .tts_queue import async_send_tts_or_queue
 from .tts_numbers import spoken_cardinal
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _format_tts_msg(template: str | None, **kwargs: object) -> str:
+    """Format a user TTS template; placeholders not in kwargs resolve to empty string."""
+    t = str(template or "")
+    if not t:
+        return ""
+    m: defaultdict[str, str] = defaultdict(str)
+    for k, v in kwargs.items():
+        m[str(k)] = "" if v is None else str(v)
+    try:
+        return t.format_map(m).strip()
+    except ValueError:
+        return t.strip()
 
 
 def person_in_any_configured_zone(
@@ -242,6 +256,10 @@ class EnergyMonitor:
         self._door_window_listener_unsub: list = []  # unsubscribe callbacks for contact sensors
         self._lock_listener_unsub: list = []  # unsubscribe callbacks for lock entities
         self._door_presence_listener_unsub: list = []  # unsubscribe callbacks for door/window presence sensors
+        # Battery monitoring state
+        self._battery_last_level: dict[str, float] = {}  # last known battery level per sensor entity
+        self._battery_low_warn_last: dict[str, datetime] = {}  # last hourly low battery warning per sensor
+        self._battery_listener_unsub: list = []  # unsubscribe callbacks for battery sensors
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -1138,7 +1156,27 @@ class EnergyMonitor:
             return bool(tts.get("vent_automation_tts_enabled"))
         if line == "heater_automation":
             return bool(tts.get("heater_automation_tts_enabled"))
-        return tts.get(f"{line}_tts_enabled", True) is not False
+        per_key = f"{line}_tts_enabled"
+        if per_key in tts and tts[per_key] is not None:
+            return tts[per_key] is not False
+        # Door/window/presence/battery: honor section master toggles when per-line key absent
+        if line.startswith("door_"):
+            return tts.get("door_tts_enabled", True) is not False
+        if line.startswith("window_"):
+            return tts.get("window_tts_enabled", True) is not False
+        if line.startswith("presence_"):
+            return tts.get("presence_tts_enabled", True) is not False
+        if line.startswith("battery_"):
+            return tts.get("battery_tts_enabled", True) is not False
+        return tts.get(per_key, True) is not False
+
+    @staticmethod
+    def _contact_sensor_state_is_open(state: str | None) -> bool:
+        """True if contact sensor state means open (on/open); supports HA and MQTT-style values."""
+        if not state:
+            return False
+        s = str(state).lower()
+        return s in ("on", "open")
 
     @staticmethod
     def _budget_boost_period_label(weekdays: list) -> str:
@@ -2555,27 +2593,42 @@ class EnergyMonitor:
         tuya_scene = segment.get("tuya_scene")
         light_mode = segment.get("light_mode", "white")
 
-        # Tuya scene handling - only when light is ON
-        if is_tuya and tuya_scene and light_mode == "scene" and self.hass.services.has_service("tuya_local", "set_dp"):
+        # Tuya scene handling - send to text.<light_name>_scene entity instead of tuya_local.set_dp
+        if is_tuya and tuya_scene and light_mode == "scene":
             if current_on:
                 scene_hex = self._encode_tuya_scene_hex(tuya_scene)
                 scene_hash = f"tuya_scene_{hash(scene_hex)}"
+                # Derive scene text entity from light entity: light.bed_light -> text.bed_light_scene
+                light_name = entity_id.replace("light.", "")
+                scene_text_entity = f"text.{light_name}_scene"
+                
+                # Check if scene text entity exists
+                scene_state = self.hass.states.get(scene_text_entity)
+                if scene_state is None:
+                    # Entity doesn't exist - try to enable it if possible or log warning
+                    _LOGGER.warning(
+                        "Scene text entity %s does not exist for light %s. "
+                        "Please enable it in your Tuya Local integration.",
+                        scene_text_entity, entity_id
+                    )
+                    self._mark_light_enforcement_run(entity_id)
+                    return
+                
                 # Always re-apply scene on enforcement interval to handle external changes
                 try:
                     await self.hass.services.async_call(
-                        "tuya_local",
-                        "set_dp",
+                        "text",
+                        "set_value",
                         {
-                            "entity_id": entity_id,
-                            "dp": 25,
+                            "entity_id": scene_text_entity,
                             "value": scene_hex,
                         },
                     )
                     self._light_automation_state[state_key] = scene_hash
                     self._mark_light_enforcement_run(entity_id)
-                    _LOGGER.debug("Light automation: applied Tuya scene hex to %s: %s", entity_id, scene_hex)
+                    _LOGGER.debug("Light automation: applied Tuya scene to %s via %s: %s", entity_id, scene_text_entity, scene_hex)
                 except Exception as e:
-                    _LOGGER.warning("Light automation failed to apply Tuya scene to %s: %s", entity_id, e)
+                    _LOGGER.warning("Light automation failed to apply Tuya scene to %s via %s: %s", entity_id, scene_text_entity, e)
             return
 
         needs_update = False
@@ -5189,7 +5242,7 @@ class EnergyMonitor:
     # -------------------------------------------------------------------------
 
     def _teardown_door_window_listeners(self) -> None:
-        """Remove door/window/lock/presence state listeners."""
+        """Remove door/window/lock/presence/battery state listeners."""
         for unsub in self._door_window_listener_unsub:
             try:
                 unsub()
@@ -5208,6 +5261,13 @@ class EnergyMonitor:
             except Exception:
                 pass
         self._door_presence_listener_unsub.clear()
+        # Teardown battery listeners
+        for unsub in self._battery_listener_unsub:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._battery_listener_unsub.clear()
 
     def _setup_door_window_listeners(self) -> None:
         """Subscribe to door/window contact sensor, lock, and presence sensor state changes."""
@@ -5268,6 +5328,139 @@ class EnergyMonitor:
             self._door_presence_listener_unsub.append(unsub)
             _LOGGER.debug("Door/window presence listeners registered for %d sensors", len(presence_sensor_ids))
 
+        # Setup battery monitoring for door/window sensors
+        self._setup_battery_listeners()
+
+    def _teardown_battery_listeners(self) -> None:
+        """Remove battery sensor state listeners."""
+        for unsub in self._battery_listener_unsub:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._battery_listener_unsub.clear()
+
+    def _setup_battery_listeners(self) -> None:
+        """Subscribe to battery sensor state changes for door/window devices."""
+        self._teardown_battery_listeners()
+        
+        battery_sensor_ids: set[str] = set()
+        
+        for room in self.config_manager.energy_config.get("rooms", []):
+            for outlet in room.get("outlets", []):
+                otype = outlet.get("type")
+                if otype in ("door", "window"):
+                    # Collect all battery sensors for this device
+                    for key in ("contact_sensor_battery", "lock_battery", "presence_sensor_battery"):
+                        batt = outlet.get(key)
+                        if batt and batt.startswith("sensor."):
+                            battery_sensor_ids.add(batt)
+        
+        if battery_sensor_ids:
+            @callback
+            def _on_battery_change(event: Event) -> None:
+                self.hass.async_create_task(
+                    self._async_handle_battery_state_change(event)
+                )
+            unsub = async_track_state_change_event(
+                self.hass, list(battery_sensor_ids), _on_battery_change
+            )
+            self._battery_listener_unsub.append(unsub)
+            _LOGGER.debug("Battery listeners registered for %d sensors", len(battery_sensor_ids))
+
+    def _find_device_by_battery_sensor(self, entity_id: str) -> tuple[dict, dict, str] | None:
+        """Find the door/window outlet config, room, and battery field key for a battery sensor."""
+        for room in self.config_manager.energy_config.get("rooms", []):
+            for outlet in room.get("outlets", []):
+                otype = outlet.get("type")
+                if otype in ("door", "window"):
+                    for key in ("contact_sensor_battery", "lock_battery", "presence_sensor_battery"):
+                        if outlet.get(key) == entity_id:
+                            return outlet, room, key
+        return None
+
+    async def _async_handle_battery_state_change(self, event: Event) -> None:
+        """Handle battery sensor state change - detect low battery and battery replacement."""
+        entity_id = event.data.get("entity_id")
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        
+        if not new_state or new_state.state in ("unknown", "unavailable"):
+            return
+        
+        try:
+            new_level = float(new_state.state)
+        except (ValueError, TypeError):
+            return
+        
+        device_info = self._find_device_by_battery_sensor(entity_id)
+        if not device_info:
+            return
+        
+        outlet, room, battery_key = device_info
+        device_name = outlet.get("name") or "Device"
+        room_name = room.get("name") or "Room"
+        
+        # Get previous level
+        prev_level = self._battery_last_level.get(entity_id)
+        self._battery_last_level[entity_id] = new_level
+        
+        tts_settings = self.config_manager.energy_config.get("tts_settings", {})
+        battery_tts_enabled = tts_settings.get("battery_tts_enabled", True)
+        
+        if not battery_tts_enabled:
+            return
+        
+        media_player = room.get("media_player")
+        try:
+            vol_raw = float(room.get("volume", 0.7) or 0.7)
+        except (TypeError, ValueError):
+            vol_raw = 0.7
+        volume = vol_raw / 100.0 if vol_raw > 1.0 else vol_raw
+        
+        # Check for battery replaced (jump from low to high)
+        if prev_level is not None and prev_level <= 25 and new_level >= 70:
+            # Battery was just replaced
+            msg_template = tts_settings.get("battery_replaced_msg") or "{device_name} battery has been successfully replaced."
+            prefix = tts_settings.get("prefix", "")
+            msg = _format_tts_msg(
+                msg_template,
+                prefix=prefix,
+                device_name=device_name,
+                room_name=room_name,
+            )
+            
+            if media_player and msg:
+                await self._async_send_tts_with_lights(
+                    room, media_player, msg, volume, tts_settings
+                )
+                _LOGGER.info("Battery replaced TTS for %s: %s", device_name, msg)
+            return
+        
+        # Check for low battery warning (at or below 25%)
+        if new_level <= 25:
+            now = dt_util.now()
+            last_warn = self._battery_low_warn_last.get(entity_id)
+            
+            # Only warn once per hour
+            if last_warn is None or (now - last_warn).total_seconds() >= 3600:
+                msg_template = tts_settings.get("battery_low_msg") or "{device_name} battery is low at {battery_level} percent."
+                prefix = tts_settings.get("prefix", "")
+                msg = _format_tts_msg(
+                    msg_template,
+                    prefix=prefix,
+                    device_name=device_name,
+                    battery_level=int(new_level),
+                    room_name=room_name,
+                )
+                
+                if media_player and msg:
+                    await self._async_send_tts_with_lights(
+                        room, media_player, msg, volume, tts_settings
+                    )
+                    self._battery_low_warn_last[entity_id] = now
+                    _LOGGER.info("Battery low TTS for %s (%d%%): %s", device_name, int(new_level), msg)
+
     def _find_door_window_outlet_by_contact_sensor(self, entity_id: str) -> tuple[dict, dict, str] | None:
         """Find the door/window outlet config and room for a contact sensor entity."""
         for room in self.config_manager.energy_config.get("rooms", []):
@@ -5308,10 +5501,9 @@ class EnergyMonitor:
         
         if not new_state or new_state.state in ("unknown", "unavailable"):
             return
-        if not old_state or old_state.state in ("unknown", "unavailable"):
-            return
-        if new_state.state == old_state.state:
-            return
+        if old_state and old_state.state not in ("unknown", "unavailable"):
+            if new_state.state == old_state.state:
+                return
         
         result = self._find_door_window_outlet_by_contact_sensor(entity_id)
         if not result:
@@ -5319,7 +5511,7 @@ class EnergyMonitor:
         
         outlet, room, device_type = result
         key = self._door_window_key(outlet, room)
-        is_open = new_state.state == "on"  # binary_sensor: on = open, off = closed
+        is_open = self._contact_sensor_state_is_open(new_state.state)
         
         room_name = room.get("name", "Room")
         outlet_name = outlet.get("name", device_type.capitalize())
@@ -5327,8 +5519,14 @@ class EnergyMonitor:
         volume = room.get("volume", 0.7)
         tts_settings = self.config_manager.energy_config.get("tts_settings", {})
         
-        _LOGGER.debug("%s %s state changed: %s -> %s (is_open=%s)",
-                      device_type.capitalize(), outlet_name, old_state.state, new_state.state, is_open)
+        _LOGGER.debug(
+            "%s %s state changed: %s -> %s (is_open=%s)",
+            device_type.capitalize(),
+            outlet_name,
+            getattr(old_state, "state", None),
+            new_state.state,
+            is_open,
+        )
         
         if device_type == "door":
             await self._handle_door_contact_change(outlet, room, key, is_open, media_player, volume, tts_settings)
@@ -5343,7 +5541,8 @@ class EnergyMonitor:
         room_name = room.get("name", "Room")
         door_type = outlet.get("door_subtype", "standard")
         door_type_text = "" if door_type == "standard" else door_type
-        
+        device_name = outlet.get("name") or "Door"
+
         # Cancel any pending auto-lock if door was opened
         if is_open and key in self._door_auto_lock_task:
             task = self._door_auto_lock_task.pop(key, None)
@@ -5356,7 +5555,13 @@ class EnergyMonitor:
                 if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_opened"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("door_opened_msg", DEFAULT_DOOR_OPENED_MSG)
-                    message = msg.format(prefix=prefix, room_name=room_name, door_type=door_type_text).strip()
+                    message = _format_tts_msg(
+                        msg,
+                        prefix=prefix,
+                        room_name=room_name,
+                        door_type=door_type_text,
+                        device_name=device_name,
+                    )
                     await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
             
             # Turn on entities
@@ -5371,7 +5576,13 @@ class EnergyMonitor:
                 if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_closed"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("door_closed_msg", DEFAULT_DOOR_CLOSED_MSG)
-                    message = msg.format(prefix=prefix, room_name=room_name, door_type=door_type_text).strip()
+                    message = _format_tts_msg(
+                        msg,
+                        prefix=prefix,
+                        room_name=room_name,
+                        door_type=door_type_text,
+                        device_name=device_name,
+                    )
                     await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
             
             # Turn off entities
@@ -5393,14 +5604,20 @@ class EnergyMonitor:
     ) -> None:
         """Handle window contact sensor state change."""
         room_name = room.get("name", "Room")
-        
+        device_name = outlet.get("name") or "Window"
+
         if is_open:
             # Window opened
             if outlet.get("announce_open_close", True) and media_player:
                 if tts_settings.get("window_tts_enabled", True) and self._tts_line_enabled(tts_settings, "window_opened"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("window_opened_msg", DEFAULT_WINDOW_OPENED_MSG)
-                    message = msg.format(prefix=prefix, room_name=room_name).strip()
+                    message = _format_tts_msg(
+                        msg,
+                        prefix=prefix,
+                        room_name=room_name,
+                        device_name=device_name,
+                    )
                     await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
             
             # Turn on entities
@@ -5415,7 +5632,12 @@ class EnergyMonitor:
                 if tts_settings.get("window_tts_enabled", True) and self._tts_line_enabled(tts_settings, "window_closed"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("window_closed_msg", DEFAULT_WINDOW_CLOSED_MSG)
-                    message = msg.format(prefix=prefix, room_name=room_name).strip()
+                    message = _format_tts_msg(
+                        msg,
+                        prefix=prefix,
+                        room_name=room_name,
+                        device_name=device_name,
+                    )
                     await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
             
             # Turn off entities
@@ -5432,10 +5654,9 @@ class EnergyMonitor:
         
         if not new_state or new_state.state in ("unknown", "unavailable"):
             return
-        if not old_state or old_state.state in ("unknown", "unavailable"):
-            return
-        if new_state.state == old_state.state:
-            return
+        if old_state and old_state.state not in ("unknown", "unavailable"):
+            if new_state.state == old_state.state:
+                return
         
         result = self._find_door_outlet_by_lock(entity_id)
         if not result:
@@ -5448,12 +5669,18 @@ class EnergyMonitor:
         room_name = room.get("name", "Room")
         door_type = outlet.get("door_subtype", "standard")
         door_type_text = "" if door_type == "standard" else door_type
+        device_name = outlet.get("name") or "Door"
         media_player = room.get("media_player")
         volume = room.get("volume", 0.7)
         tts_settings = self.config_manager.energy_config.get("tts_settings", {})
         
-        _LOGGER.debug("Lock %s state changed: %s -> %s (is_locked=%s)",
-                      entity_id, old_state.state, new_state.state, is_locked)
+        _LOGGER.debug(
+            "Lock %s state changed: %s -> %s (is_locked=%s)",
+            entity_id,
+            getattr(old_state, "state", None),
+            new_state.state,
+            is_locked,
+        )
         
         if is_locked:
             # Door locked
@@ -5461,7 +5688,13 @@ class EnergyMonitor:
                 if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_locked"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("door_locked_msg", DEFAULT_DOOR_LOCKED_MSG)
-                    message = msg.format(prefix=prefix, room_name=room_name, door_type=door_type_text).strip()
+                    message = _format_tts_msg(
+                        msg,
+                        prefix=prefix,
+                        room_name=room_name,
+                        door_type=door_type_text,
+                        device_name=device_name,
+                    )
                     await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
             
             # Turn off entities
@@ -5476,7 +5709,13 @@ class EnergyMonitor:
                 if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_unlocked"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("door_unlocked_msg", DEFAULT_DOOR_UNLOCKED_MSG)
-                    message = msg.format(prefix=prefix, room_name=room_name, door_type=door_type_text).strip()
+                    message = _format_tts_msg(
+                        msg,
+                        prefix=prefix,
+                        room_name=room_name,
+                        door_type=door_type_text,
+                        device_name=device_name,
+                    )
                     await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
             
             # Turn on entities
@@ -5495,10 +5734,9 @@ class EnergyMonitor:
         
         if not new_state or new_state.state in ("unknown", "unavailable"):
             return
-        if not old_state or old_state.state in ("unknown", "unavailable"):
-            return
-        if new_state.state == old_state.state:
-            return
+        if old_state and old_state.state not in ("unknown", "unavailable"):
+            if new_state.state == old_state.state:
+                return
         
         result = self._find_door_window_outlet_by_presence_sensor(entity_id)
         if not result:
@@ -5509,12 +5747,19 @@ class EnergyMonitor:
         is_detected = new_state.state == "on"  # binary_sensor: on = detected
         
         room_name = room.get("name", "Room")
+        device_name = outlet.get("name") or ("Door" if device_type == "door" else "Window")
         media_player = room.get("media_player")
         volume = room.get("volume", 0.7)
         tts_settings = self.config_manager.energy_config.get("tts_settings", {})
         
-        _LOGGER.debug("%s presence sensor %s: %s -> %s (detected=%s)",
-                      device_type.capitalize(), entity_id, old_state.state, new_state.state, is_detected)
+        _LOGGER.debug(
+            "%s presence sensor %s: %s -> %s (detected=%s)",
+            device_type.capitalize(),
+            entity_id,
+            getattr(old_state, "state", None),
+            new_state.state,
+            is_detected,
+        )
         
         if is_detected:
             # Presence detected
@@ -5531,7 +5776,12 @@ class EnergyMonitor:
                 if tts_settings.get("presence_tts_enabled", True) and self._tts_line_enabled(tts_settings, "presence_detected"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("presence_detected_msg", DEFAULT_PRESENCE_DETECTED_MSG)
-                    message = msg.format(prefix=prefix, room_name=room_name).strip()
+                    message = _format_tts_msg(
+                        msg,
+                        prefix=prefix,
+                        room_name=room_name,
+                        device_name=device_name,
+                    )
                     await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
             
             await self._turn_on_entities(outlet.get("presence_on_entities", []))
@@ -5548,7 +5798,12 @@ class EnergyMonitor:
                 if tts_settings.get("presence_tts_enabled", True) and self._tts_line_enabled(tts_settings, "presence_cleared"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("presence_cleared_msg", DEFAULT_PRESENCE_CLEARED_MSG)
-                    message = msg.format(prefix=prefix, room_name=room_name).strip()
+                    message = _format_tts_msg(
+                        msg,
+                        prefix=prefix,
+                        room_name=room_name,
+                        device_name=device_name,
+                    )
                     await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
             
             await self._turn_off_entities(outlet.get("presence_off_entities", []))
@@ -5574,14 +5829,14 @@ class EnergyMonitor:
                 if reminder_type == "open":
                     contact = outlet.get("contact_sensor")
                     state = self.hass.states.get(contact)
-                    if not state or state.state != "on":
+                    if not state or not self._contact_sensor_state_is_open(state.state):
                         break
                     msg_key = "door_still_open"
                     msg_template = tts_settings.get("door_still_open_msg", DEFAULT_DOOR_STILL_OPEN_MSG)
                 elif reminder_type == "window_open":
                     contact = outlet.get("contact_sensor")
                     state = self.hass.states.get(contact)
-                    if not state or state.state != "on":
+                    if not state or not self._contact_sensor_state_is_open(state.state):
                         break
                     msg_key = "window_still_open"
                     msg_template = tts_settings.get("window_still_open_msg", DEFAULT_WINDOW_STILL_OPEN_MSG)
@@ -5597,10 +5852,23 @@ class EnergyMonitor:
                 
                 # Send TTS reminder
                 if media_player and self._tts_line_enabled(tts_settings, msg_key):
-                    tts_enabled_key = "door_tts_enabled" if "door" in reminder_type or reminder_type == "unlocked" else "window_tts_enabled"
+                    tts_enabled_key = (
+                        "door_tts_enabled"
+                        if reminder_type in ("open", "unlocked")
+                        else "window_tts_enabled"
+                    )
                     if tts_settings.get(tts_enabled_key, True):
                         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
-                        message = msg_template.format(prefix=prefix, room_name=room_name, door_type=door_type_text).strip()
+                        device_name = outlet.get("name") or (
+                            "Door" if reminder_type in ("open", "unlocked") else "Window"
+                        )
+                        message = _format_tts_msg(
+                            msg_template,
+                            prefix=prefix,
+                            room_name=room_name,
+                            door_type=door_type_text,
+                            device_name=device_name,
+                        )
                         await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
         
         self._door_reminder_active[key] = self.hass.async_create_task(reminder_loop())
@@ -5623,7 +5891,7 @@ class EnergyMonitor:
             # Check if door is still closed
             contact = outlet.get("contact_sensor")
             state = self.hass.states.get(contact)
-            if not state or state.state == "on":  # Door is open
+            if not state or self._contact_sensor_state_is_open(state.state):
                 return
             
             lock_entity = outlet.get("lock_entity")
