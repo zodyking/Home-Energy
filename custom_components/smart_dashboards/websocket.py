@@ -4063,7 +4063,11 @@ async def websocket_test_tuya_scene(
         return
 
     try:
-        # Try tuya_local service first
+        scene_hex = scene_data.get("scene_data_v2", "")
+        if not scene_hex:
+            connection.send_error(msg["id"], "invalid_scene", "No scene_data_v2 hex string")
+            return
+
         if hass.services.has_service("tuya_local", "set_dp"):
             await hass.services.async_call(
                 "tuya_local",
@@ -4071,11 +4075,10 @@ async def websocket_test_tuya_scene(
                 {
                     "entity_id": entity_id,
                     "dp": 25,
-                    "value": json.dumps(scene_data),
+                    "value": scene_hex,
                 },
             )
         else:
-            # Fallback: try to set effect via light.turn_on
             await hass.services.async_call(
                 "light",
                 "turn_on",

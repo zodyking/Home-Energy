@@ -3082,7 +3082,7 @@ class ConfigManager:
             return None
 
         action = seg.get("action", "on")
-        if action not in ("on", "off"):
+        if action not in ("on", "off", "mode"):
             action = "on"
 
         validated = {
@@ -3091,7 +3091,7 @@ class ConfigManager:
             "action": action,
         }
 
-        if action == "on":
+        if action in ("on", "mode"):
             if seg.get("brightness") is not None:
                 validated["brightness"] = max(1, min(100, int(seg.get("brightness", 100))))
             if seg.get("color_temp") is not None:
