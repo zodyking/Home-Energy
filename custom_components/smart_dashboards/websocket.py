@@ -250,6 +250,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_intraday_history)
     websocket_api.async_register_command(hass, websocket_get_intraday_events)
     websocket_api.async_register_command(hass, websocket_get_event_log)
+    websocket_api.async_register_command(hass, websocket_get_door_activity)
     websocket_api.async_register_command(hass, websocket_get_statistics)
     websocket_api.async_register_command(hass, websocket_subscribe_statistics)
     websocket_api.async_register_command(hass, websocket_subscribe_hard_refresh_progress)
@@ -927,6 +928,59 @@ async def websocket_get_event_log(
     connection.send_result(
         msg["id"], {"events": events, "truncated": truncated}
     )
+
+
+def _room_and_outlet_by_index(
+    config_manager: Any, room_id: str, outlet_index: int
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Return (room dict, outlet dict) for a room id and outlet index, or None."""
+    for room in config_manager.energy_config.get("rooms", []):
+        rid = room.get("id", room["name"].lower().replace(" ", "_"))
+        if rid != room_id:
+            continue
+        outs = room.get("outlets") or []
+        if outlet_index < 0 or outlet_index >= len(outs):
+            return None
+        return room, outs[outlet_index]
+    return None
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_door_activity",
+        vol.Required("room_id"): str,
+        vol.Required("outlet_index"): vol.Coerce(int),
+    }
+)
+@websocket_api.async_response
+async def websocket_get_door_activity(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Door open/close/lock activity from the energy monitor (last 72 hours, in-memory)."""
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+    room_id = str(msg.get("room_id") or "").strip()
+    outlet_index = int(msg.get("outlet_index"))
+    found = _room_and_outlet_by_index(config_manager, room_id, outlet_index)
+    if not found:
+        connection.send_error(
+            msg["id"], "invalid_param", "Room or outlet index not found"
+        )
+        return
+    room, outlet = found
+    if outlet.get("type") != "door":
+        connection.send_error(msg["id"], "invalid_param", "Not a door device")
+        return
+    energy_monitor = hass.data[DOMAIN].get("energy_monitor")
+    if not energy_monitor or not hasattr(energy_monitor, "get_door_activity_events"):
+        connection.send_result(msg["id"], {"events": []})
+        return
+    events = energy_monitor.get_door_activity_events(outlet, room)
+    connection.send_result(msg["id"], {"events": events})
 
 
 def _parse_power_from_state(state_value: str, unit: str | None) -> float:

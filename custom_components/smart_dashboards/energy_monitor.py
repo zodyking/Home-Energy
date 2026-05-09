@@ -180,6 +180,8 @@ def vent_like_energy_tracking_key(room_id: str, outlet: dict) -> str:
 class EnergyMonitor:
     """Monitor energy consumption and send TTS alerts for thresholds."""
 
+    _DOOR_ACTIVITY_RETENTION = timedelta(hours=72)
+
     def __init__(self, hass: HomeAssistant, config_manager: "ConfigManager") -> None:
         """Initialize the energy monitor."""
         self.hass = hass
@@ -274,6 +276,8 @@ class EnergyMonitor:
         self._battery_last_level: dict[str, float] = {}  # last known battery level per sensor entity
         self._battery_low_warn_last: dict[str, datetime] = {}  # last hourly low battery warning per sensor
         self._battery_listener_unsub: list = []  # unsubscribe callbacks for battery sensors
+        # Door contact/lock activity for dashboard (in-memory; max 72h per door key)
+        self._door_activity_log: dict[str, list[dict[str, str]]] = {}
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -5844,6 +5848,50 @@ class EnergyMonitor:
         outlet_name = (outlet.get("name") or "device").lower().replace(" ", "_")
         return f"{room_id}_{outlet_name}"
 
+    def _prune_door_activity_entries(
+        self, entries: list[dict[str, str]], cutoff_utc: datetime
+    ) -> list[dict[str, str]]:
+        """Drop door activity rows older than cutoff_utc."""
+        kept: list[dict[str, str]] = []
+        for entry in entries:
+            ts_raw = entry.get("ts") or ""
+            try:
+                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=dt_util.UTC)
+            if ts >= cutoff_utc:
+                kept.append(entry)
+        return kept
+
+    def append_door_activity_event(
+        self, outlet: dict, room: dict, event: str, detail: str = ""
+    ) -> None:
+        """Record door open/close/lock activity; retains last 72 hours per door."""
+        if outlet.get("type") != "door":
+            return
+        key = self._door_window_key(outlet, room)
+        now_utc = dt_util.utcnow()
+        cutoff = now_utc - self._DOOR_ACTIVITY_RETENTION
+        prev = self._door_activity_log.get(key) or []
+        pruned = self._prune_door_activity_entries(prev, cutoff)
+        pruned.append({"ts": now_utc.isoformat(), "event": event, "detail": detail})
+        self._door_activity_log[key] = pruned
+
+    def get_door_activity_events(self, outlet: dict, room: dict) -> list[dict[str, str]]:
+        """Newest-first door activity rows within the retention window."""
+        if outlet.get("type") != "door":
+            return []
+        key = self._door_window_key(outlet, room)
+        now_utc = dt_util.utcnow()
+        cutoff = now_utc - self._DOOR_ACTIVITY_RETENTION
+        entries = self._prune_door_activity_entries(
+            self._door_activity_log.get(key) or [], cutoff
+        )
+        self._door_activity_log[key] = entries
+        return list(reversed(entries))
+
     async def _async_handle_contact_sensor_change(self, event: Event) -> None:
         """Handle door/window contact sensor state change."""
         entity_id = event.data.get("entity_id")
@@ -5893,6 +5941,11 @@ class EnergyMonitor:
         door_type = outlet.get("door_subtype", "standard")
         door_type_text = "" if door_type == "standard" else door_type
         device_name = outlet.get("name") or "Door"
+
+        if is_open:
+            self.append_door_activity_event(outlet, room, "opened")
+        else:
+            self.append_door_activity_event(outlet, room, "closed")
 
         # Cancel any pending auto-lock if door was opened
         if is_open and key in self._door_auto_lock_task:
@@ -6032,8 +6085,9 @@ class EnergyMonitor:
             new_state.state,
             is_locked,
         )
-        
+
         if is_locked:
+            self.append_door_activity_event(outlet, room, "locked")
             # Door locked
             if outlet.get("announce_lock", True) and media_player:
                 if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_locked"):
@@ -6055,6 +6109,7 @@ class EnergyMonitor:
             lock_key = f"{key}_lock"
             await self._stop_door_reminder(lock_key)
         else:
+            self.append_door_activity_event(outlet, room, "unlocked")
             # Door unlocked
             if outlet.get("announce_lock", True) and media_player:
                 if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_unlocked"):

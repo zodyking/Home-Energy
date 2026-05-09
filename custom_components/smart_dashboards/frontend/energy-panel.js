@@ -6359,6 +6359,53 @@ class EnergyPanel extends HTMLElement {
         margin-top: 2px;
       }
 
+      .appliance-context-menu-static {
+        font-size: 11px;
+        line-height: 1.35;
+        color: var(--secondary-text-color, #a0a0a0);
+        padding: 8px 12px 6px;
+        border-bottom: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
+        white-space: normal;
+      }
+
+      .door-activity-modal-shell {
+        min-width: min(420px, 92vw);
+        max-width: 92vw;
+      }
+
+      .door-activity-modal-body {
+        max-height: 55vh;
+        overflow-y: auto;
+        margin-top: 4px;
+        font-size: 13px;
+        color: var(--primary-text-color, #e1e1e1);
+      }
+
+      .door-activity-empty {
+        margin: 0;
+        color: var(--secondary-text-color, #b0b0b0);
+        line-height: 1.45;
+      }
+
+      .door-activity-row {
+        display: flex;
+        gap: 12px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
+        align-items: flex-start;
+      }
+
+      .door-activity-ts {
+        flex: 0 0 9.5rem;
+        color: var(--secondary-text-color, #a8a8a8);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .door-activity-msg {
+        flex: 1;
+        color: var(--primary-text-color, #f0f0f0);
+      }
+
       .graph-modal-overlay {
         position: fixed;
         inset: 0;
@@ -14769,6 +14816,14 @@ class EnergyPanel extends HTMLElement {
     menu.className = 'appliance-context-menu';
     menu.setAttribute('role', 'menu');
 
+    const addStatic = (text) => {
+      const div = document.createElement('div');
+      div.className = 'appliance-context-menu-static';
+      div.setAttribute('role', 'presentation');
+      div.textContent = text;
+      menu.appendChild(div);
+    };
+
     const addItem = (label, action, slot) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -14788,6 +14843,8 @@ class EnergyPanel extends HTMLElement {
           await this._toggleDoorLock(outlet, action);
         } else if (action === 'sensor_history') {
           await this._openSensorHistory(outlet);
+        } else if (action === 'door_activity') {
+          await this._openDoorActivityHistory(roomId, outletIndex, outlet);
         } else {
           void this._executeApplianceToggle({ roomId, outletIndex, plugSlot: slot });
         }
@@ -14828,17 +14885,22 @@ class EnergyPanel extends HTMLElement {
         addItem('Open usage graph', 'graph', 1);
       }
     } else if (otype === 'door') {
-      // Door context menu
+      for (const line of this._doorBatteryMenuLines(outlet)) {
+        addStatic(line);
+      }
       const lockEntity = outlet.lock_entity;
       if (lockEntity) {
         const lockState = this._hass?.states?.[lockEntity]?.state;
         const isLocked = lockState === 'locked';
-        addItem(isLocked ? 'Unlock Door' : 'Lock Door', isLocked ? 'unlock' : 'lock', null);
+        addItem(isLocked ? 'Unlock door' : 'Lock door', isLocked ? 'unlock' : 'lock', null);
       }
-      addItem('View Sensor History', 'sensor_history', null);
+      addItem('Activity history (72h)', 'door_activity', null);
+      addItem('View sensor history', 'sensor_history', null);
     } else if (otype === 'window') {
-      // Window context menu
-      addItem('View Sensor History', 'sensor_history', null);
+      for (const line of this._doorBatteryMenuLines(outlet)) {
+        addStatic(line);
+      }
+      addItem('View sensor history', 'sensor_history', null);
     } else {
       addItem('Open usage graph', 'graph', null);
       if (this._resolveApplianceToggleTarget(outlet, null)) {
@@ -15180,13 +15242,141 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  _doorBatteryMenuLines(outlet) {
+    const hass = this._hass;
+    const lines = [];
+    if (!hass?.states) return lines;
+    const fmt = (label, entityId) => {
+      const eid = String(entityId || '').trim();
+      if (!eid.startsWith('sensor.')) return null;
+      const st = hass.states[eid];
+      if (!st) return null;
+      const v = st.state;
+      if (v === 'unknown' || v === 'unavailable') return `${label}: —`;
+      const u = st.attributes?.unit_of_measurement
+        ? ` ${String(st.attributes.unit_of_measurement)}`
+        : '';
+      return `${label}: ${v}${u}`;
+    };
+    const a = fmt('Contact sensor battery', outlet.contact_sensor_battery);
+    if (a) lines.push(a);
+    const b = fmt('Lock battery', outlet.lock_battery);
+    if (b) lines.push(b);
+    const c = fmt('Presence battery', outlet.presence_sensor_battery);
+    if (c) lines.push(c);
+    return lines;
+  }
+
+  _formatDoorActivityEvent(event, detail) {
+    const labels = {
+      opened: 'Opened',
+      closed: 'Closed',
+      locked: 'Locked',
+      unlocked: 'Unlocked',
+    };
+    const base = labels[event] || event;
+    const d = String(detail || '').trim();
+    return d ? `${base} (${d})` : base;
+  }
+
+  _formatDoorActivityTs(iso) {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      return d.toLocaleString();
+    } catch {
+      return String(iso);
+    }
+  }
+
+  async _openDoorActivityHistory(roomId, outletIndex, outlet) {
+    const displayName = outlet.name || 'Door';
+    const overlay = document.createElement('div');
+    overlay.className = 'toggle-confirm-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    const modal = document.createElement('div');
+    modal.className = 'toggle-confirm-modal door-activity-modal-shell';
+
+    const title = document.createElement('div');
+    title.className = 'toggle-confirm-title';
+    title.textContent = `${displayName} — activity (last 72 hours)`;
+
+    const body = document.createElement('div');
+    body.className = 'door-activity-modal-body';
+    body.textContent = 'Loading…';
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'toggle-confirm-buttons';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'toggle-confirm-cancel';
+    closeBtn.textContent = 'Close';
+    btnRow.appendChild(closeBtn);
+
+    modal.append(title, body, btnRow);
+    overlay.appendChild(modal);
+    this.shadowRoot.appendChild(overlay);
+
+    const cleanup = () => {
+      window.removeEventListener('keydown', onKey);
+      overlay.remove();
+    };
+    const onKey = (kev) => {
+      if (kev.key === 'Escape') cleanup();
+    };
+    window.addEventListener('keydown', onKey);
+    closeBtn.addEventListener('click', cleanup);
+    overlay.addEventListener('click', (ev) => {
+      if (ev.target === overlay) cleanup();
+    });
+
+    try {
+      const res = await this._hass.callWS({
+        type: 'smart_dashboards/get_door_activity',
+        room_id: roomId,
+        outlet_index: outletIndex,
+      });
+      const events = Array.isArray(res.events) ? res.events : [];
+      body.textContent = '';
+      if (!events.length) {
+        const empty = document.createElement('p');
+        empty.className = 'door-activity-empty';
+        empty.textContent =
+          'No activity logged yet. History builds when the door opens, closes, or the lock changes.';
+        body.appendChild(empty);
+      } else {
+        for (const ev of events) {
+          const row = document.createElement('div');
+          row.className = 'door-activity-row';
+          const tsEl = document.createElement('span');
+          tsEl.className = 'door-activity-ts';
+          tsEl.textContent = this._formatDoorActivityTs(ev.ts);
+          const msgEl = document.createElement('span');
+          msgEl.className = 'door-activity-msg';
+          msgEl.textContent = this._formatDoorActivityEvent(ev.event, ev.detail);
+          row.append(tsEl, msgEl);
+          body.appendChild(row);
+        }
+      }
+    } catch (err) {
+      body.textContent = '';
+      const errEl = document.createElement('p');
+      errEl.className = 'door-activity-empty';
+      errEl.textContent = `Could not load activity: ${err.message || err}`;
+      body.appendChild(errEl);
+    }
+    closeBtn.focus();
+  }
+
   _handleApplianceToggleClick(e) {
     if (this._showSettings) return;
     if (e.target.closest('.appliance-context-menu') || e.target.closest('.appliance-context-menu-backdrop')) {
       return;
     }
 
-    const deviceCard = e.target.closest('.device-card, .outlet-card');
+    const deviceCard = e.target.closest('.device-card, .outlet-card, .door-card, .window-card');
     if (!deviceCard) return;
 
     if (e.target.closest('.graph-clickable')) return;
@@ -15215,7 +15405,9 @@ class EnergyPanel extends HTMLElement {
         otype === 'microwave' ||
         otype === 'fridge' ||
         otype === 'vent' ||
-        otype === 'wall_heater'
+        otype === 'wall_heater' ||
+        otype === 'door' ||
+        otype === 'window'
       )
     ) {
       return;
