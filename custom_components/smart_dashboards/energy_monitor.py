@@ -2467,13 +2467,51 @@ class EnergyMonitor:
         targets = [(eid, w, t) for eid, (w, t) in by_entity.items()]
         if not targets:
             return
-        results = await asyncio.gather(
-            *[
-                self._apply_light_action(eid, segment, is_wrgb=w, is_tuya=t)
-                for eid, w, t in targets
-            ],
-            return_exceptions=True,
-        )
+        import time
+
+        switch_meta: dict[str, dict] = {}
+        for eid, _, _ in targets:
+            outlet = self._find_light_outlet_for_entity(eid)
+            sw = outlet.get("switch_entity") if outlet else None
+            if not self._is_switch_entity_id(sw):
+                continue
+            if sw in switch_meta:
+                continue
+            was_off = not self._switch_entity_is_on(sw)
+            if was_off:
+                await self._async_switch_set(sw, True)
+            switch_meta[sw] = {
+                "was_off": was_off,
+                "t0": time.monotonic() if was_off else None,
+            }
+
+        results: list = []
+        try:
+            results = await asyncio.gather(
+                *[
+                    self._apply_light_action(
+                        eid,
+                        segment,
+                        is_wrgb=w,
+                        is_tuya=t,
+                        defer_appliance_switch=True,
+                    )
+                    for eid, w, t in targets
+                ],
+                return_exceptions=True,
+            )
+        finally:
+            if segment.get("action", "on") == "mode":
+                for sw, meta in switch_meta.items():
+                    if not meta.get("was_off"):
+                        continue
+                    t0 = meta.get("t0")
+                    if t0 is not None:
+                        rem = 60.0 - (time.monotonic() - t0)
+                        if rem > 0:
+                            await asyncio.sleep(rem)
+                    await self._async_switch_set(sw, False)
+
         for (eid, _, _), res in zip(targets, results):
             if isinstance(res, Exception):
                 _LOGGER.warning(
@@ -2509,6 +2547,61 @@ class EnergyMonitor:
                             "tuya": False,
                         }
         return None
+
+    def _find_light_outlet_for_entity(self, entity_id: str) -> dict | None:
+        """Return the light-type outlet dict that owns this light.* entity (for switch_entity)."""
+        rooms = self.config_manager.energy_config.get("rooms", [])
+        for room in rooms:
+            for outlet in room.get("outlets", []):
+                if outlet.get("type") != "light":
+                    continue
+                for light in outlet.get("light_entities", []):
+                    eid, _, _ = _normalize_light_entity_row(light)
+                    if eid == entity_id:
+                        return outlet
+        return None
+
+    def _light_state_matches_segment(
+        self,
+        entity_id: str,
+        segment: dict,
+        attrs: dict,
+        is_wrgb: bool,
+        is_tuya: bool,
+        state_key: str,
+    ) -> bool:
+        """True if light state already satisfies the segment (same thresholds as apply logic)."""
+        light_mode = segment.get("light_mode", "white")
+        brightness_pct = segment.get("brightness")
+        color_temp = segment.get("color_temp")
+        hs_color = segment.get("hs_color")
+        tuya_scene = segment.get("tuya_scene")
+
+        if is_tuya and tuya_scene and light_mode == "scene":
+            scene_hex = self._encode_tuya_scene_hex(tuya_scene)
+            if not scene_hex:
+                return True
+            expected = f"tuya_scene_{hash(scene_hex)}"
+            return self._light_automation_state.get(state_key) == expected
+
+        if brightness_pct is not None:
+            cur = attrs.get("brightness")
+            target = int(brightness_pct * 255 / 100)
+            if cur is None or abs(int(cur) - target) > 5:
+                return False
+
+        if is_wrgb and light_mode == "color" and hs_color is not None:
+            cur_hs = attrs.get("hs_color")
+            if cur_hs is None or (
+                abs(cur_hs[0] - hs_color[0]) > 5 or abs(cur_hs[1] - hs_color[1]) > 5
+            ):
+                return False
+        elif is_wrgb and light_mode == "white" and color_temp is not None:
+            cur_temp = attrs.get("color_temp_kelvin") or attrs.get("color_temp")
+            if cur_temp is None or abs(int(cur_temp) - int(color_temp)) > 100:
+                return False
+
+        return True
 
     def pause_light_enforcement(self, seconds: int = 30) -> None:
         """Pause light automation enforcement for a given number of seconds."""
@@ -2619,65 +2712,40 @@ class EnergyMonitor:
             return dict(st.attributes)
         return attrs
 
-    async def _apply_light_action(
+    async def _async_run_light_automation_effects(
         self,
         entity_id: str,
         segment: dict,
-        is_wrgb: bool = False,
-        is_tuya: bool = False,
+        is_wrgb: bool,
+        is_tuya: bool,
+        action: str,
+        state_key: str,
+        enforcement_interval: int,
+        *,
+        skip_enforcement: bool = False,
     ) -> None:
-        """Apply light action from automation segment with continuous enforcement."""
-        import json as json_mod
-
-        action = segment.get("action", "on")
-        enforcement_interval = segment.get("enforcement_interval", 60)
-        state_key = f"light_auto_{entity_id}"
-
+        """Apply scene/color/white/brightness from segment (shared core for retries and normal path)."""
         current_state = self.hass.states.get(entity_id)
         current_on = current_state and current_state.state == "on"
         attrs = current_state.attributes if current_state else {}
 
-        # For action "off": turn off if currently on, skip enforcement interval check
-        if action == "off":
-            if current_on:
-                if self._should_skip_light_enforcement(entity_id, enforcement_interval):
-                    return
-                try:
-                    await self.hass.services.async_call(
-                        "light",
-                        "turn_off",
-                        {"entity_id": entity_id},
-                    )
-                    self._light_automation_state[state_key] = "off"
-                    self._mark_light_enforcement_run(entity_id)
-                    _LOGGER.debug("Light automation: turned off %s", entity_id)
-                except Exception as e:
-                    _LOGGER.warning("Light automation failed to turn off %s: %s", entity_id, e)
-            return
-
-        # For action "mode": only apply settings if light is currently ON
-        # For action "on": turn on if off, or apply settings if already on
-        if action == "mode" and not current_on:
-            # Mode only applies when light is on - nothing to do
-            return
-
         light_mode = segment.get("light_mode", "white")
         tuya_scene = segment.get("tuya_scene")
 
-        # Tuya: exit Scene effect whenever segment is not scene (before enforcement so segment switches always apply).
         if is_tuya and current_on and light_mode != "scene":
             attrs = await self._async_tuya_clear_scene_effect_if_active(entity_id, attrs)
 
-        # Only check enforcement interval if light is currently ON (we're enforcing settings)
-        # If light is OFF and action is "on", we should turn it on regardless of interval
-        if current_on and self._should_skip_light_enforcement(entity_id, enforcement_interval):
+        if (
+            not skip_enforcement
+            and current_on
+            and self._should_skip_light_enforcement(entity_id, enforcement_interval)
+        ):
             return
 
         brightness_pct = segment.get("brightness")
         color_temp = segment.get("color_temp")
         hs_color = segment.get("hs_color")
 
-        # Tuya scene: write scene hex to each light's text.<object_id>_scene (per-entity pairing)
         if is_tuya and tuya_scene and light_mode == "scene":
             if not current_on and action == "on":
                 try:
@@ -2702,7 +2770,6 @@ class EnergyMonitor:
                 self._mark_light_enforcement_run(entity_id)
                 return
 
-            # Set effect to "Scene" so the light accepts scene_data writes
             effect_list = attrs.get("effect_list") or []
             scene_effect = next(
                 (e for e in effect_list if str(e).lower() == "scene"), None
@@ -2723,7 +2790,6 @@ class EnergyMonitor:
                         e,
                     )
 
-            # Enable the text.<object_id>_scene entity if it is disabled
             light_name = entity_id.replace("light.", "", 1)
             scene_text_entity = f"text.{light_name}_scene"
             from homeassistant.helpers import entity_registry as er
@@ -2818,13 +2884,11 @@ class EnergyMonitor:
                 service_data["brightness_pct"] = brightness_pct
 
         if not needs_update:
-            # Still mark that we checked, so interval tracking works
             self._mark_light_enforcement_run(entity_id)
             return
 
         action_hash = f"{action}_{brightness_pct}_{color_temp}_{hs_color}_{light_mode}"
 
-        # For Tuya lights in color/white mode, set effect to "off" to exit scene mode
         if is_tuya and light_mode in ("color", "white"):
             effect_list = attrs.get("effect_list") or []
             off_effect = next(
@@ -2844,6 +2908,125 @@ class EnergyMonitor:
             _LOGGER.debug("Light automation: applied to %s with %s", entity_id, service_data)
         except Exception as e:
             _LOGGER.warning("Light automation failed to apply to %s: %s", entity_id, e)
+
+    async def _apply_light_action(
+        self,
+        entity_id: str,
+        segment: dict,
+        is_wrgb: bool = False,
+        is_tuya: bool = False,
+        *,
+        defer_appliance_switch: bool = False,
+    ) -> None:
+        """Apply light action from automation segment with continuous enforcement."""
+        import time
+
+        action = segment.get("action", "on")
+        enforcement_interval = segment.get("enforcement_interval", 60)
+        state_key = f"light_auto_{entity_id}"
+
+        current_state = self.hass.states.get(entity_id)
+        current_on = current_state and current_state.state == "on"
+        attrs = current_state.attributes if current_state else {}
+
+        if action == "off":
+            if current_on:
+                if self._should_skip_light_enforcement(entity_id, enforcement_interval):
+                    return
+                try:
+                    await self.hass.services.async_call(
+                        "light",
+                        "turn_off",
+                        {"entity_id": entity_id},
+                    )
+                    self._light_automation_state[state_key] = "off"
+                    self._mark_light_enforcement_run(entity_id)
+                    _LOGGER.debug("Light automation: turned off %s", entity_id)
+                except Exception as e:
+                    _LOGGER.warning("Light automation failed to turn off %s: %s", entity_id, e)
+            return
+
+        switch_entity: str | None = None
+        switch_was_off = False
+        switch_energized_at: float | None = None
+        if not defer_appliance_switch:
+            outlet = self._find_light_outlet_for_entity(entity_id)
+            se = outlet.get("switch_entity") if outlet else None
+            if self._is_switch_entity_id(se):
+                switch_entity = se
+                if not self._switch_entity_is_on(se):
+                    await self._async_switch_set(se, True)
+                    switch_was_off = True
+                    switch_energized_at = time.monotonic()
+
+        try:
+            if action == "mode":
+                deadline = time.monotonic() + 60.0
+                while time.monotonic() < deadline:
+                    cs = self.hass.states.get(entity_id)
+                    raw = (cs.state or "").lower() if cs else ""
+                    if cs and raw not in ("unknown", "unavailable", ""):
+                        attrs = dict(cs.attributes or {})
+                        current_on = raw == "on"
+                        if current_on and self._light_state_matches_segment(
+                            entity_id, segment, attrs, is_wrgb, is_tuya, state_key
+                        ):
+                            return
+                    if cs and raw == "off":
+                        try:
+                            await self.hass.services.async_call(
+                                "light",
+                                "turn_on",
+                                {"entity_id": entity_id},
+                                blocking=False,
+                            )
+                        except Exception:
+                            pass
+                    await self._async_run_light_automation_effects(
+                        entity_id,
+                        segment,
+                        is_wrgb,
+                        is_tuya,
+                        action,
+                        state_key,
+                        enforcement_interval,
+                        skip_enforcement=True,
+                    )
+                    await asyncio.sleep(1.0)
+
+                cs = self.hass.states.get(entity_id)
+                raw = (cs.state or "").lower() if cs else ""
+                if cs and raw not in ("unknown", "unavailable", ""):
+                    attrs = dict(cs.attributes or {})
+                    current_on = raw == "on"
+                else:
+                    current_on = False
+                    attrs = {}
+                if action == "mode" and not current_on:
+                    return
+
+            await self._async_run_light_automation_effects(
+                entity_id,
+                segment,
+                is_wrgb,
+                is_tuya,
+                action,
+                state_key,
+                enforcement_interval,
+                skip_enforcement=False,
+            )
+        finally:
+            if (
+                not defer_appliance_switch
+                and action == "mode"
+                and switch_was_off
+                and switch_entity
+            ):
+                if switch_energized_at is not None:
+                    rem = 60.0 - (time.monotonic() - switch_energized_at)
+                    if rem > 0:
+                        await asyncio.sleep(rem)
+                await self._async_switch_set(switch_entity, False)
 
     def _presence_auto_off_configured_switch_ids(self, room: dict) -> list[str]:
         """switch.* IDs marked for presence auto-off (on or off), for restore eligibility."""
