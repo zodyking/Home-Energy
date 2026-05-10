@@ -7,7 +7,7 @@ import math
 import os
 import re
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -2100,6 +2100,74 @@ class ConfigManager:
             "timestamps": sorted_minutes,
             "watts": [minute_sums[m] for m in sorted_minutes],
         }
+
+    def get_room_day_wh_from_intraday(self, room_id: str) -> float | None:
+        """Today's Wh from merged room intraday watts (trapezoids, local calendar day).
+
+        Matches the room kWh chart (integrate W over time). Use when intraday has at least
+        two samples so the bar stays aligned with the chart after HA restarts (intraday is
+        persisted; per-entity day ledger may reset).
+        """
+        data = self.get_room_intraday_history(room_id, 1440)
+        timestamps: list[str] = list(data.get("timestamps") or [])
+        watts: list[Any] = list(data.get("watts") or [])
+        n = min(len(timestamps), len(watts))
+        if n < 2:
+            return None
+
+        now = dt_util.as_local(dt_util.now())
+        tz = now.tzinfo
+        day_start = datetime.combine(now.date(), dt_time.min, tzinfo=tz)
+        day_end = day_start + timedelta(days=1)
+        now_cap = min(now, day_end)
+
+        pairs: list[tuple[datetime, float]] = []
+        for i in range(n):
+            ts_raw = str(timestamps[i]).strip()
+            dt_p: datetime | None = None
+            try:
+                dt_p = datetime.strptime(ts_raw, "%Y-%m-%d %H:%M")
+            except ValueError:
+                parsed = dt_util.parse_datetime(ts_raw)
+                if parsed is not None:
+                    dt_p = dt_util.as_local(parsed)
+            if dt_p is None:
+                continue
+            if dt_p.tzinfo is None and tz is not None:
+                dt_p = dt_p.replace(tzinfo=tz)
+            else:
+                dt_p = dt_util.as_local(dt_p)
+            try:
+                w = float(watts[i])
+            except (TypeError, ValueError):
+                w = 0.0
+            if not math.isfinite(w):
+                w = 0.0
+            pairs.append((dt_p, w))
+
+        pairs.sort(key=lambda x: x[0])
+        if len(pairs) < 2:
+            return None
+
+        total_wh = 0.0
+        for i in range(1, len(pairs)):
+            orig_t0, w0 = pairs[i - 1]
+            orig_t1, w1 = pairs[i]
+            if orig_t1 <= orig_t0:
+                continue
+            seg_lo = max(orig_t0, day_start)
+            seg_hi = min(orig_t1, now_cap, day_end)
+            if seg_hi <= seg_lo:
+                continue
+            dur_sec = (orig_t1 - orig_t0).total_seconds()
+            if dur_sec <= 0:
+                continue
+            wa = w0 + (w1 - w0) * ((seg_lo - orig_t0).total_seconds() / dur_sec)
+            wb = w0 + (w1 - w0) * ((seg_hi - orig_t0).total_seconds() / dur_sec)
+            dt_hours = (seg_hi - seg_lo).total_seconds() / 3600.0
+            total_wh += (wa + wb) / 2.0 * dt_hours
+
+        return max(0.0, total_wh)
 
     def get_total_intraday_history(self, minutes: int = 1440) -> dict[str, Any]:
         """Get intraday power history for all rooms combined."""

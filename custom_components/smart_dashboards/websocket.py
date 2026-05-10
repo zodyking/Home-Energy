@@ -629,6 +629,9 @@ def build_rooms_payload_for_power_and_ratings(
 
         room_data["total_watts"] = round(room_data["total_watts"], 1)
         room_data["total_day_wh"] = round(room_data["total_day_wh"], 2)
+        intraday_room_wh = config_manager.get_room_day_wh_from_intraday(room_id)
+        if intraday_room_wh is not None:
+            room_data["total_day_wh"] = round(float(intraday_room_wh), 2)
         base_k, eff_k = config_manager.get_room_kwh_budgets(room_id)
         room_data["kwh_budget"] = round(base_k, 4)
         room_data["kwh_budget_effective"] = round(eff_k, 4)
