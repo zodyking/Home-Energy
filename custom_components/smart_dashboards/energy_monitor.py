@@ -3098,7 +3098,7 @@ class EnergyMonitor:
                         if current_on and self._light_state_matches_segment(
                             entity_id, segment, attrs, is_wrgb, is_tuya, state_key
                         ):
-                            break
+                            return
                     if cs and raw == "off":
                         try:
                             await self.hass.services.async_call(
