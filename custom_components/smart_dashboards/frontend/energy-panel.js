@@ -13212,6 +13212,7 @@ class EnergyPanel extends HTMLElement {
       mode: 'group',
       automation: existingAutomation || { group_automation: { enabled: false, segments: [] }, individual_automations: {} },
       selectedSegment: null,
+      selectedIndividualEntity: null,
       hasWrgb,
       hasTuya,
       lightEntities
@@ -13369,12 +13370,14 @@ class EnergyPanel extends HTMLElement {
     return -1;
   }
 
-  _renderSegmentEditor(seg, index) {
+  _renderSegmentEditor(seg, index, scope = null) {
     if (!seg) return '';
     const state = this._lightAutoState;
+    const hasWrgb = scope?.hasWrgb ?? state.hasWrgb;
+    const hasTuya = scope?.hasTuya ?? state.hasTuya;
     const isOnOrMode = seg.action !== 'off';
-    const showAdvanced = state.hasWrgb && isOnOrMode;
-    const showTuya = state.hasTuya && isOnOrMode;
+    const showAdvanced = hasWrgb && isOnOrMode;
+    const showTuya = hasTuya && isOnOrMode;
     const brightness = seg.brightness ?? 100;
     const colorTemp = seg.color_temp ?? 4000;
     
@@ -13665,6 +13668,20 @@ class EnergyPanel extends HTMLElement {
       return `<div class="light-auto-no-segments"><p>No light entities configured for this device.</p></div>`;
     }
 
+    let editorHtml = '';
+    const selEnt = state.selectedIndividualEntity;
+    if (selEnt != null && state.selectedSegment != null) {
+      const segs = state.automation.individual_automations?.[selEnt]?.segments || [];
+      const seg = segs[state.selectedSegment];
+      if (seg) {
+        const light = lights.find(l => l.entity_id === selEnt);
+        editorHtml = this._renderSegmentEditor(seg, state.selectedSegment, {
+          hasWrgb: !!light?.wrgb,
+          hasTuya: !!light?.tuya,
+        });
+      }
+    }
+
     return `
       <div class="light-auto-individual-list">
         ${lights.map((light, idx) => {
@@ -13691,6 +13708,7 @@ class EnergyPanel extends HTMLElement {
           `;
         }).join('')}
       </div>
+      ${editorHtml}
     `;
   }
 
@@ -13704,6 +13722,7 @@ class EnergyPanel extends HTMLElement {
       btn.addEventListener('click', () => {
         this._lightAutoState.mode = btn.dataset.mode;
         this._lightAutoState.selectedSegment = null;
+        this._lightAutoState.selectedIndividualEntity = null;
         this._refreshLightAutomationModal();
       });
     });
@@ -13729,22 +13748,59 @@ class EnergyPanel extends HTMLElement {
           if (!e.target.classList.contains('light-auto-segment-handle')) {
             e.stopPropagation();
             const idx = parseInt(seg.dataset.segmentIndex, 10);
+            this._lightAutoState.selectedIndividualEntity = null;
             this._lightAutoState.selectedSegment = idx;
             this._refreshLightAutomationModal();
           }
         });
 
-        this._attachSegmentDragHandlers(seg, timeline);
+        this._attachSegmentDragHandlers(seg, timeline, null);
       });
     }
+
+    this._attachIndividualLightAutomationTimelines(overlay);
 
     this._attachSegmentEditorListeners(overlay);
   }
 
-  _attachSegmentDragHandlers(segEl, timeline) {
+  _attachIndividualLightAutomationTimelines(overlay) {
+    overlay.querySelectorAll('.light-auto-indiv-timeline').forEach((timeline) => {
+      const entityId = timeline.dataset.entity;
+      if (!entityId) return;
+
+      timeline.addEventListener('click', (e) => {
+        if (e.target.closest('.light-auto-segment')) return;
+        const rect = timeline.getBoundingClientRect();
+        const rawPct = ((e.clientX - rect.left) / rect.width) * 100;
+        const startPct = this._snapToGrid(rawPct);
+        const endPct = this._snapToGrid(startPct + 8.33);
+        const time = this._percentToTime(startPct);
+        const endTime = this._percentToTime(Math.min(100, endPct));
+        this._addTimelineSegmentForEntity(entityId, time, endTime);
+      });
+
+      timeline.querySelectorAll('.light-auto-segment').forEach((seg) => {
+        seg.addEventListener('click', (e) => {
+          if (!e.target.classList.contains('light-auto-segment-handle')) {
+            e.stopPropagation();
+            const idx = parseInt(seg.dataset.segmentIndex, 10);
+            this._lightAutoState.selectedIndividualEntity = entityId;
+            this._lightAutoState.selectedSegment = idx;
+            this._refreshLightAutomationModal();
+          }
+        });
+        this._attachSegmentDragHandlers(seg, timeline, entityId);
+      });
+    });
+  }
+
+  _attachSegmentDragHandlers(segEl, timeline, timelineEntityId = null) {
     const idx = parseInt(segEl.dataset.segmentIndex, 10);
-    const getSeg = () => this._lightAutoState.automation.group_automation?.segments?.[idx];
-    const allSegments = () => this._lightAutoState.automation.group_automation?.segments || [];
+    const getSeg = () => {
+      const segments = this._lightAutoSegmentsContext(timelineEntityId);
+      return segments?.[idx];
+    };
+    const allSegments = () => this._lightAutoSegmentsContext(timelineEntityId) || [];
     const MIN_WIDTH_PCT = 4.17;
     const CLICK_THRESHOLD = 5;
 
@@ -13946,6 +14002,9 @@ class EnergyPanel extends HTMLElement {
 
       if (!didBodyDrag) {
         this._lightAutoState.selectedSegment = idx;
+        if (timelineEntityId != null) {
+          this._lightAutoState.selectedIndividualEntity = timelineEntityId;
+        }
       }
       this._refreshLightAutomationModal();
       bodyDragging = false;
@@ -13975,17 +14034,31 @@ class EnergyPanel extends HTMLElement {
     if (!editor) return;
 
     const idx = parseInt(editor.dataset.editingIndex, 10);
-    const seg = this._lightAutoState.automation.group_automation?.segments?.[idx];
+    const st = this._lightAutoState;
+    const entityId = st.mode === 'individual' ? st.selectedIndividualEntity : null;
+    const segments = this._lightAutoSegmentsContext(entityId);
+    const seg = segments?.[idx];
     if (!seg) return;
 
+    const syncStartEnd = (which, val) => {
+      if (which === 'start') seg.start = val;
+      else seg.end = val;
+    };
+
     editor.querySelector('.light-auto-seg-start')?.addEventListener('change', (e) => {
-      seg.start = e.target.value;
+      syncStartEnd('start', e.target.value);
       this._refreshLightAutomationModal();
+    });
+    editor.querySelector('.light-auto-seg-start')?.addEventListener('input', (e) => {
+      syncStartEnd('start', e.target.value);
     });
 
     editor.querySelector('.light-auto-seg-end')?.addEventListener('change', (e) => {
-      seg.end = e.target.value;
+      syncStartEnd('end', e.target.value);
       this._refreshLightAutomationModal();
+    });
+    editor.querySelector('.light-auto-seg-end')?.addEventListener('input', (e) => {
+      syncStartEnd('end', e.target.value);
     });
 
     editor.querySelector('.light-auto-seg-action')?.addEventListener('change', (e) => {
@@ -14118,7 +14191,8 @@ class EnergyPanel extends HTMLElement {
     this._attachInlineSceneEditorListeners(editor, seg, idx);
 
     editor.querySelector('.light-auto-seg-delete')?.addEventListener('click', () => {
-      this._lightAutoState.automation.group_automation.segments.splice(idx, 1);
+      if (!segments) return;
+      segments.splice(idx, 1);
       this._lightAutoState.selectedSegment = null;
       this._refreshLightAutomationModal();
     });
@@ -14319,8 +14393,51 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  _lightAutoSegmentsContext(entityId) {
+    const st = this._lightAutoState;
+    if (!st?.automation) return null;
+    if (st.mode === 'group' || !entityId) {
+      if (!st.automation.group_automation) {
+        st.automation.group_automation = { enabled: false, segments: [] };
+      }
+      return st.automation.group_automation.segments;
+    }
+    if (!st.automation.individual_automations) {
+      st.automation.individual_automations = {};
+    }
+    if (!st.automation.individual_automations[entityId]) {
+      st.automation.individual_automations[entityId] = { enabled: false, segments: [] };
+    }
+    return st.automation.individual_automations[entityId].segments;
+  }
+
+  _addTimelineSegmentForEntity(entityId, startTime, endTime) {
+    if (!entityId) return;
+    const segments = this._lightAutoSegmentsContext(entityId);
+    if (!segments) return;
+    const newSeg = {
+      start: startTime,
+      end: endTime,
+      action: 'on',
+      brightness: 100
+    };
+    const st = this._lightAutoState;
+    const light = (st.lightEntities || []).find(l => l.entity_id === entityId);
+    if (light?.wrgb) {
+      newSeg.color_temp = 4000;
+    }
+    if (this._wouldOverlapOthers(newSeg, -1, segments)) {
+      return;
+    }
+    segments.push(newSeg);
+    st.selectedIndividualEntity = entityId;
+    st.selectedSegment = segments.length - 1;
+    this._refreshLightAutomationModal();
+  }
+
   _addTimelineSegment(startTime, endTime) {
-    const segments = this._lightAutoState.automation.group_automation.segments;
+    const segments = this._lightAutoSegmentsContext(null);
+    if (!segments) return;
     const newSeg = {
       start: startTime,
       end: endTime,
@@ -14349,9 +14466,58 @@ class EnergyPanel extends HTMLElement {
     this._attachLightAutomationListeners(overlay);
   }
 
+  _flushLightAutomationEditorFromDom() {
+    const overlay = this.shadowRoot?.querySelector('.light-auto-modal-overlay');
+    const st = this._lightAutoState;
+    if (!overlay || !st?.automation) return;
+
+    overlay.querySelectorAll('.light-auto-indiv-enabled').forEach((cb) => {
+      const ent = cb.dataset.entity;
+      if (!ent) return;
+      if (!st.automation.individual_automations) st.automation.individual_automations = {};
+      const cur = st.automation.individual_automations[ent] || { enabled: false, segments: [] };
+      cur.enabled = cb.checked;
+      st.automation.individual_automations[ent] = cur;
+    });
+
+    const groupEnabled = overlay.querySelector('.light-auto-timeline-wrap .light-auto-enabled');
+    if (groupEnabled && st.automation.group_automation) {
+      st.automation.group_automation.enabled = groupEnabled.checked;
+    }
+
+    const editor = overlay.querySelector('.light-auto-segment-editor');
+    if (!editor) return;
+    const idx = parseInt(editor.dataset.editingIndex, 10);
+    if (Number.isNaN(idx) || idx < 0) return;
+    const entityId = st.mode === 'individual' ? st.selectedIndividualEntity : null;
+    const segments = this._lightAutoSegmentsContext(entityId);
+    const seg = segments?.[idx];
+    if (!seg) return;
+
+    const stv = editor.querySelector('.light-auto-seg-start')?.value;
+    const etv = editor.querySelector('.light-auto-seg-end')?.value;
+    if (stv != null && stv !== '') seg.start = stv;
+    if (etv != null && etv !== '') seg.end = etv;
+    const act = editor.querySelector('.light-auto-seg-action')?.value;
+    if (act) seg.action = act;
+
+    const enf = editor.querySelector('.light-auto-seg-enforce-interval');
+    if (enf) {
+      const v = parseInt(enf.value, 10);
+      if (Number.isFinite(v)) seg.enforcement_interval = v;
+    }
+    const bri = editor.querySelector('.light-auto-seg-brightness');
+    if (bri) {
+      const v = parseInt(bri.value, 10);
+      if (Number.isFinite(v)) seg.brightness = v;
+    }
+  }
+
   async _saveLightAutomation() {
     const state = this._lightAutoState;
     if (!state) return;
+
+    this._flushLightAutomationEditorFromDom();
 
     try {
       await this._hass.callWS({
