@@ -278,6 +278,8 @@ class EnergyMonitor:
         self._battery_last_level: dict[str, float] = {}  # last known battery level per sensor entity
         self._battery_low_warn_last: dict[str, datetime] = {}  # last hourly low battery warning per sensor
         self._battery_listener_unsub: list = []  # unsubscribe callbacks for battery sensors
+        # Last contact/lock state we acted on (dedupe HA replay + duplicate same-state events)
+        self._door_window_last_signal_state: dict[str, str] = {}
         # Door contact/lock activity for dashboard (in-memory; max 72h per door key)
         self._door_activity_log: dict[str, list[dict[str, str]]] = {}
         # group:{room_id} / ind:{room_id}:{entity_id} -> segment transition + burst reconcile timing
@@ -5758,6 +5760,7 @@ class EnergyMonitor:
             except Exception:
                 pass
         self._battery_listener_unsub.clear()
+        self._door_window_last_signal_state.clear()
 
     def _setup_door_window_listeners(self) -> None:
         """Subscribe to door/window contact sensor, lock, and presence sensor state changes."""
@@ -5817,6 +5820,18 @@ class EnergyMonitor:
             )
             self._door_presence_listener_unsub.append(unsub)
             _LOGGER.debug("Door/window presence listeners registered for %d sensors", len(presence_sensor_ids))
+
+        def _seed_contact_lock_baselines() -> None:
+            for eid in contact_sensor_ids:
+                st = self.hass.states.get(eid)
+                if st and st.state not in ("unknown", "unavailable", ""):
+                    self._door_window_last_signal_state[eid] = str(st.state).strip()
+            for eid in lock_ids:
+                st = self.hass.states.get(eid)
+                if st and st.state not in ("unknown", "unavailable", ""):
+                    self._door_window_last_signal_state[eid] = str(st.state).strip()
+
+        _seed_contact_lock_baselines()
 
         # Setup battery monitoring for door/window sensors
         self._setup_battery_listeners()
@@ -6027,17 +6042,47 @@ class EnergyMonitor:
         self._door_activity_log[key] = entries
         return list(reversed(entries))
 
+    def _door_lock_signal_is_baseline_or_duplicate(
+        self, entity_id: str, raw: str, old_state: object | None
+    ) -> bool:
+        """True if contact/lock automation should be skipped (startup replay or duplicate state)."""
+        last = self._door_window_last_signal_state.get(entity_id)
+        if last == raw:
+            return True
+        old_raw: str | None = None
+        if old_state is not None:
+            o = getattr(old_state, "state", None)
+            if o is not None and o not in ("unknown", "unavailable"):
+                old_raw = str(o).strip()
+        if last is None:
+            if old_raw is None:
+                self._door_window_last_signal_state[entity_id] = raw
+                return True
+            if old_raw == raw:
+                self._door_window_last_signal_state[entity_id] = raw
+                return True
+            self._door_window_last_signal_state[entity_id] = raw
+            return False
+        self._door_window_last_signal_state[entity_id] = raw
+        return False
+
     async def _async_handle_contact_sensor_change(self, event: Event) -> None:
         """Handle door/window contact sensor state change."""
         entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
-        
+        if not entity_id:
+            return
         if not new_state or new_state.state in ("unknown", "unavailable"):
             return
         if old_state and old_state.state not in ("unknown", "unavailable"):
             if new_state.state == old_state.state:
                 return
+        raw = str(new_state.state).strip()
+        if not raw:
+            return
+        if self._door_lock_signal_is_baseline_or_duplicate(entity_id, raw, old_state):
+            return
         
         result = self._find_door_window_outlet_by_contact_sensor(entity_id)
         if not result:
@@ -6190,12 +6235,18 @@ class EnergyMonitor:
         entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
-        
+        if not entity_id:
+            return
         if not new_state or new_state.state in ("unknown", "unavailable"):
             return
         if old_state and old_state.state not in ("unknown", "unavailable"):
             if new_state.state == old_state.state:
                 return
+        raw = str(new_state.state).strip()
+        if not raw:
+            return
+        if self._door_lock_signal_is_baseline_or_duplicate(entity_id, raw, old_state):
+            return
         
         result = self._find_door_outlet_by_lock(entity_id)
         if not result:
