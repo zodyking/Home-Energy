@@ -638,7 +638,7 @@ export const sharedStyles = `
     border-radius: 8px;
     padding: 14px 20px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-    z-index: 1100;
+    z-index: 20000;
     animation: slideIn 0.3s ease;
   }
 
