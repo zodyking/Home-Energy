@@ -2473,21 +2473,25 @@ class EnergyMonitor:
             return
         import time
 
+        # Never pre-energize appliance switches for "off" segments — that powers loads
+        # unrelated to the intended automation and feels like random switch-ons.
+        seg_action = segment.get("action", "on")
         switch_meta: dict[str, dict] = {}
-        for eid, _, _ in targets:
-            outlet = self._find_light_outlet_for_entity(eid)
-            sw = outlet.get("switch_entity") if outlet else None
-            if not self._is_switch_entity_id(sw):
-                continue
-            if sw in switch_meta:
-                continue
-            was_off = not self._switch_entity_is_on(sw)
-            if was_off:
-                await self._async_switch_set(sw, True)
-            switch_meta[sw] = {
-                "was_off": was_off,
-                "t0": time.monotonic() if was_off else None,
-            }
+        if seg_action in ("on", "mode"):
+            for eid, _, _ in targets:
+                outlet = self._find_light_outlet_for_entity(eid)
+                sw = outlet.get("switch_entity") if outlet else None
+                if not self._is_switch_entity_id(sw):
+                    continue
+                if sw in switch_meta:
+                    continue
+                was_off = not self._switch_entity_is_on(sw)
+                if was_off:
+                    await self._async_switch_set(sw, True)
+                switch_meta[sw] = {
+                    "was_off": was_off,
+                    "t0": time.monotonic() if was_off else None,
+                }
 
         results: list = []
         try:

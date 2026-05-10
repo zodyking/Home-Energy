@@ -3209,7 +3209,23 @@ class ConfigManager:
         end = str(seg.get("end", "")).strip()
         if not start or not end:
             return None
-        if not re.match(r"^\d{2}:\d{2}$", start) or not re.match(r"^\d{2}:\d{2}$", end):
+
+        def _normalize_hh_mm(s: str) -> str | None:
+            parts = s.replace(".", ":").split(":")
+            if len(parts) != 2:
+                return None
+            try:
+                h = int(parts[0].strip())
+                m = int(parts[1].strip())
+            except (TypeError, ValueError):
+                return None
+            if not (0 <= h <= 23 and 0 <= m <= 59):
+                return None
+            return f"{h:02d}:{m:02d}"
+
+        start = _normalize_hh_mm(start) or ""
+        end = _normalize_hh_mm(end) or ""
+        if not start or not end:
             return None
 
         action = seg.get("action", "on")
