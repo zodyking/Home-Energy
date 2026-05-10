@@ -208,6 +208,11 @@ class EnergyPanel extends HTMLElement {
     this._panelConfig = panel.config;
   }
 
+  /** Panel-scoped toast (shadow DOM); delegates to shared `showToast`. */
+  _showToast(message, type = 'default') {
+    showToast(this.shadowRoot, message, type);
+  }
+
   connectedCallback() {
     this._render();
     this._loadConfig();
@@ -13169,7 +13174,7 @@ class EnergyPanel extends HTMLElement {
   async _openLightAutomationModal(roomId, outlet) {
     const room = (this._config?.rooms || []).find(r => this._canonicalRoomId(r) === roomId);
     if (!room) {
-      this._showToast('Room not found');
+      this._showToast('Room not found', 'error');
       return;
     }
 
@@ -13181,7 +13186,7 @@ class EnergyPanel extends HTMLElement {
           room_id: roomId
         });
         if (!authResult.authorized) {
-          this._showToast('Only the room assignee can configure automations');
+          this._showToast('Only the room assignee can configure automations', 'error');
           return;
         }
       } catch (err) {
@@ -14371,7 +14376,7 @@ class EnergyPanel extends HTMLElement {
   async _testInlineScene(scene) {
     const tuyaLights = this._lightAutoState?.lightEntities?.filter(l => l.tuya) || [];
     if (tuyaLights.length === 0) {
-      this._showToast('No Tuya lights configured');
+      this._showToast('No Tuya lights configured', 'error');
       return;
     }
 
@@ -14386,10 +14391,10 @@ class EnergyPanel extends HTMLElement {
         entity_id: entityId,
         scene_data: { scene_data_v2: sceneHex }
       });
-      this._showToast('Scene sent - enforcement paused 30s');
+      this._showToast('Scene sent — enforcement paused 30s', 'success');
     } catch (err) {
       console.error('Failed to test scene:', err);
-      this._showToast('Failed to test scene');
+      this._showToast('Failed to test scene', 'error');
     }
   }
 
@@ -14525,11 +14530,11 @@ class EnergyPanel extends HTMLElement {
         room_id: state.roomId,
         automations: state.automation
       });
-      this._showToast('Automation saved');
+      this._showToast('Light automation saved', 'success');
       this._closeLightAutomationModal();
     } catch (err) {
       console.error('Failed to save automation:', err);
-      this._showToast('Failed to save automation');
+      this._showToast(`Failed to save automation: ${err.message || err}`, 'error');
     }
   }
 
@@ -14919,7 +14924,7 @@ class EnergyPanel extends HTMLElement {
 
     const tuyaLights = this._lightAutoState.lightEntities.filter(l => l.tuya);
     if (tuyaLights.length === 0) {
-      this._showToast('No Tuya lights configured');
+      this._showToast('No Tuya lights configured', 'error');
       return;
     }
 
@@ -14934,10 +14939,10 @@ class EnergyPanel extends HTMLElement {
         entity_id: entityId,
         scene_data: { scene_data_v2: sceneHex, pause_enforcement: 30 }
       });
-      this._showToast('Scene sent - enforcement paused 30s');
+      this._showToast('Scene sent — enforcement paused 30s', 'success');
     } catch (err) {
       console.error('Failed to test scene:', err);
-      this._showToast('Failed to test scene');
+      this._showToast('Failed to test scene', 'error');
     }
   }
 
