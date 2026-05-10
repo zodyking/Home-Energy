@@ -1176,7 +1176,11 @@ class EnergyPanel extends HTMLElement {
         budgetSection.classList.toggle('room-budget-section--na', !budgetState.showBar);
       }
       if (barFill) {
-        barFill.style.width = `${budgetState.showBar ? budgetState.fillPct : 0}%`;
+        const w =
+          budgetState.showBar && Number.isFinite(budgetState.fillPct)
+            ? Math.min(100, Math.max(0, budgetState.fillPct))
+            : 0;
+        barFill.style.width = `${w}%`;
         barFill.classList.remove('kwh-tier-0', 'kwh-tier-1', 'kwh-tier-2', 'kwh-tier-3');
         barFill.classList.add(`kwh-tier-${budgetState.kwhTier}`);
         barFill.classList.toggle('over', budgetState.over);
@@ -1227,6 +1231,18 @@ class EnergyPanel extends HTMLElement {
           );
         } else {
           budgetOnlyWrap.style.display = 'none';
+        }
+      }
+      const usageWrap = roomCard.querySelector(
+        '.room-budget-marker-wrap[data-marker-role="usage"]',
+      );
+      if (usageWrap) {
+        if (budgetState.showBar && budgetState.usedKwh > 1e-9) {
+          usageWrap.style.display = '';
+          const uPct = Math.min(100, (budgetState.usedKwh / maxIv) * 100);
+          usageWrap.style.left = `${uPct}%`;
+        } else {
+          usageWrap.style.display = 'none';
         }
       }
 
@@ -4363,6 +4379,23 @@ class EnergyPanel extends HTMLElement {
         background: transparent;
         box-shadow: none;
         opacity: 0.95;
+      }
+
+      /* True today-usage position (fill can be sub-pixel at low kWh; budget tick is separate). */
+      .room-budget-marker-wrap.room-budget-usage-marker {
+        z-index: 4;
+        transform: translateX(-50%);
+        pointer-events: none;
+      }
+
+      .room-budget-marker--usage {
+        width: 3px;
+        border-radius: 2px;
+        background: #fff;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.45),
+          0 0 10px rgba(3, 169, 244, 0.9);
+        z-index: 4;
       }
 
       .room-budget-marker-label {
@@ -8393,7 +8426,10 @@ class EnergyPanel extends HTMLElement {
     this._syncRoomsGridTitleFitObserver();
     this._putHardRefreshOverlay(hrOverlay);
     if (this._dashboardView === 'rooms' && rooms.length > 0 && !showStatistics) {
-      queueMicrotask(() => this._scheduleRoomHeaderTitleFit());
+      queueMicrotask(() => {
+        this._scheduleRoomHeaderTitleFit();
+        this._updatePowerDisplay();
+      });
     }
     if (this._dashboardView === 'statistics') {
       queueMicrotask(() => void this._syncStatsRoomsPie());
@@ -9847,9 +9883,16 @@ class EnergyPanel extends HTMLElement {
     } else {
       effKwh = this._effectiveKwhBudgetClient(baseKwh, tts, roomUsesBoost, roomConfig);
     }
-    const usedKwh = Math.max(0, (roomData.total_day_wh || 0) / 1000);
+    const whRaw = roomData?.total_day_wh;
+    const whNum = typeof whRaw === 'number' ? whRaw : parseFloat(String(whRaw ?? ''));
+    const usedWh = Number.isFinite(whNum) ? whNum : 0;
+    const usedKwh = Math.max(0, usedWh / 1000);
     const showBar = maxInterval > 0;
-    const fillPct = showBar ? Math.min(100, (usedKwh / maxInterval) * 100) : 0;
+    const rawFillPct = showBar && maxInterval > 0 ? (usedKwh / maxInterval) * 100 : 0;
+    const fillPct =
+      showBar && Number.isFinite(rawFillPct)
+        ? Math.min(100, Math.max(0, rawFillPct))
+        : 0;
     const overScale = showBar && usedKwh > maxInterval;
     const overBudget = showBar && effKwh > 0 && usedKwh > effKwh;
     const boost = baseKwh > 0 && effKwh > baseKwh + 0.0001;
@@ -9943,6 +9986,16 @@ class EnergyPanel extends HTMLElement {
       chunks.push(`<div class="room-budget-marker-wrap" data-kwh="${m.value}" style="left:${m.pct}%">
           <span class="room-budget-marker-tick room-budget-marker--interval has-tooltip" title="${tip}"></span>
           <span class="room-budget-marker-label room-budget-marker-label--kwh">${m.value} kWh</span>
+        </div>`);
+    }
+
+    if (budget.usedKwh > 1e-9) {
+      const uPct = Math.min(100, budget.fillPct);
+      const usageTip = esc(
+        `Today's usage: ${budget.usedKwh.toFixed(2)} kWh (bar scale 0–${budget.maxInterval} kWh). Blue gradient = used energy; ticks = voice tiers / daily budget.`,
+      );
+      chunks.push(`<div class="room-budget-marker-wrap room-budget-usage-marker" data-marker-role="usage" style="left:${uPct}%">
+          <span class="room-budget-marker-tick room-budget-marker--usage has-tooltip" title="${usageTip}"></span>
         </div>`);
     }
 
@@ -10305,8 +10358,9 @@ class EnergyPanel extends HTMLElement {
     const trackTitle =
       "Open today's kWh chart — scale 0–" +
       budget.maxInterval +
-      ' kWh; blue tick = first voice alert tier' +
-      (budget.showSeparateBudget ? '; dashed tick = daily budget' : '');
+      ' kWh; wide blue fill = energy used today; white tick = exact usage on scale' +
+      (budget.showSeparateBudget ? '; bright blue tick + label = daily budget' : '') +
+      '; grey ticks = voice alert tiers';
 
     const thresholdPill = room.threshold > 0
       ? `<span class="room-threshold-pill has-tooltip" title="Room power threshold: spoken alert when exceeded">
@@ -10423,7 +10477,11 @@ class EnergyPanel extends HTMLElement {
         <div class="room-footer">
           <div class="room-budget-section${budget.showBar ? '' : ' room-budget-section--na'}" role="group" aria-label="Daily kilowatt-hours, scale and budget markers">
             <div class="room-budget-bar-track graph-clickable" data-graph-type="room_wh" data-room-id="${roomId}" title="${trackTitle.replace(/"/g, '&quot;')}">
-              <div class="${fillClass}" style="width: ${budget.showBar ? budget.fillPct : 0}%"></div>
+              <div class="${fillClass}" style="width: ${
+                budget.showBar && Number.isFinite(budget.fillPct)
+                  ? Math.min(100, Math.max(0, budget.fillPct))
+                  : 0
+              }%"></div>
               ${markersHtml}
               <div class="room-budget-bar-labels">
                 <span class="room-budget-values">${budget.showBar ? `${budget.usedKwh.toFixed(2)} kWh` : '—'}</span>
