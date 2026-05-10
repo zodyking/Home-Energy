@@ -181,6 +181,8 @@ class EnergyMonitor:
     """Monitor energy consumption and send TTS alerts for thresholds."""
 
     _DOOR_ACTIVITY_RETENTION = timedelta(hours=72)
+    # After a schedule segment becomes active, re-apply at most this long (then idle until next transition).
+    _LIGHT_AUTO_BURST_ENFORCE_SEC = 60.0
 
     def __init__(self, hass: HomeAssistant, config_manager: "ConfigManager") -> None:
         """Initialize the energy monitor."""
@@ -278,6 +280,8 @@ class EnergyMonitor:
         self._battery_listener_unsub: list = []  # unsubscribe callbacks for battery sensors
         # Door contact/lock activity for dashboard (in-memory; max 72h per door key)
         self._door_activity_log: dict[str, list[dict[str, str]]] = {}
+        # group:{room_id} / ind:{room_id}:{entity_id} -> segment transition + burst reconcile timing
+        self._light_auto_apply_state: dict[str, dict] = {}
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -2390,9 +2394,31 @@ class EnergyMonitor:
         st["prev_sw_on"] = self._appliance_entity_is_on(switch)
         st["prev_presence"] = pres_ok if pres_ent else False
 
+    @staticmethod
+    def _light_automation_segment_identity(segment: dict) -> str:
+        """Stable id for the active schedule row (first match wins ordering in UI)."""
+        return "|".join(
+            str(segment.get(k, ""))
+            for k in ("start", "end", "action", "light_mode", "enforcement_interval")
+        )
+
+    def _light_automation_tick_state(self, state_key: str) -> dict:
+        st = self._light_auto_apply_state.get(state_key)
+        if st is None:
+            st = {"seg_id": None, "t0": None, "last_apply_mono": None}
+            self._light_auto_apply_state[state_key] = st
+        return st
+
     async def _tick_light_automation(self, now: datetime) -> None:
-        """Check and apply light automation schedules."""
-        import json as json_mod
+        """Run light schedules on segment transitions + short post-transition reconcile only.
+
+        The energy monitor ticks every second; re-applying while still inside the same
+        schedule window caused lights/switches to thrash all day. We only run a full
+        apply when the active segment *changes* (or on first observation), then at
+        most every ``enforcement_interval`` seconds for `_LIGHT_AUTO_BURST_ENFORCE_SEC`
+        seconds, then stay idle until the next transition.
+        """
+        import time as time_mod
 
         try:
             automations = self.config_manager.get_all_light_automations()
@@ -2403,27 +2429,105 @@ class EnergyMonitor:
         if not automations:
             return
 
-        current_time = now.strftime("%H:%M")
         current_mins = now.hour * 60 + now.minute
+        now_mono = time_mod.monotonic()
+        burst = float(self._LIGHT_AUTO_BURST_ENFORCE_SEC)
 
         for room_id, room_auto in automations.items():
             room = self._find_room_by_id(room_id)
             if not room:
                 continue
 
-            group_auto = room_auto.get("group_automation", {})
-            if group_auto.get("enabled"):
+            group_auto = room_auto.get("group_automation", {}) or {}
+
+            gkey = f"group:{room_id}"
+            if not group_auto.get("enabled"):
+                self._light_auto_apply_state.pop(gkey, None)
+            else:
+                matched: dict | None = None
                 for segment in group_auto.get("segments", []):
                     if self._time_in_segment(current_mins, segment):
-                        await self._apply_light_group_segment(room, segment)
+                        matched = segment
                         break
+                gst = self._light_automation_tick_state(gkey)
+                if matched is None:
+                    if gst.get("seg_id") is not None:
+                        gst["seg_id"] = None
+                        gst["t0"] = None
+                        gst["last_apply_mono"] = None
+                else:
+                    seg_id = self._light_automation_segment_identity(matched)
+                    if gst.get("seg_id") != seg_id:
+                        gst["seg_id"] = seg_id
+                        gst["t0"] = now_mono
+                        gst["last_apply_mono"] = None
+                        await self._apply_light_group_segment(
+                            room, matched, full_mode_converge=True
+                        )
+                        gst["last_apply_mono"] = now_mono
+                    else:
+                        t0 = gst.get("t0")
+                        if t0 is None:
+                            gst["t0"] = now_mono
+                            t0 = now_mono
+                        elapsed = now_mono - float(t0)
+                        if elapsed >= burst:
+                            continue
+                        interval = max(
+                            10,
+                            min(3600, int(matched.get("enforcement_interval", 60))),
+                        )
+                        last = gst.get("last_apply_mono")
+                        if last is None or (now_mono - float(last)) >= float(interval):
+                            await self._apply_light_group_segment(
+                                room, matched, full_mode_converge=False
+                            )
+                            gst["last_apply_mono"] = now_mono
 
             for entity_id, light_auto in room_auto.get("individual_automations", {}).items():
-                if light_auto.get("enabled"):
-                    for segment in light_auto.get("segments", []):
-                        if self._time_in_segment(current_mins, segment):
-                            await self._apply_light_single_segment(entity_id, segment)
-                            break
+                ikey = f"ind:{room_id}:{entity_id}"
+                if not light_auto.get("enabled"):
+                    self._light_auto_apply_state.pop(ikey, None)
+                    continue
+                matched_i: dict | None = None
+                for segment in light_auto.get("segments", []):
+                    if self._time_in_segment(current_mins, segment):
+                        matched_i = segment
+                        break
+                ist = self._light_automation_tick_state(ikey)
+                if matched_i is None:
+                    if ist.get("seg_id") is not None:
+                        ist["seg_id"] = None
+                        ist["t0"] = None
+                        ist["last_apply_mono"] = None
+                    continue
+                seg_id_i = self._light_automation_segment_identity(matched_i)
+                if ist.get("seg_id") != seg_id_i:
+                    ist["seg_id"] = seg_id_i
+                    ist["t0"] = now_mono
+                    ist["last_apply_mono"] = None
+                    await self._apply_light_single_segment(
+                        entity_id, matched_i, full_mode_converge=True
+                    )
+                    ist["last_apply_mono"] = now_mono
+                else:
+                    t0i = ist.get("t0")
+                    if t0i is None:
+                        ist["t0"] = now_mono
+                        t0i = now_mono
+                    elapsed_i = now_mono - float(t0i)
+                    if elapsed_i >= burst:
+                        continue
+                    interval_i = max(
+                        10,
+                        min(3600, int(matched_i.get("enforcement_interval", 60))),
+                    )
+                    last_i = ist.get("last_apply_mono")
+                    if last_i is None or (now_mono - float(last_i)) >= float(interval_i):
+                        await self._apply_light_single_segment(
+                            entity_id, matched_i, full_mode_converge=False
+                        )
+                        ist["last_apply_mono"] = now_mono
 
     def _time_in_segment(self, current_mins: int, segment: dict) -> bool:
         """Check if current time (in minutes) is within segment range."""
@@ -2453,7 +2557,9 @@ class EnergyMonitor:
                 return room
         return None
 
-    async def _apply_light_group_segment(self, room: dict, segment: dict) -> None:
+    async def _apply_light_group_segment(
+        self, room: dict, segment: dict, *, full_mode_converge: bool = True
+    ) -> None:
         """Apply a light automation segment to all mapped lights on every light appliance in the room."""
         by_entity: dict[str, tuple[bool, bool]] = {}
         for outlet in room.get("outlets", []):
@@ -2503,6 +2609,7 @@ class EnergyMonitor:
                         is_wrgb=w,
                         is_tuya=t,
                         defer_appliance_switch=True,
+                        full_mode_converge=full_mode_converge,
                     )
                     for eid, w, t in targets
                 ],
@@ -2528,13 +2635,21 @@ class EnergyMonitor:
                     res,
                 )
 
-    async def _apply_light_single_segment(self, entity_id: str, segment: dict) -> None:
+    async def _apply_light_single_segment(
+        self, entity_id: str, segment: dict, *, full_mode_converge: bool = True
+    ) -> None:
         """Apply a light automation segment to a single light."""
         room_config = self._find_light_config(entity_id)
         is_wrgb = room_config.get("wrgb", False) if room_config else False
         is_tuya = room_config.get("tuya", False) if room_config else False
 
-        await self._apply_light_action(entity_id, segment, is_wrgb=is_wrgb, is_tuya=is_tuya)
+        await self._apply_light_action(
+            entity_id,
+            segment,
+            is_wrgb=is_wrgb,
+            is_tuya=is_tuya,
+            full_mode_converge=full_mode_converge,
+        )
 
     def _find_light_config(self, entity_id: str) -> dict | None:
         """Find light entity configuration."""
@@ -2925,6 +3040,7 @@ class EnergyMonitor:
         is_tuya: bool = False,
         *,
         defer_appliance_switch: bool = False,
+        full_mode_converge: bool = True,
     ) -> None:
         """Apply light action from automation segment with continuous enforcement."""
         import time
@@ -2968,9 +3084,12 @@ class EnergyMonitor:
                     switch_energized_at = time.monotonic()
 
         try:
-            if action == "mode":
-                deadline = time.monotonic() + 60.0
-                while time.monotonic() < deadline:
+            if action == "mode" and full_mode_converge:
+                deadline = time.monotonic() + 45.0
+                max_iters = 45
+                n = 0
+                while time.monotonic() < deadline and n < max_iters:
+                    n += 1
                     cs = self.hass.states.get(entity_id)
                     raw = (cs.state or "").lower() if cs else ""
                     if cs and raw not in ("unknown", "unavailable", ""):
@@ -2979,7 +3098,7 @@ class EnergyMonitor:
                         if current_on and self._light_state_matches_segment(
                             entity_id, segment, attrs, is_wrgb, is_tuya, state_key
                         ):
-                            return
+                            break
                     if cs and raw == "off":
                         try:
                             await self.hass.services.async_call(
@@ -3012,6 +3131,18 @@ class EnergyMonitor:
                     attrs = {}
                 if action == "mode" and not current_on:
                     return
+            elif action == "mode" and not full_mode_converge:
+                await self._async_run_light_automation_effects(
+                    entity_id,
+                    segment,
+                    is_wrgb,
+                    is_tuya,
+                    action,
+                    state_key,
+                    enforcement_interval,
+                    skip_enforcement=False,
+                )
+                return
 
             await self._async_run_light_automation_effects(
                 entity_id,
