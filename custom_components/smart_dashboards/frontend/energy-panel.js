@@ -8459,15 +8459,37 @@ class EnergyPanel extends HTMLElement {
       if (Number.isNaN(n)) return;
       parts.push(`${label} ${Math.round(n)} W`);
     };
-    addW('Load', e.room_watts);
-    if (e.room_threshold != null && e.room_threshold !== '') {
-      const t = Number(e.room_threshold);
-      if (!Number.isNaN(t)) parts.push(`Threshold ${Math.round(t)} W`);
-    }
-    addW('Outlet', e.outlet_watts);
-    if (e.outlet_threshold != null && e.outlet_threshold !== '') {
-      const ot = Number(e.outlet_threshold);
-      if (!Number.isNaN(ot)) parts.push(`Limit ${Math.round(ot)} W`);
+
+    const dr = e.door_reminder != null && e.door_reminder !== '' ? String(e.door_reminder) : '';
+    if (dr) {
+      const kindLabel = (
+        {
+          door_still_open: 'Still-open door reminder',
+          door_still_unlocked: 'Still-unlocked door reminder',
+          window_still_open: 'Still-open window reminder',
+        }[dr] || 'Door/window reminder'
+      );
+      parts.push(kindLabel);
+      const rw = e.room_watts;
+      if (rw != null && rw !== '') {
+        const n = Number(rw);
+        if (!Number.isNaN(n)) parts.push(`Room power ${Math.round(n)} W`);
+      }
+      if (e.room_threshold != null && e.room_threshold !== '') {
+        const t = Number(e.room_threshold);
+        if (!Number.isNaN(t)) parts.push(`Room limit ${Math.round(t)} W`);
+      }
+    } else {
+      addW('Load', e.room_watts);
+      if (e.room_threshold != null && e.room_threshold !== '') {
+        const t = Number(e.room_threshold);
+        if (!Number.isNaN(t)) parts.push(`Threshold ${Math.round(t)} W`);
+      }
+      addW('Outlet', e.outlet_watts);
+      if (e.outlet_threshold != null && e.outlet_threshold !== '') {
+        const ot = Number(e.outlet_threshold);
+        if (!Number.isNaN(ot)) parts.push(`Limit ${Math.round(ot)} W`);
+      }
     }
     if (e.enforcement_phase != null && e.enforcement_phase !== '') {
       const p = Number(e.enforcement_phase);
