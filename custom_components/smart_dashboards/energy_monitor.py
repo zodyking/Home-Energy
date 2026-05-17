@@ -9,7 +9,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -3462,17 +3462,22 @@ class EnergyMonitor:
         self._setup_zone_health_listeners()
         self._setup_door_window_listeners()
 
-        @callback
-        def _schedule_door_window_resync(_event: Event | None = None) -> None:
+        def _run_door_window_resync(_now: datetime | None = None) -> None:
             self.hass.async_create_task(
                 self._async_resync_door_window_reminders_on_startup()
             )
 
+        # Defer so entity states are stable (avoids false "open" / missed close after setup).
         if self.hass.state is CoreState.running:
-            _schedule_door_window_resync()
+            async_call_later(self.hass, timedelta(seconds=5), _run_door_window_resync)
         else:
+
+            @callback
+            def _after_ha_started(_event: Event | None = None) -> None:
+                async_call_later(self.hass, timedelta(seconds=5), _run_door_window_resync)
+
             self.hass.bus.async_listen_once(
-                EVENT_HOMEASSISTANT_STARTED, _schedule_door_window_resync
+                EVENT_HOMEASSISTANT_STARTED, _after_ha_started
             )
 
     def _teardown_manual_toggle_switch_listeners(self) -> None:
@@ -5907,20 +5912,27 @@ class EnergyMonitor:
                             and st.state not in ("unknown", "unavailable", "")
                             and self._contact_sensor_state_is_open(st.state)
                         ):
-                            await self._start_door_reminder(
-                                outlet,
-                                room,
-                                key,
-                                "open",
-                                media_player,
-                                volume,
-                                tts_settings,
-                            )
-                            _LOGGER.debug(
-                                "Door reminder resync: started open reminder for %s (%s)",
-                                outlet.get("name") or key,
-                                contact,
-                            )
+                            lock_ent_check = str(outlet.get("lock_entity") or "").strip()
+                            skip_open = False
+                            if lock_ent_check.startswith("lock."):
+                                lchk = self.hass.states.get(lock_ent_check)
+                                if lchk and lchk.state == "locked":
+                                    skip_open = True
+                            if not skip_open:
+                                await self._start_door_reminder(
+                                    outlet,
+                                    room,
+                                    key,
+                                    "open",
+                                    media_player,
+                                    volume,
+                                    tts_settings,
+                                )
+                                _LOGGER.debug(
+                                    "Door reminder resync: started open reminder for %s (%s)",
+                                    outlet.get("name") or key,
+                                    contact,
+                                )
                     lock = outlet.get("lock_entity")
                     if (
                         outlet.get("reminder_mode") == "unlocked"
@@ -6194,8 +6206,13 @@ class EnergyMonitor:
                 old_raw = str(o).strip()
         if last is None:
             if old_raw is None:
+                # Absorb unknown→unknown only. Allow unknown/None→concrete so close/open
+                # handlers run (avoids last staying stale and blocking real transitions).
+                if raw in ("unknown", "unavailable", ""):
+                    self._door_window_last_signal_state[entity_id] = raw
+                    return True
                 self._door_window_last_signal_state[entity_id] = raw
-                return True
+                return False
             if old_raw == raw:
                 self._door_window_last_signal_state[entity_id] = raw
                 return True
@@ -6246,13 +6263,39 @@ class EnergyMonitor:
         )
         
         if device_type == "door":
-            await self._handle_door_contact_change(outlet, room, key, is_open, media_player, volume, tts_settings)
+            await self._handle_door_contact_change(
+                outlet,
+                room,
+                key,
+                is_open,
+                media_player,
+                volume,
+                tts_settings,
+                allow_contact_announce_tts=old_state is not None,
+            )
         else:
-            await self._handle_window_contact_change(outlet, room, key, is_open, media_player, volume, tts_settings)
+            await self._handle_window_contact_change(
+                outlet,
+                room,
+                key,
+                is_open,
+                media_player,
+                volume,
+                tts_settings,
+                allow_contact_announce_tts=old_state is not None,
+            )
 
     async def _handle_door_contact_change(
-        self, outlet: dict, room: dict, key: str, is_open: bool,
-        media_player: str | None, volume: float, tts_settings: dict
+        self,
+        outlet: dict,
+        room: dict,
+        key: str,
+        is_open: bool,
+        media_player: str | None,
+        volume: float,
+        tts_settings: dict,
+        *,
+        allow_contact_announce_tts: bool = True,
     ) -> None:
         """Handle door contact sensor state change."""
         room_name = room.get("name", "Room")
@@ -6273,7 +6316,11 @@ class EnergyMonitor:
         
         if is_open:
             # Door opened
-            if outlet.get("announce_open_close", True) and media_player:
+            if (
+                allow_contact_announce_tts
+                and outlet.get("announce_open_close", True)
+                and media_player
+            ):
                 if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_opened"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("door_opened_msg", DEFAULT_DOOR_OPENED_MSG)
@@ -6294,7 +6341,11 @@ class EnergyMonitor:
                 await self._start_door_reminder(outlet, room, key, "open", media_player, volume, tts_settings)
         else:
             # Door closed
-            if outlet.get("announce_open_close", True) and media_player:
+            if (
+                allow_contact_announce_tts
+                and outlet.get("announce_open_close", True)
+                and media_player
+            ):
                 if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_closed"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("door_closed_msg", DEFAULT_DOOR_CLOSED_MSG)
@@ -6321,8 +6372,16 @@ class EnergyMonitor:
                 )
 
     async def _handle_window_contact_change(
-        self, outlet: dict, room: dict, key: str, is_open: bool,
-        media_player: str | None, volume: float, tts_settings: dict
+        self,
+        outlet: dict,
+        room: dict,
+        key: str,
+        is_open: bool,
+        media_player: str | None,
+        volume: float,
+        tts_settings: dict,
+        *,
+        allow_contact_announce_tts: bool = True,
     ) -> None:
         """Handle window contact sensor state change."""
         room_name = room.get("name", "Room")
@@ -6330,7 +6389,11 @@ class EnergyMonitor:
 
         if is_open:
             # Window opened
-            if outlet.get("announce_open_close", True) and media_player:
+            if (
+                allow_contact_announce_tts
+                and outlet.get("announce_open_close", True)
+                and media_player
+            ):
                 if tts_settings.get("window_tts_enabled", True) and self._tts_line_enabled(tts_settings, "window_opened"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("window_opened_msg", DEFAULT_WINDOW_OPENED_MSG)
@@ -6350,7 +6413,11 @@ class EnergyMonitor:
                 await self._start_door_reminder(outlet, room, key, "window_open", media_player, volume, tts_settings)
         else:
             # Window closed
-            if outlet.get("announce_open_close", True) and media_player:
+            if (
+                allow_contact_announce_tts
+                and outlet.get("announce_open_close", True)
+                and media_player
+            ):
                 if tts_settings.get("window_tts_enabled", True) and self._tts_line_enabled(tts_settings, "window_closed"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("window_closed_msg", DEFAULT_WINDOW_CLOSED_MSG)
@@ -6393,7 +6460,8 @@ class EnergyMonitor:
         outlet, room = result
         key = self._door_window_key(outlet, room)
         is_locked = new_state.state == "locked"
-        
+        allow_lock_announce_tts = old_state is not None
+
         room_name = room.get("name", "Room")
         door_type = outlet.get("door_subtype", "standard")
         door_type_text = "" if door_type == "standard" else door_type
@@ -6413,7 +6481,11 @@ class EnergyMonitor:
         if is_locked:
             self.append_door_activity_event(outlet, room, "locked")
             # Door locked
-            if outlet.get("announce_lock", True) and media_player:
+            if (
+                allow_lock_announce_tts
+                and outlet.get("announce_lock", True)
+                and media_player
+            ):
                 if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_locked"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("door_locked_msg", DEFAULT_DOOR_LOCKED_MSG)
@@ -6432,10 +6504,16 @@ class EnergyMonitor:
             # Stop "still unlocked" reminder
             lock_key = f"{key}_lock"
             await self._stop_door_reminder(lock_key)
+            # Contact can lag; stop still-open reminder when lock reports secured.
+            await self._stop_door_reminder(key)
         else:
             self.append_door_activity_event(outlet, room, "unlocked")
             # Door unlocked
-            if outlet.get("announce_lock", True) and media_player:
+            if (
+                allow_lock_announce_tts
+                and outlet.get("announce_lock", True)
+                and media_player
+            ):
                 if tts_settings.get("door_tts_enabled", True) and self._tts_line_enabled(tts_settings, "door_unlocked"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
                     msg = tts_settings.get("door_unlocked_msg", DEFAULT_DOOR_UNLOCKED_MSG)
@@ -6671,6 +6749,11 @@ class EnergyMonitor:
                     state = self.hass.states.get(contact)
                     if not state or not self._contact_sensor_state_is_open(state.state):
                         break
+                    lock_ent = str(outlet.get("lock_entity") or "").strip()
+                    if lock_ent.startswith("lock."):
+                        lstate = self.hass.states.get(lock_ent)
+                        if lstate and lstate.state == "locked":
+                            break
                     msg_key = "door_still_open"
                     msg_template = tts_settings.get("door_still_open_msg", DEFAULT_DOOR_STILL_OPEN_MSG)
                 elif reminder_type == "window_open":
