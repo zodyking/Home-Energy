@@ -3462,6 +3462,19 @@ class EnergyMonitor:
         self._setup_zone_health_listeners()
         self._setup_door_window_listeners()
 
+        @callback
+        def _schedule_door_window_resync(_event: Event | None = None) -> None:
+            self.hass.async_create_task(
+                self._async_resync_door_window_reminders_on_startup()
+            )
+
+        if self.hass.state is CoreState.running:
+            _schedule_door_window_resync()
+        else:
+            self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED, _schedule_door_window_resync
+            )
+
     def _teardown_manual_toggle_switch_listeners(self) -> None:
         for unsub in self._manual_toggle_listener_unsub:
             try:
@@ -5869,6 +5882,97 @@ class EnergyMonitor:
 
         # Setup battery monitoring for door/window sensors
         self._setup_battery_listeners()
+
+    async def _async_resync_door_window_reminders_on_startup(self) -> None:
+        """Start reminder tasks when contact/lock is already open/unlocked (no transition on HA restart)."""
+        if not self._running:
+            return
+        tts_settings = self.config_manager.energy_config.get("tts_settings", {}) or {}
+        for room in self.config_manager.energy_config.get("rooms", []):
+            media_player = room.get("media_player")
+            volume = float(room.get("volume", 0.7) or 0.7)
+            for outlet in room.get("outlets", []):
+                otype = outlet.get("type")
+                if otype == "door":
+                    key = self._door_window_key(outlet, room)
+                    contact = outlet.get("contact_sensor")
+                    if (
+                        outlet.get("reminder_mode") == "open"
+                        and isinstance(contact, str)
+                        and contact.startswith("binary_sensor.")
+                    ):
+                        st = self.hass.states.get(contact)
+                        if (
+                            st
+                            and st.state not in ("unknown", "unavailable", "")
+                            and self._contact_sensor_state_is_open(st.state)
+                        ):
+                            await self._start_door_reminder(
+                                outlet,
+                                room,
+                                key,
+                                "open",
+                                media_player,
+                                volume,
+                                tts_settings,
+                            )
+                            _LOGGER.debug(
+                                "Door reminder resync: started open reminder for %s (%s)",
+                                outlet.get("name") or key,
+                                contact,
+                            )
+                    lock = outlet.get("lock_entity")
+                    if (
+                        outlet.get("reminder_mode") == "unlocked"
+                        and isinstance(lock, str)
+                        and lock.startswith("lock.")
+                    ):
+                        lst = self.hass.states.get(lock)
+                        if lst and lst.state not in ("unknown", "unavailable", ""):
+                            if lst.state != "locked":
+                                lock_key = f"{key}_lock"
+                                await self._start_door_reminder(
+                                    outlet,
+                                    room,
+                                    lock_key,
+                                    "unlocked",
+                                    media_player,
+                                    volume,
+                                    tts_settings,
+                                )
+                                _LOGGER.debug(
+                                    "Door reminder resync: started unlocked reminder for %s (%s)",
+                                    outlet.get("name") or key,
+                                    lock,
+                                )
+                elif otype == "window":
+                    key = self._door_window_key(outlet, room)
+                    contact = outlet.get("contact_sensor")
+                    if (
+                        outlet.get("reminder_enabled")
+                        and isinstance(contact, str)
+                        and contact.startswith("binary_sensor.")
+                    ):
+                        st = self.hass.states.get(contact)
+                        if (
+                            st
+                            and st.state not in ("unknown", "unavailable", "")
+                            and self._contact_sensor_state_is_open(st.state)
+                        ):
+                            await self._start_door_reminder(
+                                outlet,
+                                room,
+                                key,
+                                "window_open",
+                                media_player,
+                                volume,
+                                tts_settings,
+                            )
+                            _LOGGER.debug(
+                                "Window reminder resync: started reminder for %s (%s)",
+                                outlet.get("name") or key,
+                                contact,
+                            )
 
     def _teardown_battery_listeners(self) -> None:
         """Remove battery sensor state listeners."""
