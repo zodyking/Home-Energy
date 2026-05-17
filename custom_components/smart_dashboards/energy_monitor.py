@@ -73,6 +73,7 @@ from .zone_health_storage import (
 from .config_manager import (
     ConfigManager,
     _coerce_bool,
+    _normalize_presence_person_entity,
     resolve_budget_boost_weekdays,
     resolve_wall_heater_effective_temperatures,
 )
@@ -4603,8 +4604,9 @@ class EnergyMonitor:
                     return room
         return None
 
-    async def _send_room_alert(
+    async def _async_room_enforcement_after_threshold_recorded(
         self,
+        *,
         room_id: str,
         room_name: str,
         room: dict,
@@ -4612,53 +4614,18 @@ class EnergyMonitor:
         media_player: str | None,
         volume: float,
         tts_settings: dict,
-    ) -> None:
-        """Send TTS alert for room threshold exceeded with power enforcement."""
-        if not media_player:
-            return
-
-        # Phase transition (cooldown bypass): window count after this breach is +1; detect before record.
-        now = dt_util.now()
-        pe = self.config_manager.energy_config.get("power_enforcement", {})
-        enforcement_enabled = self.config_manager.is_room_enforcement_enabled(room_id)
-        phase1_enabled = pe.get("phase1_enabled", True)
-        phase2_enabled = pe.get("phase2_enabled", True)
-        phase_transition = False
-        if enforcement_enabled:
-            state = self.config_manager.get_enforcement_state(room_id)
-            phase = int(state.get("phase", 0) or 0)
-            phase1_count = pe.get("phase1_warning_count", 20)
-            phase1_window = pe.get("phase1_time_window_minutes", 60)
-            phase2_count = pe.get("phase2_warning_count", 40)
-            phase2_window = pe.get("phase2_time_window_minutes", 30)
-            warnings_p1 = self.config_manager.get_warnings_in_window(room_id, phase1_window)
-            warnings_p2 = self.config_manager.get_warnings_in_window(room_id, phase2_window)
-            phase_transition = (
-                (phase2_enabled and warnings_p2 + 1 >= phase2_count and phase < 2)
-                or (phase1_enabled and warnings_p1 + 1 >= phase1_count and phase < 1)
-            )
-
-        # Cooldown: skip for phase transitions (we always need TTS when phases enable)
-        last_alert = self._last_room_alerts.get(room_id)
-        if not phase_transition and last_alert and (now - last_alert).total_seconds() < ALERT_COOLDOWN:
-            return  # Still in cooldown
-
-        self._last_room_alerts[room_id] = now
-
-        await self.config_manager.async_record_threshold_warning(room_id, current_watts)
-
-        # Spoken {warning_count} matches dashboard W after this successful threshold TTS.
+        include_standard_room_warn: bool = True,
+    ) -> tuple[float, str, object | None, bool]:
+        """Phase/volume TTS, optional room-threshold wording, and phase-2 cycle callback after a recorded warning."""
         daily_warnings = self.config_manager.get_event_counts().get("room_warnings", {}).get(
             room_id, 0
         )
         tts_warning_cardinal = spoken_cardinal(daily_warnings + 1)
 
-        # Get power enforcement settings
         pe = self.config_manager.energy_config.get("power_enforcement", {})
         enforcement_enabled = self.config_manager.is_room_enforcement_enabled(room_id)
         room_threshold = room.get("threshold", 0)
 
-        # Calculate effective volume (base + enforcement offset)
         effective_volume = volume
         message = ""
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
@@ -4670,14 +4637,17 @@ class EnergyMonitor:
             phase2_count = pe.get("phase2_warning_count", 40)
             phase2_window = pe.get("phase2_time_window_minutes", 30)
             volume_increment = pe.get("phase1_volume_increment", 2)
+            phase2_enabled = pe.get("phase2_enabled", True)
 
-            warnings_in_phase1_window = self.config_manager.get_warnings_in_window(room_id, phase1_window)
-            warnings_in_phase2_window = self.config_manager.get_warnings_in_window(room_id, phase2_window)
+            warnings_in_phase1_window = self.config_manager.get_warnings_in_window(
+                room_id, phase1_window
+            )
+            warnings_in_phase2_window = self.config_manager.get_warnings_in_window(
+                room_id, phase2_window
+            )
 
-            # Coerce phase to int (JSON load can occasionally yield float)
             phase = int(state.get("phase", 0) or 0)
 
-            # Check for phase 2 (power cycling) - set message; power cycle happens AFTER TTS
             if phase2_enabled and warnings_in_phase2_window >= phase2_count and phase < 2:
                 await self.config_manager.async_set_enforcement_phase(room_id, 2)
                 await self._send_notification_to_room_person(
@@ -4711,8 +4681,7 @@ class EnergyMonitor:
                     except (KeyError, ValueError):
                         message = ""
 
-            # Check for phase 1 (volume escalation)
-            elif phase1_enabled and warnings_in_phase1_window >= phase1_count and phase < 1:
+            elif pe.get("phase1_enabled", True) and warnings_in_phase1_window >= phase1_count and phase < 1:
                 await self.config_manager.async_set_enforcement_phase(room_id, 1)
                 await self._send_notification_to_room_person(
                     room,
@@ -4778,7 +4747,6 @@ class EnergyMonitor:
                     except (KeyError, ValueError):
                         message = ""
 
-            # Already phase 2: use minisplit or generic phase-2 warn when repeating
             phase = int(self.config_manager.get_enforcement_state(room_id).get("phase", 0) or 0)
             if (
                 enforcement_enabled
@@ -4810,22 +4778,23 @@ class EnergyMonitor:
                     except (KeyError, ValueError):
                         message = ""
 
-            # If in phase 1+, increase volume (re-fetch phase after possible phase change)
             phase = int(self.config_manager.get_enforcement_state(room_id).get("phase", 0) or 0)
             if phase >= 1:
-                new_offset = await self.config_manager.async_increment_volume_offset(room_id, volume_increment)
+                new_offset = await self.config_manager.async_increment_volume_offset(
+                    room_id, volume_increment
+                )
                 effective_volume = min(1.0, volume + (new_offset / 100.0))
-            # Phase 2: cap volume at phase2_max_volume (0-100 scale)
             if phase >= 2:
                 phase2_max = pe.get("phase2_max_volume", 100)
                 if phase2_max is not None:
                     cap = max(0.0, min(1.0, float(phase2_max) / 100.0))
                     effective_volume = min(effective_volume, cap)
 
-            # Phase 2 power cycling moved to post_send_callback (runs after TTS actually plays)
-
-        # Use standard message if no enforcement message was set (or format failed)
-        if not message and self._tts_line_enabled(tts_settings, "room_warn"):
+        if (
+            include_standard_room_warn
+            and not message
+            and self._tts_line_enabled(tts_settings, "room_warn")
+        ):
             msg_template = tts_settings.get("room_warn_msg") or DEFAULT_ROOM_WARN_MSG
             try:
                 message = msg_template.format(
@@ -4835,13 +4804,16 @@ class EnergyMonitor:
                     threshold=int(room_threshold) if room_threshold is not None else 0,
                 )
             except (KeyError, ValueError):
-                message = f"{prefix} {room_name} is using {int(current_watts)} watts out of {int(room_threshold or 0)} watt room threshold, reduce your usage."
+                message = (
+                    f"{prefix} {room_name} is using {int(current_watts)} watts out of "
+                    f"{int(room_threshold or 0)} watt room threshold, reduce your usage."
+                )
 
-        # Power cycle runs in post_send_callback after TTS actually plays (incl. when queued).
-        # Flow: TTS (before) -> power cycle ALL outlets -> TTS (after, adhere message)
         post_send_cb = None
-        if enforcement_enabled and phase2_enabled:
-            phase_now = int(self.config_manager.get_enforcement_state(room_id).get("phase", 0) or 0)
+        if enforcement_enabled and pe.get("phase2_enabled", True):
+            phase_now = int(
+                self.config_manager.get_enforcement_state(room_id).get("phase", 0) or 0
+            )
             if phase_now == 2:
                 delay_sec = pe.get("phase2_cycle_delay_seconds", 5)
                 after_template = tts_settings.get("phase2_after_msg") or ""
@@ -4904,6 +4876,68 @@ class EnergyMonitor:
                             )
 
                 post_send_cb = _power_cycle_and_tts_after
+
+        return effective_volume, message, post_send_cb, enforcement_enabled
+
+    async def _send_room_alert(
+        self,
+        room_id: str,
+        room_name: str,
+        room: dict,
+        current_watts: float,
+        media_player: str | None,
+        volume: float,
+        tts_settings: dict,
+    ) -> None:
+        """Send TTS alert for room threshold exceeded with power enforcement."""
+        if not media_player:
+            return
+
+        # Phase transition (cooldown bypass): window count after this breach is +1; detect before record.
+        now = dt_util.now()
+        pe = self.config_manager.energy_config.get("power_enforcement", {})
+        enforcement_enabled = self.config_manager.is_room_enforcement_enabled(room_id)
+        phase1_enabled = pe.get("phase1_enabled", True)
+        phase2_enabled = pe.get("phase2_enabled", True)
+        phase_transition = False
+        if enforcement_enabled:
+            state = self.config_manager.get_enforcement_state(room_id)
+            phase = int(state.get("phase", 0) or 0)
+            phase1_count = pe.get("phase1_warning_count", 20)
+            phase1_window = pe.get("phase1_time_window_minutes", 60)
+            phase2_count = pe.get("phase2_warning_count", 40)
+            phase2_window = pe.get("phase2_time_window_minutes", 30)
+            warnings_p1 = self.config_manager.get_warnings_in_window(room_id, phase1_window)
+            warnings_p2 = self.config_manager.get_warnings_in_window(room_id, phase2_window)
+            phase_transition = (
+                (phase2_enabled and warnings_p2 + 1 >= phase2_count and phase < 2)
+                or (phase1_enabled and warnings_p1 + 1 >= phase1_count and phase < 1)
+            )
+
+        # Cooldown: skip for phase transitions (we always need TTS when phases enable)
+        last_alert = self._last_room_alerts.get(room_id)
+        if not phase_transition and last_alert and (now - last_alert).total_seconds() < ALERT_COOLDOWN:
+            return  # Still in cooldown
+
+        self._last_room_alerts[room_id] = now
+
+        await self.config_manager.async_record_threshold_warning(room_id, current_watts)
+
+        (
+            effective_volume,
+            message,
+            post_send_cb,
+            enforcement_enabled,
+        ) = await self._async_room_enforcement_after_threshold_recorded(
+            room_id=room_id,
+            room_name=room_name,
+            room=room,
+            current_watts=current_watts,
+            media_player=media_player,
+            volume=volume,
+            tts_settings=tts_settings,
+            include_standard_room_warn=True,
+        )
 
         msg_stripped = (message or "").strip()
         if not msg_stripped and post_send_cb is None:
@@ -6400,6 +6434,116 @@ class EnergyMonitor:
             
             await self._turn_off_entities(outlet.get("presence_off_entities", []))
 
+    async def _async_door_reminder_power_enforcement_hook(
+        self,
+        room: dict,
+        media_player: str | None,
+        volume: float,
+        tts_settings: dict,
+        *,
+        reminder_kind: str,
+    ) -> None:
+        """Each door/window still-open or still-unlocked reminder counts like a room warning when a person is assigned."""
+        if not media_player:
+            return
+        if not _normalize_presence_person_entity(room.get("presence_person_entity")):
+            return
+        room_id = room.get("id", str(room.get("name") or "room").lower().replace(" ", "_"))
+        if not self.config_manager.is_room_enforcement_enabled(room_id):
+            return
+
+        current_watts = self._sum_room_total_watts_only(room)
+        room_name = room.get("name", "Room")
+
+        await self.config_manager.async_record_threshold_warning(room_id, current_watts)
+
+        (
+            effective_volume,
+            message,
+            post_send_cb,
+            enforcement_enabled,
+        ) = await self._async_room_enforcement_after_threshold_recorded(
+            room_id=room_id,
+            room_name=room_name,
+            room=room,
+            current_watts=current_watts,
+            media_player=media_player,
+            volume=volume,
+            tts_settings=tts_settings,
+            include_standard_room_warn=False,
+        )
+
+        msg_stripped = (message or "").strip()
+        try:
+            rt_raw = room.get("threshold", 0)
+            try:
+                rt_int = int(rt_raw) if rt_raw is not None else 0
+            except (TypeError, ValueError):
+                rt_int = 0
+
+            def _warning_log_extra() -> dict:
+                ex: dict = {
+                    "tts_message": message,
+                    "room_watts": int(round(current_watts)),
+                    "room_threshold": rt_int,
+                    "volume_percent": int(round(effective_volume * 100)),
+                    "door_reminder": reminder_kind,
+                }
+                if enforcement_enabled:
+                    ex["enforcement_phase"] = int(
+                        self.config_manager.get_enforcement_state(room_id).get("phase", 0)
+                        or 0
+                    )
+                return ex
+
+            if msg_stripped:
+                await self._async_send_tts_with_lights(
+                    room,
+                    media_player,
+                    message,
+                    effective_volume,
+                    tts_settings,
+                    post_send_callback=post_send_cb,
+                )
+            elif post_send_cb:
+                await post_send_cb()
+
+            await self.config_manager.async_increment_warning(room_id)
+            await self.config_manager.async_add_event_log_entry(
+                room_id,
+                room_name,
+                "warning",
+                None,
+                True,
+                extra=_warning_log_extra(),
+            )
+        except Exception as e:
+            _LOGGER.error("Door reminder enforcement hook failed: %s", e)
+            try:
+                rt_raw = room.get("threshold", 0)
+                rt_int = int(rt_raw) if rt_raw is not None else 0
+            except (TypeError, ValueError):
+                rt_int = 0
+            fail_ex: dict = {
+                "tts_message": message,
+                "room_watts": int(round(current_watts)),
+                "room_threshold": rt_int,
+                "door_reminder": reminder_kind,
+            }
+            if enforcement_enabled:
+                fail_ex["enforcement_phase"] = int(
+                    self.config_manager.get_enforcement_state(room_id).get("phase", 0)
+                    or 0
+                )
+            await self.config_manager.async_add_event_log_entry(
+                room_id,
+                room_name,
+                "warning",
+                None,
+                False,
+                extra=fail_ex,
+            )
+
     async def _start_door_reminder(
         self, outlet: dict, room: dict, key: str, reminder_type: str,
         media_player: str | None, volume: float, tts_settings: dict
@@ -6462,7 +6606,14 @@ class EnergyMonitor:
                             device_name=device_name,
                         )
                         await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
-        
+                        await self._async_door_reminder_power_enforcement_hook(
+                            room,
+                            media_player,
+                            volume,
+                            tts_settings,
+                            reminder_kind=msg_key,
+                        )
+
         self._door_reminder_active[key] = self.hass.async_create_task(reminder_loop())
 
     async def _stop_door_reminder(self, key: str) -> None:
