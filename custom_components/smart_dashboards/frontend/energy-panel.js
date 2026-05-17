@@ -1440,7 +1440,7 @@ class EnergyPanel extends HTMLElement {
           const lockEntity = deviceCard.dataset.lockEntity;
           const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
           const lockState = lockEntity ? this._hass?.states?.[lockEntity]?.state : null;
-          const isOpen = contactState === 'on';
+          const isOpen = contactState === 'on' || contactState === 'open';
           const isLocked = lockState === 'locked';
           const hasLock = !!lockEntity;
 
@@ -1471,7 +1471,7 @@ class EnergyPanel extends HTMLElement {
         if (deviceType === 'window') {
           const contactSensor = deviceCard.dataset.contactSensor;
           const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
-          const isOpen = contactState === 'on';
+          const isOpen = contactState === 'on' || contactState === 'open';
 
           // Update card classes
           deviceCard.classList.toggle('window-open', isOpen);
@@ -10683,7 +10683,7 @@ class EnergyPanel extends HTMLElement {
     const lockEntity = device.lock_entity;
     const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
     const lockState = lockEntity ? this._hass?.states?.[lockEntity]?.state : null;
-    const isOpen = contactState === 'on';
+    const isOpen = contactState === 'on' || contactState === 'open';
     const isLocked = lockState === 'locked';
     const hasLock = !!lockEntity;
     
@@ -10717,7 +10717,7 @@ class EnergyPanel extends HTMLElement {
   _renderWindowCard(device, index) {
     const contactSensor = device.contact_sensor;
     const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
-    const isOpen = contactState === 'on';
+    const isOpen = contactState === 'on' || contactState === 'open';
 
     return `
       <div class="window-card ${isOpen ? 'window-open' : 'window-closed'}" data-outlet-index="${index}" data-device-type="window" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}">
