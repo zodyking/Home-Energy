@@ -48,6 +48,23 @@ from .statistics_aggregation import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Per-connection passcode rate-limit state fallback (used when the
+# ActiveConnection object does not allow ad-hoc attribute assignment).
+_PASSCODE_STATE: dict[int, dict] = {}
+
+
+async def _recorder_executor_job(hass: HomeAssistant, fn, *args):
+    """Run a recorder-touching sync helper on the recorder's own executor.
+
+    HA's recorder runs on a dedicated thread; the sanctioned dispatch is
+    ``get_instance(hass).async_add_executor_job`` (audit Phase 3 recorder-
+    threading finding). Previously these calls used the generic
+    ``hass.async_add_executor_job``, which runs them on the default executor
+    pool and contends with other HA work.
+    """
+    from homeassistant.components.recorder import get_instance
+    return await get_instance(hass).async_add_executor_job(fn, *args)
+
 
 def _dashboard_ws_user_key(connection: websocket_api.ActiveConnection) -> str:
     """Stable key for engagement heartbeats (per HA user)."""
@@ -277,6 +294,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_light_automations)
     websocket_api.async_register_command(hass, websocket_save_light_automations)
     websocket_api.async_register_command(hass, websocket_test_tuya_scene)
+    websocket_api.async_register_command(hass, websocket_encode_tuya_scene)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
 
 
@@ -1727,7 +1745,8 @@ async def _compute_kwh_from_history(
         eid: str, room_id: str
     ) -> tuple[str, str, float, dict[str, float], dict[str, Any]]:
         async with sem:
-            wh, by_day, meta = await hass.async_add_executor_job(
+            wh, by_day, meta = await _recorder_executor_job(
+                hass,
                 _sync_compute_plug_wh_total_and_by_day,
                 hass,
                 eid,
@@ -1740,7 +1759,8 @@ async def _compute_kwh_from_history(
         spec: dict[str, Any],
     ) -> tuple[str, str, float, dict[str, float], dict[str, Any]]:
         async with sem:
-            wh, by_day = await hass.async_add_executor_job(
+            wh, by_day = await _recorder_executor_job(
+                hass,
                 _sync_integrate_switch_constant_wh_total_and_by_day,
                 hass,
                 spec["switch_entity"],
@@ -1811,7 +1831,8 @@ async def _compute_kwh_from_history(
         )
 
         # Query LTS for ALL entities that have ANY missing days
-        lts_result = await hass.async_add_executor_job(
+        lts_result = await _recorder_executor_job(
+            hass,
             _sync_fetch_lts_wh_by_day,
             hass,
             entities_needing_lts,
@@ -2189,7 +2210,8 @@ async def async_build_statistics_payload(
             if ws_local is not None:
                 window_start_utc = dt_util.as_utc(ws_local)
                 if window_start_utc < now_utc:
-                    plateau_ts = await hass.async_add_executor_job(
+                    plateau_ts = await _recorder_executor_job(
+                        hass,
                         _sync_supplier_usage_plateau_started_at,
                         hass,
                         current_usage_ent,
@@ -2706,15 +2728,52 @@ async def websocket_verify_passcode(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Verify the settings passcode."""
-    # Get stored passcode from integration options
-    stored_passcode = hass.data[DOMAIN].get("options", {}).get("settings_passcode", "0000")
-    entered_passcode = msg["passcode"]
-    
-    if entered_passcode == stored_passcode:
+    """Verify the settings passcode.
+
+    Uses ``hmac.compare_digest`` for constant-time comparison and applies a
+    per-connection rate limit: 5 failed attempts within 60s trigger a 60s
+    lockout. Previously the 4-digit passcode was checked with a plain ``==``
+    and unlimited tries, making it brute-forceable over WebSocket (audit
+    Phase 3 passcode-security finding).
+    """
+    import hmac
+    import time
+
+    stored_passcode = str(
+        hass.data[DOMAIN].get("options", {}).get("settings_passcode", "0000")
+    )
+    entered_passcode = str(msg.get("passcode", ""))
+
+    # Per-connection rate limiting state.
+    state = getattr(connection, "_smart_dashboards_passcode_state", None)
+    if state is None:
+        state = {"fails": [], "locked_until": 0.0}
+        try:
+            # ActiveConnection is a simple object; stashing an attribute is fine.
+            object.__setattr__(connection, "_smart_dashboards_passcode_state", state)
+        except (AttributeError, TypeError):
+            # Fall back to a module-level dict keyed by id(connection) if the
+            # connection object is frozen / a slotted dataclass.
+            state = _PASSCODE_STATE.setdefault(id(connection), state)
+    now = time.monotonic()
+    if now < state["locked_until"]:
+        connection.send_error(msg["id"], "rate_limited", "Too many attempts. Try again later.")
+        return
+
+    if hmac.compare_digest(entered_passcode, stored_passcode):
+        state["fails"].clear()
+        state["locked_until"] = 0.0
         connection.send_result(msg["id"], {"valid": True})
     else:
-        connection.send_result(msg["id"], {"valid": False})
+        state["fails"].append(now)
+        # Keep only failures from the last 60s.
+        state["fails"] = [t for t in state["fails"] if now - t < 60.0]
+        if len(state["fails"]) >= 5:
+            state["locked_until"] = now + 60.0
+            state["fails"].clear()
+            connection.send_error(msg["id"], "rate_limited", "Too many failed attempts. Locked for 60s.")
+        else:
+            connection.send_result(msg["id"], {"valid": False})
 
 
 @websocket_api.websocket_command(
@@ -2960,13 +3019,16 @@ async def websocket_toggle_switch(
                     door_ent = str(out.get("heater_door_sensor_entity") or "").strip()
                     window_ent = str(out.get("heater_window_sensor_entity") or "").strip()
                     blocker = None
+                    # Accept both HA-canonical "on" and MQTT-style "open" so a
+                    # door/window reporting "open" still blocks the heater
+                    # (audit BUG 8: previously only "on" was matched here too).
                     if door_ent.startswith("binary_sensor."):
                         ds = hass.states.get(door_ent)
-                        if ds and ds.state == "on":
+                        if ds and str(ds.state).lower() in ("on", "open"):
                             blocker = "door"
                     if not blocker and window_ent.startswith("binary_sensor."):
                         ws = hass.states.get(window_ent)
-                        if ws and ws.state == "on":
+                        if ws and str(ws.state).lower() in ("on", "open"):
                             blocker = "window"
                     if blocker:
                         room_name = room_cfg.get("name", room_id)
@@ -3613,7 +3675,8 @@ async def websocket_hard_refresh_statistics(
 
             async def query_entity(eid: str, room_id: str) -> tuple[str, str, float, dict[str, float]]:
                 async with sem:
-                    wh, by_day, _meta = await hass.async_add_executor_job(
+                    wh, by_day, _meta = await _recorder_executor_job(
+                        hass,
                         _sync_compute_plug_wh_total_and_by_day,
                         hass,
                         eid,
@@ -3624,7 +3687,8 @@ async def websocket_hard_refresh_statistics(
 
             async def query_switch(spec: dict[str, Any]) -> tuple[str, str, float, dict[str, float]]:
                 async with sem:
-                    wh, by_day = await hass.async_add_executor_job(
+                    wh, by_day = await _recorder_executor_job(
+                        hass,
                         _sync_integrate_switch_constant_wh_total_and_by_day,
                         hass,
                         spec["switch_entity"],
@@ -3689,7 +3753,8 @@ async def websocket_hard_refresh_statistics(
                     f"LTS fallback: {len(missing_days)} days missing, querying Long-Term Statistics...",
                 )
 
-                lts_result = await hass.async_add_executor_job(
+                lts_result = await _recorder_executor_job(
+                    hass,
                     _sync_fetch_lts_wh_by_day,
                     hass,
                     list(entity_to_room.keys()),
@@ -4110,7 +4175,6 @@ async def websocket_test_tuya_scene(
     msg: dict[str, Any],
 ) -> None:
     """Test a Tuya scene on a light (immediate preview)."""
-    import json
     import time
 
     entity_id = msg["entity_id"]
@@ -4121,7 +4185,18 @@ async def websocket_test_tuya_scene(
         return
 
     try:
-        scene_hex = scene_data.get("scene_data_v2", "")
+        # Accept either a pre-encoded ``scene_data_v2`` hex string (legacy
+        # frontend path) or a raw scene dict (preferred — the backend owns
+        # encoding now, audit BUG 18/22). Both flow through the same apply
+        # path used by the automation engine.
+        from .light_automation import apply_tuya_scene, encode_tuya_scene_hex
+
+        raw_scene = scene_data.get("scene")
+        if isinstance(raw_scene, dict):
+            scene_hex = encode_tuya_scene_hex(raw_scene)
+        else:
+            scene_hex = scene_data.get("scene_data_v2", "")
+
         if not scene_hex:
             connection.send_error(msg["id"], "invalid_scene", "No scene_data_v2 hex string")
             return
@@ -4133,32 +4208,76 @@ async def websocket_test_tuya_scene(
 
         light_name = entity_id.replace("light.", "", 1)
         scene_text_entity = f"text.{light_name}_scene"
+
+        # Preferred path: text.set_value — same as the automation engine.
+        applied = False
         if hass.states.get(scene_text_entity) and hass.services.has_service("text", "set_value"):
-            await hass.services.async_call(
-                "text",
-                "set_value",
-                {"entity_id": scene_text_entity, "value": scene_hex},
-            )
-        elif hass.services.has_service("tuya_local", "set_dp"):
-            await hass.services.async_call(
-                "tuya_local",
-                "set_dp",
-                {
-                    "entity_id": entity_id,
-                    "dp": 25,
-                    "value": scene_hex,
-                },
-            )
-        else:
-            await hass.services.async_call(
-                "light",
-                "turn_on",
-                {
-                    "entity_id": entity_id,
-                    "effect": "scene",
-                },
-            )
+            try:
+                await hass.services.async_call(
+                    "text",
+                    "set_value",
+                    {"entity_id": scene_text_entity, "value": scene_hex},
+                )
+                applied = True
+            except Exception as e:
+                _LOGGER.warning("Scene test via text.set_value failed for %s: %s", entity_id, e)
+
+        # Fallback: tuya_local set_dp (DP 25) — kept for installs without the
+        # text entity; the automation engine does not use this path, but a test
+        # preview should still work for those users.
+        if not applied and hass.services.has_service("tuya_local", "set_dp"):
+            try:
+                await hass.services.async_call(
+                    "tuya_local",
+                    "set_dp",
+                    {"entity_id": entity_id, "dp": 25, "value": scene_hex},
+                )
+                applied = True
+            except Exception as e:
+                _LOGGER.warning("Scene test via tuya_local.set_dp failed for %s: %s", entity_id, e)
+
+        # Last-resort fallback: set the "scene" effect so the light enters
+        # scene mode even if we can't push the hex.
+        if not applied:
+            try:
+                await hass.services.async_call(
+                    "light",
+                    "turn_on",
+                    {"entity_id": entity_id, "effect": "scene"},
+                )
+            except Exception as e:
+                _LOGGER.warning("Scene test via light.turn_on effect failed for %s: %s", entity_id, e)
+
         connection.send_result(msg["id"], {"success": True})
     except Exception as e:
         _LOGGER.error("Failed to test Tuya scene on %s: %s", entity_id, e)
         connection.send_error(msg["id"], "scene_test_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/encode_tuya_scene",
+        vol.Required("scene"): dict,
+    }
+)
+@callback
+def websocket_encode_tuya_scene(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Encode a Tuya scene dict into the canonical ``scene_data_v2`` hex string.
+
+    The frontend previously carried its own drifted JS copy of the encoder
+    (audit BUG 22). With the encoder consolidated in
+    :mod:`light_automation`, the frontend can call this command to get a
+    preview hex from the single source of truth.
+    """
+    from .light_automation import encode_tuya_scene_hex
+
+    try:
+        hex_str = encode_tuya_scene_hex(msg["scene"])
+        connection.send_result(msg["id"], {"hex": hex_str})
+    except Exception as e:
+        _LOGGER.error("Failed to encode Tuya scene: %s", e)
+        connection.send_error(msg["id"], "encode_failed", str(e))

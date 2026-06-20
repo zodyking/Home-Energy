@@ -116,6 +116,13 @@ function isVentLikeType(t) {
   return t === 'vent' || t === 'wall_heater' || t === 'ceiling_vent_fan';
 }
 
+// Canonical contact-sensor open-state check for the frontend (audit BUG 13:
+// previously `=== 'on' || === 'open'` was duplicated in 4 sites). Accepts
+// both HA-canonical "on" and MQTT-style "open".
+function isContactOpen(state) {
+  return state === 'on' || state === 'open';
+}
+
 class EnergyPanel extends HTMLElement {
   constructor() {
     super();
@@ -126,6 +133,7 @@ class EnergyPanel extends HTMLElement {
     this._powerData = null;
     this._showSettings = false;
     this._settingsTab = 'rooms'; // 'rooms' | 'tts' | 'notifications' | 'statistics' | 'efficiency' | 'enforcement' | 'zone-health'
+    this._settingsDirty = false; // Phase 5 UX: unsaved-changes guard for settings
     this._dashboardView = 'rooms'; // 'rooms' | 'statistics' | 'stove'
     this._stoveData = null;
     this._refreshInterval = null;
@@ -1110,11 +1118,12 @@ class EnergyPanel extends HTMLElement {
 
     try {
       this._stoveData = await this._hass.callWS({ type: 'smart_dashboards/get_stove_data' });
+      // The standalone 'stove' dashboard view has no UI entry point (no tab
+      // sets _dashboardView = 'stove'), so this branch is effectively dead.
+      // Stove data is still consumed by _renderStoveCard as a device card.
+      // Kept for safety in case a future tab surfaces it.
       if (this._dashboardView === 'stove') {
         this._updateStoveDisplay();
-      } else if (this._dashboardView === 'stove' && !this._showSettings) {
-        // Re-render if we're on stove view but data changed significantly
-        this._render();
       }
     } catch (e) {
       console.error('Failed to load stove data:', e);
@@ -1282,7 +1291,7 @@ class EnergyPanel extends HTMLElement {
         }
       }
 
-      const presEl = roomCard.querySelector('.room-name-presence');
+      const presEl = roomCard.querySelector('.room-name-presence-chip');
       const cycleH3 = roomCard.querySelector('.room-name--cycling');
       if (presEl && roomConfig?.presence_person_entity) {
         const rawEnt = String(roomConfig.presence_person_entity).trim();
@@ -1291,6 +1300,9 @@ class EnergyPanel extends HTMLElement {
           this._hass?.states?.[key] || this._hass?.states?.[rawEnt];
         const plainPresence = this._presenceLabelFromPersonState(ps);
         presEl.textContent = plainPresence;
+        presEl.setAttribute('title', plainPresence);
+        // The cycling h3 is no longer emitted (Phase 5 UX), but keep this
+        // guard for any cards rendered before the update.
         if (cycleH3) {
           const rn = roomConfig.name || cardId;
           cycleH3.setAttribute('aria-label', `Alternates: ${rn}, then ${plainPresence}`);
@@ -1434,56 +1446,71 @@ class EnergyPanel extends HTMLElement {
           if (lightSwitchPlate) lightSwitchPlate.classList.toggle('active', isOn);
           deviceCard.classList.toggle('light-on', isOn);
         }
-        // Door card live state updates (every second)
+        // Door card live state updates. Phase 6: skip the DOM writes when the
+        // contact/lock state has not changed since the last tick (the 1s poll
+        // was rewriting identical classes/text every second for every door
+        // card — wasteful on large setups).
         if (deviceType === 'door') {
           const contactSensor = deviceCard.dataset.contactSensor;
           const lockEntity = deviceCard.dataset.lockEntity;
           const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
           const lockState = lockEntity ? this._hass?.states?.[lockEntity]?.state : null;
-          const isOpen = contactState === 'on' || contactState === 'open';
-          const isLocked = lockState === 'locked';
-          const hasLock = !!lockEntity;
+          const sig = `${contactState || ''}|${lockState || ''}`;
+          if (deviceCard.dataset.lastDoorSig === sig) {
+            // nothing changed; skip DOM writes
+          } else {
+            deviceCard.dataset.lastDoorSig = sig;
+            const isOpen = isContactOpen(contactState);
+            const isLocked = lockState === 'locked';
+            const hasLock = !!lockEntity;
 
-          // Update card classes
-          deviceCard.classList.toggle('door-open', isOpen);
-          deviceCard.classList.toggle('door-closed', !isOpen);
-          deviceCard.classList.toggle('door-locked', hasLock && isLocked);
-          deviceCard.classList.toggle('door-unlocked', hasLock && !isLocked);
+            // Update card classes
+            deviceCard.classList.toggle('door-open', isOpen);
+            deviceCard.classList.toggle('door-closed', !isOpen);
+            deviceCard.classList.toggle('door-locked', hasLock && isLocked);
+            deviceCard.classList.toggle('door-unlocked', hasLock && !isLocked);
 
-          // Update door body open/close visual
-          const doorBody = deviceCard.querySelector('.door-body');
-          if (doorBody) doorBody.classList.toggle('open', isOpen);
+            // Update door body open/close visual
+            const doorBody = deviceCard.querySelector('.door-body');
+            if (doorBody) doorBody.classList.toggle('open', isOpen);
 
-          // Update lock indicator
-          const lockIndicator = deviceCard.querySelector('.door-lock-indicator');
-          if (lockIndicator && hasLock) {
-            lockIndicator.classList.toggle('locked', isLocked);
-            lockIndicator.classList.toggle('unlocked', !isLocked);
+            // Update lock indicator
+            const lockIndicator = deviceCard.querySelector('.door-lock-indicator');
+            if (lockIndicator && hasLock) {
+              lockIndicator.classList.toggle('locked', isLocked);
+              lockIndicator.classList.toggle('unlocked', !isLocked);
+            }
+
+            // Update text labels
+            const stateLabel = deviceCard.querySelector('.door-state-label');
+            if (stateLabel) stateLabel.textContent = isOpen ? 'Open' : 'Closed';
+            const lockLabel = deviceCard.querySelector('.door-lock-label');
+            if (lockLabel && hasLock) lockLabel.textContent = isLocked ? 'Locked' : 'Unlocked';
           }
-
-          // Update text labels
-          const stateLabel = deviceCard.querySelector('.door-state-label');
-          if (stateLabel) stateLabel.textContent = isOpen ? 'Open' : 'Closed';
-          const lockLabel = deviceCard.querySelector('.door-lock-label');
-          if (lockLabel && hasLock) lockLabel.textContent = isLocked ? 'Locked' : 'Unlocked';
         }
-        // Window card live state updates (every second)
+        // Window card live state updates (Phase 6: same change-detection guard).
         if (deviceType === 'window') {
           const contactSensor = deviceCard.dataset.contactSensor;
           const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
-          const isOpen = contactState === 'on' || contactState === 'open';
+          const sig = String(contactState || '');
+          if (deviceCard.dataset.lastWindowSig === sig) {
+            // nothing changed; skip DOM writes
+          } else {
+            deviceCard.dataset.lastWindowSig = sig;
+            const isOpen = isContactOpen(contactState);
 
-          // Update card classes
-          deviceCard.classList.toggle('window-open', isOpen);
-          deviceCard.classList.toggle('window-closed', !isOpen);
+            // Update card classes
+            deviceCard.classList.toggle('window-open', isOpen);
+            deviceCard.classList.toggle('window-closed', !isOpen);
 
-          // Update window sash open/close visual
-          const windowSash = deviceCard.querySelector('.window-sash');
-          if (windowSash) windowSash.classList.toggle('open', isOpen);
+            // Update window sash open/close visual
+            const windowSash = deviceCard.querySelector('.window-sash');
+            if (windowSash) windowSash.classList.toggle('open', isOpen);
 
-          // Update text label
-          const stateLabel = deviceCard.querySelector('.window-state-label');
-          if (stateLabel) stateLabel.textContent = isOpen ? 'Open' : 'Closed';
+            // Update text label
+            const stateLabel = deviceCard.querySelector('.window-state-label');
+            if (stateLabel) stateLabel.textContent = isOpen ? 'Open' : 'Closed';
+          }
         }
       });
     });
@@ -2241,6 +2268,32 @@ class EnergyPanel extends HTMLElement {
         flex-direction: column;
         overflow: hidden;
       }
+      /* Mobile: use the full viewport so the footer Save/Cancel are always
+         reachable. Previously the centered 90vh modal with overlay padding
+         could push the footer below the fold on small screens. */
+      @media (max-width: 640px) {
+        .light-auto-modal-overlay {
+          padding: 0;
+          align-items: stretch;
+        }
+        .light-auto-modal {
+          max-width: 100%;
+          max-height: 100vh;
+          height: 100vh;
+          border-radius: 0;
+          border: none;
+        }
+        .light-auto-modal-header,
+        .light-auto-modal-body,
+        .light-auto-modal-footer {
+          padding-left: 12px;
+          padding-right: 12px;
+        }
+        .light-auto-modal-body {
+          padding-top: 12px;
+          padding-bottom: 12px;
+        }
+      }
       .light-auto-modal-header {
         display: flex;
         align-items: center;
@@ -2378,6 +2431,10 @@ class EnergyPanel extends HTMLElement {
       .light-auto-segment.selected {
         border-color: #fff;
         box-shadow: 0 0 0 2px var(--panel-accent);
+      }
+      .light-auto-segment:focus-visible {
+        outline: 2px solid #fff;
+        outline-offset: 2px;
       }
       .light-auto-segment.off {
         background: var(--card-bg);
@@ -3053,293 +3110,6 @@ class EnergyPanel extends HTMLElement {
       }
 
       /* Tuya Scene Builder Modal - SmartLife Style */
-      .tuya-scene-modal-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 1200;
-        background: rgba(0, 0, 0, 0.85);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 16px;
-      }
-      .tuya-scene-modal {
-        background: var(--card-bg);
-        border-radius: 16px;
-        border: 1px solid var(--card-border);
-        width: 100%;
-        max-width: 420px;
-        max-height: 90vh;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
-      
-      /* Scene Step Color Circles (SmartLife style) */
-      .tuya-scene-steps-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 16px;
-        background: rgba(0, 0, 0, 0.2);
-        border-bottom: 1px solid var(--card-border);
-        flex-wrap: wrap;
-      }
-      .tuya-scene-step-circle {
-        width: 44px;
-        height: 44px;
-        border-radius: 50%;
-        border: 3px solid transparent;
-        cursor: pointer;
-        transition: all 0.2s;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-        position: relative;
-      }
-      .tuya-scene-step-circle.selected {
-        border-color: #fff;
-        transform: scale(1.1);
-      }
-      .tuya-scene-step-circle.add-step {
-        background: var(--card-bg);
-        border: 2px dashed var(--secondary-text-color);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--secondary-text-color);
-        font-size: 20px;
-      }
-      .tuya-scene-step-circle.add-step:hover {
-        border-color: var(--panel-accent);
-        color: var(--panel-accent);
-      }
-      .tuya-scene-step-remove {
-        position: absolute;
-        top: -6px;
-        right: -6px;
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
-        background: var(--error-color, #ef5350);
-        border: none;
-        color: #fff;
-        font-size: 12px;
-        cursor: pointer;
-        display: none;
-        align-items: center;
-        justify-content: center;
-      }
-      .tuya-scene-step-circle.selected .tuya-scene-step-remove {
-        display: flex;
-      }
-
-      /* Scene Editor Body */
-      .tuya-scene-editor-body {
-        padding: 16px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 16px;
-      }
-
-      /* Color/White Mode Toggle for Scene */
-      .tuya-scene-mode-toggle {
-        display: flex;
-        gap: 4px;
-        padding: 4px;
-        background: rgba(0, 0, 0, 0.3);
-        border-radius: 24px;
-        width: 100%;
-        max-width: 280px;
-      }
-      .tuya-scene-mode-btn {
-        flex: 1;
-        padding: 10px 16px;
-        border: none;
-        border-radius: 20px;
-        background: transparent;
-        color: var(--secondary-text-color);
-        font-size: 13px;
-        font-weight: 500;
-        cursor: pointer;
-        transition: all 0.2s;
-      }
-      .tuya-scene-mode-btn:hover {
-        color: var(--primary-text-color);
-      }
-      .tuya-scene-mode-btn.active {
-        background: var(--panel-accent);
-        color: #fff;
-      }
-
-      /* Large Color/Temp Wheel for Scene */
-      .tuya-scene-color-wheel {
-        position: relative;
-        width: 220px;
-        height: 220px;
-        border-radius: 50%;
-        background: conic-gradient(
-          hsl(0, 100%, 50%),
-          hsl(60, 100%, 50%),
-          hsl(120, 100%, 50%),
-          hsl(180, 100%, 50%),
-          hsl(240, 100%, 50%),
-          hsl(300, 100%, 50%),
-          hsl(360, 100%, 50%)
-        );
-        cursor: crosshair;
-        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-      }
-      .tuya-scene-color-wheel::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        border-radius: 50%;
-        background: radial-gradient(circle at center, white 0%, transparent 70%);
-        pointer-events: none;
-      }
-      .tuya-scene-temp-wheel {
-        position: relative;
-        width: 220px;
-        height: 220px;
-        border-radius: 50%;
-        background: linear-gradient(135deg, #ffcc80 0%, #ffffff 50%, #b3e5fc 100%);
-        cursor: crosshair;
-        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-      }
-      .tuya-scene-wheel-picker {
-        position: absolute;
-        width: 28px;
-        height: 28px;
-        border: 3px solid #fff;
-        border-radius: 50%;
-        transform: translate(-50%, -50%);
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
-        pointer-events: none;
-        z-index: 1;
-      }
-
-      /* Brightness Slider for Scene */
-      .tuya-scene-brightness-row {
-        width: 100%;
-        max-width: 280px;
-      }
-      .tuya-scene-brightness-row label {
-        display: flex;
-        justify-content: space-between;
-        font-size: 12px;
-        color: var(--secondary-text-color);
-        margin-bottom: 8px;
-      }
-      .tuya-scene-brightness-slider {
-        width: 100%;
-        height: 8px;
-        border-radius: 4px;
-        -webkit-appearance: none;
-        appearance: none;
-        outline: none;
-      }
-      .tuya-scene-brightness-slider::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        width: 24px;
-        height: 24px;
-        border-radius: 50%;
-        background: #fff;
-        border: 3px solid var(--panel-accent);
-        cursor: pointer;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-      }
-      .tuya-scene-brightness-slider::-moz-range-thumb {
-        width: 24px;
-        height: 24px;
-        border-radius: 50%;
-        background: #fff;
-        border: 3px solid var(--panel-accent);
-        cursor: pointer;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-      }
-
-      /* Transition Settings (simplified) */
-      .tuya-scene-transition-row {
-        width: 100%;
-        max-width: 280px;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-      }
-      .tuya-scene-transition-field {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      .tuya-scene-transition-field label {
-        font-size: 11px;
-        color: var(--secondary-text-color);
-      }
-      .tuya-scene-transition-field select {
-        padding: 8px 10px;
-        border-radius: 8px;
-        border: 1px solid var(--card-border);
-        background: var(--input-bg, var(--card-bg));
-        color: var(--primary-text-color);
-        font-size: 12px;
-      }
-      .tuya-scene-transition-field input[type="range"] {
-        width: 100%;
-        margin: 4px 0 0;
-        height: 20px;
-        accent-color: #3b82f6;
-        --scene-speed-track: rgba(255, 255, 255, 0.14);
-      }
-      .tuya-scene-transition-field input[type="range"].tuya-unit-speed::-webkit-slider-runnable-track {
-        height: 4px;
-        border-radius: 2px;
-        background: var(--scene-speed-track);
-      }
-      .tuya-scene-transition-field input[type="range"].tuya-unit-speed::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 14px;
-        height: 14px;
-        margin-top: -5px;
-        border-radius: 50%;
-        background: #3b82f6;
-        border: 2px solid rgba(255, 255, 255, 0.9);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-      }
-      .tuya-scene-transition-field input[type="range"].tuya-unit-speed::-moz-range-track {
-        height: 4px;
-        border-radius: 2px;
-        background: var(--scene-speed-track);
-      }
-      .tuya-scene-transition-field input[type="range"].tuya-unit-speed::-moz-range-thumb {
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        background: #3b82f6;
-        border: 2px solid rgba(255, 255, 255, 0.9);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-      }
-      .tuya-scene-transition-field select:focus {
-        outline: none;
-        border-color: var(--panel-accent);
-      }
-      .tuya-scene-test-btn {
-        padding: 10px 20px;
-        border-radius: 8px;
-        border: none;
-        background: linear-gradient(135deg, #7c4dff 0%, #536dfe 100%);
-        color: #fff;
-        font-size: 12px;
-        font-weight: 500;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .tuya-scene-test-btn:hover {
-        opacity: 0.9;
-      }
-
       .rooms-grid {
         display: flex;
         flex-direction: column;
@@ -4127,6 +3897,34 @@ class EnergyPanel extends HTMLElement {
         }
         .room-name--cycling .room-name-presence {
           display: none;
+        }
+      }
+
+      /* Presence chip (Phase 5 UX: presence is now a small chip beside the
+         room name rather than cycling the name). Keeps the palette's
+         secondary-surface + accent feel without occupying header space. */
+      .room-name-presence-chip {
+        display: inline-flex;
+        align-items: center;
+        max-width: 120px;
+        margin-left: 6px;
+        padding: 1px 8px;
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 1.4;
+        color: var(--secondary-text-color);
+        background: var(--secondary-background-color);
+        border: 1px solid var(--card-border);
+        border-radius: 999px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        vertical-align: middle;
+      }
+      @media (max-width: 480px) {
+        .room-name-presence-chip {
+          max-width: 90px;
+          font-size: 10px;
         }
       }
 
@@ -10428,16 +10226,17 @@ class EnergyPanel extends HTMLElement {
 
     let roomNameHtml = `<h3 class="room-name">${roomNameEsc}</h3>`;
     if (personEntRaw) {
+      // Show the room name always, with presence as a small status chip beside
+      // it. Previously the room name cycled with the presence label on a timer,
+      // which was an unusual and confusing pattern (audit Phase 5 UX: declutter
+      // room card).
       const personState =
         this._hass?.states?.[personEntKey] || this._hass?.states?.[personEntRaw];
       const presencePlain = this._presenceLabelFromPersonState(personState);
       const presenceLabel = escHtmlText(presencePlain);
-      const ariaCycle = escAttr(
-        `Alternates: ${room.name || roomId}, then ${presencePlain}`,
-      );
-      roomNameHtml = `<h3 class="room-name room-name--cycling" data-has-presence="true" aria-label="${ariaCycle}">
+      roomNameHtml = `<h3 class="room-name">
               <span class="room-name-text">${roomNameEsc}</span>
-              <span class="room-name-presence">${presenceLabel}</span>
+              <span class="room-name-presence-chip" title="${escAttr(presencePlain)}">${presenceLabel}</span>
             </h3>`;
     }
 
@@ -10683,7 +10482,7 @@ class EnergyPanel extends HTMLElement {
     const lockEntity = device.lock_entity;
     const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
     const lockState = lockEntity ? this._hass?.states?.[lockEntity]?.state : null;
-    const isOpen = contactState === 'on' || contactState === 'open';
+    const isOpen = isContactOpen(contactState);
     const isLocked = lockState === 'locked';
     const hasLock = !!lockEntity;
     
@@ -10717,7 +10516,7 @@ class EnergyPanel extends HTMLElement {
   _renderWindowCard(device, index) {
     const contactSensor = device.contact_sensor;
     const contactState = contactSensor ? this._hass?.states?.[contactSensor]?.state : null;
-    const isOpen = contactState === 'on' || contactState === 'open';
+    const isOpen = isContactOpen(contactState);
 
     return `
       <div class="window-card ${isOpen ? 'window-open' : 'window-closed'}" data-outlet-index="${index}" data-device-type="window" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}">
@@ -11185,15 +10984,20 @@ class EnergyPanel extends HTMLElement {
         
         .settings-tabs {
           display: flex;
+          flex-wrap: wrap;
           gap: 4px;
           margin-bottom: 16px;
           background: var(--secondary-background-color);
           padding: 4px;
           border-radius: 8px;
         }
-        
+
         .settings-tab {
-          flex: 1;
+          /* flex: 1 caused all 7 tabs to squish onto one row, overflowing on
+             mobile (≤375px). Use auto width + wrap so the strip reflows and
+             tap targets stay ≥44px (Phase 5 UX responsive fix). */
+          flex: 0 1 auto;
+          min-height: 44px;
           padding: 10px 16px;
           border: none;
           background: transparent;
@@ -11203,6 +11007,7 @@ class EnergyPanel extends HTMLElement {
           font-size: 12px;
           font-weight: 500;
           transition: all 0.2s;
+          white-space: nowrap;
         }
         
         .settings-tab:hover {
@@ -13252,6 +13057,7 @@ class EnergyPanel extends HTMLElement {
   }
 
   async _openLightAutomationModal(roomId, outlet) {
+    this._detachLightAutoDocListeners();
     const room = (this._config?.rooms || []).find(r => this._canonicalRoomId(r) === roomId);
     if (!room) {
       this._showToast('Room not found', 'error');
@@ -13270,7 +13076,12 @@ class EnergyPanel extends HTMLElement {
           return;
         }
       } catch (err) {
+        // Previously this swallowed the error and opened the modal anyway,
+        // letting unauthorized users edit automations when the auth WS call
+        // failed. Fail closed instead (audit: light-automation auth swallow).
         console.error('Auth check failed:', err);
+        this._showToast('Could not verify authorization — try again', 'error');
+        return;
       }
     }
 
@@ -13300,7 +13111,11 @@ class EnergyPanel extends HTMLElement {
       selectedIndividualEntity: null,
       hasWrgb,
       hasTuya,
-      lightEntities
+      lightEntities,
+      // Reset the inline-scene step selection when (re)opening the modal.
+      // Previously this could be left stale from a prior session, pointing
+      // past the end of the new scene's unit list (audit: stale scene step).
+      sceneSelectedStep: 0
     };
 
     const overlay = document.createElement('div');
@@ -13316,8 +13131,35 @@ class EnergyPanel extends HTMLElement {
   }
 
   _closeLightAutomationModal() {
+    this._detachLightAutoDocListeners();
     this._lightAutoState = null;
     this.shadowRoot?.querySelector('.light-auto-modal-overlay')?.remove();
+  }
+
+  /**
+   * Remove document-level drag handlers accumulated during the current light
+   * automation modal session. Without this, every modal refresh re-attaches
+   * mousemove/mouseup/touchmove/touchend listeners to `document` for the color
+   * and temp wheels (and the inline-scene wheels) and never removes them, so
+   * after a few segment switches there are dozens of dormant zombie listeners
+   * firing on every pointer move (audit: light-automation UI listener leak).
+   */
+  _detachLightAutoDocListeners() {
+    const handlers = this._lightAutoDocHandlers;
+    if (!Array.isArray(handlers) || handlers.length === 0) return;
+    for (const { type, fn } of handlers) {
+      document.removeEventListener(type, fn);
+    }
+    this._lightAutoDocHandlers = [];
+  }
+
+  /** Track a document-level listener so it can be torn down on refresh/close. */
+  _addLightAutoDocListener(type, fn) {
+    if (!Array.isArray(this._lightAutoDocHandlers)) {
+      this._lightAutoDocHandlers = [];
+    }
+    this._lightAutoDocHandlers.push({ type, fn });
+    document.addEventListener(type, fn);
   }
 
   _renderLightAutomationModal(roomName, outletName) {
@@ -13398,10 +13240,15 @@ class EnergyPanel extends HTMLElement {
     if (isOff) label = 'OFF';
     else if (isMode) label = 'MODE';
     else if (seg.brightness != null) label = `${seg.brightness}%`;
-    
+    const timeLabel = `${seg.start || '00:00'}–${seg.end || '00:00'}`;
+
     return `
-      <div class="light-auto-segment ${isOff ? 'off' : ''} ${isMode ? 'mode' : ''} ${selected ? 'selected' : ''}" 
+      <div class="light-auto-segment ${isOff ? 'off' : ''} ${isMode ? 'mode' : ''} ${selected ? 'selected' : ''}"
            data-segment-index="${index}"
+           role="button"
+           tabindex="0"
+           aria-label="Light segment ${timeLabel}, ${label}${selected ? ', selected' : ''}"
+           title="${timeLabel} · ${label}"
            style="left: ${startPct}%; width: ${Math.max(2, width)}%;">
         <div class="light-auto-segment-handle left" data-handle="left"></div>
         <span class="light-auto-segment-label">${label}</span>
@@ -13423,6 +13270,18 @@ class EnergyPanel extends HTMLElement {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
 
+  /**
+   * Convert a percentage to a segment END time. The plain `_percentToTime`
+   * returns "00:00" at 100%, which the backend interprets as start-of-day
+   * (midnight) — turning a segment that should end at end-of-day into a
+   * wrap-around segment spanning the whole next day. For end times, 100%
+   * must map to "23:59" (audit: light-automation wrap-around bug).
+   */
+  _percentToEndTime(pct) {
+    if (pct >= 100) return '23:59';
+    return this._percentToTime(pct);
+  }
+
   _snapToGrid(pct, gridMins = 15) {
     const totalMins = (pct / 100) * 1440;
     const snapped = Math.round(totalMins / gridMins) * gridMins;
@@ -13430,9 +13289,29 @@ class EnergyPanel extends HTMLElement {
   }
 
   _segmentsOverlap(seg1, seg2) {
-    const s1 = this._timeToPercent(seg1.start), e1 = this._timeToPercent(seg1.end);
-    const s2 = this._timeToPercent(seg2.start), e2 = this._timeToPercent(seg2.end);
-    return s1 < e2 && e1 > s2;
+    // Handle midnight wrap-around (audit BUG 23). A segment like 23:00–01:00
+    // has start% > end%; normalize both segments to a set of [0,100) intervals
+    // and test pairwise. The previous `s1 < e2 && e1 > s2` check returned
+    // false for any wrap-around segment, so two overlapping wrap-around
+    // segments could both be created.
+    const intervals1 = this._segmentIntervals(seg1);
+    const intervals2 = this._segmentIntervals(seg2);
+    for (const [s1, e1] of intervals1) {
+      for (const [s2, e2] of intervals2) {
+        if (s1 < e2 && e1 > s2) return true;
+      }
+    }
+    return false;
+  }
+
+  _segmentIntervals(seg) {
+    // Returns one or two [start%, end%) intervals, splitting at midnight for
+    // wrap-around segments (e.g. 23:00–01:00 → [[95.83,100), [0,4.17)]).
+    const s = this._timeToPercent(seg.start);
+    const e = this._timeToPercent(seg.end);
+    if (s === e) return []; // zero-length
+    if (s < e) return [[s, e]];
+    return [[s, 100], [0, e]];
   }
 
   _wouldOverlapOthers(testSeg, excludeIdx, segments) {
@@ -13513,7 +13392,7 @@ class EnergyPanel extends HTMLElement {
             <select class="light-auto-seg-action">
               <option value="on" ${seg.action === 'on' ? 'selected' : ''}>Turn On</option>
               <option value="off" ${seg.action === 'off' ? 'selected' : ''}>Turn Off</option>
-              ${state.hasWrgb ? `<option value="mode" ${seg.action === 'mode' ? 'selected' : ''}>Mode Only</option>` : ''}
+              ${hasWrgb ? `<option value="mode" ${seg.action === 'mode' ? 'selected' : ''}>Mode Only</option>` : ''}
             </select>
           </div>
         </div>
@@ -13597,11 +13476,11 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderInlineSceneEditor(scene, segIndex) {
-    const sceneData = scene || { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
+    const sceneData = scene || { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, bright: 1000, temperature: 0 }] };
     const units = sceneData.scene_units || [];
     const selectedStep = this._lightAutoState?.sceneSelectedStep ?? 0;
     const selectedUnit = units[selectedStep] || units[0] || { h: 0, s: 500, bright: 1000, temperature: 0 };
-    const isUnitColorMode = !(selectedUnit.temperature > 0 && selectedUnit.h === 0 && selectedUnit.s === 0);
+    const isUnitColorMode = !((selectedUnit.temperature || 0) > 0 && selectedUnit.h === 0 && selectedUnit.s === 0);
     const sceneSpeed = (() => {
       const v = Number(selectedUnit.unit_switch_duration);
       if (!Number.isFinite(v)) return 50;
@@ -13671,7 +13550,12 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderInlineSceneStep(unit, idx, isSelected) {
-    const isWhite = unit.temperature > 0 && (unit.h === 0 || !unit.h) && (unit.s === 0 || !unit.s);
+    // Strict white-mode detection: a unit is "white" only when temperature is
+    // explicitly set AND both h and s are exactly 0. The previous loose check
+    // (`unit.h === 0 || !unit.h`) treated any falsy h (including a legitimate
+    // h:0 red) as "no hue", misclassifying color-mode units with h=0/s=0 as
+    // white (audit: light-automation white-mode misdetection).
+    const isWhite = (unit.temperature || 0) > 0 && unit.h === 0 && unit.s === 0;
     let bg;
     if (isWhite) {
       const t = (unit.temperature || 500) / 1000;
@@ -13823,7 +13707,7 @@ class EnergyPanel extends HTMLElement {
           const startPct = this._snapToGrid(rawPct);
           const endPct = this._snapToGrid(startPct + 8.33);
           const time = this._percentToTime(startPct);
-          const endTime = this._percentToTime(Math.min(100, endPct));
+          const endTime = this._percentToEndTime(Math.min(100, endPct));
           this._addTimelineSegment(time, endTime);
         }
       });
@@ -13837,6 +13721,15 @@ class EnergyPanel extends HTMLElement {
             this._lightAutoState.selectedSegment = idx;
             this._refreshLightAutomationModal();
           }
+        });
+
+        seg.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          const idx = parseInt(seg.dataset.segmentIndex, 10);
+          this._lightAutoState.selectedIndividualEntity = null;
+          this._lightAutoState.selectedSegment = idx;
+          this._refreshLightAutomationModal();
         });
 
         this._attachSegmentDragHandlers(seg, timeline, null);
@@ -13860,7 +13753,7 @@ class EnergyPanel extends HTMLElement {
         const startPct = this._snapToGrid(rawPct);
         const endPct = this._snapToGrid(startPct + 8.33);
         const time = this._percentToTime(startPct);
-        const endTime = this._percentToTime(Math.min(100, endPct));
+        const endTime = this._percentToEndTime(Math.min(100, endPct));
         this._addTimelineSegmentForEntity(entityId, time, endTime);
       });
 
@@ -13873,6 +13766,14 @@ class EnergyPanel extends HTMLElement {
             this._lightAutoState.selectedSegment = idx;
             this._refreshLightAutomationModal();
           }
+        });
+        seg.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          const idx = parseInt(seg.dataset.segmentIndex, 10);
+          this._lightAutoState.selectedIndividualEntity = entityId;
+          this._lightAutoState.selectedSegment = idx;
+          this._refreshLightAutomationModal();
         });
         this._attachSegmentDragHandlers(seg, timeline, entityId);
       });
@@ -13993,10 +13894,8 @@ class EnergyPanel extends HTMLElement {
         didDrag = false;
       };
 
-      handle.addEventListener('mousedown', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        mouseDownX = e.clientX;
+      const startHandleDrag = (clientX) => {
+        mouseDownX = clientX;
         dragging = false;
         didDrag = false;
         const seg = getSeg();
@@ -14010,9 +13909,38 @@ class EnergyPanel extends HTMLElement {
             adjacentOrigEnd = segments[adjacentIdx].end;
           }
         }
+      };
+
+      handle.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        startHandleDrag(e.clientX);
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
       });
+
+      // Touch support: route through the same drag pipeline as mouse. The
+      // previous implementation only wired mousedown/mousemove/mouseup, so
+      // segment edges couldn't be resized on touch devices (audit:
+      // light-automation touch drag).
+      handle.addEventListener('touchstart', (e) => {
+        if (!e.touches[0]) return;
+        e.stopPropagation();
+        e.preventDefault();
+        startHandleDrag(e.touches[0].clientX);
+        const onTouchMove = (ev) => {
+          if (!ev.touches[0]) return;
+          // Synthesize a mouse-like event for onMouseMove (which reads clientX).
+          onMouseMove({ clientX: ev.touches[0].clientX });
+        };
+        const onTouchEnd = () => {
+          document.removeEventListener('touchmove', onTouchMove);
+          document.removeEventListener('touchend', onTouchEnd);
+          onMouseUp();
+        };
+        document.addEventListener('touchmove', onTouchMove, { passive: false });
+        document.addEventListener('touchend', onTouchEnd);
+      }, { passive: false });
     });
 
     let mouseDownX = 0;
@@ -14096,22 +14024,47 @@ class EnergyPanel extends HTMLElement {
       didBodyDrag = false;
     };
 
-    segEl.addEventListener('mousedown', (e) => {
-      if (e.target.classList.contains('light-auto-segment-handle')) return;
-      e.stopPropagation();
-      e.preventDefault();
+    const startBodyDrag = (clientX) => {
       const seg = getSeg();
-      if (!seg) return;
-      mouseDownX = e.clientX;
+      if (!seg) return false;
+      mouseDownX = clientX;
       bodyDragging = false;
       didBodyDrag = false;
       bodyOrigStart = seg.start;
       bodyOrigEnd = seg.end;
       originalStartPct = this._timeToPercent(seg.start);
       originalEndPct = this._timeToPercent(seg.end);
+      return true;
+    };
+
+    segEl.addEventListener('mousedown', (e) => {
+      if (e.target.classList.contains('light-auto-segment-handle')) return;
+      e.stopPropagation();
+      e.preventDefault();
+      if (!startBodyDrag(e.clientX)) return;
       document.addEventListener('mousemove', onBodyMouseMove);
       document.addEventListener('mouseup', onBodyMouseUp);
     });
+
+    // Touch support for body drag (move whole segment).
+    segEl.addEventListener('touchstart', (e) => {
+      if (e.target.classList.contains('light-auto-segment-handle')) return;
+      if (!e.touches[0]) return;
+      e.stopPropagation();
+      e.preventDefault();
+      if (!startBodyDrag(e.touches[0].clientX)) return;
+      const onTouchMove = (ev) => {
+        if (!ev.touches[0]) return;
+        onBodyMouseMove({ clientX: ev.touches[0].clientX });
+      };
+      const onTouchEnd = () => {
+        document.removeEventListener('touchmove', onTouchMove);
+        document.removeEventListener('touchend', onTouchEnd);
+        onBodyMouseUp();
+      };
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
+      document.addEventListener('touchend', onTouchEnd);
+    }, { passive: false });
   }
 
   _attachSegmentEditorListeners(overlay) {
@@ -14202,7 +14155,7 @@ class EnergyPanel extends HTMLElement {
           delete seg.hs_color;
           delete seg.color_temp;
           if (!seg.tuya_scene) {
-            seg.tuya_scene = { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
+            seg.tuya_scene = { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, bright: 1000, temperature: 0 }] };
           }
         } else if (mode === 'color') {
           if (sceneContainer) sceneContainer.style.display = 'none';
@@ -14241,12 +14194,12 @@ class EnergyPanel extends HTMLElement {
       };
 
       let draggingColor = false;
-      colorWheel.addEventListener('mousedown', (e) => { draggingColor = true; handleColorWheelEvent(e); });
-      colorWheel.addEventListener('touchstart', (e) => { draggingColor = true; handleColorWheelEvent(e); e.preventDefault(); });
-      document.addEventListener('mousemove', (e) => { if (draggingColor) handleColorWheelEvent(e); });
-      document.addEventListener('touchmove', (e) => { if (draggingColor) handleColorWheelEvent(e); });
-      document.addEventListener('mouseup', () => { draggingColor = false; });
-      document.addEventListener('touchend', () => { draggingColor = false; });
+      colorWheel.addEventListener('mousedown', (e) => { draggingColor = true; handleColorWheelEvent(e); e.preventDefault(); });
+      colorWheel.addEventListener('touchstart', (e) => { draggingColor = true; handleColorWheelEvent(e); e.preventDefault(); }, { passive: false });
+      this._addLightAutoDocListener('mousemove', (e) => { if (draggingColor) handleColorWheelEvent(e); });
+      this._addLightAutoDocListener('touchmove', (e) => { if (draggingColor) handleColorWheelEvent(e); }, );
+      this._addLightAutoDocListener('mouseup', () => { draggingColor = false; });
+      this._addLightAutoDocListener('touchend', () => { draggingColor = false; });
     }
 
     const tempWheel = editor.querySelector('.light-temp-wheel');
@@ -14265,18 +14218,19 @@ class EnergyPanel extends HTMLElement {
       };
 
       let draggingTemp = false;
-      tempWheel.addEventListener('mousedown', (e) => { draggingTemp = true; handleTempWheelEvent(e); });
-      tempWheel.addEventListener('touchstart', (e) => { draggingTemp = true; handleTempWheelEvent(e); e.preventDefault(); });
-      document.addEventListener('mousemove', (e) => { if (draggingTemp) handleTempWheelEvent(e); });
-      document.addEventListener('touchmove', (e) => { if (draggingTemp) handleTempWheelEvent(e); });
-      document.addEventListener('mouseup', () => { draggingTemp = false; });
-      document.addEventListener('touchend', () => { draggingTemp = false; });
+      tempWheel.addEventListener('mousedown', (e) => { draggingTemp = true; handleTempWheelEvent(e); e.preventDefault(); });
+      tempWheel.addEventListener('touchstart', (e) => { draggingTemp = true; handleTempWheelEvent(e); e.preventDefault(); }, { passive: false });
+      this._addLightAutoDocListener('mousemove', (e) => { if (draggingTemp) handleTempWheelEvent(e); });
+      this._addLightAutoDocListener('touchmove', (e) => { if (draggingTemp) handleTempWheelEvent(e); });
+      this._addLightAutoDocListener('mouseup', () => { draggingTemp = false; });
+      this._addLightAutoDocListener('touchend', () => { draggingTemp = false; });
     }
 
     this._attachInlineSceneEditorListeners(editor, seg, idx);
 
     editor.querySelector('.light-auto-seg-delete')?.addEventListener('click', () => {
       if (!segments) return;
+      if (!window.confirm('Delete this segment? Its settings will be lost.')) return;
       segments.splice(idx, 1);
       this._lightAutoState.selectedSegment = null;
       this._refreshLightAutomationModal();
@@ -14295,13 +14249,13 @@ class EnergyPanel extends HTMLElement {
     if (!sceneEditor) return;
 
     if (!seg.tuya_scene) {
-      seg.tuya_scene = { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 }] };
+      seg.tuya_scene = { scene_num: 1, scene_units: [{ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, bright: 1000, temperature: 0 }] };
     }
     const scene = seg.tuya_scene;
     const units = scene.scene_units;
 
     sceneEditor.querySelector('.inline-scene-step.add-step')?.addEventListener('click', () => {
-      units.push({ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: Math.round(Math.random() * 360), s: 700, v: 1000, bright: 1000, temperature: 0 });
+      units.push({ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: Math.round(Math.random() * 360), s: 700, bright: 1000, temperature: 0 });
       this._lightAutoState.sceneSelectedStep = units.length - 1;
       this._refreshLightAutomationModal();
     });
@@ -14321,7 +14275,7 @@ class EnergyPanel extends HTMLElement {
         const stepIdx = parseInt(btn.dataset.stepIndex, 10);
         units.splice(stepIdx, 1);
         if (units.length === 0) {
-          units.push({ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, v: 1000, bright: 1000, temperature: 0 });
+          units.push({ unit_change_mode: 'gradient', unit_switch_duration: 25, unit_gradient_duration: 25, h: 0, s: 500, bright: 1000, temperature: 0 });
         }
         if ((this._lightAutoState.sceneSelectedStep || 0) >= units.length) {
           this._lightAutoState.sceneSelectedStep = units.length - 1;
@@ -14379,12 +14333,12 @@ class EnergyPanel extends HTMLElement {
         this._updateInlineStepCircle(sceneEditor, selectedIdx, unit);
       };
       let dragging = false;
-      colorWheel.addEventListener('mousedown', (e) => { dragging = true; handleEvent(e); });
-      colorWheel.addEventListener('touchstart', (e) => { dragging = true; handleEvent(e); e.preventDefault(); });
-      document.addEventListener('mousemove', (e) => { if (dragging) handleEvent(e); });
-      document.addEventListener('touchmove', (e) => { if (dragging) handleEvent(e); });
-      document.addEventListener('mouseup', () => { dragging = false; });
-      document.addEventListener('touchend', () => { dragging = false; });
+      colorWheel.addEventListener('mousedown', (e) => { dragging = true; handleEvent(e); e.preventDefault(); });
+      colorWheel.addEventListener('touchstart', (e) => { dragging = true; handleEvent(e); e.preventDefault(); }, { passive: false });
+      this._addLightAutoDocListener('mousemove', (e) => { if (dragging) handleEvent(e); });
+      this._addLightAutoDocListener('touchmove', (e) => { if (dragging) handleEvent(e); });
+      this._addLightAutoDocListener('mouseup', () => { dragging = false; });
+      this._addLightAutoDocListener('touchend', () => { dragging = false; });
     }
 
     const tempWheel = stepEditor.querySelector('.inline-scene-temp-wheel');
@@ -14404,12 +14358,12 @@ class EnergyPanel extends HTMLElement {
         this._updateInlineStepCircle(sceneEditor, selectedIdx, unit);
       };
       let dragging = false;
-      tempWheel.addEventListener('mousedown', (e) => { dragging = true; handleEvent(e); });
-      tempWheel.addEventListener('touchstart', (e) => { dragging = true; handleEvent(e); e.preventDefault(); });
-      document.addEventListener('mousemove', (e) => { if (dragging) handleEvent(e); });
-      document.addEventListener('touchmove', (e) => { if (dragging) handleEvent(e); });
-      document.addEventListener('mouseup', () => { dragging = false; });
-      document.addEventListener('touchend', () => { dragging = false; });
+      tempWheel.addEventListener('mousedown', (e) => { dragging = true; handleEvent(e); e.preventDefault(); });
+      tempWheel.addEventListener('touchstart', (e) => { dragging = true; handleEvent(e); e.preventDefault(); }, { passive: false });
+      this._addLightAutoDocListener('mousemove', (e) => { if (dragging) handleEvent(e); });
+      this._addLightAutoDocListener('touchmove', (e) => { if (dragging) handleEvent(e); });
+      this._addLightAutoDocListener('mouseup', () => { dragging = false; });
+      this._addLightAutoDocListener('touchend', () => { dragging = false; });
     }
 
     const brightnessSlider = stepEditor.querySelector('.inline-scene-brightness');
@@ -14444,7 +14398,7 @@ class EnergyPanel extends HTMLElement {
   _updateInlineStepCircle(sceneEditor, idx, unit) {
     const circle = sceneEditor.querySelector(`.inline-scene-step[data-step-index="${idx}"]`);
     if (!circle) return;
-    const isWhite = unit.temperature > 0 && (unit.h === 0 || !unit.h) && (unit.s === 0 || !unit.s);
+    const isWhite = (unit.temperature || 0) > 0 && unit.h === 0 && unit.s === 0;
     if (isWhite) {
       const t = (unit.temperature || 500) / 1000;
       circle.style.background = `rgb(255, ${180 + Math.round(t * 75)}, ${120 + Math.round(t * 135)})`;
@@ -14461,15 +14415,16 @@ class EnergyPanel extends HTMLElement {
     }
 
     const entityId = tuyaLights[0].entity_id;
-    const sceneHex = this._encodeTuyaSceneHex(scene);
-
+    // The backend owns scene encoding now (audit BUG 22: previously a drifted
+    // JS copy lived here). Send the raw scene dict; the test-tuya-scene handler
+    // encodes via the canonical light_automation.encode_tuya_scene_hex.
     this._enforcementPausedUntil = Date.now() + 30000;
 
     try {
       await this._hass.callWS({
         type: 'smart_dashboards/test_tuya_scene',
         entity_id: entityId,
-        scene_data: { scene_data_v2: sceneHex }
+        scene_data: { scene }
       });
       this._showToast('Scene sent — enforcement paused 30s', 'success');
     } catch (err) {
@@ -14512,6 +14467,7 @@ class EnergyPanel extends HTMLElement {
       newSeg.color_temp = 4000;
     }
     if (this._wouldOverlapOthers(newSeg, -1, segments)) {
+      this._showToast('That time slot overlaps an existing segment — pick an empty area', 'error');
       return;
     }
     segments.push(newSeg);
@@ -14530,6 +14486,7 @@ class EnergyPanel extends HTMLElement {
       brightness: 100
     };
     if (this._wouldOverlapOthers(newSeg, -1, segments)) {
+      this._showToast('That time slot overlaps an existing segment — pick an empty area', 'error');
       return;
     }
     if (this._lightAutoState.hasWrgb) {
@@ -14543,6 +14500,13 @@ class EnergyPanel extends HTMLElement {
   _refreshLightAutomationModal() {
     const overlay = this.shadowRoot?.querySelector('.light-auto-modal-overlay');
     if (!overlay) return;
+    // Flush the currently-open segment editor's DOM values back to state BEFORE
+    // re-rendering. Without this, switching segments discards unsaved edits to
+    // the previous segment because the re-render replaces the DOM (audit BUG 24).
+    this._flushLightAutomationEditorFromDom();
+    // Tear down document-level drag listeners attached by the previous render
+    // so they don't accumulate across refreshes (audit: listener leak).
+    this._detachLightAutoDocListeners();
     const state = this._lightAutoState;
     const room = (this._config?.rooms || []).find(r => this._canonicalRoomId(r) === state.roomId);
     const roomName = room?.name || state.roomId;
@@ -14615,414 +14579,6 @@ class EnergyPanel extends HTMLElement {
     } catch (err) {
       console.error('Failed to save automation:', err);
       this._showToast(`Failed to save automation: ${err.message || err}`, 'error');
-    }
-  }
-
-  _openTuyaSceneBuilder(segmentIndex, existingScene) {
-    const state = this._lightAutoState;
-    const scene = existingScene ? JSON.parse(JSON.stringify(existingScene)) : {
-      scene_num: 1,
-      scene_units: [{
-        unit_change_mode: 'static',
-        unit_switch_duration: 25,
-        unit_gradient_duration: 25,
-        h: 0,
-        s: 500,
-        v: 1000,
-        bright: 1000,
-        temperature: 500
-      }]
-    };
-
-    this._tuyaSceneState = { segmentIndex, scene, selectedStep: 0 };
-
-    const overlay = document.createElement('div');
-    overlay.className = 'tuya-scene-modal-overlay';
-    overlay.innerHTML = this._renderTuyaSceneModal(scene);
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) this._closeTuyaSceneBuilder();
-    });
-
-    this.shadowRoot.appendChild(overlay);
-    this._attachTuyaSceneListeners(overlay);
-  }
-
-  _closeTuyaSceneBuilder() {
-    this._tuyaSceneState = null;
-    this.shadowRoot?.querySelector('.tuya-scene-modal-overlay')?.remove();
-  }
-
-  _renderTuyaSceneModal(scene) {
-    const units = scene.scene_units || [];
-    const selectedIdx = this._tuyaSceneState?.selectedStep ?? 0;
-    const selectedUnit = units[selectedIdx] || { h: 0, s: 500, v: 1000, bright: 1000, temperature: 500, unit_change_mode: 'gradient' };
-    const isColorMode = !(selectedUnit.temperature > 0 && selectedUnit.h === 0 && selectedUnit.s === 0);
-    const sceneSpeed = (() => {
-      const v = Number(selectedUnit.unit_switch_duration);
-      if (!Number.isFinite(v)) return 50;
-      return Math.max(0, Math.min(100, Math.round(v)));
-    })();
-
-    return `
-      <div class="tuya-scene-modal">
-        <div class="light-auto-modal-header">
-          <div>
-            <h2 class="light-auto-modal-title">Edit Scenario</h2>
-            <p class="light-auto-modal-subtitle">Create color animation effects</p>
-          </div>
-          <button type="button" class="light-auto-modal-close tuya-scene-close" title="Close">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-
-        <!-- Step Color Circles Row (SmartLife style) -->
-        <div class="tuya-scene-steps-row">
-          ${units.map((unit, i) => this._renderTuyaStepCircle(unit, i, i === selectedIdx)).join('')}
-          <div class="tuya-scene-step-circle add-step" title="Add Step">+</div>
-        </div>
-
-        <!-- Selected Step Editor -->
-        <div class="tuya-scene-editor-body" data-step-index="${selectedIdx}">
-          <!-- Color/White Mode Toggle -->
-          <div class="tuya-scene-mode-toggle">
-            <button type="button" class="tuya-scene-mode-btn ${isColorMode ? 'active' : ''}" data-mode="color">Color</button>
-            <button type="button" class="tuya-scene-mode-btn ${!isColorMode ? 'active' : ''}" data-mode="white">White</button>
-          </div>
-
-          <!-- Color Wheel (shown for color mode) -->
-          <div class="tuya-scene-color-wheel" style="${!isColorMode ? 'display:none' : ''}">
-            ${this._renderTuyaColorWheelPicker(selectedUnit)}
-          </div>
-
-          <!-- Temp Wheel (shown for white mode) -->
-          <div class="tuya-scene-temp-wheel" style="${isColorMode ? 'display:none' : ''}">
-            ${this._renderTuyaTempWheelPicker(selectedUnit)}
-          </div>
-
-          <!-- Brightness Slider -->
-          <div class="tuya-scene-brightness-row">
-            <label>
-              Brightness
-              <span class="tuya-scene-brightness-value">${Math.round((selectedUnit.bright || 1000) / 10)}%</span>
-            </label>
-            <input type="range" class="tuya-scene-brightness-slider" min="0" max="1000" value="${selectedUnit.bright || 1000}"
-                   style="background: linear-gradient(90deg, var(--panel-accent) ${(selectedUnit.bright || 1000) / 10}%, rgba(255,255,255,0.12) ${(selectedUnit.bright || 1000) / 10}%);">
-          </div>
-
-          <!-- Transition + speed (inline, two columns) -->
-          <div class="tuya-scene-transition-row">
-            <div class="tuya-scene-transition-field">
-              <label>Transition</label>
-              <select class="tuya-unit-mode">
-                <option value="static" ${selectedUnit.unit_change_mode === 'static' ? 'selected' : ''}>Static</option>
-                <option value="jump" ${selectedUnit.unit_change_mode === 'jump' ? 'selected' : ''}>Flash</option>
-                <option value="gradient" ${selectedUnit.unit_change_mode === 'gradient' ? 'selected' : ''}>Fade</option>
-              </select>
-            </div>
-            <div class="tuya-scene-transition-field">
-              <label>Speed <span class="tuya-scene-speed-value">${sceneSpeed}</span></label>
-              <input type="range" class="tuya-unit-speed" min="0" max="100" step="1" value="${sceneSpeed}"
-                title="0 = instant, 100 = slow">
-            </div>
-          </div>
-          <div style="font-size:10px;color:var(--secondary-text-color);margin:-4px 0 0;padding:0 4px;">0 fastest — 100 slowest</div>
-        </div>
-
-        <div class="light-auto-modal-footer">
-          <button type="button" class="btn btn-secondary tuya-scene-test-btn">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
-            Test
-          </button>
-          <button type="button" class="btn btn-secondary tuya-scene-cancel">Cancel</button>
-          <button type="button" class="btn btn-primary tuya-scene-save">Apply Scene</button>
-        </div>
-      </div>
-    `;
-  }
-
-  _renderTuyaStepCircle(unit, index, isSelected) {
-    const hue = unit.h || 0;
-    const sat = (unit.s || 500) / 10;
-    const isWhiteMode = unit.temperature > 0 && unit.h === 0 && unit.s === 0;
-    let bgStyle;
-    if (isWhiteMode) {
-      const tempPct = (unit.temperature || 500) / 1000;
-      const warmColor = `rgb(255, ${180 + Math.round(tempPct * 75)}, ${120 + Math.round(tempPct * 135)})`;
-      bgStyle = `background: ${warmColor};`;
-    } else {
-      bgStyle = `background: hsl(${hue}, ${sat}%, 50%);`;
-    }
-    return `
-      <div class="tuya-scene-step-circle ${isSelected ? 'selected' : ''}" data-step-index="${index}" style="${bgStyle}">
-        <button type="button" class="tuya-scene-step-remove" data-step-index="${index}" title="Remove">×</button>
-      </div>
-    `;
-  }
-
-  _renderTuyaColorWheelPicker(unit) {
-    const hue = unit.h || 0;
-    const sat = (unit.s || 500) / 10;
-    const x = this._hueToWheelX(hue, sat);
-    const y = this._hueToWheelY(hue, sat);
-    const color = this._hsToHex([hue, sat]);
-    return `<div class="tuya-scene-wheel-picker" style="left: ${x}%; top: ${y}%; background: ${color};"></div>`;
-  }
-
-  _renderTuyaTempWheelPicker(unit) {
-    const temp = unit.temperature || 500;
-    const pct = (temp / 1000) * 100;
-    const warmColor = `rgb(255, ${180 + Math.round((temp / 1000) * 75)}, ${120 + Math.round((temp / 1000) * 135)})`;
-    return `<div class="tuya-scene-wheel-picker" style="left: ${pct}%; top: 50%; background: ${warmColor};"></div>`;
-  }
-
-  _attachTuyaSceneListeners(overlay) {
-    overlay.querySelector('.tuya-scene-close')?.addEventListener('click', () => this._closeTuyaSceneBuilder());
-    overlay.querySelector('.tuya-scene-cancel')?.addEventListener('click', () => this._closeTuyaSceneBuilder());
-
-    overlay.querySelector('.tuya-scene-step-circle.add-step')?.addEventListener('click', () => {
-      this._tuyaSceneState.scene.scene_units.push({
-        unit_change_mode: 'gradient',
-        unit_switch_duration: 25,
-        unit_gradient_duration: 25,
-        h: Math.round(Math.random() * 360),
-        s: 700,
-        v: 1000,
-        bright: 1000,
-        temperature: 0
-      });
-      this._tuyaSceneState.selectedStep = this._tuyaSceneState.scene.scene_units.length - 1;
-      this._refreshTuyaSceneModal();
-    });
-
-    overlay.querySelectorAll('.tuya-scene-step-circle:not(.add-step)').forEach(circle => {
-      circle.addEventListener('click', (e) => {
-        if (e.target.classList.contains('tuya-scene-step-remove')) return;
-        const idx = parseInt(circle.dataset.stepIndex, 10);
-        this._tuyaSceneState.selectedStep = idx;
-        this._refreshTuyaSceneModal();
-      });
-    });
-
-    overlay.querySelectorAll('.tuya-scene-step-remove').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const idx = parseInt(btn.dataset.stepIndex, 10);
-        this._tuyaSceneState.scene.scene_units.splice(idx, 1);
-        if (this._tuyaSceneState.selectedStep >= this._tuyaSceneState.scene.scene_units.length) {
-          this._tuyaSceneState.selectedStep = Math.max(0, this._tuyaSceneState.scene.scene_units.length - 1);
-        }
-        this._refreshTuyaSceneModal();
-      });
-    });
-
-    const body = overlay.querySelector('.tuya-scene-editor-body');
-    const selectedIdx = this._tuyaSceneState?.selectedStep ?? 0;
-    const unit = this._tuyaSceneState?.scene?.scene_units?.[selectedIdx];
-    if (!unit) return;
-
-    overlay.querySelectorAll('.tuya-scene-mode-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const mode = btn.dataset.mode;
-        const isColor = mode === 'color';
-        overlay.querySelectorAll('.tuya-scene-mode-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        overlay.querySelector('.tuya-scene-color-wheel').style.display = isColor ? '' : 'none';
-        overlay.querySelector('.tuya-scene-temp-wheel').style.display = isColor ? 'none' : '';
-        if (isColor) {
-          unit.temperature = 0;
-          if (!unit.h && !unit.s) { unit.h = 0; unit.s = 500; }
-        } else {
-          unit.h = 0;
-          unit.s = 0;
-          unit.temperature = unit.temperature || 500;
-        }
-        this._updateStepCircleColor(overlay, selectedIdx, unit);
-      });
-    });
-
-    const colorWheel = overlay.querySelector('.tuya-scene-color-wheel');
-    if (colorWheel) {
-      const handleColorWheelEvent = (e) => {
-        const rect = colorWheel.getBoundingClientRect();
-        const x = (e.clientX || e.touches?.[0]?.clientX) - rect.left;
-        const y = (e.clientY || e.touches?.[0]?.clientY) - rect.top;
-        const [hue, sat] = this._wheelToHueSat(x, y, rect.width, rect.height);
-        unit.h = hue;
-        unit.s = sat * 10;
-        unit.temperature = 0;
-        const picker = colorWheel.querySelector('.tuya-scene-wheel-picker');
-        if (picker) {
-          picker.style.left = `${this._hueToWheelX(hue, sat)}%`;
-          picker.style.top = `${this._hueToWheelY(hue, sat)}%`;
-          picker.style.background = this._hsToHex([hue, sat]);
-        }
-        this._updateStepCircleColor(overlay, selectedIdx, unit);
-      };
-      let dragging = false;
-      colorWheel.addEventListener('mousedown', (e) => { dragging = true; handleColorWheelEvent(e); });
-      colorWheel.addEventListener('touchstart', (e) => { dragging = true; handleColorWheelEvent(e); e.preventDefault(); });
-      document.addEventListener('mousemove', (e) => { if (dragging) handleColorWheelEvent(e); });
-      document.addEventListener('touchmove', (e) => { if (dragging) handleColorWheelEvent(e); });
-      document.addEventListener('mouseup', () => { dragging = false; });
-      document.addEventListener('touchend', () => { dragging = false; });
-    }
-
-    const tempWheel = overlay.querySelector('.tuya-scene-temp-wheel');
-    if (tempWheel) {
-      const handleTempWheelEvent = (e) => {
-        const rect = tempWheel.getBoundingClientRect();
-        const x = (e.clientX || e.touches?.[0]?.clientX) - rect.left;
-        const pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
-        const temp = Math.round((pct / 100) * 1000);
-        unit.temperature = temp;
-        unit.h = 0;
-        unit.s = 0;
-        const picker = tempWheel.querySelector('.tuya-scene-wheel-picker');
-        if (picker) {
-          picker.style.left = `${pct}%`;
-          const warmColor = `rgb(255, ${180 + Math.round((temp / 1000) * 75)}, ${120 + Math.round((temp / 1000) * 135)})`;
-          picker.style.background = warmColor;
-        }
-        this._updateStepCircleColor(overlay, selectedIdx, unit);
-      };
-      let dragging = false;
-      tempWheel.addEventListener('mousedown', (e) => { dragging = true; handleTempWheelEvent(e); });
-      tempWheel.addEventListener('touchstart', (e) => { dragging = true; handleTempWheelEvent(e); e.preventDefault(); });
-      document.addEventListener('mousemove', (e) => { if (dragging) handleTempWheelEvent(e); });
-      document.addEventListener('touchmove', (e) => { if (dragging) handleTempWheelEvent(e); });
-      document.addEventListener('mouseup', () => { dragging = false; });
-      document.addEventListener('touchend', () => { dragging = false; });
-    }
-
-    const brightnessSlider = overlay.querySelector('.tuya-scene-brightness-slider');
-    if (brightnessSlider) {
-      brightnessSlider.addEventListener('input', (e) => {
-        unit.bright = parseInt(e.target.value, 10);
-        const label = overlay.querySelector('.tuya-scene-brightness-value');
-        if (label) label.textContent = `${Math.round(unit.bright / 10)}%`;
-        e.target.style.background = `linear-gradient(90deg, var(--panel-accent) ${unit.bright / 10}%, rgba(255,255,255,0.12) ${unit.bright / 10}%)`;
-      });
-    }
-
-    const modeSelect = body.querySelector('.tuya-unit-mode');
-    if (modeSelect) {
-      modeSelect.addEventListener('change', (e) => { unit.unit_change_mode = e.target.value; });
-    }
-
-    const speedSlider = body.querySelector('.tuya-unit-speed');
-    if (speedSlider) {
-      speedSlider.addEventListener('input', (e) => {
-        const v = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
-        unit.unit_switch_duration = v;
-        unit.unit_gradient_duration = v;
-        const label = overlay.querySelector('.tuya-scene-speed-value');
-        if (label) label.textContent = String(v);
-      });
-    }
-
-    overlay.querySelector('.tuya-scene-test-btn')?.addEventListener('click', () => this._testTuyaScene());
-
-    overlay.querySelector('.tuya-scene-save')?.addEventListener('click', () => {
-      const state = this._tuyaSceneState;
-      const segIdx = state.segmentIndex;
-      const seg = this._lightAutoState.automation.group_automation.segments[segIdx];
-      if (seg) {
-        seg.tuya_scene = state.scene;
-      }
-      this._closeTuyaSceneBuilder();
-      this._refreshLightAutomationModal();
-    });
-  }
-
-  _refreshTuyaSceneModal() {
-    const overlay = this.shadowRoot?.querySelector('.tuya-scene-modal-overlay');
-    if (!overlay || !this._tuyaSceneState) return;
-    overlay.innerHTML = this._renderTuyaSceneModal(this._tuyaSceneState.scene);
-    this._attachTuyaSceneListeners(overlay);
-  }
-
-  _updateStepCircleColor(overlay, idx, unit) {
-    const circle = overlay.querySelector(`.tuya-scene-step-circle[data-step-index="${idx}"]`);
-    if (!circle) return;
-    const isWhiteMode = unit.temperature > 0 && unit.h === 0 && unit.s === 0;
-    if (isWhiteMode) {
-      const tempPct = (unit.temperature || 500) / 1000;
-      const warmColor = `rgb(255, ${180 + Math.round(tempPct * 75)}, ${120 + Math.round(tempPct * 135)})`;
-      circle.style.background = warmColor;
-    } else {
-      const hue = unit.h || 0;
-      const sat = (unit.s || 500) / 10;
-      circle.style.background = `hsl(${hue}, ${sat}%, 50%)`;
-    }
-  }
-
-  _encodeTuyaSceneHex(scene) {
-    const units = scene.scene_units || [];
-    if (units.length === 0) return '';
-    const sceneIndex = (scene.scene_num || 1).toString(16).padStart(2, '0');
-    let hexStr = sceneIndex;
-
-    for (const unit of units) {
-      const isWhiteMode = unit.temperature > 0 && (unit.h === 0 || unit.h === undefined) && (unit.s === 0 || unit.s === undefined);
-      const sw = Math.max(0, Math.min(100, Math.round(Number(unit.unit_switch_duration) || 50)));
-      let gr = Math.round(Number(unit.unit_gradient_duration));
-      if (!Number.isFinite(gr)) gr = sw;
-      gr = Math.max(0, Math.min(100, gr));
-      const switchHex = sw.toString(16).padStart(2, '0');
-      const gradientHex = gr.toString(16).padStart(2, '0');
-      let transitionType = '00';
-      if (unit.unit_change_mode === 'jump') transitionType = '01';
-      else if (unit.unit_change_mode === 'gradient') transitionType = '02';
-
-      if (isWhiteMode) {
-        const brightness = Math.max(0, Math.min(1000, unit.bright || 1000));
-        const temperature = Math.max(0, Math.min(1000, unit.temperature || 500));
-        const brightHex = brightness.toString(16).padStart(4, '0');
-        const tempHex = temperature.toString(16).padStart(4, '0');
-        hexStr += switchHex + gradientHex + transitionType + '0000' + '0000' + '0000' + brightHex + tempHex;
-      } else {
-        const hue = Math.max(0, Math.min(359, unit.h || 0));
-        const saturation = Math.max(0, Math.min(1000, unit.s || 500));
-        const brightness = Math.max(0, Math.min(1000, unit.bright || 1000));
-        const hueHex = hue.toString(16).padStart(4, '0');
-        const satHex = saturation.toString(16).padStart(4, '0');
-        const brightHex = brightness.toString(16).padStart(4, '0');
-        hexStr += switchHex + gradientHex + transitionType + hueHex + satHex + brightHex + '0000' + '0000';
-      }
-    }
-    return hexStr;
-  }
-
-  async _testTuyaScene() {
-    const state = this._tuyaSceneState;
-    if (!state) return;
-
-    const tuyaLights = this._lightAutoState.lightEntities.filter(l => l.tuya);
-    if (tuyaLights.length === 0) {
-      this._showToast('No Tuya lights configured', 'error');
-      return;
-    }
-
-    const entityId = tuyaLights[0].entity_id;
-    const sceneHex = this._encodeTuyaSceneHex(state.scene);
-
-    this._enforcementPausedUntil = Date.now() + 30000;
-
-    try {
-      await this._hass.callWS({
-        type: 'smart_dashboards/test_tuya_scene',
-        entity_id: entityId,
-        scene_data: { scene_data_v2: sceneHex, pause_enforcement: 30 }
-      });
-      this._showToast('Scene sent — enforcement paused 30s', 'success');
-    } catch (err) {
-      console.error('Failed to test scene:', err);
-      this._showToast('Failed to test scene', 'error');
     }
   }
 
@@ -18239,6 +17795,12 @@ class EnergyPanel extends HTMLElement {
 
     if (backBtn) {
       backBtn.addEventListener('click', () => {
+        // Warn on unsaved changes (Phase 5 UX: dirty-state guard). The
+        // _settingsDirty flag is set by input/change handlers across settings.
+        if (this._settingsDirty && !window.confirm('You have unsaved changes. Leave settings anyway?')) {
+          return;
+        }
+        this._settingsDirty = false;
         this._showSettings = false;
         this._settingsTab = 'rooms';
         this._render();
@@ -18256,6 +17818,23 @@ class EnergyPanel extends HTMLElement {
     const saveEnforcementBtn = this.shadowRoot.querySelector('#save-enforcement-btn');
     if (saveEnforcementBtn) {
       saveEnforcementBtn.addEventListener('click', () => this._saveEnforcementSettings());
+    }
+
+    // Phase 5 UX: delegated dirty-state tracker. Any input/change inside the
+    // settings content area marks settings dirty so the Back button can warn
+    // about unsaved changes. Buttons (Save, etc.) are excluded.
+    const settingsContent = this.shadowRoot.querySelector('.content-area');
+    if (settingsContent) {
+      settingsContent.addEventListener('input', (e) => {
+        const t = e.target;
+        if (!t || t.closest('button')) return;
+        this._settingsDirty = true;
+      });
+      settingsContent.addEventListener('change', (e) => {
+        const t = e.target;
+        if (!t || t.closest('button')) return;
+        this._settingsDirty = true;
+      });
     }
 
     if (addRoomBtn) {
@@ -19835,6 +19414,7 @@ class EnergyPanel extends HTMLElement {
 
       this._config = config;
       this._syncZoneHealthPollingFromConfig();
+      this._settingsDirty = false; // Phase 5 UX: clear dirty flag on save
       showToast(this.shadowRoot, 'Settings saved!', 'success');
 
       try {
