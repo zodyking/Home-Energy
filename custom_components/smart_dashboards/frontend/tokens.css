@@ -1,0 +1,73 @@
+/*
+ * Home Energy panel design tokens.
+ *
+ * Single source of truth for the palette, typography, spacing, and surface
+ * treatments used across the Home Energy panel. Extracted from the inline
+ * :host block in shared-utils.js and the inline <style> in energy-panel.js
+ * (audit Phase 4: CSS was duplicated in two JS files and re-injected on every
+ * render).
+ *
+ * The palette is fixed dark and intentionally overrides the user's HA theme
+ * for a consistent Home Energy experience.
+ */
+:host {
+  /* ---- Backgrounds / surfaces ---- */
+  --primary-background-color: #111111;
+  --card-background-color: #1c1c1c;
+  --secondary-background-color: #282828;
+  --clear-background-color: #111111;
+  --card-bg: var(--card-background-color);
+  --panel-header-background: rgb(28, 28, 28);
+  --input-bg: #282828;
+
+  /* ---- Text ---- */
+  --primary-text-color: #e1e1e1;
+  --secondary-text-color: #9b9b9b;
+  --disabled-text-color: #6f6f6f;
+
+  /* ---- Accent (signature cyan) ---- */
+  --panel-accent: #03a9f4;
+  --panel-accent-rgb: 3, 169, 244;
+  --panel-accent-dim: rgba(3, 169, 244, 0.15);
+  --panel-accent-hover: #29b6f6;
+
+  /* ---- Semantic ---- */
+  --panel-danger: #f44336;
+  --panel-warning: #ff9800;
+  --panel-success: #4caf50;
+  --efficiency-star-gold: #ffb300;
+
+  /* ---- Borders / overlays ---- */
+  --card-border: rgba(255, 255, 255, 0.08);
+  --input-border: rgba(255, 255, 255, 0.12);
+  --overlay-scrim: rgba(0, 0, 0, 0.55);
+  --overlay-scrim-light: rgba(0, 0, 0, 0.42);
+
+  /* ---- Typography ---- */
+  font-family: var(--paper-font-body1_-_font-family, 'Roboto', 'Segoe UI', sans-serif);
+  color-scheme: dark;
+
+  background: var(--primary-background-color);
+  color: var(--primary-text-color);
+}
+
+/* ---- Spacing scale (reference; consume via var() in component CSS) ---- */
+:host {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* ---- Radius / elevation ---- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --elev-2: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+  /* ---- Layout ---- */
+  --content-max-width: 1800px;
+  --panel-header-z: 100;
+}

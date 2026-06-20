@@ -267,11 +267,13 @@ class EnergyMonitor:
         self._zone_health_store_cache: dict | None = None
 
         # Door/Window/Lock/Presence automation state
-        self._door_window_state: dict[str, dict] = {}  # contact sensor states
-        self._lock_state: dict[str, str] = {}  # lock entity states (locked/unlocked)
+        # NOTE: _door_window_state, _lock_state, and _presence_hold_state were
+        # previously declared but never read or written — the handlers re-read
+        # hass.states each time. They are removed (audit BUG 7).
         self._door_reminder_active: dict[str, asyncio.Task | None] = {}  # active reminder tasks
         self._door_auto_lock_task: dict[str, asyncio.Task | None] = {}  # pending auto-lock tasks
-        self._presence_hold_state: dict[str, dict] = {}  # presence sensor hold timers
+        # Cancellable presence hold-then-announce tasks (audit BUG 4).
+        self._presence_handler_tasks: dict[str, asyncio.Task | None] = {}
         self._door_window_listener_unsub: list = []  # unsubscribe callbacks for contact sensors
         self._lock_listener_unsub: list = []  # unsubscribe callbacks for lock entities
         self._door_presence_listener_unsub: list = []  # unsubscribe callbacks for door/window presence sensors
@@ -1132,16 +1134,23 @@ class EnergyMonitor:
             )
 
     def _heater_door_window_blocks(self, outlet: dict) -> str | None:
-        """Return 'door' or 'window' if sensor is open, else None."""
+        """Return 'door' or 'window' if sensor is open, else None.
+
+        Uses :meth:`_contact_sensor_state_is_open` so both HA-canonical ``on``
+        and MQTT-style ``open`` values are accepted (audit BUG 8: previously
+        only ``on`` was matched, so a door/window reporting ``open`` would not
+        block the heater). When both are open, 'door' is reported first so the
+        user knows to close it.
+        """
         door_ent = str(outlet.get("heater_door_sensor_entity") or "").strip()
         window_ent = str(outlet.get("heater_window_sensor_entity") or "").strip()
         if door_ent.startswith("binary_sensor."):
             ds = self.hass.states.get(door_ent)
-            if ds and ds.state == "on":
+            if ds and self._contact_sensor_state_is_open(ds.state):
                 return "door"
         if window_ent.startswith("binary_sensor."):
             ws = self.hass.states.get(window_ent)
-            if ws and ws.state == "on":
+            if ws and self._contact_sensor_state_is_open(ws.state):
                 return "window"
         return None
 
@@ -1197,11 +1206,14 @@ class EnergyMonitor:
 
     @staticmethod
     def _contact_sensor_state_is_open(state: str | None) -> bool:
-        """True if contact sensor state means open (on/open); supports HA and MQTT-style values."""
-        if not state:
-            return False
-        s = str(state).lower()
-        return s in ("on", "open")
+        """True if contact sensor state means open (on/open); supports HA and MQTT-style values.
+
+        Delegates to the canonical :func:`door_window.contact_is_open` so the
+        open-state check has one source of truth across the integration and the
+        frontend (audit BUG 8).
+        """
+        from .door_window import contact_is_open
+        return contact_is_open(state)
 
     @staticmethod
     def _budget_boost_period_label(weekdays: list) -> str:
@@ -2464,9 +2476,18 @@ class EnergyMonitor:
                         gst["seg_id"] = seg_id
                         gst["t0"] = now_mono
                         gst["last_apply_mono"] = None
-                        await self._apply_light_group_segment(
-                            room, matched, full_mode_converge=True
-                        )
+                        # On apply failure, set last_apply_mono to now so the next
+                        # tick waits the full interval instead of re-applying every
+                        # second for 60s (audit BUG 2).
+                        try:
+                            await self._apply_light_group_segment(
+                                room, matched, full_mode_converge=True
+                            )
+                        except Exception as e:
+                            _LOGGER.warning(
+                                "Light automation group apply failed for room %s: %s",
+                                room_id, e,
+                            )
                         gst["last_apply_mono"] = now_mono
                     else:
                         t0 = gst.get("t0")
@@ -2482,9 +2503,15 @@ class EnergyMonitor:
                         )
                         last = gst.get("last_apply_mono")
                         if last is None or (now_mono - float(last)) >= float(interval):
-                            await self._apply_light_group_segment(
-                                room, matched, full_mode_converge=False
-                            )
+                            try:
+                                await self._apply_light_group_segment(
+                                    room, matched, full_mode_converge=False
+                                )
+                            except Exception as e:
+                                _LOGGER.warning(
+                                    "Light automation group reconcile failed for room %s: %s",
+                                    room_id, e,
+                                )
                             gst["last_apply_mono"] = now_mono
 
             for entity_id, light_auto in room_auto.get("individual_automations", {}).items():
@@ -2509,9 +2536,15 @@ class EnergyMonitor:
                     ist["seg_id"] = seg_id_i
                     ist["t0"] = now_mono
                     ist["last_apply_mono"] = None
-                    await self._apply_light_single_segment(
-                        entity_id, matched_i, full_mode_converge=True
-                    )
+                    try:
+                        await self._apply_light_single_segment(
+                            entity_id, matched_i, full_mode_converge=True
+                        )
+                    except Exception as e:
+                        _LOGGER.warning(
+                            "Light automation individual apply failed for %s: %s",
+                            entity_id, e,
+                        )
                     ist["last_apply_mono"] = now_mono
                 else:
                     t0i = ist.get("t0")
@@ -2527,9 +2560,15 @@ class EnergyMonitor:
                     )
                     last_i = ist.get("last_apply_mono")
                     if last_i is None or (now_mono - float(last_i)) >= float(interval_i):
-                        await self._apply_light_single_segment(
-                            entity_id, matched_i, full_mode_converge=False
-                        )
+                        try:
+                            await self._apply_light_single_segment(
+                                entity_id, matched_i, full_mode_converge=False
+                            )
+                        except Exception as e:
+                            _LOGGER.warning(
+                                "Light automation individual reconcile failed for %s: %s",
+                                entity_id, e,
+                            )
                         ist["last_apply_mono"] = now_mono
 
     def _time_in_segment(self, current_mins: int, segment: dict) -> bool:
@@ -2687,6 +2726,28 @@ class EnergyMonitor:
                         return outlet
         return None
 
+    @staticmethod
+    def _to_kelvin(value: float | int | None, attr_name: str) -> float | None:
+        """Normalize a color-temperature attribute/target to kelvin.
+
+        HA lights expose ``color_temp_kelvin`` (kelvin) OR ``color_temp`` (mireds).
+        Comparing them directly caused infinite re-apply on mireds-only lights
+        (audit BUG 6). This helper converts mireds to kelvin via 1e6/mireds so the
+        two are always compared in the same unit.
+        """
+        if value is None:
+            return None
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return None
+        if attr_name == "color_temp_kelvin":
+            return v
+        # mireds: lower is cooler/blue, higher is warmer/red — invert to kelvin.
+        if v <= 0:
+            return None
+        return 1_000_000.0 / v
+
     def _light_state_matches_segment(
         self,
         entity_id: str,
@@ -2704,16 +2765,27 @@ class EnergyMonitor:
         tuya_scene = segment.get("tuya_scene")
 
         if is_tuya and tuya_scene and light_mode == "scene":
+            # Previously this compared an in-memory hash() of the encoded scene hex,
+            # which can never detect external/manual scene changes and caused the
+            # full_mode_converge loop to re-send the scene for up to 45s. Instead,
+            # read the actual text.{light}_scene entity state and compare the
+            # freshly-encoded hex against it (audit BUG 4).
             scene_hex = self._encode_tuya_scene_hex(tuya_scene)
             if not scene_hex:
                 return True
-            expected = f"tuya_scene_{hash(scene_hex)}"
-            return self._light_automation_state.get(state_key) == expected
+            light_name = entity_id.replace("light.", "", 1)
+            scene_text_entity = f"text.{light_name}_scene"
+            st = self.hass.states.get(scene_text_entity)
+            if st is None or st.state in (None, "", "unknown", "unavailable"):
+                return False
+            return str(st.state).strip().lower() == scene_hex.strip().lower()
 
         if brightness_pct is not None:
             cur = attrs.get("brightness")
             target = int(brightness_pct * 255 / 100)
-            if cur is None or abs(int(cur) - target) > 5:
+            # Compare as floats so the match check and the apply check agree at
+            # the tolerance boundary (audit BUG 7).
+            if cur is None or abs(float(cur) - float(target)) > 5:
                 return False
 
         if is_wrgb and light_mode == "color" and hs_color is not None:
@@ -2723,8 +2795,12 @@ class EnergyMonitor:
             ):
                 return False
         elif is_wrgb and light_mode == "white" and color_temp is not None:
-            cur_temp = attrs.get("color_temp_kelvin") or attrs.get("color_temp")
-            if cur_temp is None or abs(int(cur_temp) - int(color_temp)) > 100:
+            # Compare in kelvin on both sides; mireds-only lights previously
+            # caused infinite re-apply (audit BUG 6).
+            cur_k = self._to_kelvin(attrs.get("color_temp_kelvin"), "color_temp_kelvin") \
+                or self._to_kelvin(attrs.get("color_temp"), "color_temp")
+            tgt_k = float(color_temp)
+            if cur_k is None or abs(cur_k - tgt_k) > 100:
                 return False
 
         return True
@@ -2732,71 +2808,38 @@ class EnergyMonitor:
     def pause_light_enforcement(self, seconds: int = 30) -> None:
         """Pause light automation enforcement for a given number of seconds."""
         import time
-        self._light_enforcement_paused_until = time.time() + seconds
+        self._light_enforcement_paused_until = time.monotonic() + seconds
         _LOGGER.info("Light automation enforcement paused for %d seconds", seconds)
 
     def _should_skip_light_enforcement(self, entity_id: str, enforcement_interval: int) -> bool:
-        """Check if light enforcement should be skipped due to pause or interval."""
+        """Check if light enforcement should be skipped due to pause or interval.
+
+        Uses ``time.monotonic`` (the same clock as the tick loop's
+        ``_light_auto_apply_state``) so the two throttle paths can't disagree
+        (audit BUG 3).
+        """
         import time
-        now = time.time()
-        if now < self._light_enforcement_paused_until:
+        now_mono = time.monotonic()
+        if now_mono < self._light_enforcement_paused_until:
             return True
-        last_run = self._light_enforcement_last_run.get(entity_id, 0)
-        if now - last_run < enforcement_interval:
+        last_run = self._light_enforcement_last_run.get(entity_id, 0.0)
+        if now_mono - last_run < enforcement_interval:
             return True
         return False
 
     def _mark_light_enforcement_run(self, entity_id: str) -> None:
         """Mark that enforcement ran for this light."""
         import time
-        self._light_enforcement_last_run[entity_id] = time.time()
+        self._light_enforcement_last_run[entity_id] = time.monotonic()
 
     def _encode_tuya_scene_hex(self, scene: dict) -> str:
-        """Encode Tuya scene data into hex string for scene_data_v2 format."""
-        units = scene.get("scene_units", [])
-        if not units:
-            return ""
+        """Encode Tuya scene data into hex string for scene_data_v2 format.
 
-        scene_index = hex(max(1, scene.get("scene_num", 1)))[2:].zfill(2)
-        hex_str = scene_index
-
-        for unit in units:
-            is_white_mode = (
-                unit.get("temperature", 0) > 0
-                and unit.get("h", 0) == 0
-                and unit.get("s", 0) == 0
-            )
-            # Tuya scene_data_v2: unit_switch_duration / unit_gradient_duration are 0–100 (0 = fastest).
-            sw = int(float(unit.get("unit_switch_duration", 50) or 50))
-            gr = int(float(unit.get("unit_gradient_duration", sw) or sw))
-            byte_sw = max(0, min(100, sw))
-            byte_gr = max(0, min(100, gr))
-            switch_hex = hex(byte_sw)[2:].zfill(2)
-            gradient_hex = hex(byte_gr)[2:].zfill(2)
-
-            transition_type = "00"
-            mode = unit.get("unit_change_mode", "static")
-            if mode == "jump":
-                transition_type = "01"
-            elif mode == "gradient":
-                transition_type = "02"
-
-            if is_white_mode:
-                brightness = max(0, min(1000, unit.get("bright", 1000) or 1000))
-                temperature = max(0, min(1000, unit.get("temperature", 500) or 500))
-                bright_hex = hex(brightness)[2:].zfill(4)
-                temp_hex = hex(temperature)[2:].zfill(4)
-                hex_str += switch_hex + gradient_hex + transition_type + "0000" + "0000" + "0000" + bright_hex + temp_hex
-            else:
-                hue = max(0, min(359, unit.get("h", 0) or 0))
-                saturation = max(0, min(1000, unit.get("s", 500) or 500))
-                brightness = max(0, min(1000, unit.get("bright", 1000) or 1000))
-                hue_hex = hex(hue)[2:].zfill(4)
-                sat_hex = hex(saturation)[2:].zfill(4)
-                bright_hex = hex(brightness)[2:].zfill(4)
-                hex_str += switch_hex + gradient_hex + transition_type + hue_hex + sat_hex + bright_hex + "0000" + "0000"
-
-        return hex_str
+        Delegates to the canonical implementation in :mod:`light_automation`
+        (audit BUG 22: previously a drifted JS copy lived in the frontend too).
+        """
+        from .light_automation import encode_tuya_scene_hex
+        return encode_tuya_scene_hex(scene)
 
     async def _async_tuya_clear_scene_effect_if_active(
         self, entity_id: str, attrs: dict
@@ -2936,7 +2979,6 @@ class EnergyMonitor:
                 _LOGGER.warning("Light automation: empty scene hex for %s", entity_id)
                 self._mark_light_enforcement_run(entity_id)
                 return
-            scene_hash = f"tuya_scene_{hash(scene_hex)}"
             scene_state = self.hass.states.get(scene_text_entity)
             if scene_state is None:
                 _LOGGER.warning(
@@ -2952,7 +2994,7 @@ class EnergyMonitor:
                     "set_value",
                     {"entity_id": scene_text_entity, "value": scene_hex},
                 )
-                self._light_automation_state[state_key] = scene_hash
+                self._light_automation_state[state_key] = "tuya_scene_applied"
                 self._mark_light_enforcement_run(entity_id)
                 _LOGGER.debug(
                     "Light automation: scene for %s via %s",
@@ -2986,8 +3028,10 @@ class EnergyMonitor:
                     service_data["hs_color"] = hs_color
                     needs_update = True
             elif light_mode == "white" and color_temp is not None:
-                current_temp = attrs.get("color_temp_kelvin") or attrs.get("color_temp")
-                if current_temp is None or abs(current_temp - color_temp) > 100:
+                # Compare in kelvin on both sides (audit BUG 6).
+                cur_k = self._to_kelvin(attrs.get("color_temp_kelvin"), "color_temp_kelvin") \
+                    or self._to_kelvin(attrs.get("color_temp"), "color_temp")
+                if cur_k is None or abs(cur_k - float(color_temp)) > 100:
                     service_data["color_temp_kelvin"] = color_temp
                     needs_update = True
         elif not is_wrgb and current_on and brightness_pct is not None:
@@ -2998,6 +3042,22 @@ class EnergyMonitor:
                 needs_update = True
 
         if action == "on" and not current_on:
+            needs_update = True
+            if is_wrgb:
+                if brightness_pct is not None:
+                    service_data["brightness_pct"] = brightness_pct
+                if light_mode == "color" and hs_color is not None:
+                    service_data["hs_color"] = hs_color
+                elif light_mode == "white" and color_temp is not None:
+                    service_data["color_temp_kelvin"] = color_temp
+            elif brightness_pct is not None:
+                service_data["brightness_pct"] = brightness_pct
+        elif action == "mode" and not current_on:
+            # A "mode" segment on an off light must still apply the configured
+            # color/temp/brightness so the user sees the intended state when the
+            # light is later switched on. Previously this branch was missing,
+            # causing the light to energize at default brightness for 60s then
+            # turn off (see audit BUG 1).
             needs_update = True
             if is_wrgb:
                 if brightness_pct is not None:
@@ -3086,12 +3146,16 @@ class EnergyMonitor:
                     switch_was_off = True
                     switch_energized_at = time.monotonic()
 
+        apply_exc: Exception | None = None
         try:
             if action == "mode" and full_mode_converge:
-                deadline = time.monotonic() + 45.0
-                max_iters = 45
+                # Previously 45 iterations / 45s; that re-sent the scene command
+                # continuously when the hash-based check could never converge
+                # (audit BUG 4). Now that the match check reads the real text
+                # entity state, 3 attempts with 1s spacing is enough.
+                max_iters = 3
                 n = 0
-                while time.monotonic() < deadline and n < max_iters:
+                while n < max_iters:
                     n += 1
                     cs = self.hass.states.get(entity_id)
                     raw = (cs.state or "").lower() if cs else ""
@@ -3101,7 +3165,7 @@ class EnergyMonitor:
                         if current_on and self._light_state_matches_segment(
                             entity_id, segment, attrs, is_wrgb, is_tuya, state_key
                         ):
-                            return
+                            break
                     if cs and raw == "off":
                         try:
                             await self.hass.services.async_call(
@@ -3157,9 +3221,19 @@ class EnergyMonitor:
                 enforcement_interval,
                 skip_enforcement=False,
             )
+        except Exception as exc:
+            apply_exc = exc
+            _LOGGER.warning(
+                "Light automation apply failed for %s: %s", entity_id, exc
+            )
         finally:
+            # Only de-energize a switch we energized for a "mode" segment when the
+            # apply succeeded. On failure, leave the switch state alone so the
+            # user can see the light is on rather than having it killed after 60s
+            # (audit BUG 8).
             if (
-                not defer_appliance_switch
+                apply_exc is None
+                and not defer_appliance_switch
                 and action == "mode"
                 and switch_was_off
                 and switch_entity
@@ -3345,6 +3419,22 @@ class EnergyMonitor:
         self._presence_listener_unsub = []
         self._setup_presence_listeners()
         self._setup_manual_toggle_switch_listeners()
+
+    def refresh_door_window_listeners(self) -> None:
+        """Teardown and re-register door/window/lock/presence/contact listeners.
+
+        Called from ``config_manager.async_update_energy`` after a config save
+        so newly added doors/windows/contact sensors/locks/presence sensors
+        start firing immediately, and removed ones stop. Previously config save
+        only refreshed presence listeners, so the door/window listeners stayed
+        bound to the old entity set until the integration was reloaded
+        (audit BUG 1 — root cause of "door/window controls don't respond").
+        """
+        self._teardown_door_window_listeners()
+        # Re-seed the baseline state dict so the first event after a refresh is
+        # not absorbed as a duplicate (audit BUG 6 re-arm path).
+        self._door_window_last_signal_state.clear()
+        self._setup_door_window_listeners()
 
     def _setup_presence_listeners(self) -> None:
         track_ids: set[str] = set()
@@ -3621,6 +3711,11 @@ class EnergyMonitor:
             if task:
                 task.cancel()
         self._door_auto_lock_task.clear()
+        # Cancel any in-flight presence hold-then-announce tasks (audit BUG 4).
+        for task in self._presence_handler_tasks.values():
+            if task:
+                task.cancel()
+        self._presence_handler_tasks.clear()
         if self._task:
             self._task.cancel()
             try:
@@ -3634,8 +3729,10 @@ class EnergyMonitor:
         while self._running:
             try:
                 await self._check_energy()
-            except Exception as e:
-                _LOGGER.error("Energy monitor error: %s", e)
+            except Exception:
+                # Use _LOGGER.exception so the full traceback is preserved
+                # (previously "%s" truncated it — Phase 3 HA-convention fix).
+                _LOGGER.exception("Energy monitor error")
 
             await asyncio.sleep(ENERGY_CHECK_INTERVAL)
 
@@ -4589,8 +4686,14 @@ class EnergyMonitor:
                 light_task = asyncio.create_task(
                     self._async_light_warning_loop(wrgb_lights, rgb, temp_k, tts_task, interval)
                 )
-                await asyncio.gather(tts_task, light_task)
-                await self._async_restore_lights(wrgb_lights, restore_data)
+                # Restore lights in a finally so they are not stuck in the warning
+                # color when TTS fails (audit BUG 10).
+                try:
+                    await asyncio.gather(tts_task, light_task)
+                except Exception as e:
+                    _LOGGER.warning("Responsive-light TTS gather failed: %s", e)
+                finally:
+                    await self._async_restore_lights(wrgb_lights, restore_data)
             else:
                 await async_send_tts(
                     self.hass,
@@ -5957,6 +6060,42 @@ class EnergyMonitor:
                                     outlet.get("name") or key,
                                     lock,
                                 )
+                    # Re-arm auto-lock for a door that is currently closed and
+                    # was closed before HA restarted. Without this the pending
+                    # auto-lock is lost on restart and the door stays unlocked
+                    # until the next open/close cycle (audit BUG 6).
+                    if (
+                        outlet.get("auto_lock_enabled")
+                        and isinstance(outlet.get("lock_entity"), str)
+                        and isinstance(contact, str)
+                        and contact.startswith("binary_sensor.")
+                    ):
+                        cst = self.hass.states.get(contact)
+                        lst = self.hass.states.get(outlet.get("lock_entity"))
+                        contact_closed = bool(
+                            cst
+                            and cst.state not in ("unknown", "unavailable", "")
+                            and not self._contact_sensor_state_is_open(cst.state)
+                        )
+                        lock_unlocked = bool(
+                            lst
+                            and lst.state not in ("unknown", "unavailable", "")
+                            and lst.state != "locked"
+                        )
+                        if contact_closed and lock_unlocked:
+                            delay = outlet.get("auto_lock_delay", 10)
+                            # Cancel any pre-existing task first (defensive).
+                            existing = self._door_auto_lock_task.pop(key, None)
+                            if existing and not existing.done():
+                                existing.cancel()
+                            self._door_auto_lock_task[key] = self.hass.async_create_task(
+                                self._run_auto_lock(outlet, room, key, delay)
+                            )
+                            _LOGGER.debug(
+                                "Door reminder resync: re-armed auto-lock for %s (%s)",
+                                outlet.get("name") or key,
+                                outlet.get("lock_entity"),
+                            )
                 elif otype == "window":
                     key = self._door_window_key(outlet, room)
                     contact = outlet.get("contact_sensor")
@@ -6168,8 +6307,13 @@ class EnergyMonitor:
     def append_door_activity_event(
         self, outlet: dict, room: dict, event: str, detail: str = ""
     ) -> None:
-        """Record door open/close/lock activity; retains last 72 hours per door."""
-        if outlet.get("type") != "door":
+        """Record door/window open/close/lock activity; retains last 72 hours per key.
+
+        Previously this only logged events for ``type == "door"``, so windows
+        had no activity history at all even though the UI exposes it (audit
+        BUG 12). Now both door and window events are recorded.
+        """
+        if outlet.get("type") not in ("door", "window"):
             return
         key = self._door_window_key(outlet, room)
         now_utc = dt_util.utcnow()
@@ -6367,6 +6511,14 @@ class EnergyMonitor:
             # Start auto-lock timer if enabled
             if outlet.get("auto_lock_enabled") and outlet.get("lock_entity"):
                 delay = outlet.get("auto_lock_delay", 10)
+                # Cancel any pre-existing pending auto-lock task for this door
+                # before scheduling a new one. Previously a rapid close→open→close
+                # within the delay orphaned the first task, which still fired
+                # lock.lock after its original delay even though the door was
+                # reopened in between (audit BUG 2).
+                existing = self._door_auto_lock_task.pop(key, None)
+                if existing and not existing.done():
+                    existing.cancel()
                 self._door_auto_lock_task[key] = self.hass.async_create_task(
                     self._run_auto_lock(outlet, room, key, delay)
                 )
@@ -6386,6 +6538,10 @@ class EnergyMonitor:
         """Handle window contact sensor state change."""
         room_name = room.get("name", "Room")
         device_name = outlet.get("name") or "Window"
+
+        # Record window activity too (audit BUG 12: previously windows had no
+        # activity history).
+        self.append_door_activity_event(outlet, room, "opened" if is_open else "closed")
 
         if is_open:
             # Window opened
@@ -6504,8 +6660,12 @@ class EnergyMonitor:
             # Stop "still unlocked" reminder
             lock_key = f"{key}_lock"
             await self._stop_door_reminder(lock_key)
-            # Contact can lag; stop still-open reminder when lock reports secured.
-            await self._stop_door_reminder(key)
+            # NOTE: do NOT stop the "still open" reminder here. A smart lock can
+            # report `locked` while the door is still physically open (latch
+            # throws before the door closes). Stopping the open reminder here
+            # suppressed a legitimate warning. Only the contact-sensor close
+            # transition in _handle_door_contact_change stops that reminder
+            # (audit BUG 5).
         else:
             self.append_door_activity_event(outlet, room, "unlocked")
             # Door unlocked
@@ -6539,27 +6699,37 @@ class EnergyMonitor:
         entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
-        
+
         if not new_state or new_state.state in ("unknown", "unavailable"):
             return
+
+        # Baseline/duplicate dedupe. The contact and lock handlers gate on
+        # _door_lock_signal_is_baseline_or_duplicate to avoid firing on HA
+        # restart state replay; the presence handler was missing this and fired
+        # spurious "Presence detected" TTS on every restart (audit BUG 3).
+        if self._door_lock_signal_is_baseline_or_duplicate(
+            entity_id, str(new_state.state), old_state
+        ):
+            return
+
         if old_state and old_state.state not in ("unknown", "unavailable"):
             if new_state.state == old_state.state:
                 return
-        
+
         result = self._find_door_window_outlet_by_presence_sensor(entity_id)
         if not result:
             return
-        
+
         outlet, room, device_type = result
         key = f"{self._door_window_key(outlet, room)}_presence"
         is_detected = new_state.state == "on"  # binary_sensor: on = detected
-        
+
         room_name = room.get("name", "Room")
         device_name = outlet.get("name") or ("Door" if device_type == "door" else "Window")
         media_player = room.get("media_player")
         volume = room.get("volume", 0.7)
         tts_settings = self.config_manager.energy_config.get("tts_settings", {})
-        
+
         _LOGGER.debug(
             "%s presence sensor %s: %s -> %s (detected=%s)",
             device_type.capitalize(),
@@ -6568,18 +6738,27 @@ class EnergyMonitor:
             new_state.state,
             is_detected,
         )
-        
+
         if is_detected:
             # Presence detected
             hold_secs = outlet.get("presence_on_hold_secs", 0)
             if hold_secs > 0:
-                # Wait for hold time before acting
-                await asyncio.sleep(hold_secs)
-                # Re-check state after hold
-                current = self.hass.states.get(entity_id)
-                if not current or current.state != "on":
-                    return
-            
+                # Track this task so it can be cancelled on teardown or on a
+                # new event for the same key. Previously the fire-and-forget
+                # task was uncancellable and survived HA shutdown (audit BUG 4).
+                existing = self._presence_handler_tasks.pop(key, None)
+                if existing and not existing.done():
+                    existing.cancel()
+                task = self.hass.async_create_task(
+                    self._async_presence_hold_then_announce(
+                        entity_id, outlet, room, key, room_name, device_name,
+                        media_player, volume, tts_settings, hold_secs,
+                        on_clear=False,
+                    )
+                )
+                self._presence_handler_tasks[key] = task
+                return
+
             if outlet.get("announce_presence") and media_player:
                 if tts_settings.get("presence_tts_enabled", True) and self._tts_line_enabled(tts_settings, "presence_detected"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
@@ -6591,17 +6770,25 @@ class EnergyMonitor:
                         device_name=device_name,
                     )
                     await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
-            
+
             await self._turn_on_entities(outlet.get("presence_on_entities", []))
         else:
             # Presence cleared
             hold_secs = outlet.get("presence_off_hold_secs", 0)
             if hold_secs > 0:
-                await asyncio.sleep(hold_secs)
-                current = self.hass.states.get(entity_id)
-                if not current or current.state != "off":
-                    return
-            
+                existing = self._presence_handler_tasks.pop(key, None)
+                if existing and not existing.done():
+                    existing.cancel()
+                task = self.hass.async_create_task(
+                    self._async_presence_hold_then_announce(
+                        entity_id, outlet, room, key, room_name, device_name,
+                        media_player, volume, tts_settings, hold_secs,
+                        on_clear=True,
+                    )
+                )
+                self._presence_handler_tasks[key] = task
+                return
+
             if outlet.get("announce_presence") and media_player:
                 if tts_settings.get("presence_tts_enabled", True) and self._tts_line_enabled(tts_settings, "presence_cleared"):
                     prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
@@ -6613,8 +6800,70 @@ class EnergyMonitor:
                         device_name=device_name,
                     )
                     await self._async_send_tts_with_lights(room, media_player, message, volume, tts_settings)
-            
+
             await self._turn_off_entities(outlet.get("presence_off_entities", []))
+
+    async def _async_presence_hold_then_announce(
+        self,
+        entity_id: str,
+        outlet: dict,
+        room: dict,
+        key: str,
+        room_name: str,
+        device_name: str,
+        media_player: str | None,
+        volume: float,
+        tts_settings: dict,
+        hold_secs: float,
+        *,
+        on_clear: bool,
+    ) -> None:
+        """Wait ``hold_secs`` then announce presence change if still in that state.
+
+        Extracted from ``_async_handle_door_window_presence_change`` so the
+        hold sleep is cancellable (audit BUG 4). Checks ``self._running`` after
+        the sleep so a teardown during the hold does not fire TTS.
+        """
+        try:
+            await asyncio.sleep(hold_secs)
+            if not self._running:
+                return
+            expected_state = "off" if on_clear else "on"
+            current = self.hass.states.get(entity_id)
+            if not current or current.state != expected_state:
+                return
+            msg_key = "presence_cleared" if on_clear else "presence_detected"
+            default_tmpl = (
+                DEFAULT_PRESENCE_CLEARED_MSG if on_clear else DEFAULT_PRESENCE_DETECTED_MSG
+            )
+            if outlet.get("announce_presence") and media_player:
+                if tts_settings.get("presence_tts_enabled", True) and self._tts_line_enabled(
+                    tts_settings, msg_key
+                ):
+                    prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+                    msg = tts_settings.get(f"{msg_key}_msg", default_tmpl)
+                    message = _format_tts_msg(
+                        msg,
+                        prefix=prefix,
+                        room_name=room_name,
+                        device_name=device_name,
+                    )
+                    await self._async_send_tts_with_lights(
+                        room, media_player, message, volume, tts_settings
+                    )
+            entities_key = "presence_off_entities" if on_clear else "presence_on_entities"
+            turn = self._turn_off_entities if on_clear else self._turn_on_entities
+            await turn(outlet.get(entities_key, []))
+        except asyncio.CancelledError:
+            # Superseded by a newer event for the same key, or monitor teardown.
+            raise
+        except Exception as e:
+            _LOGGER.warning("Presence hold-then-announce failed for %s: %s", entity_id, e)
+        finally:
+            # Only clear our slot if it still points at us.
+            current_task = self._presence_handler_tasks.get(key)
+            if current_task is None or current_task is asyncio.current_task():
+                self._presence_handler_tasks.pop(key, None)
 
     async def _async_door_reminder_power_enforcement_hook(
         self,

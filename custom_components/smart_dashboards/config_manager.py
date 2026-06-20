@@ -250,17 +250,45 @@ def _validate_rgb(val: Any) -> list[int]:
 
 
 def _load_json_file(path: str) -> dict | None:
-    """Load JSON file (run in executor to avoid blocking event loop)."""
+    """Load JSON file (run in executor to avoid blocking event loop).
+
+    Tolerates a corrupted file by returning ``None`` instead of crashing the
+    integration load (HA's ``Store`` does the same). The corrupt file is left
+    in place so the user can recover it; a backup copy is written next to it
+    for safety.
+    """
     if not os.path.exists(path):
         return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, ValueError) as e:
+        _LOGGER.error("Corrupt JSON at %s (%s); backing up and ignoring.", path, e)
+        try:
+            backup = f"{path}.corrupt.{int(__import__('time').time())}"
+            os.replace(path, backup)
+            _LOGGER.warning("Moved corrupt file to %s", backup)
+        except OSError:
+            pass
+        return None
+    except OSError as e:
+        _LOGGER.error("Could not read %s: %s", path, e)
+        return None
 
 
 def _write_json_file(path: str, data: Any) -> None:
-    """Write JSON file (run in executor to avoid blocking event loop)."""
-    with open(path, "w", encoding="utf-8") as f:
+    """Write JSON file atomically (run in executor to avoid blocking event loop).
+
+    Writes to a ``.partial`` sibling and then ``os.replace``s it onto the
+    target so a crash mid-write cannot corrupt the existing file (HA's
+    ``Store`` does the same — audit Phase 3 storage finding). The previous
+    implementation did a direct ``open(path, "w")`` which left a truncated
+    file on crash.
+    """
+    partial = f"{path}.partial"
+    with open(partial, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    os.replace(partial, path)
 
 
 def _power_source_for_light_vent(outlet: dict[str, Any]) -> tuple[str, str | None]:
@@ -764,6 +792,12 @@ class ConfigManager:
         monitor = self.hass.data.get(DOMAIN, {}).get("energy_monitor")
         if monitor is not None and hasattr(monitor, "refresh_presence_listeners"):
             monitor.refresh_presence_listeners()
+        # Also refresh door/window/lock/contact listeners so newly added or
+        # removed sensors take effect immediately. Without this the listeners
+        # stayed bound to the pre-save entity set until integration reload
+        # (audit BUG 1).
+        if monitor is not None and hasattr(monitor, "refresh_door_window_listeners"):
+            monitor.refresh_door_window_listeners()
 
     async def async_prune_kwh_alerts_sent_for_current_config(self) -> None:
         """Drop kwh_alerts_sent entries that are no longer eligible tiers after config change."""
