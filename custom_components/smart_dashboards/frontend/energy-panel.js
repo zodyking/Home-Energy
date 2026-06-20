@@ -1242,18 +1242,6 @@ class EnergyPanel extends HTMLElement {
           budgetOnlyWrap.style.display = 'none';
         }
       }
-      const usageWrap = roomCard.querySelector(
-        '.room-budget-marker-wrap[data-marker-role="usage"]',
-      );
-      if (usageWrap) {
-        if (budgetState.showBar && budgetState.usedKwh > 1e-9) {
-          usageWrap.style.display = '';
-          const uPct = Math.min(100, (budgetState.usedKwh / maxIv) * 100);
-          usageWrap.style.left = `${uPct}%`;
-        } else {
-          usageWrap.style.display = 'none';
-        }
-      }
 
       // Enforcement badge update
       const pe = this._config?.power_enforcement || {};
@@ -4177,23 +4165,6 @@ class EnergyPanel extends HTMLElement {
         background: transparent;
         box-shadow: none;
         opacity: 0.95;
-      }
-
-      /* True today-usage position (fill can be sub-pixel at low kWh; budget tick is separate). */
-      .room-budget-marker-wrap.room-budget-usage-marker {
-        z-index: 4;
-        transform: translateX(-50%);
-        pointer-events: none;
-      }
-
-      .room-budget-marker--usage {
-        width: 3px;
-        border-radius: 2px;
-        background: #fff;
-        box-shadow:
-          0 0 0 1px rgba(0, 0, 0, 0.45),
-          0 0 10px rgba(3, 169, 244, 0.9);
-        z-index: 4;
       }
 
       .room-budget-marker-label {
@@ -9809,16 +9780,6 @@ class EnergyPanel extends HTMLElement {
         </div>`);
     }
 
-    if (budget.usedKwh > 1e-9) {
-      const uPct = Math.min(100, budget.fillPct);
-      const usageTip = esc(
-        `Today's usage: ${budget.usedKwh.toFixed(2)} kWh (bar scale 0–${budget.maxInterval} kWh). Blue gradient = used energy; ticks = voice tiers / daily budget.`,
-      );
-      chunks.push(`<div class="room-budget-marker-wrap room-budget-usage-marker" data-marker-role="usage" style="left:${uPct}%">
-          <span class="room-budget-marker-tick room-budget-marker--usage has-tooltip" title="${usageTip}"></span>
-        </div>`);
-    }
-
     return `<div class="room-budget-markers" aria-hidden="true">${chunks.join('')}</div>`;
   }
 
@@ -10178,7 +10139,7 @@ class EnergyPanel extends HTMLElement {
     const trackTitle =
       "Open today's kWh chart — scale 0–" +
       budget.maxInterval +
-      ' kWh; wide blue fill = energy used today; white tick = exact usage on scale' +
+      ' kWh; wide blue fill = energy used today' +
       (budget.showSeparateBudget ? '; bright blue tick + label = daily budget' : '') +
       '; grey ticks = voice alert tiers';
 
