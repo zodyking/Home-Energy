@@ -1799,7 +1799,6 @@ class EnergyMonitor:
         fallback_message: str = "",
         *,
         integration_auto: bool = False,
-        also_speak_room_tts: bool = False,
     ) -> None:
         """Send HA notification to person assigned to room using configured templates."""
         tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
@@ -2023,6 +2022,91 @@ class EnergyMonitor:
                 if outlet.get("plug1_switch") == switch_entity:
                     return outlet
         return None
+
+    def _presence_restore_outlet_classification(
+        self, room: dict, restored_switch_ids: list[str]
+    ) -> tuple[list[str], list[str]]:
+        """Split restored switches into (ac_outlet_names, other_outlet_names).
+
+        Used by the smarter presence-restore TTS so the spoken message reflects
+        what was actually turned back on: AC only, outlets only, or both.
+        """
+        ac_names: list[str] = []
+        other_names: list[str] = []
+        seen: set[str] = set()
+        for sw in restored_switch_ids:
+            if not sw or sw in seen:
+                continue
+            seen.add(sw)
+            outlet = self._find_outlet_by_switch(room, sw)
+            if not outlet:
+                other_names.append(sw)
+                continue
+            name = str(outlet.get("name") or "").strip()
+            if outlet.get("type") == "minisplit":
+                ac_names.append(name or "Air Conditioner")
+            else:
+                other_names.append(name or "outlet")
+        return ac_names, other_names
+
+    async def _async_speak_presence_restore_tts_for_room(
+        self,
+        room: dict,
+        restored_switch_ids: list[str],
+    ) -> None:
+        """Speak a context-aware TTS when zone-based presence restores devices.
+
+        - AC only → "Turning on the air conditioning."
+        - Outlets only → "Turning on the outlets." (or single outlet name)
+        - Both → "Turning on the outlets and air conditioning."
+        - Neither → no TTS.
+
+        Only fires for rooms with a configured presence person + zone entities
+        (zone-based presence), so it complements the per-outlet binary_sensor
+        presence-detected TTS rather than replacing it.
+        """
+        mp = (room.get("media_player") or "").strip()
+        if not mp.startswith("media_player."):
+            return
+        person_ent = _normalize_presence_person_entity(room.get("presence_person_entity"))
+        if not person_ent:
+            return
+        zones = room.get("presence_zone_entities") or []
+        if not zones:
+            return
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        if not tts_settings.get("presence_tts_enabled", True):
+            return
+        if not self._tts_line_enabled(tts_settings, "presence_detected"):
+            return
+
+        person_state = self.hass.states.get(person_ent)
+        if person_state and person_state.attributes:
+            person_name = (
+                person_state.attributes.get("friendly_name")
+                or str(person_ent).replace("person.", "").replace("_", " ").title()
+            )
+        else:
+            person_name = str(person_ent).replace("person.", "").replace("_", " ").title()
+
+        ac_names, other_names = self._presence_restore_outlet_classification(
+            room, restored_switch_ids
+        )
+        has_ac = bool(ac_names)
+        has_outlets = bool(other_names)
+        if not has_ac and not has_outlets:
+            return
+        if has_ac and has_outlets:
+            phrase = "the outlets and air conditioning"
+        elif has_ac:
+            phrase = "the air conditioning"
+        else:
+            phrase = "the outlets" if len(other_names) > 1 else f"the {other_names[0]}"
+
+        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        room_name = str(room.get("name") or "Room")
+        message = f"{prefix} {person_name} is nearby, turning on {phrase} in {room_name}."
+        await self._async_speak_appliance_automation_tts(room, message)
 
     async def _tick_vent_automation(
         self, room: dict, room_id: str, outlet: dict, now: datetime
@@ -3367,6 +3451,7 @@ class EnergyMonitor:
             if not pending:
                 self._presence_auto_turned_off.pop(room_id, None)
                 return
+            restored_switch_ids: list[str] = []
             for sw in list(pending):
                 if self._switch_entity_is_on(sw):
                     pending.discard(sw)
@@ -3376,6 +3461,7 @@ class EnergyMonitor:
                         "switch", "turn_on", {"entity_id": sw}, blocking=True
                     )
                     pending.discard(sw)
+                    restored_switch_ids.append(sw)
                     _LOGGER.info(
                         "Presence auto-restore: turned on %s (room %s entered home/nearby)",
                         sw,
@@ -3391,10 +3477,13 @@ class EnergyMonitor:
                             "Air Conditioner On",
                             DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
                             integration_auto=True,
-                            also_speak_room_tts=True,
                         )
                 except Exception as e:
                     _LOGGER.warning("Presence auto-restore failed for %s: %s", sw, e)
+            if restored_switch_ids:
+                await self._async_speak_presence_restore_tts_for_room(
+                    room, restored_switch_ids
+                )
             if not pending:
                 self._presence_auto_turned_off.pop(room_id, None)
 
@@ -3527,7 +3616,6 @@ class EnergyMonitor:
                         "Air Conditioner Off",
                         DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
                         integration_auto=True,
-                        also_speak_room_tts=True,
                     )
             except Exception as e:
                 _LOGGER.warning("Presence auto-off (switch listener) failed for %s: %s", entity_id, e)
@@ -6874,7 +6962,12 @@ class EnergyMonitor:
         *,
         reminder_kind: str,
     ) -> None:
-        """Each door/window still-open or still-unlocked reminder counts like a room warning when a person is assigned."""
+        """Log door/window still-open or still-unlocked reminders without counting as a room warning.
+
+        Door/window reminders are informational TTS — they should appear in the
+        event log but must NOT increment the room warning count, record a
+        threshold warning, or push the room toward power enforcement phases.
+        """
         if not media_player:
             return
         if not _normalize_presence_person_entity(room.get("presence_person_entity")):
@@ -6885,26 +6978,8 @@ class EnergyMonitor:
 
         current_watts = self._sum_room_total_watts_only(room)
         room_name = room.get("name", "Room")
+        volume_pct = int(round(float(volume) * 100))
 
-        await self.config_manager.async_record_threshold_warning(room_id, current_watts)
-
-        (
-            effective_volume,
-            message,
-            post_send_cb,
-            enforcement_enabled,
-        ) = await self._async_room_enforcement_after_threshold_recorded(
-            room_id=room_id,
-            room_name=room_name,
-            room=room,
-            current_watts=current_watts,
-            media_player=media_player,
-            volume=volume,
-            tts_settings=tts_settings,
-            include_standard_room_warn=False,
-        )
-
-        msg_stripped = (message or "").strip()
         try:
             rt_raw = room.get("threshold", 0)
             try:
@@ -6912,68 +6987,30 @@ class EnergyMonitor:
             except (TypeError, ValueError):
                 rt_int = 0
 
-            def _warning_log_extra() -> dict:
-                ex: dict = {
-                    "tts_message": message,
-                    "room_watts": int(round(current_watts)),
-                    "room_threshold": rt_int,
-                    "volume_percent": int(round(effective_volume * 100)),
-                    "door_reminder": reminder_kind,
-                }
-                if enforcement_enabled:
-                    ex["enforcement_phase"] = int(
-                        self.config_manager.get_enforcement_state(room_id).get("phase", 0)
-                        or 0
-                    )
-                return ex
-
-            if msg_stripped:
-                await self._async_send_tts_with_lights(
-                    room,
-                    media_player,
-                    message,
-                    effective_volume,
-                    tts_settings,
-                    post_send_callback=post_send_cb,
+            log_extra: dict = {
+                "room_watts": int(round(current_watts)),
+                "room_threshold": rt_int,
+                "volume_percent": volume_pct,
+                "door_reminder": reminder_kind,
+                "counted_as_warning": False,
+            }
+            try:
+                log_extra["enforcement_phase"] = int(
+                    self.config_manager.get_enforcement_state(room_id).get("phase", 0) or 0
                 )
-            elif post_send_cb:
-                await post_send_cb()
+            except Exception:
+                pass
 
-            await self.config_manager.async_increment_warning(room_id)
             await self.config_manager.async_add_event_log_entry(
                 room_id,
                 room_name,
                 "warning",
                 None,
                 True,
-                extra=_warning_log_extra(),
+                extra=log_extra,
             )
         except Exception as e:
-            _LOGGER.error("Door reminder enforcement hook failed: %s", e)
-            try:
-                rt_raw = room.get("threshold", 0)
-                rt_int = int(rt_raw) if rt_raw is not None else 0
-            except (TypeError, ValueError):
-                rt_int = 0
-            fail_ex: dict = {
-                "tts_message": message,
-                "room_watts": int(round(current_watts)),
-                "room_threshold": rt_int,
-                "door_reminder": reminder_kind,
-            }
-            if enforcement_enabled:
-                fail_ex["enforcement_phase"] = int(
-                    self.config_manager.get_enforcement_state(room_id).get("phase", 0)
-                    or 0
-                )
-            await self.config_manager.async_add_event_log_entry(
-                room_id,
-                room_name,
-                "warning",
-                None,
-                False,
-                extra=fail_ex,
-            )
+            _LOGGER.error("Door reminder event log failed: %s", e)
 
     async def _start_door_reminder(
         self, outlet: dict, room: dict, key: str, reminder_type: str,
