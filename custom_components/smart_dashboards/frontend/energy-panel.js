@@ -12616,6 +12616,27 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _renderKeepOnRow(inputClass, checked, helpText) {
+    const esc = (helpText || '').replace(/</g, '&lt;');
+    return `
+      <div class="form-group" style="margin-top: 8px;">
+        <label class="toggle-row">
+          <input type="checkbox" class="form-checkbox ${inputClass}" ${checked ? 'checked' : ''}>
+          <span class="toggle-label">Keep on</span>
+        </label>
+        <div class="tts-msg-desc" style="margin-top: 4px;">${esc}</div>
+      </div>
+    `;
+  }
+
+  _keepOnHelpText(withZoneNote = true) {
+    let t = 'Re-checks this switch and turns it back on if something turns it off by mistake. Does not override energy safety shutoffs.';
+    if (withZoneNote) {
+      t += ' Does not override zone-based turn off/restore when that option is also enabled.';
+    }
+    return t;
+  }
+
   _renderRoomPresenceSection(room, index) {
     const persons = Array.isArray(this._entities?.persons) ? this._entities.persons : [];
     const zlist = Array.isArray(room.presence_zone_entities) && room.presence_zone_entities.length
@@ -12645,7 +12666,7 @@ class EnergyPanel extends HTMLElement {
       <div class="divider" style="margin: 16px 0;"></div>
       <h4 style="margin: 0 0 8px; font-size: 11px; color: var(--secondary-text-color);">Presence &amp; zones</h4>
       <p class="tts-msg-desc" style="margin-bottom: 12px;">
-        Optional: pick who this room tracks and which zones count as present. Leaving all selected zones turns off the configured switch.* entities (plugs, vent, light switch, etc.) for devices below that have this enabled. Entering any selected zone again turns those same switches back on only if this automation had turned them off (tracked per switch). Updates run on a short interval and when the person or selected zones change state.
+        Optional: pick who this room tracks and which zones count as present. Leaving all selected zones turns off the configured switch.* entities (plugs, vent, light switch, etc.) for devices below that have this enabled. Entering any selected zone again turns those same switches back on only if this automation had turned them off (tracked per switch). <strong>Keep on</strong> (per device below) re-applies switch power after mistaken turn-offs and does not override energy safety shutoffs or zone-based turn off/restore when both options are enabled.
         Persons appear only if they have a linked device tracker in Home Assistant.
       </p>
       <div class="form-group" style="margin-bottom: 12px;">
@@ -12949,6 +12970,18 @@ class EnergyPanel extends HTMLElement {
       ['single_outlet', 'minisplit', 'stove', 'light', 'vent', 'wall_heater', 'ceiling_vent_fan', 'fridge', 'microwave'].includes(t)
     ) {
       device.presence_auto_off = item.querySelector('.presence-auto-off-appliance')?.checked === true;
+    }
+  }
+
+  _applyKeepOnFromItemToDevice(item, device) {
+    const t = device.type;
+    if (t === 'outlet') {
+      device.keep_on_plug1 = item.querySelector('.keep-on-plug1')?.checked === true;
+      device.keep_on_plug2 = item.querySelector('.keep-on-plug2')?.checked === true;
+    } else if (
+      ['single_outlet', 'minisplit', 'stove', 'light', 'vent', 'wall_heater', 'ceiling_vent_fan', 'fridge', 'microwave'].includes(t)
+    ) {
+      device.keep_on = item.querySelector('.keep-on-appliance')?.checked === true;
     }
   }
 
@@ -16630,6 +16663,11 @@ class EnergyPanel extends HTMLElement {
                 !!device.presence_auto_off,
                 'Uses room Presence & zones. Targets the switch entity above.',
               )}
+              ${this._renderKeepOnRow(
+                'keep-on-appliance',
+                !!device.keep_on,
+                this._keepOnHelpText(),
+              )}
             </div>
           </div>
         </div>
@@ -16996,6 +17034,11 @@ class EnergyPanel extends HTMLElement {
                 !!device.presence_auto_off,
                 'Uses room Presence & zones. Turns plug switch off when away and can turn it back on when returning if this feature turned it off. Opt-in: use with care for HVAC.',
               )}
+              ${this._renderKeepOnRow(
+                'keep-on-appliance',
+                !!device.keep_on,
+                this._keepOnHelpText(),
+              )}
             </div>
           </div>
         </div>
@@ -17042,6 +17085,11 @@ class EnergyPanel extends HTMLElement {
                 'presence-auto-off-appliance',
                 !!device.presence_auto_off,
                 'Fridges usually have no switch; this is saved but has no effect until a switch is configured for this device.',
+              )}
+              ${this._renderKeepOnRow(
+                'keep-on-appliance',
+                !!device.keep_on,
+                'Fridges usually have no switch; keep-on has no effect until a switch is configured. ' + this._keepOnHelpText(),
               )}
             </div>
           </div>
@@ -17315,6 +17363,11 @@ class EnergyPanel extends HTMLElement {
                 !!device.presence_auto_off,
                 'Uses room Presence & zones. Targets the switch above.',
               )}
+              ${this._renderKeepOnRow(
+                'keep-on-appliance',
+                !!device.keep_on,
+                this._keepOnHelpText(),
+              )}
               ${ventAutomationSection}
               ${heaterAutomationSection}
             </div>
@@ -17427,6 +17480,18 @@ class EnergyPanel extends HTMLElement {
             presenceApplianceHelp,
           )
         : '';
+    const keepOnApplianceHelp =
+      deviceType === 'microwave'
+        ? 'Microwaves usually have no switch; keep-on has no effect until a switch is configured. ' + this._keepOnHelpText()
+        : this._keepOnHelpText();
+    const keepOnApplianceBlock =
+      deviceType === 'stove' || deviceType === 'microwave'
+        ? this._renderKeepOnRow(
+            'keep-on-appliance',
+            !!device.keep_on,
+            keepOnApplianceHelp,
+          )
+        : '';
 
     return `
       <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="${deviceType}" draggable="true">
@@ -17463,6 +17528,7 @@ class EnergyPanel extends HTMLElement {
               ${stoveSafetyFields}
               ${microwaveSafetyFields}
               ${presenceApplianceBlock}
+              ${keepOnApplianceBlock}
             </div>
           </div>
         </div>
@@ -17476,6 +17542,8 @@ class EnergyPanel extends HTMLElement {
     const collapsedClass = isCollapsed ? 'collapsed' : '';
     const presencePlug1Class = isSingleOutlet ? 'presence-auto-off-appliance' : 'presence-auto-off-plug1';
     const presencePlug1Checked = isSingleOutlet ? !!outlet.presence_auto_off : !!outlet.presence_auto_off_plug1;
+    const keepOnPlug1Class = isSingleOutlet ? 'keep-on-appliance' : 'keep-on-plug1';
+    const keepOnPlug1Checked = isSingleOutlet ? !!outlet.keep_on : !!outlet.keep_on_plug1;
 
     return `
       <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${outletIndex}" data-room-index="${roomIndex}" draggable="true">
@@ -17531,6 +17599,11 @@ class EnergyPanel extends HTMLElement {
                   ? 'Uses room Presence & zones. Targets this plug switch.'
                   : 'Uses room Presence & zones. Targets plug 1 switch.',
               )}
+              ${this._renderKeepOnRow(
+                keepOnPlug1Class,
+                keepOnPlug1Checked,
+                this._keepOnHelpText(),
+              )}
             </div>
             ${isSingleOutlet ? '' : `
             <div class="plug-settings-card" data-plug="2">
@@ -17556,6 +17629,11 @@ class EnergyPanel extends HTMLElement {
                 'presence-auto-off-plug2',
                 !!outlet.presence_auto_off_plug2,
                 'Uses room Presence & zones. Targets plug 2 switch.',
+              )}
+              ${this._renderKeepOnRow(
+                'keep-on-plug2',
+                !!outlet.keep_on_plug2,
+                this._keepOnHelpText(),
               )}
             </div>
             `}
@@ -19085,6 +19163,7 @@ class EnergyPanel extends HTMLElement {
             device.plug2_shutoff = isSingleOutlet ? 0 : plug2Shutoff;
           }
           this._applyPresenceAutoOffFromItemToDevice(item, device);
+          this._applyKeepOnFromItemToDevice(item, device);
           outlets.push(device);
         }
       });
@@ -19631,6 +19710,7 @@ class EnergyPanel extends HTMLElement {
           device.plug2_shutoff = isSingleOutlet ? 0 : plug2Shutoff;
         }
         this._applyPresenceAutoOffFromItemToDevice(item, device);
+        this._applyKeepOnFromItemToDevice(item, device);
         outlets.push(device);
       }
     });

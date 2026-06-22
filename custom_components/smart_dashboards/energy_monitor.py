@@ -3521,6 +3521,120 @@ class EnergyMonitor:
                     targets.append(str(sw))
         return list(dict.fromkeys(targets))
 
+    def _keep_on_bindings(self, room: dict) -> list[str]:
+        """switch.* IDs with keep-on enabled for a room."""
+        bindings: list[str] = []
+        for outlet in room.get("outlets", []):
+            otype = outlet.get("type", "outlet")
+            if otype == "outlet":
+                if outlet.get("keep_on_plug1"):
+                    sw = outlet.get("plug1_switch")
+                    if self._is_switch_entity_id(sw):
+                        bindings.append(str(sw))
+                if outlet.get("keep_on_plug2"):
+                    sw = outlet.get("plug2_switch")
+                    if self._is_switch_entity_id(sw):
+                        bindings.append(str(sw))
+            elif otype == "light" and outlet.get("keep_on"):
+                sw = outlet.get("switch_entity")
+                if self._is_switch_entity_id(sw):
+                    bindings.append(str(sw))
+            elif otype in ("vent", "wall_heater") and outlet.get("keep_on"):
+                sw = outlet.get("switch_entity")
+                if self._is_switch_entity_id(sw):
+                    bindings.append(str(sw))
+            elif otype in ("single_outlet", "minisplit", "stove") and outlet.get(
+                "keep_on"
+            ):
+                sw = outlet.get("plug1_switch")
+                if self._is_switch_entity_id(sw):
+                    bindings.append(str(sw))
+            elif otype in ("microwave", "fridge") and outlet.get("keep_on"):
+                sw = outlet.get("plug1_switch")
+                if self._is_switch_entity_id(sw):
+                    bindings.append(str(sw))
+        return list(dict.fromkeys(bindings))
+
+    def _keep_on_configured_switch_ids(self, room: dict) -> list[str]:
+        return self._keep_on_bindings(room)
+
+    def _presence_auto_off_blocks_keep_on(
+        self, room: dict, room_id: str, switch_id: str
+    ) -> bool:
+        """True when presence auto-off owns this switch being off (defer keep-on)."""
+        if switch_id not in self._presence_auto_off_configured_switch_ids(room):
+            return False
+        person_ent = room.get("presence_person_entity")
+        zones = room.get("presence_zone_entities") or []
+        if not person_ent or not zones:
+            return False
+        pending = self._presence_auto_turned_off.get(room_id)
+        if pending and switch_id in pending:
+            return True
+        if self._room_presence_was_in_comfort.get(room_id) is False:
+            return True
+        return False
+
+    def _keep_on_suppressed(self, room: dict, room_id: str, switch_id: str) -> bool:
+        if self._presence_auto_off_blocks_keep_on(room, room_id, switch_id):
+            return True
+        if switch_id in self._integration_internal_switch_ids:
+            return True
+        if not self._entity_usable(switch_id):
+            return True
+        if switch_id in self._plug_shutoff_switch_entities:
+            return True
+        if self._room_in_enforcement_power_cycle(room_id):
+            return True
+        hold = self._minisplit_hold.get(room_id)
+        if hold and switch_id in hold.get("switches", set()):
+            return True
+        outlet = self._find_outlet_by_switch(room, switch_id)
+        if outlet:
+            oname = outlet.get("name") or "Outlet"
+            if outlet.get("plug1_switch") == switch_id:
+                if self._shutoff_pending.get(f"{room_id}_{oname}_Plug 1"):
+                    return True
+            elif outlet.get("plug2_switch") == switch_id:
+                if self._shutoff_pending.get(f"{room_id}_{oname}_Plug 2"):
+                    return True
+        return False
+
+    async def _maybe_keep_on_switch(self, room: dict, switch_id: str) -> None:
+        room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+        if self._keep_on_suppressed(room, room_id, switch_id):
+            return
+        if self._switch_entity_is_on(switch_id):
+            return
+        try:
+            await self._async_switch_set(switch_id, True)
+            _LOGGER.info(
+                "Keep on: turned on %s (room %s)",
+                switch_id,
+                room_id,
+            )
+        except Exception as e:
+            _LOGGER.warning("Keep on failed for %s: %s", switch_id, e)
+
+    async def _tick_keep_on_switches(self) -> None:
+        for room in self.config_manager.energy_config.get("rooms", []):
+            for switch_id in self._keep_on_bindings(room):
+                await self._maybe_keep_on_switch(room, switch_id)
+
+    async def _keep_on_on_switch_turned_off(self, event: Event) -> None:
+        entity_id = event.data.get("entity_id")
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if not entity_id or not new_state or new_state.state != "off":
+            return
+        if old_state and old_state.state == "off":
+            return
+        for room in self.config_manager.energy_config.get("rooms", []):
+            for switch_id in self._keep_on_bindings(room):
+                if switch_id == entity_id:
+                    await self._maybe_keep_on_switch(room, switch_id)
+                    return
+
     def _presence_room_lock(self, room_id: str) -> asyncio.Lock:
         if room_id not in self._presence_room_locks:
             self._presence_room_locks[room_id] = asyncio.Lock()
@@ -3679,15 +3793,17 @@ class EnergyMonitor:
         for room in self.config_manager.energy_config.get("rooms", []):
             pe = room.get("presence_person_entity")
             zs = room.get("presence_zone_entities") or []
-            if not pe or not zs:
-                continue
-            track_ids.add(pe)
-            for tracker in get_person_device_tracker_entity_ids(self.hass, pe):
-                track_ids.add(tracker)
-            for z in zs:
-                if z and str(z).startswith("zone."):
-                    track_ids.add(str(z))
+            if pe and zs:
+                track_ids.add(pe)
+                for tracker in get_person_device_tracker_entity_ids(self.hass, pe):
+                    track_ids.add(tracker)
+                for z in zs:
+                    if z and str(z).startswith("zone."):
+                        track_ids.add(str(z))
             for sw in self._presence_auto_off_configured_switch_ids(room):
+                if sw:
+                    switch_ids.add(sw)
+            for sw in self._keep_on_configured_switch_ids(room):
                 if sw:
                     switch_ids.add(sw)
 
@@ -3708,6 +3824,7 @@ class EnergyMonitor:
             @callback
             def _on_switch_change(event: Event) -> None:
                 self.hass.async_create_task(self._presence_on_switch_turned_on(event))
+                self.hass.async_create_task(self._keep_on_on_switch_turned_off(event))
 
             unsub = async_track_state_change_event(
                 self.hass,
@@ -4320,6 +4437,9 @@ class EnergyMonitor:
 
         # Check light automations (runs every tick)
         await self._tick_light_automation(now)
+
+        # Keep-on switches (runs every tick)
+        await self._tick_keep_on_switches()
 
         # Periodically save energy tracking data (every 15 seconds, survives restarts)
         self._save_counter += 1

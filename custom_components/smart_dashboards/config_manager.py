@@ -1209,8 +1209,11 @@ class ConfigManager:
                             item["presence_auto_off_plug2"] = bool(
                                 outlet.get("presence_auto_off_plug2")
                             )
+                            item["keep_on_plug1"] = bool(outlet.get("keep_on_plug1"))
+                            item["keep_on_plug2"] = bool(outlet.get("keep_on_plug2"))
                         else:
                             item["presence_auto_off"] = bool(outlet.get("presence_auto_off"))
+                            item["keep_on"] = bool(outlet.get("keep_on"))
                         validated_room["outlets"].append(item)
                 validated["rooms"].append(validated_room)
 
