@@ -151,19 +151,19 @@ class EnergyPanel extends HTMLElement {
     this._statsFetchedAt = null; // ms — last successful get_statistics
     this._statsFetchError = null;
     this._statsSubscription = null; // WebSocket subscription for live statistics updates
-    this._statsRoomsView = 'pie'; // 'table' | 'pie' — statistics rooms card only
+    this._statsRoomsView = 'radar'; // legacy tab key; statistics page uses side-by-side radar + table
     /** One modal per visit to Statistics when supplier vs tracked kWh differ by > threshold. */
     this._statsDiscrepancyModalShownThisVisit = false;
     this._statsDiscrepancyModalEsc = null;
-    this._statsRoomsPieInstance = null;
-    this._statsPieRoomRows = null; // aligned with pie series for tooltips / selection
+    this._statsRoomsRadarInstance = null;
+    this._statsRadarRoomRows = null; // aligned with radar series for tooltips / selection
     /** Per-entity kWh from get_statistics_source_breakdown (debug). */
     this._statsSourceBreakdown = null;
     this._statsSourceBreakdownLoading = false;
     this._statsSourceBreakdownErr = null;
-    /** Serializes async pie mount so concurrent _render() passes cannot stack ApexCharts. */
-    this._statsPieSyncChain = Promise.resolve();
-    this._statPieBillingDelegation = false;
+    /** Serializes async chart mount so concurrent _render() passes cannot stack ApexCharts. */
+    this._statsRadarSyncChain = Promise.resolve();
+    this._statRadarBillingDelegation = false;
     this._applianceToggleDelegation = false;
     /** Appliance card context menu: Escape handler + scroll-close. */
     this._applianceMenuEsc = null;
@@ -228,7 +228,7 @@ class EnergyPanel extends HTMLElement {
 
   disconnectedCallback() {
     this._stopRefresh();
-    this._destroyStatsRoomsPie();
+    this._destroyStatsRoomsRadar();
     if (this._summaryStatsResizeObs) {
       this._summaryStatsResizeObs.disconnect();
       this._summaryStatsResizeObs = null;
@@ -962,81 +962,109 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
-  _destroyStatsRoomsPie() {
-    if (this._statsRoomsPieInstance) {
+  _destroyStatsRoomsRadar() {
+    if (this._statsRoomsRadarInstance) {
       try {
-        this._statsRoomsPieInstance.destroy();
+        this._statsRoomsRadarInstance.destroy();
       } catch (_e) {
         /* stale DOM */
       }
-      this._statsRoomsPieInstance = null;
+      this._statsRoomsRadarInstance = null;
     }
   }
 
-  _resetStatPieSelectionPanel() {
-    const el = this.shadowRoot?.getElementById('stat-pie-selection');
+  _resetStatRadarSelectionPanel() {
+    const el = this.shadowRoot?.getElementById('stat-radar-selection');
     if (!el) return;
     el.innerHTML =
-      '<p class="stat-pie-selection-meta">Tap a slice for room details and to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>';
+      '<p class="stat-radar-selection-meta">Tap a room in the legend for details and to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>';
   }
 
-  _fillStatPieSelection(dataPointIndex) {
-    const el = this.shadowRoot?.getElementById('stat-pie-selection');
-    const rows = this._statsPieRoomRows;
-    if (!el || !rows || dataPointIndex == null || dataPointIndex < 0 || dataPointIndex >= rows.length) {
+  _fillStatRadarSelection(seriesIndex) {
+    const el = this.shadowRoot?.getElementById('stat-radar-selection');
+    const rows = this._statsRadarRoomRows;
+    if (!el || !rows || seriesIndex == null || seriesIndex < 0 || seriesIndex >= rows.length) {
       return;
     }
-    const r = rows[dataPointIndex];
+    const r = rows[seriesIndex];
     const ds = this._statsData?.date_start;
     const de = this._statsData?.date_end;
     const rid = String(r.id || '').replace(/"/g, '&quot;');
     const rname = String(r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     const title = this._eventLogEscape(String(r.name || r.id || 'Room'));
+    const stars =
+      r.ratings != null && r.ratings.stars != null && Number.isFinite(Number(r.ratings.stars))
+        ? Number(r.ratings.stars).toFixed(1)
+        : '—';
     const open = ds && de
-      ? `<div class="stat-pie-selection-actions"><button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="${rid}" data-room-name="${rname}" title="Room daily kWh for the date range at the top">Open usage graph</button></div>`
+      ? `<div class="stat-radar-selection-actions"><button type="button" class="btn-stat-chart btn-stat-chart-sm stat-room-billing-chart" data-room-id="${rid}" data-room-name="${rname}" title="Room daily kWh for the date range at the top">Open usage graph</button></div>`
       : '';
     el.innerHTML = `
-      <div class="stat-pie-selection-title">${title}</div>
+      <div class="stat-radar-selection-title">${title}</div>
+      <p class="stat-radar-selection-stats">${r.kwh.toFixed(2)} kWh · ${r.pct.toFixed(1)}% of tracked · ${stars}★ efficiency</p>
       ${open}`;
   }
 
-  _syncStatsRoomsPie() {
-    this._statsPieSyncChain = this._statsPieSyncChain
+  _syncStatsRoomsRadar() {
+    this._statsRadarSyncChain = this._statsRadarSyncChain
       .catch(() => {})
-      .then(() => this._syncStatsRoomsPieImpl());
+      .then(() => this._syncStatsRoomsRadarImpl());
   }
 
-  async _syncStatsRoomsPieImpl() {
+  async _syncStatsRoomsRadarImpl() {
     if (this._showSettings || this._dashboardView !== 'statistics') {
-      this._destroyStatsRoomsPie();
+      this._destroyStatsRoomsRadar();
       return;
     }
-    const container = this.shadowRoot?.getElementById('stat-rooms-pie-chart');
+    const container = this.shadowRoot?.getElementById('stat-rooms-radar-chart');
     if (!container) {
-      this._destroyStatsRoomsPie();
+      this._destroyStatsRoomsRadar();
+      return;
+    }
+    if (this._statsRoomsView !== 'radar') {
+      this._destroyStatsRoomsRadar();
       return;
     }
     const rooms = this._statsData?.rooms || [];
-    const pieRoomRows = rooms
+    const radarRoomRows = rooms
       .filter((r) => (Number(r.kwh) || 0) > 0)
-      .map((r) => ({
-        id: r.id,
-        name: r.name || r.id,
-        kwh: Number(r.kwh) || 0,
-        pct: Number(r.pct) || 0,
-        warnings: r.warnings ?? 0,
-        shutoffs: r.shutoffs ?? 0,
-        power_cycles: r.power_cycles ?? 0,
-      }));
-    this._statsPieRoomRows = pieRoomRows.length ? pieRoomRows : null;
+      .map((r) => {
+        const effRatings = r.ratings;
+        const stars =
+          effRatings != null &&
+          effRatings.stars != null &&
+          Number.isFinite(Number(effRatings.stars))
+            ? Number(effRatings.stars)
+            : 0;
+        const events =
+          (Number(r.warnings) || 0) +
+          (Number(r.shutoffs) || 0) +
+          (Number(r.power_cycles) || 0);
+        return {
+          id: r.id,
+          name: r.name || r.id,
+          kwh: Number(r.kwh) || 0,
+          pct: Number(r.pct) || 0,
+          warnings: r.warnings ?? 0,
+          shutoffs: r.shutoffs ?? 0,
+          power_cycles: r.power_cycles ?? 0,
+          daily_avg_kwh: Number(r.daily_avg_kwh) || 0,
+          ratings: r.ratings,
+          stars,
+          events,
+        };
+      })
+      .sort((a, b) => b.kwh - a.kwh)
+      .slice(0, 8);
+    this._statsRadarRoomRows = radarRoomRows.length ? radarRoomRows : null;
 
-    this._destroyStatsRoomsPie();
+    this._destroyStatsRoomsRadar();
     container.innerHTML = '';
-    this._resetStatPieSelectionPanel();
+    this._resetStatRadarSelectionPanel();
 
-    if (pieRoomRows.length === 0) {
+    if (radarRoomRows.length === 0) {
       container.innerHTML =
-        '<p class="statistics-pie-empty">No room kWh in this period.</p>';
+        '<p class="statistics-radar-empty">No room kWh in this period.</p>';
       return;
     }
 
@@ -1044,7 +1072,6 @@ class EnergyPanel extends HTMLElement {
       const ApexCharts = (await import('https://cdn.jsdelivr.net/npm/apexcharts@3.45.1/dist/apexcharts.esm.min.js')).default;
       const accent = getComputedStyle(this).getPropertyValue('--panel-accent').trim() || '#03a9f4';
       const textColor = getComputedStyle(this).getPropertyValue('--primary-text-color').trim() || '#e1e1e1';
-      const muted = getComputedStyle(this).getPropertyValue('--secondary-text-color').trim() || '#9b9b9b';
       const sliceColors = [
         accent,
         '#26a69a',
@@ -1054,62 +1081,87 @@ class EnergyPanel extends HTMLElement {
         '#66bb6a',
         '#5c6bc0',
         '#ef5350',
-        '#29b6f6',
-        '#ab47bc',
       ];
-      const labels = pieRoomRows.map((p) => String(p.name));
-      const series = pieRoomRows.map((p) => p.kwh);
+      const maxAvg = Math.max(...radarRoomRows.map((p) => p.daily_avg_kwh), 0.001);
+      const maxEvents = Math.max(...radarRoomRows.map((p) => p.events), 1);
+      const categories = ['Usage share', 'Efficiency', 'Daily average', 'Reliability'];
+      const series = radarRoomRows.map((r) => ({
+        name: String(r.name),
+        data: [
+          Math.min(100, Math.max(0, r.pct)),
+          Math.min(100, Math.max(0, (r.stars / 5) * 100)),
+          Math.min(100, Math.max(0, (r.daily_avg_kwh / maxAvg) * 100)),
+          Math.min(100, Math.max(0, 100 - (r.events / maxEvents) * 100)),
+        ],
+      }));
       const panel = this;
       const options = {
         chart: {
-          type: 'pie',
-          height: 300,
+          type: 'radar',
+          height: 380,
           fontFamily: 'inherit',
           background: 'transparent',
           toolbar: { show: false },
-          animations: { enabled: true },
+          animations: { enabled: true, easing: 'easeinout', speed: 600 },
           events: {
-            dataPointSelection(_event, _ctx, cfg) {
-              const i = cfg?.dataPointIndex;
-              if (typeof i === 'number' && i >= 0) {
-                panel._fillStatPieSelection(i);
+            legendClick(_chart, seriesIndex) {
+              if (typeof seriesIndex === 'number' && seriesIndex >= 0) {
+                panel._fillStatRadarSelection(seriesIndex);
               }
             },
           },
         },
-        labels,
         series,
         colors: sliceColors,
+        xaxis: {
+          categories,
+          labels: {
+            style: { colors: categories.map(() => textColor), fontSize: '11px' },
+          },
+        },
+        yaxis: {
+          show: true,
+          min: 0,
+          max: 100,
+          tickAmount: 5,
+          labels: {
+            formatter: (v) => `${Math.round(v)}`,
+            style: { colors: [textColor], fontSize: '10px' },
+          },
+        },
+        stroke: { width: 2 },
+        fill: { opacity: 0.18 },
+        markers: { size: 4, hover: { size: 6 } },
         legend: {
           position: 'bottom',
           fontSize: '11px',
           labels: { colors: textColor },
           markers: { width: 10, height: 10 },
+          onItemClick: { toggleDataSeries: false },
         },
         plotOptions: {
-          pie: {
-            dataLabels: { minAngleToShowLabel: 12 },
+          radar: {
+            polygons: {
+              strokeColors: 'rgba(255,255,255,0.12)',
+              connectorColors: 'rgba(255,255,255,0.08)',
+              fill: { colors: ['rgba(255,255,255,0.02)', 'rgba(255,255,255,0.05)'] },
+            },
           },
         },
-        dataLabels: {
-          enabled: true,
-          style: { fontSize: '11px', colors: ['#fff'] },
-          dropShadow: { enabled: false },
-          formatter: (val) => `${Number(val).toFixed(1)}%`,
-        },
-        stroke: { width: 1, colors: ['rgba(0,0,0,0.25)'] },
         tooltip: {
-          enabled: false,
+          enabled: true,
+          y: { formatter: (v) => `${Number(v).toFixed(0)} / 100` },
         },
         theme: { mode: 'dark' },
       };
-      this._statsRoomsPieInstance = new ApexCharts(container, options);
-      await this._statsRoomsPieInstance.render();
+      this._statsRoomsRadarInstance = new ApexCharts(container, options);
+      await this._statsRoomsRadarInstance.render();
+      this._fillStatRadarSelection(0);
     } catch (e) {
-      console.error('Statistics rooms pie chart failed:', e);
+      console.error('Statistics rooms radar chart failed:', e);
       const errMuted =
         getComputedStyle(this).getPropertyValue('--secondary-text-color').trim() || '#9b9b9b';
-      container.innerHTML = `<p class="statistics-pie-empty" style="color:${errMuted}">Chart failed to load.</p>`;
+      container.innerHTML = `<p class="statistics-radar-empty" style="color:${errMuted}">Chart failed to load.</p>`;
     }
   }
 
@@ -1916,10 +1968,11 @@ class EnergyPanel extends HTMLElement {
       }
       .statistics-overview-card,
       .statistics-rooms-card {
-        background: var(--card-bg);
+        background: linear-gradient(145deg, rgba(255,255,255,0.04) 0%, var(--card-bg) 48%, rgba(0,0,0,0.08) 100%);
         border-radius: 10px;
         border: 1px solid var(--card-border);
         padding: clamp(12px, 3vw, 16px);
+        box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset;
       }
       .statistics-overview-grid {
         display: grid;
@@ -2036,12 +2089,15 @@ class EnergyPanel extends HTMLElement {
         color: #fff;
       }
       .stat-rooms-panel { min-width: 0; }
-      .stat-rooms-pie-mount {
-        min-height: 280px;
+      .stat-rooms-radar-mount {
+        min-height: 380px;
         width: 100%;
       }
-      .statistics-pie-empty,
-      .stat-pie-caption {
+      .stat-rooms-radar-panel {
+        padding-top: 4px;
+      }
+      .statistics-radar-empty,
+      .stat-radar-caption {
         font-size: 11px;
         color: var(--secondary-text-color);
         text-align: center;
@@ -2049,10 +2105,10 @@ class EnergyPanel extends HTMLElement {
         padding: 12px 8px 0;
         line-height: 1.4;
       }
-      .statistics-pie-empty {
+      .statistics-radar-empty {
         padding: 32px 16px;
       }
-      .stat-pie-selection {
+      .stat-radar-selection {
         margin-top: 12px;
         padding: 12px;
         border-radius: 8px;
@@ -2062,28 +2118,33 @@ class EnergyPanel extends HTMLElement {
         color: var(--primary-text-color);
         line-height: 1.45;
       }
-      .stat-pie-selection-title {
+      .stat-radar-selection-title {
         font-weight: 600;
         margin: 0 0 6px;
         font-size: 13px;
       }
-      .stat-pie-selection-meta {
+      .stat-radar-selection-stats {
+        margin: 0 0 8px;
+        font-size: 11px;
+        color: var(--secondary-text-color);
+      }
+      .stat-radar-selection-meta {
         margin: 0;
         color: var(--secondary-text-color);
         font-size: 11px;
       }
-      .stat-pie-selection-actions {
+      .stat-radar-selection-actions {
         margin-top: 10px;
       }
 
-      /* Integrated Statistics Page Layout — stacked pie + table at all breakpoints */
+      /* Integrated Statistics Page Layout — stacked radar + table at all breakpoints */
       .statistics-content-grid {
         display: flex;
         flex-direction: column;
         gap: clamp(16px, 3vw, 24px);
         width: 100%;
       }
-      .statistics-pie-panel {
+      .statistics-radar-panel {
         background: var(--card-bg);
         border-radius: 12px;
         border: 1px solid var(--card-border);
@@ -2093,14 +2154,14 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
         text-align: center;
       }
-      .statistics-pie-panel .statistics-section-header {
+      .statistics-radar-panel .statistics-section-header {
         width: 100%;
       }
-      .statistics-pie-panel .stat-rooms-pie-mount {
-        min-height: 300px;
+      .statistics-radar-panel .stat-rooms-radar-mount {
+        min-height: 380px;
         margin: 0 auto;
         width: 100%;
-        max-width: min(420px, 100%);
+        max-width: min(480px, 100%);
       }
       .statistics-table-panel {
         background: var(--card-bg);
@@ -8046,7 +8107,7 @@ class EnergyPanel extends HTMLElement {
       }
     `;
 
-    this._destroyStatsRoomsPie();
+    this._destroyStatsRoomsRadar();
 
     if (this._loading) {
       const hrOverlay = this._takeHardRefreshOverlay();
@@ -8201,7 +8262,7 @@ class EnergyPanel extends HTMLElement {
       });
     }
     if (this._dashboardView === 'statistics') {
-      queueMicrotask(() => void this._syncStatsRoomsPie());
+      queueMicrotask(() => void this._syncStatsRoomsRadar());
     }
   }
 
@@ -9428,13 +9489,14 @@ class EnergyPanel extends HTMLElement {
           </div>
 
           <div class="statistics-content-grid">
-            <div class="statistics-pie-panel">
+            <div class="statistics-radar-panel">
               <div class="statistics-section-header">
-                <h3 class="statistics-section-title">Room Distribution</h3>
+                <h3 class="statistics-section-title">Room Profile</h3>
+                <p class="statistics-section-sub">Usage, efficiency, daily average, and reliability (top 8 rooms)</p>
               </div>
-              <div id="stat-rooms-pie-chart" class="stat-rooms-pie-mount" aria-label="Room energy distribution pie chart"></div>
-              <div id="stat-pie-selection" class="stat-pie-selection" role="region" aria-live="polite">
-                <p class="stat-pie-selection-meta">Tap a slice for room details and to open a usage graph.</p>
+              <div id="stat-rooms-radar-chart" class="stat-rooms-radar-mount" aria-label="Room energy profile radar chart"></div>
+              <div id="stat-radar-selection" class="stat-radar-selection" role="region" aria-live="polite">
+                <p class="stat-radar-selection-meta">Tap a room in the legend for details and to open a usage graph.</p>
               </div>
             </div>
 
@@ -17581,15 +17643,15 @@ class EnergyPanel extends HTMLElement {
       this.shadowRoot.addEventListener('click', (e) => this._handleRoomRatingClick(e));
     }
 
-    if (!this._statPieBillingDelegation) {
-      this._statPieBillingDelegation = true;
+    if (!this._statRadarBillingDelegation) {
+      this._statRadarBillingDelegation = true;
       this.shadowRoot.addEventListener('click', (e) => {
         const t = e.target;
         if (!t || !t.closest) return;
         const btn = t.closest('.stat-room-billing-chart');
         if (!btn || !this.shadowRoot.contains(btn)) return;
-        const pieSel = this.shadowRoot.getElementById('stat-pie-selection');
-        if (!pieSel || !pieSel.contains(btn)) return;
+        const radarSel = this.shadowRoot.getElementById('stat-radar-selection');
+        if (!radarSel || !radarSel.contains(btn)) return;
         e.preventDefault();
         e.stopPropagation();
         const rid = btn.dataset.roomId;
@@ -17668,25 +17730,26 @@ class EnergyPanel extends HTMLElement {
       seg.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const mode = seg.dataset.statRoomsView;
-        if (mode !== 'table' && mode !== 'pie') return;
+        const mode = seg.dataset.statRoomsView === 'pie' ? 'radar' : seg.dataset.statRoomsView;
+        if (mode !== 'table' && mode !== 'radar') return;
         this._statsRoomsView = mode;
-        const pie = mode === 'pie';
+        const radar = mode === 'radar';
         this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((b) => {
-          const on = b.dataset.statRoomsView === mode;
+          const bMode = b.dataset.statRoomsView === 'pie' ? 'radar' : b.dataset.statRoomsView;
+          const on = bMode === mode;
           b.classList.toggle('active', on);
           b.setAttribute('aria-selected', on ? 'true' : 'false');
         });
         const panelTable = this.shadowRoot.getElementById('stat-rooms-panel-table');
-        const panelPie = this.shadowRoot.getElementById('stat-rooms-panel-pie');
-        if (panelTable) panelTable.style.display = pie ? 'none' : 'block';
-        if (panelPie) panelPie.style.display = pie ? 'block' : 'none';
-        const pieMount = this.shadowRoot.getElementById('stat-rooms-pie-chart');
-        if (pieMount) pieMount.setAttribute('aria-hidden', pie ? 'false' : 'true');
-        if (pie) void this._syncStatsRoomsPie();
+        const panelRadar = this.shadowRoot.getElementById('stat-rooms-panel-radar');
+        if (panelTable) panelTable.style.display = radar ? 'none' : 'block';
+        if (panelRadar) panelRadar.style.display = radar ? 'block' : 'none';
+        const radarMount = this.shadowRoot.getElementById('stat-rooms-radar-chart');
+        if (radarMount) radarMount.setAttribute('aria-hidden', radar ? 'false' : 'true');
+        if (radar) void this._syncStatsRoomsRadar();
         else {
-          this._destroyStatsRoomsPie();
-          this._resetStatPieSelectionPanel();
+          this._destroyStatsRoomsRadar();
+          this._resetStatRadarSelectionPanel();
         }
       });
     });
