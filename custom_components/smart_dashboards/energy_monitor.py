@@ -170,6 +170,87 @@ def person_truly_away_for_ac(hass: HomeAssistant, person_entity_id: str) -> bool
     return True
 
 
+def _presence_zone_match_tokens(hass: HomeAssistant, zone_entity_id: str) -> frozenset[str]:
+    """Lowercase strings that mean the person/tracker is in this zone entity."""
+    zid = str(zone_entity_id or "").strip().lower()
+    if not zid.startswith("zone."):
+        return frozenset()
+    object_id = zid.replace("zone.", "", 1)
+    tokens: set[str] = {zid, object_id, object_id.replace("_", " ")}
+    zs = hass.states.get(zid)
+    if zs:
+        fn = str(zs.attributes.get("friendly_name") or "").strip().lower()
+        if fn:
+            tokens.add(fn)
+        if zid == "zone.home":
+            tokens.add("home")
+    return frozenset(t for t in tokens if t)
+
+
+def _person_state_matches_presence_zone(raw_state: str, tokens: frozenset[str]) -> bool:
+    s = (raw_state or "").strip().lower()
+    if s.startswith("at "):
+        s = s[3:].strip()
+    return bool(s and s in tokens)
+
+
+def person_in_room_presence_zones(
+    hass: HomeAssistant,
+    person_entity_id: str,
+    zone_entity_ids: list[str],
+) -> bool:
+    """True when person is in any room-configured zone (matches UI: any selected zone = present).
+
+    Uses device-tracker GPS inside zone circles first (handles person.state lag / not_home glitches),
+    then person.state string matching including zone slugs (e.g. brandons_nearby).
+    """
+    if not person_entity_id:
+        return False
+    zone_ids = [
+        str(z).strip().lower()
+        for z in (zone_entity_ids or [])
+        if z and str(z).strip().lower().startswith("zone.")
+    ]
+    if not zone_ids:
+        return False
+
+    try:
+        from homeassistant.components.zone import in_zone
+    except ImportError:
+        in_zone = None
+
+    if in_zone is not None:
+        for tracker in get_person_device_tracker_entity_ids(hass, person_entity_id):
+            ts = hass.states.get(tracker)
+            if not ts or ts.state in ("unknown", "unavailable", ""):
+                continue
+            lat = ts.attributes.get("latitude")
+            lon = ts.attributes.get("longitude")
+            if lat is None or lon is None:
+                continue
+            try:
+                lat_f, lon_f = float(lat), float(lon)
+            except (TypeError, ValueError):
+                continue
+            for zid in zone_ids:
+                zs = hass.states.get(zid)
+                if zs and in_zone(zs, lat_f, lon_f):
+                    return True
+
+    ps = hass.states.get(person_entity_id)
+    if not ps or ps.state in ("unknown", "unavailable", ""):
+        return False
+    raw = (ps.state or "").strip().lower()
+    if raw == "not_home":
+        return False
+    if person_in_any_configured_zone(hass, person_entity_id, zone_ids):
+        return True
+    for zid in zone_ids:
+        if _person_state_matches_presence_zone(raw, _presence_zone_match_tokens(hass, zid)):
+            return True
+    return False
+
+
 def vent_like_energy_tracking_key(room_id: str, outlet: dict) -> str:
     """Match config_manager.vent_like_energy_tracking_key for static-watt vent/heater loads."""
     name = (outlet.get("name") or "device").lower().replace(" ", "_")
@@ -221,10 +302,11 @@ class EnergyMonitor:
         self._stove_progress_last_boundary: dict[str, int] = {}
         # Phase-2 mini-split hold: room_id -> {switches: set[str], outlet_name, volume}
         self._minisplit_hold: dict[str, dict] = {}
-        # Presence / AC comfort: last known "in home or nearby" per room_id (not raw configured zones)
+        # Presence / AC comfort: last known in-room zone presence per room_id
         self._room_presence_was_in_comfort: dict[str, bool | None] = {}
         # Switches we turned off due to leaving zones (restore on return if still allowed)
         self._presence_auto_turned_off: dict[str, set[str]] = {}
+        self._presence_room_locks: dict[str, asyncio.Lock] = {}
         # Vent / wall heater optional automations (key: room_id|outlet_name_slug)
         self._vent_automation_state: dict[str, dict] = {}
         self._heater_automation_state: dict[str, dict] = {}
@@ -3396,96 +3478,116 @@ class EnergyMonitor:
                     targets.append(str(sw))
         return list(dict.fromkeys(targets))
 
-    async def _apply_presence_auto_off_for_room(self, room: dict) -> None:
-        """On zone transitions: turn off selected switch.* when leaving; restore when returning."""
-        room_id = room.get("id", room["name"].lower().replace(" ", "_"))
-        person_ent = room.get("presence_person_entity")
-        zones = room.get("presence_zone_entities") or []
-        if not person_ent or not zones:
-            self._room_presence_was_in_comfort.pop(room_id, None)
+    def _presence_room_lock(self, room_id: str) -> asyncio.Lock:
+        if room_id not in self._presence_room_locks:
+            self._presence_room_locks[room_id] = asyncio.Lock()
+        return self._presence_room_locks[room_id]
+
+    async def _presence_turn_off_room_switches(
+        self, room: dict, room_id: str, *, reason: str
+    ) -> None:
+        pending = self._presence_auto_turned_off.setdefault(room_id, set())
+        for sw in self._presence_auto_off_switch_targets(room):
+            if sw in pending:
+                continue
+            try:
+                await self._async_switch_set(sw, False)
+                pending.add(sw)
+                _LOGGER.info(
+                    "Presence auto-off: turned off %s (room %s %s)",
+                    sw,
+                    room_id,
+                    reason,
+                )
+                outlet = self._find_outlet_by_switch(room, sw)
+                if outlet and outlet.get("type") == "minisplit":
+                    outlet_name = outlet.get("name") or "Air Conditioner"
+                    await self._send_notification_to_room_person(
+                        room,
+                        "ac_auto_off",
+                        {"room_name": room.get("name", room_id), "outlet_name": outlet_name},
+                        "Air Conditioner Off",
+                        DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
+                        integration_auto=True,
+                    )
+            except Exception as e:
+                _LOGGER.warning("Presence auto-off failed for %s: %s", sw, e)
+
+    async def _presence_restore_room_switches(self, room: dict, room_id: str) -> None:
+        allowed = set(self._presence_auto_off_configured_switch_ids(room))
+        pending = self._presence_auto_turned_off.get(room_id)
+        if not pending:
+            return
+        pending &= allowed
+        if not pending:
             self._presence_auto_turned_off.pop(room_id, None)
             return
-        in_comfort = not person_truly_away_for_ac(self.hass, person_ent)
-        prev = self._room_presence_was_in_comfort.get(room_id)
-        self._room_presence_was_in_comfort[room_id] = in_comfort
-        truly_away = not in_comfort
-
-        # Turn off when: first detection truly away, or transition from comfort to away
-        should_turn_off = (prev is None and truly_away) or (prev is True and truly_away)
-        if should_turn_off:
-            pending = self._presence_auto_turned_off.setdefault(room_id, set())
-            for sw in self._presence_auto_off_switch_targets(room):
-                if sw in pending:
-                    continue
-                try:
-                    await self.hass.services.async_call(
-                        "switch", "turn_off", {"entity_id": sw}, blocking=True
-                    )
-                    pending.add(sw)
-                    _LOGGER.info(
-                        "Presence auto-off: turned off %s (room %s %s)",
-                        sw,
-                        room_id,
-                        "already outside zones" if prev is None else "left zones",
-                    )
-                    outlet = self._find_outlet_by_switch(room, sw)
-                    if outlet and outlet.get("type") == "minisplit":
-                        outlet_name = outlet.get("name") or "Air Conditioner"
-                        await self._send_notification_to_room_person(
-                            room,
-                            "ac_auto_off",
-                            {"room_name": room.get("name", room_id), "outlet_name": outlet_name},
-                            "Air Conditioner Off",
-                            DEFAULT_NOTIFY_AC_AUTO_OFF_MSG,
-                            integration_auto=True,
-                        )
-                except Exception as e:
-                    _LOGGER.warning("Presence auto-off failed for %s: %s", sw, e)
-
-        if prev is False and in_comfort:
-            allowed = set(self._presence_auto_off_configured_switch_ids(room))
-            pending = self._presence_auto_turned_off.get(room_id)
-            if not pending:
-                return
-            pending &= allowed
-            if not pending:
-                self._presence_auto_turned_off.pop(room_id, None)
-                return
-            restored_switch_ids: list[str] = []
-            for sw in list(pending):
-                if self._switch_entity_is_on(sw):
-                    pending.discard(sw)
-                    continue
-                try:
-                    await self.hass.services.async_call(
-                        "switch", "turn_on", {"entity_id": sw}, blocking=True
-                    )
-                    pending.discard(sw)
-                    restored_switch_ids.append(sw)
-                    _LOGGER.info(
-                        "Presence auto-restore: turned on %s (room %s entered home/nearby)",
-                        sw,
-                        room_id,
-                    )
-                    outlet = self._find_outlet_by_switch(room, sw)
-                    if outlet and outlet.get("type") == "minisplit":
-                        outlet_name = outlet.get("name") or "Air Conditioner"
-                        await self._send_notification_to_room_person(
-                            room,
-                            "ac_auto_on",
-                            {"room_name": room.get("name", room_id), "outlet_name": outlet_name},
-                            "Air Conditioner On",
-                            DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
-                            integration_auto=True,
-                        )
-                except Exception as e:
-                    _LOGGER.warning("Presence auto-restore failed for %s: %s", sw, e)
-            if restored_switch_ids:
-                await self._async_speak_presence_restore_tts_for_room(
-                    room, restored_switch_ids
+        restored_switch_ids: list[str] = []
+        for sw in list(pending):
+            if self._switch_entity_is_on(sw):
+                pending.discard(sw)
+                continue
+            try:
+                await self._async_switch_set(sw, True)
+                pending.discard(sw)
+                restored_switch_ids.append(sw)
+                _LOGGER.info(
+                    "Presence auto-restore: turned on %s (room %s entered configured zones)",
+                    sw,
+                    room_id,
                 )
-            if not pending:
+                outlet = self._find_outlet_by_switch(room, sw)
+                if outlet and outlet.get("type") == "minisplit":
+                    outlet_name = outlet.get("name") or "Air Conditioner"
+                    await self._send_notification_to_room_person(
+                        room,
+                        "ac_auto_on",
+                        {"room_name": room.get("name", room_id), "outlet_name": outlet_name},
+                        "Air Conditioner On",
+                        DEFAULT_NOTIFY_AC_AUTO_ON_MSG,
+                        integration_auto=True,
+                    )
+            except Exception as e:
+                _LOGGER.warning("Presence auto-restore failed for %s: %s", sw, e)
+        if restored_switch_ids:
+            await self._async_speak_presence_restore_tts_for_room(
+                room, restored_switch_ids
+            )
+        if not pending:
+            self._presence_auto_turned_off.pop(room_id, None)
+
+    async def _apply_presence_auto_off_for_room(self, room: dict) -> None:
+        """On zone transitions only: turn off when leaving; restore once when returning."""
+        room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+        async with self._presence_room_lock(room_id):
+            person_ent = room.get("presence_person_entity")
+            zones = room.get("presence_zone_entities") or []
+            if not person_ent or not zones:
+                self._room_presence_was_in_comfort.pop(room_id, None)
                 self._presence_auto_turned_off.pop(room_id, None)
+                return
+            zone_ids = [str(z).strip() for z in zones if z and str(z).strip()]
+            in_comfort = person_in_room_presence_zones(self.hass, person_ent, zone_ids)
+            prev = self._room_presence_was_in_comfort.get(room_id)
+
+            if prev is not None and prev == in_comfort:
+                return
+
+            self._room_presence_was_in_comfort[room_id] = in_comfort
+
+            if prev is None:
+                if not in_comfort:
+                    await self._presence_turn_off_room_switches(
+                        room, room_id, reason="startup outside zones"
+                    )
+                return
+
+            if prev is True and not in_comfort:
+                await self._presence_turn_off_room_switches(
+                    room, room_id, reason="left zones"
+                )
+            elif prev is False and in_comfort:
+                await self._presence_restore_room_switches(room, room_id)
 
     async def _presence_on_tracked_entity(self, entity_id: str | None) -> None:
         if not entity_id:
@@ -3495,7 +3597,8 @@ class EnergyMonitor:
             zs = room.get("presence_zone_entities") or []
             if not pe or not zs:
                 continue
-            if entity_id == pe or entity_id in zs:
+            trackers = get_person_device_tracker_entity_ids(self.hass, pe)
+            if entity_id == pe or entity_id in zs or entity_id in trackers:
                 await self._apply_presence_auto_off_for_room(room)
 
     def refresh_presence_listeners(self) -> None:
@@ -3508,6 +3611,8 @@ class EnergyMonitor:
         self._presence_listener_unsub = []
         self._setup_presence_listeners()
         self._setup_manual_toggle_switch_listeners()
+        for room in self.config_manager.energy_config.get("rooms", []):
+            self.hass.async_create_task(self._apply_presence_auto_off_for_room(room))
 
     def refresh_door_window_listeners(self) -> None:
         """Teardown and re-register door/window/lock/presence/contact listeners.
@@ -3534,6 +3639,8 @@ class EnergyMonitor:
             if not pe or not zs:
                 continue
             track_ids.add(pe)
+            for tracker in get_person_device_tracker_entity_ids(self.hass, pe):
+                track_ids.add(tracker)
             for z in zs:
                 if z and str(z).startswith("zone."):
                     track_ids.add(str(z))
@@ -3587,22 +3694,21 @@ class EnergyMonitor:
             if entity_id not in configured_switches:
                 continue
 
-            if not person_truly_away_for_ac(self.hass, person_ent):
+            if entity_id in self._integration_internal_switch_ids:
+                continue
+
+            zone_ids = [str(z).strip() for z in zones if z and str(z).strip()]
+            if person_in_room_presence_zones(self.hass, person_ent, zone_ids):
                 continue
 
             room_id = room.get("id", room["name"].lower().replace(" ", "_"))
             pending = self._presence_auto_turned_off.setdefault(room_id, set())
 
-            if entity_id in pending:
-                continue
-
             try:
-                await self.hass.services.async_call(
-                    "switch", "turn_off", {"entity_id": entity_id}, blocking=True
-                )
+                await self._async_switch_set(entity_id, False)
                 pending.add(entity_id)
                 _LOGGER.info(
-                    "Presence auto-off: immediately turned off %s (room %s, person outside home/nearby)",
+                    "Presence auto-off: immediately turned off %s (room %s, person outside configured zones)",
                     entity_id,
                     room_id,
                 )
@@ -3657,6 +3763,8 @@ class EnergyMonitor:
             self.hass.bus.async_listen_once(
                 EVENT_HOMEASSISTANT_STARTED, _after_ha_started
             )
+        for room in self.config_manager.energy_config.get("rooms", []):
+            await self._apply_presence_auto_off_for_room(room)
 
     def _teardown_manual_toggle_switch_listeners(self) -> None:
         for unsub in self._manual_toggle_listener_unsub:
@@ -3838,7 +3946,6 @@ class EnergyMonitor:
         await self._maybe_fire_budget_boost_scheduled(now, today, tts_settings)
 
         for room in rooms:
-            await self._apply_presence_auto_off_for_room(room)
             room_id = room.get("id", room["name"].lower().replace(" ", "_"))
             room_name = room["name"]
             room_threshold = room.get("threshold", 0)
