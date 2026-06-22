@@ -151,7 +151,7 @@ class EnergyPanel extends HTMLElement {
     this._statsFetchedAt = null; // ms — last successful get_statistics
     this._statsFetchError = null;
     this._statsSubscription = null; // WebSocket subscription for live statistics updates
-    this._statsRoomsView = 'radar'; // legacy tab key; statistics page uses side-by-side radar + table
+    this._statsRoomsView = 'pie'; // legacy tab key; statistics page uses side-by-side usage chart + table
     /** One modal per visit to Statistics when supplier vs tracked kWh differ by > threshold. */
     this._statsDiscrepancyModalShownThisVisit = false;
     this._statsDiscrepancyModalEsc = null;
@@ -977,7 +977,7 @@ class EnergyPanel extends HTMLElement {
     const el = this.shadowRoot?.getElementById('stat-radar-selection');
     if (!el) return;
     el.innerHTML =
-      '<p class="stat-radar-selection-meta">Tap a room in the legend for details and to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>';
+      '<p class="stat-radar-selection-meta">Tap a slice or room in the legend for details and to open a usage graph. Rooms with 0 kWh this period appear in the table only.</p>';
   }
 
   _fillStatRadarSelection(seriesIndex) {
@@ -1021,7 +1021,7 @@ class EnergyPanel extends HTMLElement {
       this._destroyStatsRoomsRadar();
       return;
     }
-    if (this._statsRoomsView !== 'radar') {
+    if (this._statsRoomsView !== 'pie' && this._statsRoomsView !== 'radar') {
       this._destroyStatsRoomsRadar();
       return;
     }
@@ -1036,26 +1036,16 @@ class EnergyPanel extends HTMLElement {
           Number.isFinite(Number(effRatings.stars))
             ? Number(effRatings.stars)
             : 0;
-        const events =
-          (Number(r.warnings) || 0) +
-          (Number(r.shutoffs) || 0) +
-          (Number(r.power_cycles) || 0);
         return {
           id: r.id,
           name: r.name || r.id,
           kwh: Number(r.kwh) || 0,
           pct: Number(r.pct) || 0,
-          warnings: r.warnings ?? 0,
-          shutoffs: r.shutoffs ?? 0,
-          power_cycles: r.power_cycles ?? 0,
-          daily_avg_kwh: Number(r.daily_avg_kwh) || 0,
           ratings: r.ratings,
           stars,
-          events,
         };
       })
-      .sort((a, b) => b.kwh - a.kwh)
-      .slice(0, 8);
+      .sort((a, b) => b.kwh - a.kwh);
     this._statsRadarRoomRows = radarRoomRows.length ? radarRoomRows : null;
 
     this._destroyStatsRoomsRadar();
@@ -1081,29 +1071,27 @@ class EnergyPanel extends HTMLElement {
         '#66bb6a',
         '#5c6bc0',
         '#ef5350',
+        '#29b6f6',
+        '#ab47bc',
       ];
-      const maxAvg = Math.max(...radarRoomRows.map((p) => p.daily_avg_kwh), 0.001);
-      const maxEvents = Math.max(...radarRoomRows.map((p) => p.events), 1);
-      const categories = ['Usage share', 'Efficiency', 'Daily average', 'Reliability'];
-      const series = radarRoomRows.map((r) => ({
-        name: String(r.name),
-        data: [
-          Math.min(100, Math.max(0, r.pct)),
-          Math.min(100, Math.max(0, (r.stars / 5) * 100)),
-          Math.min(100, Math.max(0, (r.daily_avg_kwh / maxAvg) * 100)),
-          Math.min(100, Math.max(0, 100 - (r.events / maxEvents) * 100)),
-        ],
-      }));
+      const labels = radarRoomRows.map((p) => String(p.name));
+      const series = radarRoomRows.map((p) => p.kwh);
       const panel = this;
       const options = {
         chart: {
-          type: 'radar',
-          height: 380,
+          type: 'pie',
+          height: 300,
           fontFamily: 'inherit',
           background: 'transparent',
           toolbar: { show: false },
           animations: { enabled: true, easing: 'easeinout', speed: 600 },
           events: {
+            dataPointSelection(_event, _ctx, cfg) {
+              const i = cfg?.dataPointIndex;
+              if (typeof i === 'number' && i >= 0) {
+                panel._fillStatRadarSelection(i);
+              }
+            },
             legendClick(_chart, seriesIndex) {
               if (typeof seriesIndex === 'number' && seriesIndex >= 0) {
                 panel._fillStatRadarSelection(seriesIndex);
@@ -1111,27 +1099,9 @@ class EnergyPanel extends HTMLElement {
             },
           },
         },
+        labels,
         series,
         colors: sliceColors,
-        xaxis: {
-          categories,
-          labels: {
-            style: { colors: categories.map(() => textColor), fontSize: '11px' },
-          },
-        },
-        yaxis: {
-          show: true,
-          min: 0,
-          max: 100,
-          tickAmount: 5,
-          labels: {
-            formatter: (v) => `${Math.round(v)}`,
-            style: { colors: [textColor], fontSize: '10px' },
-          },
-        },
-        stroke: { width: 2 },
-        fill: { opacity: 0.18 },
-        markers: { size: 4, hover: { size: 6 } },
         legend: {
           position: 'bottom',
           fontSize: '11px',
@@ -1140,25 +1110,25 @@ class EnergyPanel extends HTMLElement {
           onItemClick: { toggleDataSeries: false },
         },
         plotOptions: {
-          radar: {
-            polygons: {
-              strokeColors: 'rgba(255,255,255,0.12)',
-              connectorColors: 'rgba(255,255,255,0.08)',
-              fill: { colors: ['rgba(255,255,255,0.02)', 'rgba(255,255,255,0.05)'] },
-            },
+          pie: {
+            dataLabels: { minAngleToShowLabel: 12 },
           },
         },
-        tooltip: {
+        dataLabels: {
           enabled: true,
-          y: { formatter: (v) => `${Number(v).toFixed(0)} / 100` },
+          style: { fontSize: '11px', colors: ['#fff'] },
+          dropShadow: { enabled: false },
+          formatter: (val) => `${Number(val).toFixed(1)}%`,
         },
+        stroke: { width: 1, colors: ['rgba(0,0,0,0.25)'] },
+        tooltip: { enabled: false },
         theme: { mode: 'dark' },
       };
       this._statsRoomsRadarInstance = new ApexCharts(container, options);
       await this._statsRoomsRadarInstance.render();
       this._fillStatRadarSelection(0);
     } catch (e) {
-      console.error('Statistics rooms radar chart failed:', e);
+      console.error('Statistics rooms usage chart failed:', e);
       const errMuted =
         getComputedStyle(this).getPropertyValue('--secondary-text-color').trim() || '#9b9b9b';
       container.innerHTML = `<p class="statistics-radar-empty" style="color:${errMuted}">Chart failed to load.</p>`;
@@ -2090,7 +2060,7 @@ class EnergyPanel extends HTMLElement {
       }
       .stat-rooms-panel { min-width: 0; }
       .stat-rooms-radar-mount {
-        min-height: 380px;
+        min-height: 300px;
         width: 100%;
       }
       .stat-rooms-radar-panel {
@@ -2158,10 +2128,10 @@ class EnergyPanel extends HTMLElement {
         width: 100%;
       }
       .statistics-radar-panel .stat-rooms-radar-mount {
-        min-height: 380px;
+        min-height: 300px;
         margin: 0 auto;
         width: 100%;
-        max-width: min(480px, 100%);
+        max-width: min(420px, 100%);
       }
       .statistics-table-panel {
         background: var(--card-bg);
@@ -9491,12 +9461,12 @@ class EnergyPanel extends HTMLElement {
           <div class="statistics-content-grid">
             <div class="statistics-radar-panel">
               <div class="statistics-section-header">
-                <h3 class="statistics-section-title">Room Profile</h3>
-                <p class="statistics-section-sub">Usage, efficiency, daily average, and reliability (top 8 rooms)</p>
+                <h3 class="statistics-section-title">Room Usage</h3>
+                <p class="statistics-section-sub">Percent of tracked energy by room (non-zero rooms only)</p>
               </div>
-              <div id="stat-rooms-radar-chart" class="stat-rooms-radar-mount" aria-label="Room energy profile radar chart"></div>
+              <div id="stat-rooms-radar-chart" class="stat-rooms-radar-mount" aria-label="Room usage share pie chart"></div>
               <div id="stat-radar-selection" class="stat-radar-selection" role="region" aria-live="polite">
-                <p class="stat-radar-selection-meta">Tap a room in the legend for details and to open a usage graph.</p>
+                <p class="stat-radar-selection-meta">Tap a slice or room in the legend for details and to open a usage graph.</p>
               </div>
             </div>
 
@@ -17730,23 +17700,23 @@ class EnergyPanel extends HTMLElement {
       seg.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const mode = seg.dataset.statRoomsView === 'pie' ? 'radar' : seg.dataset.statRoomsView;
-        if (mode !== 'table' && mode !== 'radar') return;
+        const mode = seg.dataset.statRoomsView === 'radar' ? 'pie' : seg.dataset.statRoomsView;
+        if (mode !== 'table' && mode !== 'pie') return;
         this._statsRoomsView = mode;
-        const radar = mode === 'radar';
+        const chart = mode === 'pie';
         this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((b) => {
-          const bMode = b.dataset.statRoomsView === 'pie' ? 'radar' : b.dataset.statRoomsView;
+          const bMode = b.dataset.statRoomsView === 'radar' ? 'pie' : b.dataset.statRoomsView;
           const on = bMode === mode;
           b.classList.toggle('active', on);
           b.setAttribute('aria-selected', on ? 'true' : 'false');
         });
         const panelTable = this.shadowRoot.getElementById('stat-rooms-panel-table');
         const panelRadar = this.shadowRoot.getElementById('stat-rooms-panel-radar');
-        if (panelTable) panelTable.style.display = radar ? 'none' : 'block';
-        if (panelRadar) panelRadar.style.display = radar ? 'block' : 'none';
+        if (panelTable) panelTable.style.display = chart ? 'none' : 'block';
+        if (panelRadar) panelRadar.style.display = chart ? 'block' : 'none';
         const radarMount = this.shadowRoot.getElementById('stat-rooms-radar-chart');
-        if (radarMount) radarMount.setAttribute('aria-hidden', radar ? 'false' : 'true');
-        if (radar) void this._syncStatsRoomsRadar();
+        if (radarMount) radarMount.setAttribute('aria-hidden', chart ? 'false' : 'true');
+        if (chart) void this._syncStatsRoomsRadar();
         else {
           this._destroyStatsRoomsRadar();
           this._resetStatRadarSelectionPanel();
