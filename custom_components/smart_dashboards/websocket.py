@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from copy import deepcopy
+from functools import partial
 import time
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -689,7 +690,9 @@ async def websocket_get_power_data(
     }
 
     try:
-        intraday = compute_intraday_ratings(hass, config_manager, result["rooms"])
+        intraday = await hass.async_add_executor_job(
+            compute_intraday_ratings, hass, config_manager, result["rooms"]
+        )
         for room_data in result["rooms"]:
             rid = room_data.get("id")
             if rid:
@@ -2432,13 +2435,16 @@ async def async_build_statistics_payload(
             }
             for rid, rsum in room_sums.items()
         }
-        monthly = compute_monthly_ratings(
-            hass,
-            config_manager,
-            stat_day_keys=stat_day_keys,
-            room_wh_totals=dict(room_wh_map),
-            room_day_wh=dict(room_day_wh_map),
-            room_event_totals=room_event_totals,
+        monthly = await hass.async_add_executor_job(
+            partial(
+                compute_monthly_ratings,
+                hass,
+                config_manager,
+                stat_day_keys=stat_day_keys,
+                room_wh_totals=dict(room_wh_map),
+                room_day_wh=dict(room_day_wh_map),
+                room_event_totals=room_event_totals,
+            )
         )
         for r in result["rooms"]:
             rid = r.get("id")
