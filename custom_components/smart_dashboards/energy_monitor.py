@@ -314,6 +314,8 @@ class EnergyMonitor:
         self._heater_smart_state: dict[str, dict] = {}
         # Light automation state (tracks last applied action per light)
         self._light_automation_state: dict[str, str] = {}
+        # Entities skipped while unavailable (debug log once until usable again)
+        self._light_auto_unavail_logged: set[str] = set()
         # Light automation enforcement pause (for testing scenes)
         self._light_enforcement_paused_until: float = 0.0
         # Light automation last enforcement time per entity
@@ -2602,7 +2604,12 @@ class EnergyMonitor:
         import time as time_mod
 
         try:
-            automations = self.config_manager.get_all_light_automations()
+            if not self.config_manager.light_automations_cache_loaded():
+                automations = await self.hass.async_add_executor_job(
+                    self.config_manager.get_all_light_automations
+                )
+            else:
+                automations = self.config_manager.get_all_light_automations()
         except Exception as e:
             _LOGGER.debug("Failed to load light automations: %s", e)
             return
@@ -2765,6 +2772,29 @@ class EnergyMonitor:
                 return room
         return None
 
+    def _entity_usable(self, entity_id: str) -> bool:
+        """True when HA reports a state other than unavailable/unknown."""
+        if not entity_id:
+            return False
+        st = self.hass.states.get(entity_id)
+        if st is None:
+            return False
+        raw = (st.state or "").lower()
+        return raw not in ("unavailable", "unknown")
+
+    def _skip_light_auto_if_unusable(self, entity_id: str) -> bool:
+        """Return True when automation should wait for entity to become ready."""
+        if self._entity_usable(entity_id):
+            self._light_auto_unavail_logged.discard(entity_id)
+            return False
+        if entity_id not in self._light_auto_unavail_logged:
+            _LOGGER.debug(
+                "Light automation: skipping %s until entity is available",
+                entity_id,
+            )
+            self._light_auto_unavail_logged.add(entity_id)
+        return True
+
     async def _apply_light_group_segment(
         self, room: dict, segment: dict, *, full_mode_converge: bool = True
     ) -> None:
@@ -2782,7 +2812,11 @@ class EnergyMonitor:
                     by_entity[entity_id] = (ow or is_wrgb, ot or is_tuya)
                 else:
                     by_entity[entity_id] = (is_wrgb, is_tuya)
-        targets = [(eid, w, t) for eid, (w, t) in by_entity.items()]
+        targets = [
+            (eid, w, t)
+            for eid, (w, t) in by_entity.items()
+            if not self._skip_light_auto_if_unusable(eid)
+        ]
         if not targets:
             return
         import time
@@ -2796,6 +2830,8 @@ class EnergyMonitor:
                 outlet = self._find_light_outlet_for_entity(eid)
                 sw = outlet.get("switch_entity") if outlet else None
                 if not self._is_switch_entity_id(sw):
+                    continue
+                if self._skip_light_auto_if_unusable(sw):
                     continue
                 if sw in switch_meta:
                     continue
@@ -2847,6 +2883,8 @@ class EnergyMonitor:
         self, entity_id: str, segment: dict, *, full_mode_converge: bool = True
     ) -> None:
         """Apply a light automation segment to a single light."""
+        if self._skip_light_auto_if_unusable(entity_id):
+            return
         room_config = self._find_light_config(entity_id)
         is_wrgb = room_config.get("wrgb", False) if room_config else False
         is_tuya = room_config.get("tuya", False) if room_config else False
@@ -3274,6 +3312,9 @@ class EnergyMonitor:
         """Apply light action from automation segment with continuous enforcement."""
         import time
 
+        if self._skip_light_auto_if_unusable(entity_id):
+            return
+
         action = segment.get("action", "on")
         enforcement_interval = segment.get("enforcement_interval", 60)
         state_key = f"light_auto_{entity_id}"
@@ -3306,6 +3347,8 @@ class EnergyMonitor:
             outlet = self._find_light_outlet_for_entity(entity_id)
             se = outlet.get("switch_entity") if outlet else None
             if self._is_switch_entity_id(se):
+                if self._skip_light_auto_if_unusable(se):
+                    return
                 switch_entity = se
                 if not self._switch_entity_is_on(se):
                     await self._async_switch_set(se, True)

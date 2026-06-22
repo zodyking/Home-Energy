@@ -433,6 +433,9 @@ class ConfigManager:
         self._event_archive_days: dict[str, list[dict[str, Any]]] = {}
         # Statistics cache: pre-computed statistics for instant page load
         self._statistics_cache_data: dict[str, Any] = {}
+        # Light automations JSON — in-memory cache invalidated by file mtime
+        self._light_automations_cache: dict[str, Any] | None = None
+        self._light_automations_mtime: float | None = None
 
     def _ensure_data_dir(self) -> str:
         """Ensure data directory exists and return its path."""
@@ -3231,15 +3234,36 @@ class ConfigManager:
         """Return path to light automations JSON file."""
         return self._data_path("light_automations.json")
 
-    def get_light_automations(self, room_id: str) -> dict[str, Any]:
-        """Get light automation config for a room."""
+    def light_automations_cache_loaded(self) -> bool:
+        """True once light automations have been read from disk at least once."""
+        return self._light_automations_cache is not None
+
+    def _light_automations_file_mtime(self) -> float:
         path = self._light_automations_path()
         try:
-            data = _load_json_file(path)
-            if data and room_id in data:
-                return data[room_id]
-        except (json.JSONDecodeError, IOError):
-            pass
+            return os.path.getmtime(path) if os.path.exists(path) else 0.0
+        except OSError:
+            return 0.0
+
+    def _get_light_automations_data(self) -> dict[str, Any]:
+        """Return all room light automations, using cache when file mtime is unchanged."""
+        mtime = self._light_automations_file_mtime()
+        if (
+            self._light_automations_cache is not None
+            and self._light_automations_mtime == mtime
+        ):
+            return self._light_automations_cache
+        path = self._light_automations_path()
+        data = _load_json_file(path)
+        self._light_automations_cache = data if isinstance(data, dict) else {}
+        self._light_automations_mtime = mtime
+        return self._light_automations_cache
+
+    def get_light_automations(self, room_id: str) -> dict[str, Any]:
+        """Get light automation config for a room."""
+        data = self._get_light_automations_data()
+        if room_id in data:
+            return data[room_id]
         return {
             "group_automation": {"enabled": False, "segments": []},
             "individual_automations": {},
@@ -3247,30 +3271,19 @@ class ConfigManager:
 
     def get_all_light_automations(self) -> dict[str, Any]:
         """Get all light automations for all rooms."""
-        path = self._light_automations_path()
-        try:
-            data = _load_json_file(path)
-            if data:
-                return data
-        except (json.JSONDecodeError, IOError):
-            pass
-        return {}
+        return dict(self._get_light_automations_data())
 
     def save_light_automations(self, room_id: str, automations: dict[str, Any]) -> None:
         """Save light automation config for a room."""
-        path = self._light_automations_path()
-        try:
-            data = _load_json_file(path)
-            if data is None:
-                data = {}
-        except (json.JSONDecodeError, IOError):
-            data = {}
-
+        data = dict(self._get_light_automations_data())
         validated = self._validate_light_automation(automations)
         data[room_id] = validated
 
+        path = self._light_automations_path()
         try:
             _write_json_file(path, data)
+            self._light_automations_cache = data
+            self._light_automations_mtime = self._light_automations_file_mtime()
         except IOError as err:
             _LOGGER.error("Error saving light automations: %s", err)
             raise
