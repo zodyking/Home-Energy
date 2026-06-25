@@ -96,6 +96,7 @@ DEFAULT_WINDOW_CLOSED_MSG = "{room_name} window was closed."
 DEFAULT_WINDOW_STILL_OPEN_MSG = "{room_name} window is still open."
 DEFAULT_PRESENCE_DETECTED_MSG = "Presence detected in {room_name}."
 DEFAULT_PRESENCE_CLEARED_MSG = "{room_name} cleared."
+DEFAULT_PRESENCE_LEFT_MSG = "{prefix} {person_name} has left {room_name}, turning off {device_phrase}."
 
 # Battery monitoring TTS message templates
 DEFAULT_BATTERY_LOW_MSG = "{device_name} battery is low at {battery_level} percent."
@@ -270,6 +271,7 @@ DEFAULT_CONFIG = {
             "window_still_open_msg": DEFAULT_WINDOW_STILL_OPEN_MSG,
             "presence_detected_msg": DEFAULT_PRESENCE_DETECTED_MSG,
             "presence_cleared_msg": DEFAULT_PRESENCE_CLEARED_MSG,
+            "presence_left_msg": DEFAULT_PRESENCE_LEFT_MSG,
             # Battery monitoring TTS messages
             "battery_low_msg": DEFAULT_BATTERY_LOW_MSG,
             "battery_replaced_msg": DEFAULT_BATTERY_REPLACED_MSG,
@@ -277,6 +279,7 @@ DEFAULT_CONFIG = {
             "door_tts_enabled": True,
             "window_tts_enabled": True,
             "presence_tts_enabled": True,
+            "presence_left_tts_enabled": True,
             "battery_tts_enabled": True,
         },
         "power_enforcement": {

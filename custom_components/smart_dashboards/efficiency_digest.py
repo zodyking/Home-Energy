@@ -61,9 +61,8 @@ def _load_digest_state(path: str) -> dict[str, Any]:
 
 
 def _save_digest_state(path: str, data: dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    from .json_store import atomic_save_json
+    atomic_save_json(path, data)
 
 
 def _digest_tts_prefix(tts: dict[str, Any]) -> str:

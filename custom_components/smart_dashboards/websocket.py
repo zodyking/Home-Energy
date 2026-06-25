@@ -7,7 +7,7 @@ from copy import deepcopy
 from functools import partial
 import time
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 
 import voluptuous as vol
 
@@ -30,6 +30,7 @@ from .efficiency_digest import (
 )
 from .mobile_notify_target import async_send_notify_push
 from .room_ratings import (
+    _RATINGS_FILE_LOCK,
     compute_intraday_ratings,
     compute_monthly_ratings,
     efficiency_scoring_params_from_manager,
@@ -245,14 +246,17 @@ _KWH_HISTORY_CACHE: dict[
 _last_stats_prime_at: float = 0.0
 
 
-async def async_register_statistics_cache_primer(hass: HomeAssistant) -> None:
-    """Periodic background prime of default-range statistics cache and save to JSON."""
+async def async_register_statistics_cache_primer(hass: HomeAssistant) -> Callable[[], None]:
+    """Periodic background prime of default-range statistics cache and save to JSON.
+
+    Returns the unsub callback so the caller can cancel the timer on unload.
+    """
     _clear_recorder_derived_caches()
 
     async def _tick(_now: datetime) -> None:
         await _statistics_cache_prime_tick(hass, _now)
 
-    async_track_time_interval(hass, _tick, timedelta(seconds=15))
+    return async_track_time_interval(hass, _tick, timedelta(seconds=15))
 
 
 @callback
@@ -4095,7 +4099,6 @@ async def websocket_dashboard_heartbeat(
     config_manager = hass.data.get(DOMAIN, {}).get("config_manager")
 
     def _beat() -> None:
-        data = load_ratings(path)
         cap = None
         if config_manager is not None:
             cap = int(
@@ -4103,8 +4106,10 @@ async def websocket_dashboard_heartbeat(
                     "engagement_max_visits_per_hour"
                 ]
             )
-        record_dashboard_heartbeat(data, user_key, max_per_hour=cap)
-        save_ratings(path, data)
+        with _RATINGS_FILE_LOCK:
+            data = load_ratings(path)
+            record_dashboard_heartbeat(data, user_key, max_per_hour=cap)
+            save_ratings(path, data)
 
     await hass.async_add_executor_job(_beat)
     connection.send_result(msg["id"], {"success": True})
