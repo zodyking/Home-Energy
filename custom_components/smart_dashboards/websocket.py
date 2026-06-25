@@ -280,6 +280,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_areas)
     websocket_api.async_register_command(hass, websocket_get_switches)
     websocket_api.async_register_command(hass, websocket_verify_passcode)
+    websocket_api.async_register_command(hass, websocket_verify_room_auth)
     websocket_api.async_register_command(hass, websocket_check_toggle_auth)
     websocket_api.async_register_command(hass, websocket_set_room_budget_boost_days)
     websocket_api.async_register_command(hass, websocket_toggle_switch)
@@ -2842,7 +2843,9 @@ async def websocket_check_toggle_auth(
         else ""
     )
 
-    authorized = user_name.lower().strip() == person_name.lower().strip()
+    authorized = _assignee_matches_connection_user(
+        hass, connection, str(person_ent)
+    )
     connection.send_result(
         msg["id"],
         {
@@ -2852,6 +2855,55 @@ async def websocket_check_toggle_auth(
             "room_person": person_name,
             "is_admin": is_admin,
         },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/verify_room_auth",
+        vol.Required("room_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_verify_room_auth(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Check if the current user may configure room-scoped dashboard features."""
+    is_admin = _ws_connection_user_is_admin(connection)
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_result(
+            msg["id"],
+            {"authorized": False, "error": "config_not_ready", "is_admin": is_admin},
+        )
+        return
+
+    room_id = msg["room_id"]
+    rooms = config_manager.energy_config.get("rooms", [])
+    room = next((r for r in rooms if r.get("id") == room_id), None)
+    if not room:
+        connection.send_result(
+            msg["id"],
+            {"authorized": False, "error": "room_not_found", "is_admin": is_admin},
+        )
+        return
+
+    person_ent = room.get("presence_person_entity")
+    if not person_ent or not str(person_ent).strip().lower().startswith("person."):
+        connection.send_result(
+            msg["id"],
+            {"authorized": True, "is_admin": is_admin},
+        )
+        return
+
+    authorized = _assignee_matches_connection_user(
+        hass, connection, str(person_ent)
+    )
+    connection.send_result(
+        msg["id"],
+        {"authorized": authorized, "is_admin": is_admin},
     )
 
 
@@ -2894,7 +2946,10 @@ async def websocket_set_room_budget_boost_days(
         )
         return
 
-    if not _room_budget_boost_assignee_only(hass, connection, str(person_ent)):
+    is_admin = _ws_connection_user_is_admin(connection)
+    if not is_admin and not _room_budget_boost_assignee_only(
+        hass, connection, str(person_ent)
+    ):
         connection.send_error(
             msg["id"],
             "unauthorized",
@@ -2908,7 +2963,7 @@ async def websocket_set_room_budget_boost_days(
         return
 
     raw_at = room.get("room_budget_boost_weekdays_changed_at")
-    if raw_at:
+    if not is_admin and raw_at:
         last_dt = dt_util.parse_datetime(str(raw_at))
         if last_dt is not None:
             last_utc = dt_util.as_utc(last_dt)
