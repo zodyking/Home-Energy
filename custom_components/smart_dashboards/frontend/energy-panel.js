@@ -334,12 +334,15 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
-  async _loadConfig() {
+  async _loadConfig(options = {}) {
     if (!this._hass) return;
 
-    this._loading = true;
-    this._error = null;
-    this._render();
+    const silent = options.silent === true || this._showSettings;
+    if (!silent) {
+      this._loading = true;
+      this._error = null;
+      this._render();
+    }
 
     try {
       const [config, entities, areasResult, switchesResult] = await Promise.all([
@@ -355,7 +358,13 @@ class EnergyPanel extends HTMLElement {
       this._entities.switches = switchesResult.switches || [];
       this._entities.binary_sensors = this._entities.binary_sensors || [];
       this._areas = areasResult.areas || [];
-      await this._loadPowerData();
+      await this._loadPowerData({ force: silent });
+      if (silent) {
+        if (this._showSettings) {
+          this._updateRoomPresenceLiveLabels();
+        }
+        return;
+      }
       this._loading = false;
       this._render();
       this._startRefresh();
@@ -368,6 +377,7 @@ class EnergyPanel extends HTMLElement {
       });
     } catch (e) {
       console.error('Failed to load energy config:', e);
+      if (silent) return;
       this._loading = false;
       this._error = e.message || 'Failed to load configuration';
       this._render();
@@ -544,18 +554,28 @@ class EnergyPanel extends HTMLElement {
     this.classList.remove('hard-refresh-lock');
     this.shadowRoot?.querySelector('.hard-refresh-modal-overlay')?.remove();
   }
-
-  /** Detach hard-refresh overlay before shadowRoot.innerHTML replaces content (keeps log + listeners). */
   _takeHardRefreshOverlay() {
     const el = this.shadowRoot?.querySelector('.hard-refresh-modal-overlay');
     if (!el) return null;
     el.remove();
+    // Avoid panel-container pointer-events lock while overlay is detached during re-render.
+    this.classList.remove('hard-refresh-lock');
     return el;
   }
 
   _putHardRefreshOverlay(overlay) {
     if (overlay && this.shadowRoot) {
       this.shadowRoot.appendChild(overlay);
+      this.classList.add('hard-refresh-lock');
+    }
+  }
+
+  _syncHardRefreshLock() {
+    const hasOverlay = !!this.shadowRoot?.querySelector('.hard-refresh-modal-overlay');
+    if (hasOverlay) {
+      this.classList.add('hard-refresh-lock');
+    } else {
+      this.classList.remove('hard-refresh-lock');
     }
   }
 
@@ -774,6 +794,8 @@ class EnergyPanel extends HTMLElement {
 
     // If this is the "started" event, show the modal (on ALL clients)
     if (started) {
+      // Do not dim/block settings while the user is editing configuration.
+      if (this._showSettings) return;
       if (!this.shadowRoot?.querySelector('.hard-refresh-modal-overlay')) {
         this._showHardRefreshModalUI();
       }
@@ -11023,6 +11045,7 @@ class EnergyPanel extends HTMLElement {
       (ttsSettings.tts_default_media_player || ttsSettings.budget_boost_announce_media_player || '').trim();
 
     const hrOverlay = this._takeHardRefreshOverlay();
+    this._teardownTransientUI();
     this.shadowRoot.innerHTML = `
       <style>
         ${styles}
@@ -12596,6 +12619,7 @@ class EnergyPanel extends HTMLElement {
     this._updateRoomPresenceLiveLabels();
     initCustomSelects(this.shadowRoot);
     this._putHardRefreshOverlay(hrOverlay);
+    this._syncHardRefreshLock();
   }
 
   _getAllOutlets() {
@@ -13170,6 +13194,18 @@ class EnergyPanel extends HTMLElement {
       this._roomRatingModalEsc = null;
     }
     this.shadowRoot?.querySelector('.room-rating-modal-overlay')?.remove();
+    // Stray overlays that can leave the UI dimmed after a partial close or failed modal
+    this.shadowRoot?.querySelector('.modal-overlay')?.remove();
+    this.shadowRoot?.querySelector('.toggle-confirm-overlay')?.remove();
+    this.shadowRoot?.querySelector('.zone-health-popup-overlay')?.remove();
+    this.shadowRoot?.querySelector('#boost-days-modal-overlay')?.remove();
+    this.shadowRoot?.querySelector('.ac-safety-overlay')?.remove();
+    this._syncHardRefreshLock();
+  }
+
+  /** True when WS auth result grants room-scoped dashboard actions (assignee or HA admin). */
+  _roomAuthAllowed(authResult) {
+    return authResult?.authorized === true || authResult?.is_admin === true;
   }
 
   async _openLightAutomationModal(roomId, outlet) {
@@ -13187,7 +13223,7 @@ class EnergyPanel extends HTMLElement {
           type: 'smart_dashboards/verify_room_auth',
           room_id: roomId
         });
-        if (!authResult.authorized) {
+        if (!this._roomAuthAllowed(authResult)) {
           this._showToast('Only the room assignee can configure automations', 'error');
           return;
         }
@@ -15182,7 +15218,7 @@ class EnergyPanel extends HTMLElement {
         room_id: roomId,
       });
 
-      if (!authResult.authorized) {
+      if (!this._roomAuthAllowed(authResult)) {
         showToast(
           this.shadowRoot,
           `Not authorized. Only ${authResult.room_person || 'the assigned person'} can control devices in this room.`,
@@ -15750,7 +15786,7 @@ class EnergyPanel extends HTMLElement {
             type: 'smart_dashboards/check_toggle_auth',
             room_id: roomId,
           });
-          if (!authResult.authorized) {
+          if (!this._roomAuthAllowed(authResult)) {
             showToast(
               this.shadowRoot,
               `${authResult.room_person || 'The assigned person'} can configure boost days for this room.`,
@@ -15848,9 +15884,11 @@ class EnergyPanel extends HTMLElement {
         });
         showToast(this.shadowRoot, 'Boost days saved', 'success');
         close();
-        await this._loadConfig();
+        await this._loadConfig({ silent: true });
         await this._loadPowerData({ force: true });
-        this._render();
+        if (!this._showSettings) {
+          this._render();
+        }
       } catch (err) {
         const msg =
           (err && (err.message || err.error_message)) ? String(err.message || err.error_message) : String(err);
@@ -16508,6 +16546,7 @@ class EnergyPanel extends HTMLElement {
     const room = rooms.find((r) => this._canonicalRoomId(r) === roomId);
     if (!room) return;
 
+    let isAdmin = false;
     const personEnt = (room.presence_person_entity || '').trim();
     if (personEnt.startsWith('person.')) {
       try {
@@ -16515,7 +16554,8 @@ class EnergyPanel extends HTMLElement {
           type: 'smart_dashboards/check_toggle_auth',
           room_id: roomId,
         });
-        if (!authResult.authorized) {
+        isAdmin = authResult.is_admin === true;
+        if (!this._roomAuthAllowed(authResult)) {
           showToast(
             this.shadowRoot,
             `${authResult.room_person || 'The assigned person'} can configure boost days for this room.`,
@@ -16530,7 +16570,7 @@ class EnergyPanel extends HTMLElement {
     }
 
     const remMs = this._roomBudgetBoostCooldownRemainingMs(room);
-    if (remMs > 0) {
+    if (!isAdmin && remMs > 0) {
       const hm = this._formatRoomBudgetBoostCooldownHm(remMs);
       showToast(
         this.shadowRoot,
@@ -19708,11 +19748,13 @@ class EnergyPanel extends HTMLElement {
 
       setTimeout(async () => {
         await this._loadPowerData({ force: true });
+        if (this._showSettings) {
+          this._syncZoneHealthPollingFromConfig();
+          return;
+        }
         this._render();
         this._startRefresh();
-        if (!this._showSettings) {
-          void this._loadStatistics();
-        }
+        void this._loadStatistics();
       }, 500);
     } catch (e) {
       console.error('Failed to save settings:', e);
@@ -20030,12 +20072,6 @@ class EnergyPanel extends HTMLElement {
 
       this._config = { ...this._config, ...config };
       showToast(this.shadowRoot, 'Room saved!', 'success');
-
-      setTimeout(async () => {
-        await this._loadPowerData({ force: true });
-        this._render();
-        this._startRefresh();
-      }, 500);
     } catch (e) {
       console.error('Failed to save room:', e);
       const msg = (e && (e.message || e.error_message || e)) ? String(e.message || e.error_message || e) : 'Unknown error';
