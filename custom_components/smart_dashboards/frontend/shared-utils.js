@@ -966,29 +966,34 @@ export function showPasscodeModal(shadowRoot, hass, options = {}) {
       digit.addEventListener('focus', () => digit.select());
     });
 
+    // Shared cleanup: remove modal + escape listener
+    const cleanup = () => {
+      document.removeEventListener('keydown', escHandler);
+      modalOverlay.remove();
+    };
+
+    // Escape key to cancel (define before use in cleanup)
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        cleanup();
+        resolve(false);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+
     // Cancel button
     cancelBtn.addEventListener('click', () => {
-      modalOverlay.remove();
+      cleanup();
       resolve(false);
     });
 
     // Click outside to cancel
     modalOverlay.addEventListener('click', (e) => {
       if (e.target === modalOverlay) {
-        modalOverlay.remove();
+        cleanup();
         resolve(false);
       }
     });
-
-    // Escape key to cancel
-    const escHandler = (e) => {
-      if (e.key === 'Escape') {
-        modalOverlay.remove();
-        document.removeEventListener('keydown', escHandler);
-        resolve(false);
-      }
-    };
-    document.addEventListener('keydown', escHandler);
 
     // Submit button
     submitBtn.addEventListener('click', async () => {
@@ -1010,8 +1015,7 @@ export function showPasscodeModal(shadowRoot, hass, options = {}) {
         });
 
         if (result.valid) {
-          modalOverlay.remove();
-          document.removeEventListener('keydown', escHandler);
+          cleanup();
           resolve(true);
         } else {
           errorEl.textContent = 'Incorrect passcode';

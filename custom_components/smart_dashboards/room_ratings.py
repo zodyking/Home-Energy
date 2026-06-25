@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,10 @@ from homeassistant.util import dt as dt_util
 from .const import DEFAULT_CONFIG
 
 _LOGGER = logging.getLogger(__name__)
+
+# Serialize all read-modify-write operations on the ratings JSON file to prevent
+# lost-update races (e.g. concurrent hourly recompute + heartbeat from websocket).
+_RATINGS_FILE_LOCK = threading.Lock()
 
 SCHEMA_VERSION = 1
 FILENAME = "smart_dashboards_room_ratings.json"
@@ -208,6 +213,33 @@ def save_ratings(path: Path, data: dict[str, Any]) -> None:
             tmp.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _merge_engagement_visits(ours: dict, theirs: dict) -> dict:
+    """Merge two engagement_visits dicts, taking max counts per user per hour.
+
+    Prevents lost-update race: if heartbeat incremented a count between our load
+    and save, we don't overwrite it with a lower value.
+    """
+    merged: dict = {}
+    all_days = set(ours.keys()) | set(theirs.keys())
+    for day in all_days:
+        our_day = ours.get(day) or {}
+        their_day = theirs.get(day) or {}
+        merged_day: dict = {}
+        all_users = set(our_day.keys()) | set(their_day.keys())
+        for user in all_users:
+            our_hours = our_day.get(user) or {}
+            their_hours = their_day.get(user) or {}
+            merged_hours: dict = {}
+            all_hours = set(our_hours.keys()) | set(their_hours.keys())
+            for hour in all_hours:
+                our_val = int(our_hours.get(hour, 0))
+                their_val = int(their_hours.get(hour, 0))
+                merged_hours[hour] = max(our_val, their_val)
+            merged_day[user] = merged_hours
+        merged[day] = merged_day
+    return merged
 
 
 def record_dashboard_heartbeat(
@@ -819,10 +851,14 @@ def recompute_room_ratings(
     (``engagement_visits`` keys match ``str(user.id)``).
 
     When ``persist`` is False, scores are not written to disk (e.g. on-demand WS load).
+
+    Uses ``_RATINGS_FILE_LOCK`` when ``persist=True`` to prevent lost-update races
+    with concurrent heartbeat writes.
     """
     p = efficiency_scoring_params_from_manager(config_manager)
     path = ratings_store_path(hass)
-    data = load_ratings(path)
+    with _RATINGS_FILE_LOCK:
+        data = load_ratings(path)
     now = dt_util.now()
     history = config_manager.get_daily_history(
         days=int(p["history_window_days"]), include_today=True
@@ -928,7 +964,15 @@ def recompute_room_ratings(
     data["updated_at"] = now.isoformat()
     data["rooms"] = rooms_out
     if persist:
-        save_ratings(path, data)
+        with _RATINGS_FILE_LOCK:
+            # Re-read engagement_visits to merge any heartbeats added since we
+            # loaded. Prevents lost-update race with concurrent dashboard heartbeats.
+            fresh = load_ratings(path)
+            fresh_visits = fresh.get("engagement_visits") or {}
+            our_visits = data.get("engagement_visits") or {}
+            merged_visits = _merge_engagement_visits(our_visits, fresh_visits)
+            data["engagement_visits"] = merged_visits
+            save_ratings(path, data)
     return data
 
 

@@ -61,6 +61,7 @@ const TTS_DEFAULTS = {
   notify_room_boost_days_title: '{notification_title} Set boost days',
   notify_room_boost_days_msg:
     '{room_name}: Open Home Energy and tap your room icon to choose up to two days when your higher kWh budget applies.',
+  presence_left_msg: '{prefix} {person_name} has left {room_name}, turning off {device_phrase}.',
 };
 
 const EFFICIENCY_UI_DEFAULTS = {
@@ -277,13 +278,21 @@ class EnergyPanel extends HTMLElement {
       this._roomsGridResizeObserver.disconnect();
       this._roomsGridResizeObserver = null;
     }
-    this.shadowRoot?.querySelector('.room-rating-modal-overlay')?.remove();
+    // Teardown all transient UI (modals, popups, menus) and their listeners
+    this._teardownTransientUI();
     this._removeStatisticsDiscrepancyModal();
     this._removeHardRefreshModal();
-    this._closeApplianceMenu();
     this._teardownBillingBarChartNative();
     this._unsubscribeFromStatisticsUpdates();
     this._unsubscribeFromHardRefreshProgress();
+    // Reset settings dropdown listener guard
+    if (this._addDeviceDropdownCloseHandler) {
+      this.shadowRoot?.removeEventListener('click', this._addDeviceDropdownCloseHandler);
+      this._addDeviceDropdownCloseHandler = null;
+    }
+    this._addDeviceDropdownCloseAttached = false;
+    // Light automation document listeners
+    this._detachLightAutoDocListeners();
   }
 
   _statisticsRefreshMs() {
@@ -2427,6 +2436,36 @@ class EnergyPanel extends HTMLElement {
         cursor: crosshair;
         border: 1px solid var(--card-border);
       }
+      /* Subtle grid lines at 1-hour intervals for visual snap guidance */
+      .light-auto-timeline::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: repeating-linear-gradient(
+          90deg,
+          transparent,
+          transparent calc(4.167% - 1px),
+          rgba(255,255,255,0.1) calc(4.167% - 1px),
+          rgba(255,255,255,0.1) 4.167%
+        );
+        border-radius: 8px;
+      }
+      /* Stronger lines at 6-hour marks */
+      .light-auto-timeline::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: repeating-linear-gradient(
+          90deg,
+          transparent,
+          transparent calc(25% - 1px),
+          rgba(255,255,255,0.25) calc(25% - 1px),
+          rgba(255,255,255,0.25) 25%
+        );
+        border-radius: 8px;
+      }
       .light-auto-segment {
         position: absolute;
         top: 4px;
@@ -2504,8 +2543,21 @@ class EnergyPanel extends HTMLElement {
       .light-auto-segment-handle.left { left: -7px; }
       .light-auto-segment-handle.right { right: -7px; }
       .light-auto-segment.dragging {
-        opacity: 0.8;
-        box-shadow: 0 0 12px rgba(0, 188, 212, 0.5);
+        opacity: 0.9;
+        box-shadow: 0 0 16px rgba(0, 188, 212, 0.6), 0 0 4px rgba(0, 188, 212, 0.8);
+        z-index: 10;
+        cursor: grabbing !important;
+      }
+      .light-auto-segment.dragging .light-auto-segment-handle {
+        cursor: grabbing !important;
+      }
+      /* Visual indicator for shared boundary handles - make them more prominent */
+      .light-auto-segment-handle.shared {
+        background: rgba(255, 193, 7, 0.3);
+      }
+      .light-auto-segment-handle.shared::after {
+        background: rgba(255, 193, 7, 0.8);
+        opacity: 1;
       }
       .light-auto-segment.selected {
         outline: 2px solid var(--panel-accent);
@@ -11696,6 +11748,19 @@ class EnergyPanel extends HTMLElement {
                   <div class="tts-msg-group" style="margin-top: 16px;">
                     <div class="tts-msg-header-row">
                       <div>
+                        <div class="tts-msg-title">Presence Left (Zone-Based)</div>
+                        <div class="tts-msg-desc">Spoken when person leaves zone and devices are turned off</div>
+                      </div>
+                      ${this._ttsLineEnableHtml(ttsSettings, 'presence_left')}
+                    </div>
+                    <input type="text" class="form-input" id="tts-presence-left"
+                      value="${(ttsSettings.presence_left_msg || TTS_DEFAULTS.presence_left_msg).replace(/"/g, '&quot;')}"
+                      placeholder="${TTS_DEFAULTS.presence_left_msg}">
+                    <div class="tts-var-help">Variables: <code>{prefix}</code> <code>{person_name}</code> <code>{room_name}</code> <code>{device_phrase}</code></div>
+                  </div>
+                  <div class="tts-msg-group" style="margin-top: 16px;">
+                    <div class="tts-msg-header-row">
+                      <div>
                         <div class="tts-msg-title">Battery Low Warning</div>
                         <div class="tts-msg-desc">Hourly warning when sensor battery is at or below 25%</div>
                       </div>
@@ -13082,6 +13147,31 @@ class EnergyPanel extends HTMLElement {
     this.shadowRoot?.querySelector('.appliance-context-menu-backdrop')?.remove();
   }
 
+  _closeLoadRatePopup() {
+    if (this._loadRatePopupEsc) {
+      window.removeEventListener('keydown', this._loadRatePopupEsc);
+      this._loadRatePopupEsc = null;
+    }
+    this.shadowRoot?.querySelector('.load-rate-popup-overlay')?.remove();
+  }
+
+  /**
+   * Tear down all transient UI (modals, popups, context menus) and their window/document listeners.
+   * Called before full re-render and in disconnectedCallback to prevent listener leaks.
+   */
+  _teardownTransientUI() {
+    this._closeApplianceMenu();
+    this._closeRoomIconModal();
+    this._closeLightAutomationModal();
+    this._closeLoadRatePopup();
+    // Room rating modal
+    if (this._roomRatingModalEsc) {
+      window.removeEventListener('keydown', this._roomRatingModalEsc);
+      this._roomRatingModalEsc = null;
+    }
+    this.shadowRoot?.querySelector('.room-rating-modal-overlay')?.remove();
+  }
+
   async _openLightAutomationModal(roomId, outlet) {
     this._detachLightAutoDocListeners();
     const room = (this._config?.rooms || []).find(r => this._canonicalRoomId(r) === roomId);
@@ -13242,7 +13332,7 @@ class EnergyPanel extends HTMLElement {
           <span>12 PM</span><span>3 PM</span><span>6 PM</span><span>9 PM</span><span>12 AM</span>
         </div>
         <div class="light-auto-timeline" id="light-auto-timeline">
-          ${segments.map((seg, i) => this._renderTimelineSegment(seg, i)).join('')}
+          ${segments.map((seg, i) => this._renderTimelineSegment(seg, i, segments)).join('')}
         </div>
         <p class="light-auto-add-hint">Click on the timeline to add a new segment. Drag edges to resize.</p>
       </div>
@@ -13254,7 +13344,7 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
-  _renderTimelineSegment(seg, index) {
+  _renderTimelineSegment(seg, index, allSegments = []) {
     const startPct = this._timeToPercent(seg.start);
     const endPct = this._timeToPercent(seg.end);
     let width = endPct - startPct;
@@ -13268,6 +13358,14 @@ class EnergyPanel extends HTMLElement {
     else if (seg.brightness != null) label = `${seg.brightness}%`;
     const timeLabel = `${seg.start || '00:00'}–${seg.end || '00:00'}`;
 
+    // Detect shared boundaries with other segments (for visual highlighting)
+    let leftShared = false, rightShared = false;
+    for (let i = 0; i < allSegments.length; i++) {
+      if (i === index) continue;
+      if (allSegments[i].end === seg.start) leftShared = true;
+      if (allSegments[i].start === seg.end) rightShared = true;
+    }
+
     return `
       <div class="light-auto-segment ${isOff ? 'off' : ''} ${isMode ? 'mode' : ''} ${selected ? 'selected' : ''}"
            data-segment-index="${index}"
@@ -13276,9 +13374,9 @@ class EnergyPanel extends HTMLElement {
            aria-label="Light segment ${timeLabel}, ${label}${selected ? ', selected' : ''}"
            title="${timeLabel} · ${label}"
            style="left: ${startPct}%; width: ${Math.max(2, width)}%;">
-        <div class="light-auto-segment-handle left" data-handle="left"></div>
+        <div class="light-auto-segment-handle left ${leftShared ? 'shared' : ''}" data-handle="left" ${leftShared ? 'title="Shared boundary - drag to adjust both segments"' : ''}></div>
         <span class="light-auto-segment-label">${label}</span>
-        <div class="light-auto-segment-handle right" data-handle="right"></div>
+        <div class="light-auto-segment-handle right ${rightShared ? 'shared' : ''}" data-handle="right" ${rightShared ? 'title="Shared boundary - drag to adjust both segments"' : ''}></div>
       </div>
     `;
   }
@@ -13312,6 +13410,46 @@ class EnergyPanel extends HTMLElement {
     const totalMins = (pct / 100) * 1440;
     const snapped = Math.round(totalMins / gridMins) * gridMins;
     return Math.max(0, Math.min(1440, snapped)) / 1440 * 100;
+  }
+
+  /**
+   * Snap percentage to grid with magnetic threshold - only snap if within
+   * threshold of a grid line, otherwise return raw value for smoother dragging.
+   */
+  _snapToGridMagnetic(pct, gridMins = 15, thresholdMins = 5) {
+    const totalMins = (pct / 100) * 1440;
+    const nearestGrid = Math.round(totalMins / gridMins) * gridMins;
+    const distance = Math.abs(totalMins - nearestGrid);
+    if (distance <= thresholdMins) {
+      return Math.max(0, Math.min(1440, nearestGrid)) / 1440 * 100;
+    }
+    return Math.max(0, Math.min(100, pct));
+  }
+
+  /**
+   * Find all boundary positions where segments exist (for snap guides).
+   * Returns sorted array of percentages at segment edges.
+   */
+  _getSegmentBoundaries(segments, excludeIdx = -1) {
+    const boundaries = new Set([0, 100]);
+    for (let i = 0; i < segments.length; i++) {
+      if (i === excludeIdx) continue;
+      boundaries.add(this._timeToPercent(segments[i].start));
+      boundaries.add(this._timeToPercent(segments[i].end));
+    }
+    return Array.from(boundaries).sort((a, b) => a - b);
+  }
+
+  /**
+   * Snap to segment boundaries with magnetic threshold for easy alignment.
+   */
+  _snapToBoundary(pct, boundaries, thresholdPct = 1.5) {
+    for (const b of boundaries) {
+      if (Math.abs(pct - b) <= thresholdPct) {
+        return b;
+      }
+    }
+    return pct;
   }
 
   _segmentsOverlap(seg1, seg2) {
@@ -13697,7 +13835,7 @@ class EnergyPanel extends HTMLElement {
                 <span class="toggle-label">Enable automation</span>
               </label>
               <div class="light-auto-timeline light-auto-indiv-timeline" data-entity="${entityId}" style="height:40px;">
-                ${(indivAuto.segments || []).map((seg, i) => this._renderTimelineSegment(seg, i)).join('')}
+                ${(indivAuto.segments || []).map((seg, i) => this._renderTimelineSegment(seg, i, indivAuto.segments || [])).join('')}
               </div>
             </div>
           `;
@@ -13829,11 +13967,12 @@ class EnergyPanel extends HTMLElement {
     };
 
     // Helper to find the nearest boundary when dragging would cause overlap
-    const findNearestBoundary = (pct, direction, excludeIdx) => {
+    // excludeIdx2 is optional - used when dragging shared boundary to skip adjacent segment too
+    const findNearestBoundary = (pct, direction, excludeIdx, excludeIdx2 = -1) => {
       const segments = allSegments();
       let boundary = direction === 'left' ? 0 : 100;
       for (let i = 0; i < segments.length; i++) {
-        if (i === excludeIdx) continue;
+        if (i === excludeIdx || i === excludeIdx2) continue;
         const otherStart = this._timeToPercent(segments[i].start);
         const otherEnd = this._timeToPercent(segments[i].end);
         if (direction === 'left') {
@@ -13853,6 +13992,7 @@ class EnergyPanel extends HTMLElement {
       let origStart = '', origEnd = '';
       let adjacentIdx = -1;
       let adjacentOrigStart = '', adjacentOrigEnd = '';
+      let adjacentSegEl = null; // DOM element for adjacent segment
       const isLeft = handle.dataset.handle === 'left';
 
       const onMouseMove = (e) => {
@@ -13860,6 +14000,8 @@ class EnergyPanel extends HTMLElement {
         if (!dragging && dx > CLICK_THRESHOLD) {
           dragging = true;
           didDrag = true;
+          segEl.classList.add('dragging');
+          if (adjacentSegEl) adjacentSegEl.classList.add('dragging');
         }
         if (!dragging) return;
 
@@ -13867,7 +14009,16 @@ class EnergyPanel extends HTMLElement {
         const segments = allSegments();
         let rawPct = ((e.clientX - rect.left) / rect.width) * 100;
         rawPct = Math.max(0, Math.min(100, rawPct));
-        let pct = this._snapToGrid(rawPct);
+        
+        // Apply magnetic snapping to grid lines
+        let pct = this._snapToGridMagnetic(rawPct, 15, 3);
+        
+        // When adjusting shared boundary, don't snap to OTHER segment boundaries
+        // (we're moving the shared boundary, not snapping to it)
+        if (adjacentIdx < 0) {
+          const boundaries = this._getSegmentBoundaries(segments, idx);
+          pct = this._snapToBoundary(pct, boundaries, 1.5);
+        }
 
         const seg = getSeg();
         if (!seg) return;
@@ -13877,14 +14028,20 @@ class EnergyPanel extends HTMLElement {
           pct = Math.min(pct, endPct - MIN_WIDTH_PCT);
           pct = Math.max(0, pct);
 
-          // Check for overlap with non-adjacent segments
-          const leftBoundary = findNearestBoundary(pct, 'left', idx);
+          // Check for overlap with non-adjacent segments (skip adjacent)
+          const leftBoundary = findNearestBoundary(pct, 'left', idx, adjacentIdx);
           if (pct < leftBoundary) pct = leftBoundary;
 
+          // Update adjacent segment (shared boundary) - both data AND visual
           if (adjacentIdx >= 0 && segments[adjacentIdx]) {
             const adjStartPct = this._timeToPercent(adjacentOrigStart);
             pct = Math.max(pct, adjStartPct + MIN_WIDTH_PCT);
             segments[adjacentIdx].end = this._percentToTime(pct);
+            // Update adjacent segment's visual width
+            if (adjacentSegEl) {
+              const adjWidth = pct - adjStartPct;
+              adjacentSegEl.style.width = Math.max(MIN_WIDTH_PCT, adjWidth) + '%';
+            }
           }
 
           seg.start = this._percentToTime(pct);
@@ -13895,14 +14052,21 @@ class EnergyPanel extends HTMLElement {
           pct = Math.max(pct, startPct + MIN_WIDTH_PCT);
           pct = Math.min(100, pct);
 
-          // Check for overlap with non-adjacent segments
-          const rightBoundary = findNearestBoundary(pct, 'right', idx);
+          // Check for overlap with non-adjacent segments (skip adjacent)
+          const rightBoundary = findNearestBoundary(pct, 'right', idx, adjacentIdx);
           if (pct > rightBoundary) pct = rightBoundary;
 
+          // Update adjacent segment (shared boundary) - both data AND visual
           if (adjacentIdx >= 0 && segments[adjacentIdx]) {
             const adjEndPct = this._timeToPercent(adjacentOrigEnd);
             pct = Math.min(pct, adjEndPct - MIN_WIDTH_PCT);
             segments[adjacentIdx].start = this._percentToTime(pct);
+            // Update adjacent segment's visual position and width
+            if (adjacentSegEl) {
+              const adjWidth = adjEndPct - pct;
+              adjacentSegEl.style.left = pct + '%';
+              adjacentSegEl.style.width = Math.max(MIN_WIDTH_PCT, adjWidth) + '%';
+            }
           }
 
           seg.end = this._percentToTime(pct);
@@ -13913,17 +14077,21 @@ class EnergyPanel extends HTMLElement {
       const onMouseUp = () => {
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
+        segEl.classList.remove('dragging');
+        if (adjacentSegEl) adjacentSegEl.classList.remove('dragging');
         if (didDrag) {
           this._refreshLightAutomationModal();
         }
         dragging = false;
         didDrag = false;
+        adjacentSegEl = null;
       };
 
       const startHandleDrag = (clientX) => {
         mouseDownX = clientX;
         dragging = false;
         didDrag = false;
+        adjacentSegEl = null;
         const seg = getSeg();
         const segments = allSegments();
         if (seg) {
@@ -13933,6 +14101,8 @@ class EnergyPanel extends HTMLElement {
           if (adjacentIdx >= 0 && segments[adjacentIdx]) {
             adjacentOrigStart = segments[adjacentIdx].start;
             adjacentOrigEnd = segments[adjacentIdx].end;
+            // Find the DOM element for the adjacent segment
+            adjacentSegEl = timeline.querySelector(`.light-auto-segment[data-segment-index="${adjacentIdx}"]`);
           }
         }
       };
@@ -13981,53 +14151,83 @@ class EnergyPanel extends HTMLElement {
       if (!bodyDragging && dx > CLICK_THRESHOLD) {
         bodyDragging = true;
         didBodyDrag = true;
+        segEl.classList.add('dragging');
       }
       if (!bodyDragging) return;
 
       const rect = timeline.getBoundingClientRect();
-      const deltaPct = ((e.clientX - mouseDownX) / rect.width) * 100;
+      const rawDeltaPct = ((e.clientX - mouseDownX) / rect.width) * 100;
       const seg = getSeg();
       const segments = allSegments();
       if (!seg) return;
 
       const segWidth = originalEndPct - originalStartPct;
-      let newStart = this._snapToGrid(originalStartPct + deltaPct);
-      let newEnd = newStart + segWidth;
+      
+      // Calculate raw new position (not snapped yet)
+      let rawStart = originalStartPct + rawDeltaPct;
+      let rawEnd = rawStart + segWidth;
 
-      // Clamp to timeline bounds
-      if (newStart < 0) {
-        newStart = 0;
-        newEnd = segWidth;
+      // Clamp to timeline bounds first
+      if (rawStart < 0) {
+        rawStart = 0;
+        rawEnd = segWidth;
       }
-      if (newEnd > 100) {
-        newEnd = 100;
-        newStart = 100 - segWidth;
+      if (rawEnd > 100) {
+        rawEnd = 100;
+        rawStart = 100 - segWidth;
       }
 
-      // Check for collisions with all other segments and stop at boundaries
-      for (let i = 0; i < segments.length; i++) {
-        if (i === idx) continue;
-        const otherStart = this._timeToPercent(segments[i].start);
-        const otherEnd = this._timeToPercent(segments[i].end);
+      // Find valid position range (gaps between other segments)
+      let minStart = 0;
+      let maxEnd = 100;
+      
+      // Sort segments by start time to find gaps
+      const otherSegs = segments
+        .map((s, i) => i === idx ? null : { start: this._timeToPercent(s.start), end: this._timeToPercent(s.end), idx: i })
+        .filter(s => s !== null)
+        .sort((a, b) => a.start - b.start);
+
+      // Find which gap the segment center would be in
+      const segCenter = rawStart + segWidth / 2;
+      for (let i = 0; i <= otherSegs.length; i++) {
+        const gapStart = i === 0 ? 0 : otherSegs[i - 1].end;
+        const gapEnd = i === otherSegs.length ? 100 : otherSegs[i].start;
         
-        // Would this segment overlap?
-        if (newStart < otherEnd && newEnd > otherStart) {
-          // Determine which direction we're moving and stop at the boundary
-          if (deltaPct < 0) {
-            // Moving left, stop at the right edge of the other segment
-            newStart = otherEnd;
-            newEnd = newStart + segWidth;
-          } else {
-            // Moving right, stop at the left edge of the other segment
-            newEnd = otherStart;
-            newStart = newEnd - segWidth;
-          }
+        if (segCenter >= gapStart && segCenter <= gapEnd) {
+          minStart = gapStart;
+          maxEnd = gapEnd;
+          break;
         }
       }
 
-      // Final clamp
-      newStart = Math.max(0, newStart);
-      newEnd = Math.min(100, newEnd);
+      // Constrain segment to fit within the gap
+      let newStart = rawStart;
+      let newEnd = rawEnd;
+      
+      if (newStart < minStart) {
+        newStart = minStart;
+        newEnd = newStart + segWidth;
+      }
+      if (newEnd > maxEnd) {
+        newEnd = maxEnd;
+        newStart = newEnd - segWidth;
+      }
+
+      // Apply magnetic snapping to grid and segment boundaries
+      const boundaries = this._getSegmentBoundaries(segments, idx);
+      let snappedStart = this._snapToGridMagnetic(newStart, 15, 3);
+      snappedStart = this._snapToBoundary(snappedStart, boundaries, 1.0);
+      
+      // Ensure snapped position still fits in gap
+      let snappedEnd = snappedStart + segWidth;
+      if (snappedStart >= minStart && snappedEnd <= maxEnd) {
+        newStart = snappedStart;
+        newEnd = snappedEnd;
+      }
+
+      // Final validation
+      newStart = Math.max(minStart, Math.min(maxEnd - segWidth, newStart));
+      newEnd = newStart + segWidth;
 
       seg.start = this._percentToTime(newStart);
       seg.end = this._percentToTime(newEnd);
@@ -14038,6 +14238,7 @@ class EnergyPanel extends HTMLElement {
     const onBodyMouseUp = () => {
       document.removeEventListener('mousemove', onBodyMouseMove);
       document.removeEventListener('mouseup', onBodyMouseUp);
+      segEl.classList.remove('dragging');
 
       if (!didBodyDrag) {
         this._lightAutoState.selectedSegment = idx;
@@ -18043,11 +18244,16 @@ class EnergyPanel extends HTMLElement {
         });
       });
     });
-    this.shadowRoot.addEventListener('click', (e) => {
-      if (!e.target.closest('.add-device-dropdown')) {
-        this.shadowRoot.querySelectorAll('.add-device-menu').forEach(m => { m.style.display = 'none'; });
-      }
-    });
+    // Close add-device dropdowns when clicking outside (guard prevents accumulating)
+    if (!this._addDeviceDropdownCloseAttached) {
+      this._addDeviceDropdownCloseHandler = (e) => {
+        if (!e.target.closest('.add-device-dropdown')) {
+          this.shadowRoot.querySelectorAll('.add-device-menu').forEach(m => { m.style.display = 'none'; });
+        }
+      };
+      this.shadowRoot.addEventListener('click', this._addDeviceDropdownCloseHandler);
+      this._addDeviceDropdownCloseAttached = true;
+    }
 
     // Area selectors - filter outlets when area changes
 
@@ -19439,6 +19645,8 @@ class EnergyPanel extends HTMLElement {
         window_still_open_msg: this.shadowRoot.querySelector('#tts-window-still-open')?.value ?? '',
         presence_detected_msg: this.shadowRoot.querySelector('#tts-presence-detected')?.value ?? '',
         presence_cleared_msg: this.shadowRoot.querySelector('#tts-presence-cleared')?.value ?? '',
+        presence_left_msg: this.shadowRoot.querySelector('#tts-presence-left')?.value ?? '',
+        presence_left_tts_enabled: ttsLineOn('tts-enable-presence-left'),
         battery_low_msg: this.shadowRoot.querySelector('#tts-battery-low')?.value ?? '',
         battery_replaced_msg: this.shadowRoot.querySelector('#tts-battery-replaced')?.value ?? '',
         notify_budget_hit_title: this.shadowRoot.querySelector('#notify-budget-hit-title')?.value ?? '',

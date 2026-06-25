@@ -205,6 +205,7 @@ def person_in_room_presence_zones(
     then person.state string matching including zone slugs (e.g. brandons_nearby).
     """
     if not person_entity_id:
+        _LOGGER.debug("person_in_room_presence_zones: no person_entity_id → False")
         return False
     zone_ids = [
         str(z).strip().lower()
@@ -212,6 +213,7 @@ def person_in_room_presence_zones(
         if z and str(z).strip().lower().startswith("zone.")
     ]
     if not zone_ids:
+        _LOGGER.debug("person_in_room_presence_zones(%s): no valid zone_ids → False", person_entity_id)
         return False
 
     try:
@@ -223,31 +225,42 @@ def person_in_room_presence_zones(
         for tracker in get_person_device_tracker_entity_ids(hass, person_entity_id):
             ts = hass.states.get(tracker)
             if not ts or ts.state in ("unknown", "unavailable", ""):
+                _LOGGER.debug("person_in_room_presence_zones: tracker %s state=%s (skip)", tracker, ts.state if ts else None)
                 continue
             lat = ts.attributes.get("latitude")
             lon = ts.attributes.get("longitude")
             if lat is None or lon is None:
+                _LOGGER.debug("person_in_room_presence_zones: tracker %s missing lat/lon", tracker)
                 continue
             try:
                 lat_f, lon_f = float(lat), float(lon)
             except (TypeError, ValueError):
+                _LOGGER.debug("person_in_room_presence_zones: tracker %s invalid lat/lon (%s, %s)", tracker, lat, lon)
                 continue
             for zid in zone_ids:
                 zs = hass.states.get(zid)
                 if zs and in_zone(zs, lat_f, lon_f):
+                    _LOGGER.debug("person_in_room_presence_zones(%s): tracker %s GPS inside %s → True", person_entity_id, tracker, zid)
                     return True
+            _LOGGER.debug("person_in_room_presence_zones: tracker %s (%.5f, %.5f) not inside any zone %s", tracker, lat_f, lon_f, zone_ids)
 
     ps = hass.states.get(person_entity_id)
     if not ps or ps.state in ("unknown", "unavailable", ""):
+        _LOGGER.debug("person_in_room_presence_zones(%s): person state=%s → False", person_entity_id, ps.state if ps else None)
         return False
     raw = (ps.state or "").strip().lower()
     if raw == "not_home":
+        _LOGGER.debug("person_in_room_presence_zones(%s): person.state='not_home' → False", person_entity_id)
         return False
     if person_in_any_configured_zone(hass, person_entity_id, zone_ids):
+        _LOGGER.debug("person_in_room_presence_zones(%s): person_in_any_configured_zone matched → True", person_entity_id)
         return True
     for zid in zone_ids:
-        if _person_state_matches_presence_zone(raw, _presence_zone_match_tokens(hass, zid)):
+        tokens = _presence_zone_match_tokens(hass, zid)
+        if _person_state_matches_presence_zone(raw, tokens):
+            _LOGGER.debug("person_in_room_presence_zones(%s): person.state=%s matched zone %s tokens %s → True", person_entity_id, raw, zid, tokens)
             return True
+    _LOGGER.debug("person_in_room_presence_zones(%s): no match, person.state=%s, zones=%s → False", person_entity_id, raw, zone_ids)
     return False
 
 
@@ -292,7 +305,6 @@ class EnergyMonitor:
         self._stove_power_below_since: dict[str, datetime | None] = {}
         self._stove_power_above_since: dict[str, datetime | None] = {}
         self._stove_presence_window_start: dict[str, datetime | None] = {}
-        self._power_listener_unsub: list = []  # Unsubscribe callbacks for state listeners
         self._presence_listener_unsub: list = []  # person.* + zone.* for presence automation
         self._room_budget_announced: set[str] = set()
         self._room_budget_announced_date: str = ""
@@ -342,6 +354,8 @@ class EnergyMonitor:
         # Zone-health state listeners (recovery TTS); recorder pull uses device_trackers only. "Refresh Status" forces pull.
         self._zone_health_recorder_refresh_interval = timedelta(hours=1)
         self._zone_health_tts_lock = asyncio.Lock()
+        # Serialize zone-health recorder refresh + JSON append to prevent interleaved writes
+        self._zone_health_refresh_lock = asyncio.Lock()
         # "Nearby" zone guidance: track whether we've already created/dismissed the persistent_notification
         self._nearby_zone_notification_shown: bool = False
         # Zone health: defer TTS/push/recovery until HA has been up 10 minutes (recorder / mobile_app settle)
@@ -603,7 +617,15 @@ class EnergyMonitor:
         ``force`` is True (used by the dashboard "Refresh Status" action).
 
         Returns True if a full recorder pull ran (and JSON snapshots were appended).
+
+        Uses ``_zone_health_refresh_lock`` to prevent concurrent refresh+append races.
+        Recorder queries run on the recorder's dedicated executor to avoid blocking HA.
         """
+        async with self._zone_health_refresh_lock:
+            return await self._async_refresh_zone_health_recorder_cache_locked(force)
+
+    async def _async_refresh_zone_health_recorder_cache_locked(self, force: bool) -> bool:
+        """Inner implementation of zone health recorder refresh (must hold lock)."""
         now = dt_util.now()
         if not force and (
             self._zone_health_recorder_last_refresh
@@ -621,11 +643,7 @@ class EnergyMonitor:
             return False
 
         try:
-            from homeassistant.components.recorder.history import (
-                get_significant_states_with_session,
-                state_changes_during_period,
-            )
-            from homeassistant.components.recorder.util import session_scope
+            from homeassistant.components.recorder import get_instance
         except ImportError:
             _LOGGER.debug("Recorder not available for zone health history")
             self._zone_health_recorder_last_refresh = now
@@ -653,83 +671,24 @@ class EnergyMonitor:
                 person_key,
                 len(entity_ids),
             )
-            states_union: set[str] = set()
-            tracker_classified: dict[str, set[str]] = {}
-            row_debug: dict[str, dict[str, int]] = {
-                eid: {"state_changes": 0, "significant": 0} for eid in entity_ids
-            }
-            last_home_dt: datetime | None = None
-            last_nearby_dt: datetime | None = None
-            last_away_dt: datetime | None = None
+
+            # Run recorder queries on the recorder's dedicated executor to avoid blocking HA
             try:
-
-                def _consume_state_row(st, source_eid: str) -> None:
-                    nonlocal last_home_dt, last_nearby_dt, last_away_dt
-                    raw = getattr(st, "state", None) or (
-                        st.get("state") if isinstance(st, dict) else None
-                    )
-                    if not raw:
-                        return
-                    classified = self._classify_zone_health_state_with_nearby_tokens(
-                        raw, nearby_tokens
-                    )
-                    if classified is None:
-                        return
-                    states_union.add(classified)
-                    tracker_classified.setdefault(source_eid, set()).add(classified)
-                    lc = getattr(st, "last_changed", None) or getattr(
-                        st, "last_updated", None
-                    )
-                    if lc is None and isinstance(st, dict):
-                        lc = st.get("last_changed") or st.get("last_updated")
-                    if lc is not None:
-                        if classified == "home":
-                            if last_home_dt is None or lc > last_home_dt:
-                                last_home_dt = lc
-                        elif classified == "nearby":
-                            if last_nearby_dt is None or lc > last_nearby_dt:
-                                last_nearby_dt = lc
-                        elif classified == "not_home":
-                            if last_away_dt is None or lc > last_away_dt:
-                                last_away_dt = lc
-
-                # state_changes_during_period matches HA Activity (true state changes per entity).
-                for eid in entity_ids:
-                    eid_lower = eid.lower()
-                    per_ent = state_changes_during_period(
-                        self.hass,
-                        start_time,
-                        now,
-                        entity_id=eid_lower,
-                        no_attributes=True,
-                        include_start_time_state=True,
-                    )
-                    rows = per_ent.get(eid_lower) or per_ent.get(eid) or []
-                    row_debug[eid]["state_changes"] = len(rows)
-                    for st in rows:
-                        _consume_state_row(st, eid_lower)
-                # Merge broader recorder rows so we still catch edge cases either API might miss.
-                with session_scope(hass=self.hass, read_only=True) as session:
-                    states_dict = get_significant_states_with_session(
-                        self.hass,
-                        session,
-                        start_time,
-                        now,
-                        entity_ids,
-                        None,
-                        include_start_time_state=True,
-                        significant_changes_only=False,
-                        minimal_response=False,
-                        no_attributes=False,
-                    )
-                for eid in entity_ids:
-                    sig_list = states_dict.get(eid) or []
-                    row_debug[eid]["significant"] = len(sig_list)
-                    eid_lower = eid.lower()
-                    for st in sig_list:
-                        _consume_state_row(st, eid_lower)
+                result = await get_instance(self.hass).async_add_executor_job(
+                    self._zone_health_recorder_query_sync,
+                    entity_ids,
+                    start_time,
+                    now,
+                    nearby_tokens,
+                )
+                states_union, tracker_classified, row_debug, last_home_dt, last_nearby_dt, last_away_dt = result
             except Exception as e:
                 _LOGGER.warning("Zone health recorder fetch failed for %s: %s", person_key, e)
+                states_union = set()
+                tracker_classified = {}
+                row_debug = {}
+                last_home_dt = last_nearby_dt = last_away_dt = None
+
             self._zone_health_tracker_recorder_cache[person_key] = {
                 tid: set(states) for tid, states in tracker_classified.items()
             }
@@ -746,6 +705,7 @@ class EnergyMonitor:
             )
 
         person_keys = [str(p).strip().lower() for p in all_persons]
+        # Await the snapshot append so health evaluation sees fresh data
         await self.hass.async_add_executor_job(
             self._zone_health_append_snapshots_blocking, now, history_days, person_keys
         )
@@ -757,6 +717,101 @@ class EnergyMonitor:
             len(all_persons),
         )
         return True
+
+    def _zone_health_recorder_query_sync(
+        self,
+        entity_ids: list[str],
+        start_time: datetime,
+        end_time: datetime,
+        nearby_tokens: set[str],
+    ) -> tuple[set[str], dict[str, set[str]], dict, datetime | None, datetime | None, datetime | None]:
+        """Synchronous recorder query for zone health (runs on recorder executor).
+
+        Returns (states_union, tracker_classified, row_debug, last_home_dt, last_nearby_dt, last_away_dt).
+        """
+        from homeassistant.components.recorder.history import (
+            get_significant_states_with_session,
+            state_changes_during_period,
+        )
+        from homeassistant.components.recorder.util import session_scope
+
+        states_union: set[str] = set()
+        tracker_classified: dict[str, set[str]] = {}
+        row_debug: dict[str, dict[str, int]] = {
+            eid: {"state_changes": 0, "significant": 0} for eid in entity_ids
+        }
+        last_home_dt: datetime | None = None
+        last_nearby_dt: datetime | None = None
+        last_away_dt: datetime | None = None
+
+        def _consume_state_row(st, source_eid: str) -> None:
+            nonlocal last_home_dt, last_nearby_dt, last_away_dt
+            raw = getattr(st, "state", None) or (
+                st.get("state") if isinstance(st, dict) else None
+            )
+            if not raw:
+                return
+            classified = self._classify_zone_health_state_with_nearby_tokens(
+                raw, nearby_tokens
+            )
+            if classified is None:
+                return
+            states_union.add(classified)
+            tracker_classified.setdefault(source_eid, set()).add(classified)
+            lc = getattr(st, "last_changed", None) or getattr(
+                st, "last_updated", None
+            )
+            if lc is None and isinstance(st, dict):
+                lc = st.get("last_changed") or st.get("last_updated")
+            if lc is not None:
+                if classified == "home":
+                    if last_home_dt is None or lc > last_home_dt:
+                        last_home_dt = lc
+                elif classified == "nearby":
+                    if last_nearby_dt is None or lc > last_nearby_dt:
+                        last_nearby_dt = lc
+                elif classified == "not_home":
+                    if last_away_dt is None or lc > last_away_dt:
+                        last_away_dt = lc
+
+        # state_changes_during_period matches HA Activity (true state changes per entity).
+        for eid in entity_ids:
+            eid_lower = eid.lower()
+            per_ent = state_changes_during_period(
+                self.hass,
+                start_time,
+                end_time,
+                entity_id=eid_lower,
+                no_attributes=True,
+                include_start_time_state=True,
+            )
+            rows = per_ent.get(eid_lower) or per_ent.get(eid) or []
+            row_debug[eid]["state_changes"] = len(rows)
+            for st in rows:
+                _consume_state_row(st, eid_lower)
+
+        # Merge broader recorder rows so we still catch edge cases either API might miss.
+        with session_scope(hass=self.hass, read_only=True) as session:
+            states_dict = get_significant_states_with_session(
+                self.hass,
+                session,
+                start_time,
+                end_time,
+                entity_ids,
+                None,
+                include_start_time_state=True,
+                significant_changes_only=False,
+                minimal_response=False,
+                no_attributes=False,
+            )
+        for eid in entity_ids:
+            sig_list = states_dict.get(eid) or []
+            row_debug[eid]["significant"] = len(sig_list)
+            eid_lower = eid.lower()
+            for st in sig_list:
+                _consume_state_row(st, eid_lower)
+
+        return states_union, tracker_classified, row_debug, last_home_dt, last_nearby_dt, last_away_dt
 
     def _zone_health_person_entry(self, person_key: str) -> dict | None:
         pk = str(person_key).strip().lower()
@@ -1409,12 +1464,12 @@ class EnergyMonitor:
         path = self._budget_boost_slots_path()
 
         def _write() -> None:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(self._budget_boost_slots_fired, f, indent=2)
+            from .json_store import atomic_save_json
+            atomic_save_json(path, self._budget_boost_slots_fired)
 
         try:
             await self.hass.async_add_executor_job(_write)
-        except OSError as err:
+        except Exception as err:
             _LOGGER.warning("Budget boost slots save failed: %s", err)
 
     @staticmethod
@@ -2190,6 +2245,75 @@ class EnergyMonitor:
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
         room_name = str(room.get("name") or "Room")
         message = f"{prefix} {person_name} is nearby, turning on {phrase} in {room_name}."
+        await self._async_speak_appliance_automation_tts(room, message)
+
+    async def _async_speak_presence_turn_off_tts_for_room(
+        self,
+        room: dict,
+        turned_off_switch_ids: list[str],
+    ) -> None:
+        """Speak a context-aware TTS when zone-based presence turns off devices.
+
+        - AC only → "turning off the air conditioning."
+        - Outlets only → "turning off the outlets." (or single outlet name)
+        - Both → "turning off the outlets and air conditioning."
+        - Neither → no TTS.
+
+        Mirrors _async_speak_presence_restore_tts_for_room but for leaving zones.
+        """
+        mp = (room.get("media_player") or "").strip()
+        if not mp.startswith("media_player."):
+            return
+        person_ent = _normalize_presence_person_entity(room.get("presence_person_entity"))
+        if not person_ent:
+            return
+        zones = room.get("presence_zone_entities") or []
+        if not zones:
+            return
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        if not tts_settings.get("presence_tts_enabled", True):
+            return
+        if not self._tts_line_enabled(tts_settings, "presence_left"):
+            return
+
+        person_state = self.hass.states.get(person_ent)
+        if person_state and person_state.attributes:
+            person_name = (
+                person_state.attributes.get("friendly_name")
+                or str(person_ent).replace("person.", "").replace("_", " ").title()
+            )
+        else:
+            person_name = str(person_ent).replace("person.", "").replace("_", " ").title()
+
+        ac_names, other_names = self._presence_restore_outlet_classification(
+            room, turned_off_switch_ids
+        )
+        has_ac = bool(ac_names)
+        has_outlets = bool(other_names)
+        if not has_ac and not has_outlets:
+            return
+        if has_ac and has_outlets:
+            phrase = "the outlets and air conditioning"
+        elif has_ac:
+            phrase = "the air conditioning"
+        else:
+            phrase = "the outlets" if len(other_names) > 1 else f"the {other_names[0]}"
+
+        prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+        room_name = str(room.get("name") or "Room")
+        msg_template = tts_settings.get("presence_left_msg") or ""
+        if msg_template:
+            try:
+                message = msg_template.format(
+                    prefix=prefix,
+                    person_name=person_name,
+                    room_name=room_name,
+                    device_phrase=phrase,
+                )
+            except (KeyError, ValueError):
+                message = f"{prefix} {person_name} has left {room_name}, turning off {phrase}."
+        else:
+            message = f"{prefix} {person_name} has left {room_name}, turning off {phrase}."
         await self._async_speak_appliance_automation_tts(room, message)
 
     async def _tick_vent_automation(
@@ -3644,12 +3768,14 @@ class EnergyMonitor:
         self, room: dict, room_id: str, *, reason: str
     ) -> None:
         pending = self._presence_auto_turned_off.setdefault(room_id, set())
+        turned_off_switch_ids: list[str] = []
         for sw in self._presence_auto_off_switch_targets(room):
             if sw in pending:
                 continue
             try:
                 await self._async_switch_set(sw, False)
                 pending.add(sw)
+                turned_off_switch_ids.append(sw)
                 _LOGGER.info(
                     "Presence auto-off: turned off %s (room %s %s)",
                     sw,
@@ -3669,6 +3795,10 @@ class EnergyMonitor:
                     )
             except Exception as e:
                 _LOGGER.warning("Presence auto-off failed for %s: %s", sw, e)
+        if turned_off_switch_ids:
+            await self._async_speak_presence_turn_off_tts_for_room(
+                room, turned_off_switch_ids
+            )
 
     async def _presence_restore_room_switches(self, room: dict, room_id: str) -> None:
         allowed = set(self._presence_auto_off_configured_switch_ids(room))
@@ -3713,8 +3843,17 @@ class EnergyMonitor:
         if not pending:
             self._presence_auto_turned_off.pop(room_id, None)
 
-    async def _apply_presence_auto_off_for_room(self, room: dict) -> None:
-        """On zone transitions only: turn off when leaving; restore once when returning."""
+    async def _apply_presence_auto_off_for_room(
+        self, room: dict, *, force_reevaluate: bool = False
+    ) -> None:
+        """On zone transitions: turn off when leaving; restore once when returning.
+
+        When ``force_reevaluate=True`` (e.g. after config save), bypass the
+        "no change" early return so updated presence_auto_off settings take
+        effect immediately. This does NOT clear _presence_auto_turned_off so
+        devices that were auto-turned-off can still be restored when the person
+        returns to zone.
+        """
         room_id = room.get("id", room["name"].lower().replace(" ", "_"))
         async with self._presence_room_lock(room_id):
             person_ent = room.get("presence_person_entity")
@@ -3727,7 +3866,7 @@ class EnergyMonitor:
             in_comfort = person_in_room_presence_zones(self.hass, person_ent, zone_ids)
             prev = self._room_presence_was_in_comfort.get(room_id)
 
-            if prev is not None and prev == in_comfort:
+            if prev is not None and prev == in_comfort and not force_reevaluate:
                 return
 
             self._room_presence_was_in_comfort[room_id] = in_comfort
@@ -3737,6 +3876,9 @@ class EnergyMonitor:
                     await self._presence_turn_off_room_switches(
                         room, room_id, reason="startup outside zones"
                     )
+                elif in_comfort and force_reevaluate:
+                    # Config save while in zone: restore any pending auto-off switches
+                    await self._presence_restore_room_switches(room, room_id)
                 return
 
             if prev is True and not in_comfort:
@@ -3744,6 +3886,9 @@ class EnergyMonitor:
                     room, room_id, reason="left zones"
                 )
             elif prev is False and in_comfort:
+                await self._presence_restore_room_switches(room, room_id)
+            elif force_reevaluate and in_comfort:
+                # Settings changed while in zone: restore any pending switches
                 await self._presence_restore_room_switches(room, room_id)
 
     async def _presence_on_tracked_entity(self, entity_id: str | None) -> None:
@@ -3766,10 +3911,18 @@ class EnergyMonitor:
             except Exception:
                 pass
         self._presence_listener_unsub = []
+        # Clear cached comfort state so changed settings (presence_auto_off toggles)
+        # are re-evaluated immediately. Do NOT clear _presence_auto_turned_off so
+        # devices that were auto-turned-off can still be restored when person
+        # returns to zone (fixes regression where config save while in-zone left
+        # devices off until next leave/return cycle).
+        self._room_presence_was_in_comfort.clear()
         self._setup_presence_listeners()
         self._setup_manual_toggle_switch_listeners()
         for room in self.config_manager.energy_config.get("rooms", []):
-            self.hass.async_create_task(self._apply_presence_auto_off_for_room(room))
+            self.hass.async_create_task(
+                self._apply_presence_auto_off_for_room(room, force_reevaluate=True)
+            )
 
     def refresh_door_window_listeners(self) -> None:
         """Teardown and re-register door/window/lock/presence/contact listeners.
@@ -3786,6 +3939,21 @@ class EnergyMonitor:
         # not absorbed as a duplicate (audit BUG 6 re-arm path).
         self._door_window_last_signal_state.clear()
         self._setup_door_window_listeners()
+
+    def refresh_zone_health_listeners(self) -> None:
+        """Teardown and re-register zone health person/tracker listeners.
+
+        Called from ``config_manager.async_update_energy`` after a config save
+        so changes to ``presence_person_entity`` take effect immediately for
+        zone health monitoring without requiring an integration reload.
+        """
+        for unsub in self._person_zone_health_listener_unsub:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._person_zone_health_listener_unsub.clear()
+        self._setup_zone_health_listeners()
 
     def _setup_presence_listeners(self) -> None:
         track_ids: set[str] = set()
@@ -4049,9 +4217,6 @@ class EnergyMonitor:
         self._presence_listener_unsub = []
         self._teardown_manual_toggle_switch_listeners()
         self._teardown_door_window_listeners()
-        for unsub in self._power_listener_unsub:
-            unsub()
-        self._power_listener_unsub = []
         for unsub in self._person_zone_health_listener_unsub:
             try:
                 unsub()

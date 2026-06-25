@@ -125,6 +125,22 @@ def get_tts_queue(hass: HomeAssistant) -> TTSPendingQueue:
     return _tts_queue
 
 
+async def async_reset_tts_queue() -> None:
+    """Cancel poll tasks and reset the global TTS queue on integration unload."""
+    global _tts_queue
+    if _tts_queue is not None:
+        for task in list(_tts_queue._poll_tasks.values()):
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        _tts_queue._poll_tasks.clear()
+        _tts_queue._queues.clear()
+    _tts_queue = None
+
+
 async def async_send_tts_or_queue(
     hass: HomeAssistant,
     media_player: str,

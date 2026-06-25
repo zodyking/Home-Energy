@@ -801,6 +801,10 @@ class ConfigManager:
         # (audit BUG 1).
         if monitor is not None and hasattr(monitor, "refresh_door_window_listeners"):
             monitor.refresh_door_window_listeners()
+        # Refresh zone health listeners so changes to presence_person_entity
+        # take effect immediately for zone health monitoring.
+        if monitor is not None and hasattr(monitor, "refresh_zone_health_listeners"):
+            monitor.refresh_zone_health_listeners()
 
     async def async_prune_kwh_alerts_sent_for_current_config(self) -> None:
         """Drop kwh_alerts_sent entries that are no longer eligible tiers after config change."""

@@ -50,7 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Start background statistics cache primer for instant page loads
     from .websocket import async_register_statistics_cache_primer
-    await async_register_statistics_cache_primer(hass)
+    hass.data[DOMAIN]["statistics_primer_unsub"] = await async_register_statistics_cache_primer(hass)
 
     # Room efficiency ratings: hourly recompute + JSON under config/data
     from .room_ratings import ratings_payload_for_ws, recompute_room_ratings
@@ -89,6 +89,11 @@ async def async_options_update_listener(hass: HomeAssistant, entry: ConfigEntry)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    # Unsubscribe statistics cache primer (prevents stacking timers on reload)
+    stats_primer_unsub = hass.data.get(DOMAIN, {}).get("statistics_primer_unsub")
+    if callable(stats_primer_unsub):
+        stats_primer_unsub()
+
     ratings_unsub = hass.data.get(DOMAIN, {}).get("room_ratings_unsub")
     if ratings_unsub:
         ratings_unsub()
@@ -101,6 +106,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     energy_monitor = hass.data.get(DOMAIN, {}).get("energy_monitor")
     if energy_monitor:
         await energy_monitor.async_stop()
+
+    # Reset TTS queue (cancel poll tasks)
+    from .tts_queue import async_reset_tts_queue
+    await async_reset_tts_queue()
 
     # Persist energy and tracking data before cleanup (survives reload/restart)
     config_manager = hass.data.get(DOMAIN, {}).get("config_manager")
