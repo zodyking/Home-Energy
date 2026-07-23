@@ -124,6 +124,22 @@ function isContactOpen(state) {
   return state === 'on' || state === 'open';
 }
 
+/** Escape a string for safe interpolation into an HTML text node. */
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** Escape a string for safe interpolation into a double-quoted HTML attribute. */
+function escapeAttr(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;');
+}
+
 class EnergyPanel extends HTMLElement {
   constructor() {
     super();
@@ -141,11 +157,17 @@ class EnergyPanel extends HTMLElement {
     this._statsRefreshInterval = null;
     this._loading = true;
     this._error = null;
+    /** Guards against stacked concurrent loads (hass setter fires per state change). */
+    this._configLoadInFlight = false;
+    /** Guards the 1s power poll against overlapping/out-of-order responses. */
+    this._powerDataInFlight = false;
     this._draggedRoomCard = null;
     this._graphOpen = null;  // { type, roomId?, roomName?, billingStart?, billingEnd? }
     this._graphData = null;  // from get_daily_history
     this._graphLoading = false;
     this._graphLoadError = null;
+    /** Monotonic token so a slow graph fetch cannot clobber a newer one. */
+    this._graphLoadToken = 0;
     this._apexChartInstance = null;
     this._statsData = null;  // from get_statistics
     this._statsLoading = false;
@@ -202,7 +224,9 @@ class EnergyPanel extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._config) {
+    // hass is re-assigned on every HA state change; without the in-flight
+    // guard a slow first load stacked many concurrent _loadConfig calls.
+    if (!this._config && !this._configLoadInFlight) {
       this._loadConfig();
     }
     if (this._showSettings && hass?.states) {
@@ -337,6 +361,7 @@ class EnergyPanel extends HTMLElement {
   async _loadConfig(options = {}) {
     if (!this._hass) return;
 
+    this._configLoadInFlight = true;
     const silent = options.silent === true || this._showSettings;
     if (!silent) {
       this._loading = true;
@@ -381,12 +406,19 @@ class EnergyPanel extends HTMLElement {
       this._loading = false;
       this._error = e.message || 'Failed to load configuration';
       this._render();
+    } finally {
+      this._configLoadInFlight = false;
     }
   }
 
   async _loadPowerData(options = {}) {
     if (!this._hass) return;
     if (this._showSettings && !options.force) return;
+    // The 1s refresh interval must not stack overlapping requests when the
+    // backend is slow — overlapping responses could apply out of order and
+    // briefly show stale data.
+    if (this._powerDataInFlight) return;
+    this._powerDataInFlight = true;
 
     try {
       this._powerData = await this._hass.callWS({ type: 'smart_dashboards/get_power_data' });
@@ -395,6 +427,8 @@ class EnergyPanel extends HTMLElement {
       }
     } catch (e) {
       console.error('Failed to load power data:', e);
+    } finally {
+      this._powerDataInFlight = false;
     }
   }
 
@@ -913,6 +947,47 @@ class EnergyPanel extends HTMLElement {
     return { date_start: iso(start), date_end: iso(end) };
   }
 
+  /**
+   * One <tr> of the statistics room table. Shared by _renderStatisticsView
+   * (initial render) and _updateStatisticsDisplay (live refresh) — the two
+   * previously carried duplicated, drift-prone copies of this template.
+   */
+  _statRoomTableRowHtml(r, dateStart, dateEnd, effPrefixTag) {
+    const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const rid = String(r.id || '').replace(/"/g, '&quot;');
+    const effRatings = r.ratings;
+    const effStars =
+      effRatings != null &&
+      effRatings.stars != null &&
+      Number.isFinite(Number(effRatings.stars))
+        ? Number(effRatings.stars)
+        : 0;
+    const effPrefix = `${effPrefixTag}_${String(r.id || 'room').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    const effStarsHtml = this._formatEfficiencyStarsSvg(effStars, effPrefix);
+    const effCell = `<button type="button" class="stat-room-efficiency-rating has-tooltip" data-stat-room-rating="${rid}"
+      title="Efficiency — tap for details" aria-label="Room efficiency, tap for details">
+      <span class="room-efficiency-stars stat-room-efficiency-stars">${effStarsHtml}</span>
+    </button>`;
+    const eventCell = (graphType, count, label) => (dateStart && dateEnd
+      ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="${graphType}" data-room-id="${rid}" data-room-name="${rname}" title="${label}">${count ?? 0}</span>`
+      : `${count ?? 0}`);
+    const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
+    const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
+    const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
+    return `
+    <tr>
+      <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
+      <td class="stat-efficiency-cell">${effCell}</td>
+      <td>${(Number(r.pct) || 0).toFixed(1)}%</td>
+      <td>${eventCell('stat_room_warnings', r.warnings, 'Room warning log')}</td>
+      <td>${eventCell('stat_room_shutoffs', r.shutoffs, 'Room shutoff log')}</td>
+      <td>${eventCell('stat_room_power_cycles', r.power_cycles, 'Room cycle log')}</td>
+      <td>${hi}</td>
+      <td>${lo}</td>
+      <td>${avg}</td>
+    </tr>`;
+  }
+
   _updateStatisticsDisplay() {
     if (!this._statsData || this._showSettings) return;
     const s = this._statsData;
@@ -945,51 +1020,9 @@ class EnergyPanel extends HTMLElement {
     const rooms = s.rooms || [];
     const tbody = this.shadowRoot.querySelector('#stat-rooms-tbody');
     if (tbody) {
-      const ds = dateStart;
-      const de = dateEnd;
       tbody.innerHTML = rooms.length === 0
         ? '<tr><td colspan="9" class="statistics-empty">No room data for this range.</td></tr>'
-        : rooms.map((r) => {
-          const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-          const rid = String(r.id || '').replace(/"/g, '&quot;');
-          const effRatings = r.ratings;
-          const effStars =
-            effRatings != null &&
-            effRatings.stars != null &&
-            Number.isFinite(Number(effRatings.stars))
-              ? Number(effRatings.stars)
-              : 0;
-          const effPrefix = `stat_upd_${String(r.id || 'room').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-          const effStarsHtml = this._formatEfficiencyStarsSvg(effStars, effPrefix);
-          const effCell = `<button type="button" class="stat-room-efficiency-rating has-tooltip" data-stat-room-rating="${rid}"
-            title="Efficiency — tap for details" aria-label="Room efficiency, tap for details">
-            <span class="room-efficiency-stars stat-room-efficiency-stars">${effStarsHtml}</span>
-          </button>`;
-          const warnCell = ds && de
-            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log">${r.warnings ?? 0}</span>`
-            : `${r.warnings ?? 0}`;
-          const shutCell = ds && de
-            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_shutoffs" data-room-id="${rid}" data-room-name="${rname}" title="Room shutoff log">${r.shutoffs ?? 0}</span>`
-            : `${r.shutoffs ?? 0}`;
-          const cycCell = ds && de
-            ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_power_cycles" data-room-id="${rid}" data-room-name="${rname}" title="Room cycle log">${r.power_cycles ?? 0}</span>`
-            : `${r.power_cycles ?? 0}`;
-          const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
-          const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
-          const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
-          return `
-          <tr>
-            <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
-            <td class="stat-efficiency-cell">${effCell}</td>
-            <td>${(r.pct ?? 0).toFixed(1)}%</td>
-            <td>${warnCell}</td>
-            <td>${shutCell}</td>
-            <td>${cycCell}</td>
-            <td>${hi}</td>
-            <td>${lo}</td>
-            <td>${avg}</td>
-          </tr>`;
-        }).join('');
+        : rooms.map((r) => this._statRoomTableRowHtml(r, dateStart, dateEnd, 'stat_upd')).join('');
     }
   }
 
@@ -1192,8 +1225,8 @@ class EnergyPanel extends HTMLElement {
     let totalWatts = 0;
     let totalDayWh = 0;
     rooms.forEach(r => {
-      totalWatts += r.total_watts;
-      totalDayWh += r.total_day_wh;
+      totalWatts += Number(r.total_watts) || 0;
+      totalDayWh += Number(r.total_day_wh) || 0;
     });
 
     const totalWattsEl = this.shadowRoot.querySelector('#summary-total-watts');
@@ -1224,8 +1257,12 @@ class EnergyPanel extends HTMLElement {
       // Update room totals (watts only in header; kWh is in the bar)
       const totalWattsSpan = roomCard.querySelector('.room-total-watts');
       if (totalWattsSpan) {
-        totalWattsSpan.textContent = `${room.total_watts.toFixed(1)} W`;
-        totalWattsSpan.classList.toggle('over-threshold', threshold > 0 && room.total_watts > threshold);
+        const rw = Number(room.total_watts) || 0;
+        totalWattsSpan.textContent = `${rw.toFixed(1)} W`;
+        // Keep data-watts in sync: the load-rate popup reads it on click, and
+        // it was previously only written at full render time (stale watts bug).
+        totalWattsSpan.dataset.watts = String(rw);
+        totalWattsSpan.classList.toggle('over-threshold', threshold > 0 && rw > threshold);
       }
 
       // Budget bar updates
@@ -1298,7 +1335,9 @@ class EnergyPanel extends HTMLElement {
 
       // Enforcement badge update
       const pe = this._config?.power_enforcement || {};
-      const enfOn = pe.enabled && (pe.rooms_enabled || []).includes(room.id);
+      // rooms_enabled stores canonical config ids; the power row id (room.id)
+      // may differ in casing/spacing, so match on the resolved cardId.
+      const enfOn = pe.enabled && (pe.rooms_enabled || []).includes(cardId);
       const badge = roomCard.querySelector('.enforcement-badge');
       if (badge && enfOn) {
         const p = typeof room.enforcement_phase === 'number'
@@ -1363,9 +1402,14 @@ class EnergyPanel extends HTMLElement {
         const isFridge = deviceType === 'fridge';
         const isVentLike = isVentLikeType(deviceType);
         const isAppliance = deviceType === 'stove' || deviceType === 'microwave';
+        // Null-safe plug watts: the render path already guards with ?. but this
+        // 1s update path previously crashed (and froze all live updates) when a
+        // power row was missing plug1/plug2.
+        const p1W = Number(outlet.plug1?.watts) || 0;
+        const p2W = Number(outlet.plug2?.watts) || 0;
         const outletTotal = isAppliance || isSingleOutlet || isMinisplit || isFridge || isVentLike
-          ? outlet.plug1.watts
-          : outlet.plug1.watts + outlet.plug2.watts;
+          ? p1W
+          : p1W + p2W;
 
         const plug1Watts = deviceCard.querySelector('.plug1-watts');
         const plug2Watts = deviceCard.querySelector('.plug2-watts');
@@ -1374,18 +1418,18 @@ class EnergyPanel extends HTMLElement {
         const stoveDoorWatts = deviceCard.querySelector('.stove-door-watts');
         const msLcdWatts = deviceCard.querySelector('.ms-lcd-watts');
 
-        if (plug1Watts) plug1Watts.textContent = `${outlet.plug1.watts.toFixed(1)}W`;
-        if (plug2Watts) plug2Watts.textContent = `${outlet.plug2.watts.toFixed(1)}W`;
+        if (plug1Watts) plug1Watts.textContent = `${p1W.toFixed(1)}W`;
+        if (plug2Watts) plug2Watts.textContent = `${p2W.toFixed(1)}W`;
         if (mwLcdWatts) {
-          mwLcdWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
+          mwLcdWatts.textContent = `${p1W.toFixed(1)} W`;
           mwLcdWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
         }
         if (msLcdWatts) {
-          msLcdWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
+          msLcdWatts.textContent = `${p1W.toFixed(1)} W`;
           msLcdWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
         }
         if (stoveDoorWatts) {
-          stoveDoorWatts.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
+          stoveDoorWatts.textContent = `${p1W.toFixed(1)} W`;
           stoveDoorWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
         }
         const stoveTimerEl = deviceCard.querySelector('.stove-timer-remaining');
@@ -1405,9 +1449,9 @@ class EnergyPanel extends HTMLElement {
         }
         if (isAppliance) {
           const mwBody = deviceCard.querySelector('.mw-body');
-          if (mwBody) mwBody.classList.toggle('mw-on', outlet.plug1.watts > 0.1);
+          if (mwBody) mwBody.classList.toggle('mw-on', p1W > 0.1);
           if (deviceType === 'stove') {
-            const active = outlet.plug1.watts > 0.1;
+            const active = p1W > 0.1;
             const ovenDoor = deviceCard.querySelector('.stove-oven-door');
             const firstKnob = deviceCard.querySelector('.stove-knob');
             if (ovenDoor) ovenDoor.classList.toggle('active', active);
@@ -1416,19 +1460,19 @@ class EnergyPanel extends HTMLElement {
         }
         if (isMinisplit) {
           const msUnit = deviceCard.querySelector('.ms-unit');
-          if (msUnit) msUnit.classList.toggle('ms-on', outlet.plug1.watts > 0.1);
+          if (msUnit) msUnit.classList.toggle('ms-on', p1W > 0.1);
         }
         if (isVentLike) {
           const cvWatts = deviceCard.querySelector('.ceiling-vent-watts');
           if (cvWatts) {
-            const cvFmt = this._formatCeilingVentWatts(outlet.plug1.watts);
+            const cvFmt = this._formatCeilingVentWatts(p1W);
             cvWatts.textContent = cvFmt.text;
             if (cvFmt.title) cvWatts.setAttribute('title', cvFmt.title);
             else cvWatts.removeAttribute('title');
             cvWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
           }
           const ventBody = deviceCard.querySelector('.ceiling-vent-body');
-          if (ventBody) ventBody.classList.toggle('vent-on', outlet.plug1.watts > 0.1);
+          if (ventBody) ventBody.classList.toggle('vent-on', p1W > 0.1);
           if (deviceType === 'wall_heater') {
             const nowEl = deviceCard.querySelector('.heater-dash-now-val');
             const thEl = deviceCard.querySelector('.heater-dash-threshold-val');
@@ -1463,11 +1507,11 @@ class EnergyPanel extends HTMLElement {
         if (isFridge) {
           const fridgeW = deviceCard.querySelector('.fridge-watts');
           if (fridgeW) {
-            fridgeW.textContent = `${outlet.plug1.watts.toFixed(1)} W`;
+            fridgeW.textContent = `${p1W.toFixed(1)} W`;
             fridgeW.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
           }
           const fridgeBody = deviceCard.querySelector('.fridge-body');
-          if (fridgeBody) fridgeBody.classList.toggle('fridge-on', outlet.plug1.watts > 0.1);
+          if (fridgeBody) fridgeBody.classList.toggle('fridge-on', p1W > 0.1);
         }
         if (deviceType === 'light') {
           const isOn = outlet.switch_state === true;
@@ -1818,12 +1862,13 @@ class EnergyPanel extends HTMLElement {
 
       .view-tab {
         flex: 1;
+        min-height: var(--tap-target, 44px);
         padding: 10px 16px;
         border: none;
         background: transparent;
         color: var(--disabled-text-color);
         cursor: pointer;
-        border-radius: 6px;
+        border-radius: var(--radius-sm, 6px);
         font-size: 13px;
         font-weight: 500;
         transition: all 0.2s;
@@ -4537,37 +4582,6 @@ class EnergyPanel extends HTMLElement {
         white-space: nowrap;
         font-variant-numeric: tabular-nums;
         border: 1px solid var(--card-border);
-      }
-
-      .view-tabs {
-        display: flex;
-        gap: 4px;
-        margin-bottom: 16px;
-        background: var(--secondary-background-color);
-        padding: 4px;
-        border-radius: 8px;
-      }
-
-      .view-tab {
-        flex: 1;
-        padding: 10px 16px;
-        border: none;
-        background: transparent;
-        color: var(--disabled-text-color);
-        cursor: pointer;
-        border-radius: 6px;
-        font-size: 13px;
-        font-weight: 500;
-        transition: all 0.2s;
-      }
-
-      .view-tab:hover {
-        background: rgba(255, 255, 255, 0.05);
-      }
-
-      .view-tab.active {
-        background: var(--panel-accent);
-        color: white;
       }
 
       .stove-safety-panel {
@@ -7711,6 +7725,7 @@ class EnergyPanel extends HTMLElement {
       .toggle-confirm-cancel,
       .toggle-confirm-ok {
         padding: 10px 20px;
+        min-height: var(--tap-target, 44px);
         border-radius: 8px;
         font-size: 14px;
         font-weight: 500;
@@ -8011,6 +8026,7 @@ class EnergyPanel extends HTMLElement {
       .ac-safety-cancel,
       .ac-safety-ok {
         padding: 10px 16px;
+        min-height: var(--tap-target, 44px);
         border-radius: 8px;
         font-size: 14px;
         font-weight: 500;
@@ -8175,6 +8191,7 @@ class EnergyPanel extends HTMLElement {
           </div>
         </div>
       `;
+      this._attachMenuButton();
       this._putHardRefreshOverlay(hrOverlay);
       return;
     }
@@ -8199,7 +8216,7 @@ class EnergyPanel extends HTMLElement {
                 ${icons.warning}
               </svg>
               <h3 class="empty-state-title">Error Loading Data</h3>
-              <p class="empty-state-desc">${this._error}</p>
+              <p class="empty-state-desc">${escapeHtml(this._error)}</p>
               <button class="btn btn-primary" id="retry-btn">Retry</button>
             </div>
           </div>
@@ -8207,6 +8224,9 @@ class EnergyPanel extends HTMLElement {
       `;
       const retryBtn = this.shadowRoot.querySelector('#retry-btn');
       if (retryBtn) retryBtn.addEventListener('click', () => this._loadConfig());
+      // The error screen still shows the hamburger menu on mobile; wire it up
+      // (previously only the main/settings render paths attached it).
+      this._attachMenuButton();
       this._putHardRefreshOverlay(hrOverlay);
       return;
     }
@@ -8227,8 +8247,8 @@ class EnergyPanel extends HTMLElement {
     let totalWatts = 0;
     let totalDayWh = 0;
     powerData.forEach(r => {
-      totalWatts += r.total_watts;
-      totalDayWh += r.total_day_wh;
+      totalWatts += Number(r.total_watts) || 0;
+      totalDayWh += Number(r.total_day_wh) || 0;
     });
 
     // Get event counts
@@ -8237,6 +8257,10 @@ class EnergyPanel extends HTMLElement {
     const totalPowerCycles = this._powerData?.total_power_cycles || 0;
 
     const hrOverlay = this._takeHardRefreshOverlay();
+    // Tear down transient UI (modals/popups + their window/document listeners)
+    // before replacing innerHTML, matching _renderSettings. Without this a
+    // dashboard re-render leaked listeners from any open modal/popup.
+    this._teardownTransientUI();
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
       <div class="panel-container">
@@ -8289,7 +8313,6 @@ class EnergyPanel extends HTMLElement {
               ${rooms.map((room) => this._renderRoomCard(room)).join('')}
             </div>
           `) : ''}
-          </div>
         </div>
         ${this._graphOpen ? this._renderGraphModal() : ''}
       </div>
@@ -8573,6 +8596,25 @@ class EnergyPanel extends HTMLElement {
    * - Legacy daily (31d): get_daily_history days=31 for total_* / room_* non-intraday types.
    */
   async _openGraph(type, roomId = null, roomName = null, billingRange = null, graphOpts = null) {
+    // Open the modal immediately in its loading state (the loading branch in
+    // _renderGraphModal was previously dead code: nothing appeared until the
+    // fetch finished). The token guards against an older slow response
+    // clobbering a newer graph, and against applying after the modal closes.
+    const token = (this._graphLoadToken = (this._graphLoadToken || 0) + 1);
+    this._graphOpen = {
+      type,
+      roomId,
+      roomName,
+      date_start: billingRange?.date_start || null,
+      date_end: billingRange?.date_end || null,
+      outletIndex: graphOpts?.outletIndex ?? null,
+      plugSlot: graphOpts?.plugSlot ?? null,
+      outletSeriesLabel: graphOpts?.outletSeriesLabel ?? null,
+    };
+    this._graphData = null;
+    this._graphLoading = true;
+    this._graphLoadError = null;
+    this._render();
     try {
       const isIntraday =
         type === 'total_watts_intraday' ||
@@ -8630,21 +8672,18 @@ class EnergyPanel extends HTMLElement {
       } else {
         result = await this._hass.callWS({ type: 'smart_dashboards/get_daily_history', days: 31 });
       }
-      this._graphOpen = {
-        type,
-        roomId,
-        roomName,
-        date_start: billingRange?.date_start || null,
-        date_end: billingRange?.date_end || null,
-        outletIndex: graphOpts?.outletIndex ?? null,
-        plugSlot: graphOpts?.plugSlot ?? null,
-        outletSeriesLabel: graphOpts?.outletSeriesLabel ?? null,
-      };
+      if (token !== this._graphLoadToken || !this._graphOpen) return; // superseded or closed
+      this._graphOpen.date_start = billingRange?.date_start || null;
+      this._graphOpen.date_end = billingRange?.date_end || null;
       this._graphData = result;
+      this._graphLoading = false;
       this._render();
     } catch (e) {
       console.error('Failed to load graph data:', e);
-      showToast(this.shadowRoot, 'Failed to load history', 'error');
+      if (token !== this._graphLoadToken || !this._graphOpen) return;
+      this._graphLoading = false;
+      this._graphLoadError = e?.message || 'Failed to load history';
+      this._render();
     }
   }
 
@@ -9567,47 +9606,7 @@ class EnergyPanel extends HTMLElement {
                   </thead>
                   <tbody id="stat-rooms-tbody">
                     ${rooms.length === 0 ? '<tr><td colspan="9" class="statistics-empty">No room data for this range.</td></tr>' : ''}
-                    ${rooms.map((r) => {
-                    const rname = (r.name || r.id || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-                    const rid = String(r.id || '').replace(/"/g, '&quot;');
-                    const effRatings = r.ratings;
-                    const effStars =
-                      effRatings != null &&
-                      effRatings.stars != null &&
-                      Number.isFinite(Number(effRatings.stars))
-                        ? Number(effRatings.stars)
-                        : 0;
-                    const effPrefix = `stat_${String(r.id || 'room').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-                    const effStarsHtml = this._formatEfficiencyStarsSvg(effStars, effPrefix);
-                    const effCell = `<button type="button" class="stat-room-efficiency-rating has-tooltip" data-stat-room-rating="${rid}"
-                      title="Efficiency — tap for details" aria-label="Room efficiency, tap for details">
-                      <span class="room-efficiency-stars stat-room-efficiency-stars">${effStarsHtml}</span>
-                    </button>`;
-                    const warnCell = dateStart && dateEnd
-                      ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_warnings" data-room-id="${rid}" data-room-name="${rname}" title="Room warning log">${r.warnings ?? 0}</span>`
-                      : `${r.warnings ?? 0}`;
-                    const shutCell = dateStart && dateEnd
-                      ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_shutoffs" data-room-id="${rid}" data-room-name="${rname}" title="Room shutoff log">${r.shutoffs ?? 0}</span>`
-                      : `${r.shutoffs ?? 0}`;
-                    const cycCell = dateStart && dateEnd
-                      ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="stat_room_power_cycles" data-room-id="${rid}" data-room-name="${rname}" title="Room cycle log">${r.power_cycles ?? 0}</span>`
-                      : `${r.power_cycles ?? 0}`;
-                    const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
-                    const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
-                    const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
-                    return `
-                    <tr>
-                      <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
-                      <td class="stat-efficiency-cell">${effCell}</td>
-                      <td>${(r.pct ?? 0).toFixed(1)}%</td>
-                      <td>${warnCell}</td>
-                      <td>${shutCell}</td>
-                      <td>${cycCell}</td>
-                      <td>${hi}</td>
-                      <td>${lo}</td>
-                      <td>${avg}</td>
-                    </tr>`;
-                  }).join('')}
+                    ${rooms.map((r) => this._statRoomTableRowHtml(r, dateStart, dateEnd, 'stat')).join('')}
                   </tbody>
                 </table>
               </div>
@@ -10209,6 +10208,12 @@ class EnergyPanel extends HTMLElement {
       if (ev.target === overlay) close();
     });
     overlay.querySelector('.room-rating-modal-close')?.addEventListener('click', close);
+    // Remove any Escape handler from a previously opened rating modal before
+    // overwriting the reference (opening twice leaked the old window listener).
+    if (this._roomRatingModalEsc) {
+      window.removeEventListener('keydown', this._roomRatingModalEsc);
+      this._roomRatingModalEsc = null;
+    }
     this._roomRatingModalEsc = (kev) => {
       if (kev.key === 'Escape') close();
     };
@@ -10231,7 +10236,10 @@ class EnergyPanel extends HTMLElement {
       kwh_budget: fallbackBudget,
     };
 
-    const isOverThreshold = room.threshold > 0 && roomData.total_watts > room.threshold;
+    // Null-safe: a missing/non-numeric total_watts from the backend must not
+    // crash the whole dashboard render (same guard as _updatePowerDisplay).
+    const roomWatts = Number(roomData.total_watts) || 0;
+    const isOverThreshold = room.threshold > 0 && roomWatts > room.threshold;
     const warnings = roomData.warnings || 0;
     const shutoffs = roomData.shutoffs || 0;
     const powerCycles = roomData.power_cycles || 0;
@@ -10351,7 +10359,7 @@ class EnergyPanel extends HTMLElement {
               <span class="event-count graph-clickable has-tooltip" data-event="power_cycles" data-graph-type="room_power_cycles" data-room-id="${roomId}" title="Enforcement outlet cycles today">C ${powerCycles}</span>
             </div>
             <div class="room-header-watts-col">
-              <span class="room-total-watts load-rate-clickable ${isOverThreshold ? 'over-threshold' : ''}" data-room-id="${roomId}" data-watts="${roomData.total_watts}" role="button" tabindex="0" title="Tap to see hourly rate">${roomData.total_watts.toFixed(1)} W</span>
+              <span class="room-total-watts load-rate-clickable ${isOverThreshold ? 'over-threshold' : ''}" data-room-id="${roomId}" data-watts="${roomWatts}" role="button" tabindex="0" title="Tap to see hourly rate">${roomWatts.toFixed(1)} W</span>
             </div>
           </div>
         </div>
@@ -10441,7 +10449,7 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="device-card stove-card" data-outlet-index="${index}">
         <div class="stove-faceplate">
-          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="stove-body">
             <div class="stove-control-panel">
               <div class="stove-display"></div>
@@ -10465,7 +10473,7 @@ class EnergyPanel extends HTMLElement {
           </div>
           <div class="outlet-meta stove-meta">
             <div class="outlet-threshold">
-              <span class="threshold-badge">∞ W</span>
+              <span class="threshold-badge">${device.threshold > 0 ? `${device.threshold}W` : '∞ W'}</span>
             </div>
           </div>
         </div>
@@ -10482,7 +10490,7 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="device-card microwave-card" data-outlet-index="${index}">
         <div class="mw-faceplate">
-          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="mw-body ${isActive ? 'mw-on' : ''}">
             <div class="mw-door">
               <div class="mw-window"></div>
@@ -10528,7 +10536,7 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="outlet-card outlet-face light-outlet ${isOn ? 'light-on' : ''}" data-outlet-index="${index}">
         <div class="faceplate">
-          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="light-switch-plate ${isOn ? 'active' : ''}">
             <div class="light-toggle-lever ${isOn ? 'on' : 'off'}">
@@ -10555,7 +10563,7 @@ class EnergyPanel extends HTMLElement {
     
     return `
       <div class="door-card ${isOpen ? 'door-open' : 'door-closed'} ${hasLock ? (isLocked ? 'door-locked' : 'door-unlocked') : ''}" data-outlet-index="${index}" data-device-type="door" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}" data-lock-entity="${(lockEntity || '').replace(/"/g, '&quot;')}">
-        <div class="door-card-name" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || 'Door'}</div>
+        <div class="door-card-name" title="${escapeAttr(device.name)}">${escapeHtml(device.name || 'Door')}</div>
         <div class="door-frame">
           <div class="door-body ${isOpen ? 'open' : ''}">
             <div class="door-panel-row">
@@ -10587,7 +10595,7 @@ class EnergyPanel extends HTMLElement {
 
     return `
       <div class="window-card ${isOpen ? 'window-open' : 'window-closed'}" data-outlet-index="${index}" data-device-type="window" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}">
-        <div class="window-card-name" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || 'Window'}</div>
+        <div class="window-card-name" title="${escapeAttr(device.name)}">${escapeHtml(device.name || 'Window')}</div>
         <div class="window-frame">
           <div class="window-sash ${isOpen ? 'open' : ''}">
             <div class="window-pane-row">
@@ -10617,7 +10625,7 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="device-card minisplit-card" data-outlet-index="${index}">
         <div class="ms-faceplate">
-          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="ms-unit ${isActive ? 'ms-on' : ''}">
             <div class="ms-upper-panel">
               <div class="ms-lcd">
@@ -10653,7 +10661,7 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="device-card fridge-card" data-outlet-index="${index}">
         <div class="fridge-faceplate">
-          <div class="outlet-name outlet-name-top" title="${(device.name || '').replace(/"/g, '&quot;')}">${device.name || ''}</div>
+          <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="fridge-body ${isActive ? 'fridge-on' : ''}">
             <div class="fridge-freezer-door">
               <div class="fridge-door-panel"></div>
@@ -10717,7 +10725,7 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="device-card ceiling-vent-card" data-outlet-index="${index}">
         <div class="ceiling-vent-faceplate">
-          <div class="outlet-name outlet-name-top" title="${displayTitle.replace(/"/g, '&quot;')}">${displayTitle.replace(/</g, '&lt;')}</div>
+          <div class="outlet-name outlet-name-top" title="${escapeAttr(displayTitle)}">${escapeHtml(displayTitle)}</div>
           <div class="ceiling-vent-body ${isActive ? 'vent-on' : ''}">
             <div class="ceiling-vent-grill-wrap">
               <div class="ceiling-vent-grill">
@@ -10760,7 +10768,7 @@ class EnergyPanel extends HTMLElement {
       return `
       <div class="outlet-card outlet-face single-outlet" data-outlet-index="${index}">
         <div class="faceplate">
-          <div class="outlet-name outlet-name-top" title="${(outlet.name || '').replace(/"/g, '&quot;')}">${outlet.name || ''}</div>
+          <div class="outlet-name outlet-name-top" title="${escapeAttr(outlet.name)}">${escapeHtml(outlet.name)}</div>
           <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="receptacle single-receptacle ${plug1Active ? 'active' : ''}">
             <div class="holes" aria-hidden="true">
@@ -10788,7 +10796,7 @@ class EnergyPanel extends HTMLElement {
     return `
       <div class="outlet-card outlet-face" data-outlet-index="${index}">
         <div class="faceplate">
-          <div class="outlet-name outlet-name-top" title="${(outlet.name || '').replace(/"/g, '&quot;')}">${outlet.name || ''}</div>
+          <div class="outlet-name outlet-name-top" title="${escapeAttr(outlet.name)}">${escapeHtml(outlet.name)}</div>
           <div class="receptacle plug-receptacle ${plug1Active ? 'active' : ''}" data-plug-index="1" title="Tap for usage graph and power">
             <div class="holes" aria-hidden="true">
               <span class="slot left"></span>
@@ -10861,7 +10869,7 @@ class EnergyPanel extends HTMLElement {
 
     const powerValue = panel.querySelector('.stove-detail-value');
     if (powerValue && panel.querySelector('.stove-detail-label')?.textContent === 'Current Power') {
-      powerValue.textContent = `${this._stoveData.current_power.toFixed(1)} W`;
+      powerValue.textContent = `${(Number(this._stoveData.current_power) || 0).toFixed(1)} W`;
     }
 
     const presenceValue = panel.querySelector('.stove-detail-value.present, .stove-detail-value.absent');
@@ -13138,8 +13146,9 @@ class EnergyPanel extends HTMLElement {
    * @returns {number|null} degrees, or null if unknown
    */
   _getWallHeaterLiveTemp(roomId, outletIndex, outletConfig) {
-    const rooms = this._powerData?.rooms || [];
-    const pr = rooms.find((r) => r.id === roomId);
+    // Use the canonical/normalized room-row resolver (a raw `r.id === roomId`
+    // find here missed rows whose id casing/spacing differs from the config id).
+    const pr = this._resolvePowerRoomRow(roomId);
     const po = pr?.outlets?.[outletIndex];
     if (po) {
       const hc = po.heater_current_temperature;
@@ -13194,6 +13203,9 @@ class EnergyPanel extends HTMLElement {
       this._roomRatingModalEsc = null;
     }
     this.shadowRoot?.querySelector('.room-rating-modal-overlay')?.remove();
+    // Toggle confirmation: resolve its promise (false) and drop the Escape
+    // listener so a re-render can't orphan the awaiting caller or leak it.
+    if (this._toggleConfirmCleanup) this._toggleConfirmCleanup(false);
     // Stray overlays that can leave the UI dimmed after a partial close or failed modal
     this.shadowRoot?.querySelector('.modal-overlay')?.remove();
     this.shadowRoot?.querySelector('.toggle-confirm-overlay')?.remove();
@@ -15050,7 +15062,9 @@ class EnergyPanel extends HTMLElement {
   }
 
   _showLoadRatePopup(roomId, roomName, currentWatts) {
-    this.shadowRoot?.querySelector('.load-rate-popup-overlay')?.remove();
+    // Fully close any prior popup (overlay + window Escape listener); removing
+    // only the overlay leaked the old keydown handler when re-opened.
+    this._closeLoadRatePopup();
 
     const kwhIfOneHour = currentWatts / 1000;
     const costPerKwh = this._getKwhCostPerKwh();
@@ -15511,12 +15525,16 @@ class EnergyPanel extends HTMLElement {
 
   _showToggleConfirmation(applianceName, actionWord) {
     return new Promise((resolve) => {
+      // Resolve+detach any confirmation left over from a prior open (also lets
+      // _teardownTransientUI cancel this dialog on a full re-render).
+      if (this._toggleConfirmCleanup) this._toggleConfirmCleanup(false);
+
       const overlay = document.createElement('div');
       overlay.className = 'toggle-confirm-overlay';
       overlay.innerHTML = `
-        <div class="toggle-confirm-modal">
+        <div class="toggle-confirm-modal" role="dialog" aria-modal="true" aria-label="Confirm action">
           <div class="toggle-confirm-title">Confirm Action</div>
-          <div class="toggle-confirm-message">Are you sure you want to ${actionWord} <strong>${applianceName.replace(/</g, '&lt;')}</strong>?</div>
+          <div class="toggle-confirm-message">Are you sure you want to ${escapeHtml(actionWord)} <strong>${escapeHtml(applianceName)}</strong>?</div>
           <div class="toggle-confirm-buttons">
             <button type="button" class="toggle-confirm-cancel">Cancel</button>
             <button type="button" class="toggle-confirm-ok">Confirm</button>
@@ -15525,9 +15543,20 @@ class EnergyPanel extends HTMLElement {
       `;
 
       const cleanup = (result) => {
+        if (this._toggleConfirmEsc) {
+          window.removeEventListener('keydown', this._toggleConfirmEsc);
+          this._toggleConfirmEsc = null;
+        }
+        this._toggleConfirmCleanup = null;
         overlay.remove();
         resolve(result);
       };
+      this._toggleConfirmCleanup = cleanup;
+
+      this._toggleConfirmEsc = (kev) => {
+        if (kev.key === 'Escape') cleanup(false);
+      };
+      window.addEventListener('keydown', this._toggleConfirmEsc);
 
       overlay.querySelector('.toggle-confirm-cancel').addEventListener('click', () => cleanup(false));
       overlay.querySelector('.toggle-confirm-ok').addEventListener('click', () => cleanup(true));

@@ -747,10 +747,10 @@ def _intraday_point_power_w(hass: HomeAssistant, entity_id: str) -> float:
     if entity_id.startswith("sensor."):
         if state.state in ("unknown", "unavailable", ""):
             return 0.0
-        try:
-            return float(state.state)
-        except (ValueError, TypeError):
-            return 0.0
+        # Honor the sensor's unit (kW/mW) like the other power parsers do, so a
+        # kW-reporting sensor isn't reported ~1000x too low in the fallback point.
+        unit = state.attributes.get("unit_of_measurement")
+        return _parse_power_from_state(state.state, unit)
     if entity_id.startswith("switch."):
         try:
             return float(state.attributes.get("current_power_w", 0))
@@ -3323,6 +3323,7 @@ async def websocket_test_trip_breaker(
         connection.send_error(msg["id"], "no_switches", "No switches found for this breaker")
         return
     
+    turned_off = False
     try:
         # Turn off all switches
         await hass.services.async_call(
@@ -3331,10 +3332,11 @@ async def websocket_test_trip_breaker(
             {"entity_id": switch_entities},
             blocking=True,
         )
-        
+        turned_off = True
+
         # Wait 5 seconds
         await asyncio.sleep(5)
-        
+
         # Turn all switches back on
         await hass.services.async_call(
             "switch",
@@ -3342,7 +3344,7 @@ async def websocket_test_trip_breaker(
             {"entity_id": switch_entities},
             blocking=True,
         )
-        
+
         connection.send_result(msg["id"], {
             "success": True,
             "total_switches": len(switch_entities),
@@ -3350,6 +3352,20 @@ async def websocket_test_trip_breaker(
         })
     except Exception as e:
         _LOGGER.error("Test trip breaker failed: %s", e)
+        # Never leave outlets off after a failed test trip: always attempt restore.
+        if turned_off:
+            try:
+                await hass.services.async_call(
+                    "switch",
+                    "turn_on",
+                    {"entity_id": switch_entities},
+                    blocking=True,
+                )
+            except Exception as restore_err:
+                _LOGGER.error(
+                    "Failed to restore switches after breaker trip test: %s",
+                    restore_err,
+                )
         connection.send_error(msg["id"], "trip_failed", str(e))
 
 
@@ -3645,6 +3661,7 @@ async def websocket_clear_statistics_cache(
 @websocket_api.websocket_command(
     {vol.Required("type"): "smart_dashboards/hard_refresh_statistics"}
 )
+@websocket_api.async_response
 async def websocket_hard_refresh_statistics(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,

@@ -4,9 +4,6 @@ from __future__ import annotations
 DOMAIN = "smart_dashboards"
 NAME = "Home Energy"
 
-# Config file
-CONFIG_FILE = "smart_dashboards.json"
-
 # Panel configuration
 ENERGY_PANEL_ICON = "mdi:flash"
 ENERGY_PANEL_TITLE = "Home Energy"

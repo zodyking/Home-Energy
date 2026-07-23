@@ -34,6 +34,38 @@ export const sharedStyles = `
     --card-border: rgba(255, 255, 255, 0.08);
     --input-bg: #282828;
     --input-border: rgba(255, 255, 255, 0.12);
+    --overlay-scrim: rgba(0, 0, 0, 0.55);
+    --overlay-scrim-light: rgba(0, 0, 0, 0.42);
+
+    /* Spacing / radius / elevation scale (kept in sync with tokens.css).
+       Consume via var() instead of one-off px values. */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 12px;
+    --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --elev-2: 0 4px 12px rgba(0, 0, 0, 0.5);
+    --content-max-width: 1800px;
+    --panel-header-z: 100;
+    /* Minimum tap target for interactive controls (a11y). */
+    --tap-target: 44px;
+  }
+
+  /* Consistent, visible keyboard focus for every interactive control. */
+  :is(button, a, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+    outline: 2px solid var(--panel-accent);
+    outline-offset: 2px;
+  }
+
+  /* Toggle switches hide their native input; surface focus on the slider. */
+  .toggle-switch input:focus-visible + .toggle-slider {
+    outline: 2px solid var(--panel-accent);
+    outline-offset: 2px;
   }
 
   * {
@@ -60,8 +92,8 @@ export const sharedStyles = `
 
   .menu-btn {
     display: none;
-    width: 40px;
-    height: 40px;
+    width: var(--tap-target, 44px);
+    height: var(--tap-target, 44px);
     border-radius: 8px;
     border: none;
     background: transparent;
@@ -116,13 +148,21 @@ export const sharedStyles = `
     justify-content: center;
     gap: 6px;
     padding: 8px 14px;
-    border-radius: 6px;
+    min-height: var(--tap-target, 44px);
+    border-radius: var(--radius-sm, 6px);
     border: none;
     cursor: pointer;
     font-size: 12px;
     font-weight: 500;
     transition: all 0.2s ease;
     font-family: inherit;
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
   }
 
   .btn-primary {
@@ -242,6 +282,7 @@ export const sharedStyles = `
   .light-entity-row .light-entity-remove-btn {
     flex-shrink: 0;
     padding: 6px;
+    min-width: var(--tap-target, 44px);
   }
 
   .toggle-switch {
@@ -387,7 +428,7 @@ export const sharedStyles = `
   .custom-select-trigger:hover {
     border-color: rgba(255,255,255,0.2);
   }
-  .custom-select-trigger.open {
+  .custom-select-wrapper.open .custom-select-trigger {
     border-color: var(--panel-accent);
   }
   .custom-select-dropdown {
@@ -598,6 +639,7 @@ export const sharedStyles = `
   }
 
   .modal-close {
+    position: relative;
     width: 32px;
     height: 32px;
     border-radius: 8px;
@@ -613,6 +655,13 @@ export const sharedStyles = `
 
   .modal-close:hover {
     background: rgba(255, 255, 255, 0.1);
+  }
+
+  /* Expand the close button's hit area to >=44px without changing its look. */
+  .modal-close::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
   }
 
   .modal-body {
@@ -691,13 +740,13 @@ export function renderCustomSelect(id, options, selectedValue, placeholder = 'No
   const optionsHtml = opts.map(o => {
     const v = String(o.value ?? '');
     const isSel = v === sel;
-    return `<div class="custom-select-option" data-value="${v.replace(/"/g, '&quot;')}" ${isSel ? 'data-selected' : ''}>${(o.label || '').replace(/</g, '&lt;')}</div>`;
+    return `<div class="custom-select-option" role="option" tabindex="-1" aria-selected="${isSel ? 'true' : 'false'}" data-value="${v.replace(/"/g, '&quot;')}" ${isSel ? 'data-selected' : ''}>${(o.label || '').replace(/</g, '&lt;')}</div>`;
   }).join('');
   return `
     <div class="custom-select-wrapper" data-select-id="${id}">
       <input type="hidden" id="${id}" value="${sel.replace(/"/g, '&quot;')}">
-      <div class="custom-select-trigger">${(label || placeholder).replace(/</g, '&lt;')}</div>
-      <div class="custom-select-dropdown">${optionsHtml}</div>
+      <button type="button" class="custom-select-trigger" aria-haspopup="listbox" aria-expanded="false">${(label || placeholder).replace(/</g, '&lt;')}</button>
+      <div class="custom-select-dropdown" role="listbox">${optionsHtml}</div>
     </div>
   `;
 }
@@ -709,25 +758,74 @@ export function initCustomSelects(container) {
     const trigger = wrapper.querySelector('.custom-select-trigger');
     const dropdown = wrapper.querySelector('.custom-select-dropdown');
     const hiddenInput = wrapper.querySelector('input[type="hidden"]');
-    const selectId = wrapper.dataset.selectId;
     if (!trigger || !dropdown || !hiddenInput) return;
 
-    const close = () => wrapper.classList.remove('open');
+    const setExpanded = (open) => trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const close = () => {
+      wrapper.classList.remove('open');
+      setExpanded(false);
+    };
     const update = (value, label) => {
       hiddenInput.value = value || '';
       trigger.textContent = label || 'None';
       dropdown.querySelectorAll('.custom-select-option').forEach(opt => {
-        opt.classList.toggle('selected', opt.dataset.value === value);
+        const on = opt.dataset.value === value;
+        opt.classList.toggle('selected', on);
+        opt.setAttribute('aria-selected', on ? 'true' : 'false');
       });
     };
 
     trigger.addEventListener('click', (e) => {
       e.stopPropagation();
-      container.querySelectorAll('.custom-select-wrapper.open').forEach(w => { if (w !== wrapper) w.classList.remove('open'); });
+      container.querySelectorAll('.custom-select-wrapper.open').forEach(w => {
+        if (w !== wrapper) {
+          w.classList.remove('open');
+          w.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
+        }
+      });
       const isOpen = wrapper.classList.toggle('open');
+      setExpanded(isOpen);
       if (isOpen) {
         const handler = () => { close(); document.removeEventListener('click', handler); };
         setTimeout(() => document.addEventListener('click', handler), 0);
+      }
+    });
+
+    // Keyboard support: Escape closes; arrows move between options; Enter/Space
+    // on a focused option selects it (the trigger itself is a real <button>).
+    wrapper.addEventListener('keydown', (e) => {
+      const options = [...dropdown.querySelectorAll('.custom-select-option')];
+      if (e.key === 'Escape') {
+        if (wrapper.classList.contains('open')) {
+          e.stopPropagation();
+          close();
+          trigger.focus();
+        }
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (!options.length) return;
+        e.preventDefault();
+        if (!wrapper.classList.contains('open')) {
+          wrapper.classList.add('open');
+          setExpanded(true);
+        }
+        const active = dropdown.contains(wrapper.getRootNode().activeElement)
+          ? options.indexOf(wrapper.getRootNode().activeElement)
+          : options.findIndex((o) => o.classList.contains('selected'));
+        const dir = e.key === 'ArrowDown' ? 1 : -1;
+        const next = active < 0
+          ? (dir === 1 ? 0 : options.length - 1)
+          : Math.max(0, Math.min(options.length - 1, active + dir));
+        options[next]?.focus();
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === ' ') && e.target?.classList?.contains('custom-select-option')) {
+        e.preventDefault();
+        e.stopPropagation();
+        update(e.target.dataset.value, e.target.textContent);
+        close();
+        trigger.focus();
       }
     });
 

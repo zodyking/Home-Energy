@@ -9,6 +9,10 @@
  *
  * The palette is fixed dark and intentionally overrides the user's HA theme
  * for a consistent Home Energy experience.
+ *
+ * NOTE: the panel loads its CSS from the inline `sharedStyles` block in
+ * shared-utils.js (shadow DOM, no external stylesheet fetch). The token
+ * values below are mirrored there — keep both in sync when editing.
  */
 :host {
   /* ---- Backgrounds / surfaces ---- */
@@ -70,4 +74,8 @@
   /* ---- Layout ---- */
   --content-max-width: 1800px;
   --panel-header-z: 100;
+
+  /* ---- Accessibility ---- */
+  /* Minimum tap target for interactive controls. */
+  --tap-target: 44px;
 }

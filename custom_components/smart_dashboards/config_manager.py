@@ -13,7 +13,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import CONFIG_FILE, DEFAULT_CONFIG, DOMAIN, DEFAULT_TTS_VOLUME
+from .const import DEFAULT_CONFIG, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -241,11 +241,14 @@ def _validate_budget_boost_announce_time(raw: Any, default: str) -> str:
 def _validate_rgb(val: Any) -> list[int]:
     """Validate and return RGB list [r, g, b] 0-255."""
     if isinstance(val, list) and len(val) >= 3:
-        return [
-            max(0, min(255, int(val[0]) if val[0] is not None else 0)),
-            max(0, min(255, int(val[1]) if val[1] is not None else 0)),
-            max(0, min(255, int(val[2]) if val[2] is not None else 0)),
-        ]
+
+        def _channel(v: Any) -> int:
+            try:
+                return max(0, min(255, int(float(v))))
+            except (TypeError, ValueError):
+                return 0
+
+        return [_channel(val[0]), _channel(val[1]), _channel(val[2])]
     return [245, 0, 0]
 
 
@@ -456,7 +459,9 @@ class ConfigManager:
     @property
     def energy_config(self) -> dict[str, Any]:
         """Return energy configuration."""
-        return self._config.get("energy", DEFAULT_CONFIG["energy"])
+        # Fall back to a *copy* of the default so callers that mutate the result
+        # in place can never corrupt the shared module-level DEFAULT_CONFIG.
+        return self._config.get("energy") or deepcopy(DEFAULT_CONFIG["energy"])
 
     @property
     def daily_totals(self) -> dict[str, Any]:
@@ -1838,7 +1843,9 @@ class ConfigManager:
                 pe.get("room_kwh_intervals", default_pe["room_kwh_intervals"])
             ),
             "home_kwh_limit": max(1, int(pe.get("home_kwh_limit", default_pe["home_kwh_limit"]))),
-            "rooms_enabled": pe.get("rooms_enabled", default_pe["rooms_enabled"]),
+            # Copy into a fresh list so we never store a reference to (and later
+            # mutate) DEFAULT_CONFIG's shared list.
+            "rooms_enabled": list(pe.get("rooms_enabled") or default_pe["rooms_enabled"]),
         }
 
         # Validate statistics settings
@@ -3126,9 +3133,22 @@ class ConfigManager:
                         key = vent_like_energy_tracking_key(rid, outlet)
                         room_wh += self._day_energy_data.get(key, {}).get("energy", 0.0)
                 else:
+                    # Include power_sensor_entity too (with dedupe), matching
+                    # async_snapshot_day_and_reset_if_rolled_over/_build_today_totals;
+                    # otherwise kWh budget alerts/percentages under-count sensor-backed outlets.
+                    seen_e: set[str] = set()
+                    pe = outlet.get("power_sensor_entity")
+                    if pe and isinstance(pe, str) and pe.strip():
+                        e = pe.strip()
+                        seen_e.add(e)
+                        room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
                     for e in (outlet.get("plug1_entity"), outlet.get("plug2_entity")):
-                        if e:
-                            room_wh += self._day_energy_data.get(e, {}).get("energy", 0.0)
+                        if e and isinstance(e, str) and e.strip():
+                            e2 = e.strip()
+                            if e2 in seen_e:
+                                continue
+                            seen_e.add(e2)
+                            room_wh += self._day_energy_data.get(e2, {}).get("energy", 0.0)
         return room_wh / 1000.0
 
     def get_total_day_kwh(self) -> float:
@@ -3215,11 +3235,9 @@ class ConfigManager:
                 # Only load if data is from today
                 if saved_date == today:
                     self._intraday_history = data.get("history", {})
-                    self._intraday_last_minute = data.get("last_minute", "")
                 else:
                     # Data is from a previous day, start fresh
                     self._intraday_history = {}
-                    self._intraday_last_minute = ""
         except (json.JSONDecodeError, IOError):
             pass
 

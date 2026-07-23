@@ -287,7 +287,6 @@ class EnergyMonitor:
         self._task: asyncio.Task | None = None
         self._last_room_alerts: dict[str, datetime] = {}
         self._last_outlet_alerts: dict[str, datetime] = {}
-        self._last_plug_alerts: dict[str, datetime] = {}
         self._last_breaker_warnings: dict[str, datetime] = {}
         self._last_breaker_shutoffs: dict[str, datetime] = {}
         self._breaker_shutoff_pending: dict[str, bool] = {}  # Track breakers in shutoff cycle
@@ -324,8 +323,6 @@ class EnergyMonitor:
         self._heater_automation_state: dict[str, dict] = {}
         # Smart heater state with thermal learning (key: room_id|outlet_name_slug)
         self._heater_smart_state: dict[str, dict] = {}
-        # Light automation state (tracks last applied action per light)
-        self._light_automation_state: dict[str, str] = {}
         # Entities skipped while unavailable (debug log once until usable again)
         self._light_auto_unavail_logged: set[str] = set()
         # Light automation enforcement pause (for testing scenes)
@@ -346,7 +343,6 @@ class EnergyMonitor:
         # Zone health event log for UI display (recent alerts/TTS/recoveries)
         self._zone_health_event_log: deque = deque(maxlen=100)
         # Zone health recorder-backed history (refreshed periodically)
-        self._zone_health_recorder_cache: dict[str, set[str]] = {}
         self._zone_health_tracker_recorder_cache: dict[str, dict[str, set[str]]] = {}
         self._zone_health_recorder_meta: dict[str, dict[str, str | None]] = {}
         self._zone_health_recorder_last_refresh: datetime | None = None
@@ -421,27 +417,6 @@ class EnergyMonitor:
                     if eid and str(eid).startswith("switch."):
                         found.add(str(eid))
         return found
-
-    def _room_outlet_context_for_switch(
-        self, entity_id: str
-    ) -> tuple[str, str, str, str] | None:
-        """Return room_id, room_name, outlet_display_name, plug_slot for a switch.* or None."""
-        for room in self.config_manager.energy_config.get("rooms", []):
-            outlet = self._find_outlet_by_switch(room, entity_id)
-            if not outlet:
-                continue
-            room_id = room.get("id", room["name"].lower().replace(" ", "_"))
-            room_name = str(room.get("name") or room_id)
-            outlet_name = str(outlet.get("name") or "Outlet")
-            plug_slot = ""
-            if outlet.get("plug1_switch") == entity_id:
-                plug_slot = str(outlet.get("plug1_name") or "plug 1")
-            elif outlet.get("plug2_switch") == entity_id:
-                plug_slot = str(outlet.get("plug2_name") or "plug 2")
-            parts = [outlet_name, plug_slot] if plug_slot else [outlet_name]
-            display = " ".join(p for p in parts if p).strip()
-            return room_id, room_name, display, plug_slot
-        return None
 
     def _room_outlet_context_for_switch_with_type(
         self, entity_id: str
@@ -661,7 +636,6 @@ class EnergyMonitor:
             }
             if not entity_ids:
                 self._zone_health_tracker_recorder_cache[person_key] = {}
-                self._zone_health_recorder_cache[person_key] = set()
                 self._zone_health_recorder_meta[person_key] = empty_meta
                 _LOGGER.debug("Zone health recorder: %s has no linked device_trackers", person_key)
                 continue
@@ -681,10 +655,9 @@ class EnergyMonitor:
                     now,
                     nearby_tokens,
                 )
-                states_union, tracker_classified, row_debug, last_home_dt, last_nearby_dt, last_away_dt = result
+                _states_union, tracker_classified, row_debug, last_home_dt, last_nearby_dt, last_away_dt = result
             except Exception as e:
                 _LOGGER.warning("Zone health recorder fetch failed for %s: %s", person_key, e)
-                states_union = set()
                 tracker_classified = {}
                 row_debug = {}
                 last_home_dt = last_nearby_dt = last_away_dt = None
@@ -692,7 +665,6 @@ class EnergyMonitor:
             self._zone_health_tracker_recorder_cache[person_key] = {
                 tid: set(states) for tid, states in tracker_classified.items()
             }
-            self._zone_health_recorder_cache[person_key] = set(states_union)
             self._zone_health_recorder_meta[person_key] = {
                 "last_home": last_home_dt.isoformat() if last_home_dt else None,
                 "last_nearby": last_nearby_dt.isoformat() if last_nearby_dt else None,
@@ -1550,8 +1522,6 @@ class EnergyMonitor:
                 continue
             if sm in fired:
                 continue
-            if sm == now_min:
-                pass
             try:
                 message = tmpl.format(
                     prefix=prefix,
@@ -1834,15 +1804,6 @@ class EnergyMonitor:
 
         smart_st["last_rate_calc"] = now
         return smart_st.get("heating_rate", 0.0), smart_st.get("cooling_rate", 0.0)
-
-    def _estimate_time_to_comfort(
-        self, current_temp: float, comfort: float, heating_rate: float
-    ) -> float | None:
-        """Estimate minutes to reach comfort temp based on heating rate."""
-        if heating_rate <= 0 or current_temp >= comfort:
-            return None
-        temp_diff = comfort - current_temp
-        return temp_diff / heating_rate
 
     async def _async_switch_set(self, entity_id: str, turn_on: bool) -> None:
         self._mark_switch_internal(entity_id)
@@ -3322,7 +3283,6 @@ class EnergyMonitor:
                     "set_value",
                     {"entity_id": scene_text_entity, "value": scene_hex},
                 )
-                self._light_automation_state[state_key] = "tuya_scene_applied"
                 self._mark_light_enforcement_run(entity_id)
                 _LOGGER.debug(
                     "Light automation: scene for %s via %s",
@@ -3401,8 +3361,6 @@ class EnergyMonitor:
             self._mark_light_enforcement_run(entity_id)
             return
 
-        action_hash = f"{action}_{brightness_pct}_{color_temp}_{hs_color}_{light_mode}"
-
         if is_tuya and light_mode in ("color", "white"):
             effect_list = attrs.get("effect_list") or []
             off_effect = next(
@@ -3417,7 +3375,6 @@ class EnergyMonitor:
                 "turn_on",
                 service_data,
             )
-            self._light_automation_state[state_key] = action_hash
             self._mark_light_enforcement_run(entity_id)
             _LOGGER.debug("Light automation: applied to %s with %s", entity_id, service_data)
         except Exception as e:
@@ -3457,7 +3414,6 @@ class EnergyMonitor:
                         "turn_off",
                         {"entity_id": entity_id},
                     )
-                    self._light_automation_state[state_key] = "off"
                     self._mark_light_enforcement_run(entity_id)
                     _LOGGER.debug("Light automation: turned off %s", entity_id)
                 except Exception as e:
@@ -4223,20 +4179,22 @@ class EnergyMonitor:
             except Exception:
                 pass
         self._person_zone_health_listener_unsub = []
-        # Cancel door reminder and auto-lock tasks
-        for task in self._door_reminder_active.values():
-            if task:
-                task.cancel()
-        self._door_reminder_active.clear()
-        for task in self._door_auto_lock_task.values():
-            if task:
-                task.cancel()
-        self._door_auto_lock_task.clear()
-        # Cancel any in-flight presence hold-then-announce tasks (audit BUG 4).
-        for task in self._presence_handler_tasks.values():
-            if task:
-                task.cancel()
-        self._presence_handler_tasks.clear()
+        # Cancel door reminder / auto-lock / presence hold-then-announce tasks
+        # (audit BUG 4) and await them so async_stop doesn't return while they
+        # are still tearing down and touching hass/config_manager.
+        pending_tasks: list[asyncio.Task] = []
+        for task_map in (
+            self._door_reminder_active,
+            self._door_auto_lock_task,
+            self._presence_handler_tasks,
+        ):
+            for task in task_map.values():
+                if task and not task.done():
+                    task.cancel()
+                    pending_tasks.append(task)
+            task_map.clear()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
         if self._task:
             self._task.cancel()
             try:
@@ -6729,11 +6687,13 @@ class EnergyMonitor:
             return
         
         media_player = room.get("media_player")
+        # room["volume"] is a 0-1 fraction everywhere else in this file (and
+        # async_set_volume clamps to [0,1]); use it directly for consistency
+        # instead of the divergent "/100 if >1" normalization used only here.
         try:
-            vol_raw = float(room.get("volume", 0.7) or 0.7)
+            volume = float(room.get("volume", 0.7) or 0.7)
         except (TypeError, ValueError):
-            vol_raw = 0.7
-        volume = vol_raw / 100.0 if vol_raw > 1.0 else vol_raw
+            volume = 0.7
         
         # Check for battery replaced (jump from low to high)
         if prev_level is not None and prev_level <= 25 and new_level >= 70:

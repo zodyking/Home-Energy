@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.const import ATTR_ENTITY_ID
 
-from .const import DEFAULT_TTS_LANGUAGE, DEFAULT_TTS_VOLUME
+from .const import DEFAULT_TTS_LANGUAGE
 
 _LOGGER = logging.getLogger(__name__)
 
