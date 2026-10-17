@@ -2725,6 +2725,39 @@ class ConfigManager:
         day, rooms, totals = self.durable_energy_payload()
         self.durable.upsert_energy_day(day, rooms, totals)
 
+    def report_periods(self) -> list[dict[str, str]]:
+        """Billing periods that should have a PDF, newest first.
+
+        The live billing sensors define the current period and are remembered in
+        the durable ledger. Earlier periods come from that ledger and the billing
+        history file. Without billing sensors, calendar months of recorded days
+        are used instead.
+        """
+        from .monthly_reports import period_key, valid_month
+
+        now_iso = dt_util.now().isoformat(timespec="seconds")
+        start, end = self.get_billing_date_range()
+        if start and end and period_key(start, end):
+            self.durable.note_period(start, end, now_iso)
+        for cycle in (self._billing_history or {}).get("cycles", []) or []:
+            if isinstance(cycle, dict):
+                cs, ce = str(cycle.get("start") or ""), str(cycle.get("end") or "")
+                if period_key(cs, ce):
+                    self.durable.note_period(cs, ce, now_iso)
+        periods = self.durable.periods()
+        if periods:
+            return periods
+        months: set[str] = set()
+        for day in self.durable.data.get("days", {}):
+            if isinstance(day, str) and valid_month(day[:7]):
+                months.add(day[:7])
+        today_month = dt_util.now().strftime("%Y-%m")
+        months.add(today_month)
+        out = []
+        for month in sorted(months, reverse=True):
+            out.append({"key": month, "start": "", "end": ""})
+        return out
+
     def refresh_monthly_report_index(self) -> list[dict[str, Any]]:
         """Rebuild the in-memory list of retained monthly PDFs."""
         from .monthly_reports import list_reports

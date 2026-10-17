@@ -4952,30 +4952,36 @@ class EnergyPanel extends HTMLElement {
       .window-card {
         position: relative;
       }
+      .faceplate,
+      .stove-body,
+      .mw-body,
+      .fridge-body,
+      .ms-unit,
+      .ceiling-vent-body,
+      .door-frame,
+      .window-frame {
+        position: relative;
+      }
       .device-offline-badge {
         position: absolute;
-        top: 4px;
-        right: 4px;
-        z-index: 4;
-        width: 16px;
-        height: 16px;
+        top: 5px;
+        right: 5px;
+        z-index: 5;
+        width: 18px;
+        height: 18px;
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #e53935;
         pointer-events: none;
-        filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.85));
+        filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
       }
       .device-offline-badge svg {
-        width: 14px;
-        height: 14px;
+        width: 18px;
+        height: 18px;
         display: block;
       }
-      .outlet-card.is-offline .outlet-name-top,
-      .device-card.is-offline .outlet-name-top,
-      .door-card.is-offline .door-card-name,
-      .window-card.is-offline .window-card-name {
-        padding-right: 14px;
+      .outlet-card.is-offline .outlet-name-top {
+        padding-right: 16px;
         box-sizing: border-box;
       }
       .outlet-card.outlet-face {
@@ -9854,38 +9860,38 @@ class EnergyPanel extends HTMLElement {
   _renderMonthlyReportsArchive() {
     const reports = Array.isArray(this._statsData?.monthly_reports) ? this._statsData.monthly_reports : [];
     const rows = reports.map((report) => {
-      const month = this._eventLogEscape(report.month || '');
-      const title = this._eventLogEscape(report.title || report.month || 'Report');
+      const key = this._eventLogEscape(report.key || report.month || '');
+      const title = this._eventLogEscape(report.label || report.title || key || 'Report');
       const generated = this._eventLogEscape(this._formatOfflineWhen(report.generated_at));
       return `
         <div class="monthly-report-row">
           <div>
             <div class="monthly-report-title">${title}</div>
-            <div class="monthly-report-meta">Saved ${generated}. Kept permanently.</div>
+            <div class="monthly-report-meta">Billing period · updated ${generated} · kept permanently</div>
           </div>
           <div class="monthly-report-actions">
-            <button type="button" class="btn btn-secondary" data-monthly-report="${month}" data-monthly-action="open">Open</button>
-            <button type="button" class="btn btn-secondary" data-monthly-report="${month}" data-monthly-action="download">Download</button>
+            <button type="button" class="btn btn-secondary" data-monthly-report="${key}" data-monthly-action="open">Open</button>
+            <button type="button" class="btn btn-secondary" data-monthly-report="${key}" data-monthly-action="download">Download</button>
           </div>
         </div>
       `;
     }).join('');
-    const body = rows || '<p class="monthly-reports-empty">No monthly reports yet. A report is saved here after usage or presence is recorded, and it is not removed by cleanup.</p>';
+    const body = rows || '<p class="monthly-reports-empty">No billing period statements yet. One is saved here once usage or presence is recorded for the current billing period, and it is never removed by cleanup.</p>';
     return `
-      <section class="monthly-reports" aria-label="Monthly PDF reports">
-        <h3>Monthly reports</h3>
-        <p class="statistics-section-sub">Daily room energy and device-tracker presence. Updating a month replaces only that file.</p>
+      <section class="monthly-reports" aria-label="Billing period PDF statements">
+        <h3>Billing period statements</h3>
+        <p class="statistics-section-sub">One PDF per billing period from your billing sensors: usage by day and room, appliances, and who was home. Opening a statement refreshes only that period.</p>
         ${body}
       </section>
     `;
   }
 
-  async _openMonthlyReport(month, download) {
-    if (!month || !this._hass) return;
+  async _openMonthlyReport(key, download) {
+    if (!key || !this._hass) return;
     try {
       const res = await this._hass.callWS({
         type: 'smart_dashboards/get_monthly_report',
-        month,
+        key,
         refresh: true,
       });
       const binary = atob(res.pdf_base64 || '');
@@ -9896,7 +9902,7 @@ class EnergyPanel extends HTMLElement {
       if (download) {
         const link = document.createElement('a');
         link.href = url;
-        link.download = res.filename || `${month}.pdf`;
+        link.download = res.filename || `Home-Energy ${key}.pdf`;
         link.click();
       } else {
         window.open(url, '_blank', 'noopener');
@@ -10742,10 +10748,10 @@ class EnergyPanel extends HTMLElement {
 
     return `
       <div class="device-card stove-card ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
-        ${this._deviceOfflineBadge(device)}
         <div class="stove-faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="stove-body">
+            ${this._deviceOfflineBadge(device)}
             <div class="stove-control-panel">
               <div class="stove-display"></div>
               <div class="stove-knobs">
@@ -10784,10 +10790,10 @@ class EnergyPanel extends HTMLElement {
 
     return `
       <div class="device-card microwave-card ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
-        ${this._deviceOfflineBadge(device)}
         <div class="mw-faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="mw-body ${isActive ? 'mw-on' : ''}">
+            ${this._deviceOfflineBadge(device)}
             <div class="mw-door">
               <div class="mw-window"></div>
               <div class="mw-handle"></div>
@@ -10831,8 +10837,8 @@ class EnergyPanel extends HTMLElement {
     const totalWatts = isOn ? (deviceData?.plug1?.watts || 0) : 0;
     return `
       <div class="outlet-card outlet-face light-outlet ${isOn ? 'light-on' : ''} ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
-        ${this._deviceOfflineBadge(device)}
         <div class="faceplate">
+          ${this._deviceOfflineBadge(device)}
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="light-switch-plate ${isOn ? 'active' : ''}">
@@ -10860,9 +10866,9 @@ class EnergyPanel extends HTMLElement {
     
     return `
       <div class="door-card ${isOpen ? 'door-open' : 'door-closed'} ${hasLock ? (isLocked ? 'door-locked' : 'door-unlocked') : ''} ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}" data-device-type="door" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}" data-lock-entity="${(lockEntity || '').replace(/"/g, '&quot;')}">
-        ${this._deviceOfflineBadge(device)}
         <div class="door-card-name" title="${escapeAttr(device.name)}">${escapeHtml(device.name || 'Door')}</div>
         <div class="door-frame">
+          ${this._deviceOfflineBadge(device)}
           <div class="door-body ${isOpen ? 'open' : ''}">
             <div class="door-panel-row">
               <div class="door-panel"></div>
@@ -10893,9 +10899,9 @@ class EnergyPanel extends HTMLElement {
 
     return `
       <div class="window-card ${isOpen ? 'window-open' : 'window-closed'} ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}" data-device-type="window" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}">
-        ${this._deviceOfflineBadge(device)}
         <div class="window-card-name" title="${escapeAttr(device.name)}">${escapeHtml(device.name || 'Window')}</div>
         <div class="window-frame">
+          ${this._deviceOfflineBadge(device)}
           <div class="window-sash ${isOpen ? 'open' : ''}">
             <div class="window-pane-row">
               <div class="window-pane"></div>
@@ -10923,10 +10929,10 @@ class EnergyPanel extends HTMLElement {
 
     return `
       <div class="device-card minisplit-card ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
-        ${this._deviceOfflineBadge(device)}
         <div class="ms-faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="ms-unit ${isActive ? 'ms-on' : ''}">
+            ${this._deviceOfflineBadge(device)}
             <div class="ms-upper-panel">
               <div class="ms-lcd">
                 <div class="ms-lcd-watts ${isOverThreshold ? 'over-threshold' : ''}">${watts.toFixed(1)} W</div>
@@ -10960,10 +10966,10 @@ class EnergyPanel extends HTMLElement {
 
     return `
       <div class="device-card fridge-card ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
-        ${this._deviceOfflineBadge(device)}
         <div class="fridge-faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="fridge-body ${isActive ? 'fridge-on' : ''}">
+            ${this._deviceOfflineBadge(device)}
             <div class="fridge-freezer-door">
               <div class="fridge-door-panel"></div>
               <div class="fridge-handle-vert"></div>
@@ -11025,10 +11031,10 @@ class EnergyPanel extends HTMLElement {
 
     return `
       <div class="device-card ceiling-vent-card ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
-        ${this._deviceOfflineBadge(device)}
         <div class="ceiling-vent-faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(displayTitle)}">${escapeHtml(displayTitle)}</div>
           <div class="ceiling-vent-body ${isActive ? 'vent-on' : ''}">
+            ${this._deviceOfflineBadge(device)}
             <div class="ceiling-vent-grill-wrap">
               <div class="ceiling-vent-grill">
                 <span class="cv-slat"></span>
@@ -11069,8 +11075,8 @@ class EnergyPanel extends HTMLElement {
     if (isSingleOutlet) {
       return `
       <div class="outlet-card outlet-face single-outlet ${this._deviceIsOffline(outlet) ? 'is-offline' : ''}" data-outlet-index="${index}">
-        ${this._deviceOfflineBadge(outlet)}
         <div class="faceplate">
+          ${this._deviceOfflineBadge(outlet)}
           <div class="outlet-name outlet-name-top" title="${escapeAttr(outlet.name)}">${escapeHtml(outlet.name)}</div>
           <div class="center-screw plate-screw" aria-hidden="true"></div>
           <div class="receptacle single-receptacle ${plug1Active ? 'active' : ''}">
@@ -11098,8 +11104,8 @@ class EnergyPanel extends HTMLElement {
 
     return `
       <div class="outlet-card outlet-face ${this._deviceIsOffline(outlet) ? 'is-offline' : ''}" data-outlet-index="${index}">
-        ${this._deviceOfflineBadge(outlet)}
         <div class="faceplate">
+          ${this._deviceOfflineBadge(outlet)}
           <div class="outlet-name outlet-name-top" title="${escapeAttr(outlet.name)}">${escapeHtml(outlet.name)}</div>
           <div class="receptacle plug-receptacle ${plug1Active ? 'active' : ''}" data-plug-index="1" title="Tap for usage graph and power">
             <div class="holes" aria-hidden="true">
@@ -15234,6 +15240,9 @@ class EnergyPanel extends HTMLElement {
       const eid = String(entityId || '').trim();
       if (eid && eid.includes('.')) ids.push(eid);
     };
+    const addPower = (entityId) => {
+      if (device?.power_source === 'sensor') add(entityId);
+    };
     if (otype === 'outlet') {
       add(device.plug1_entity);
       add(device.plug2_entity);
@@ -15241,20 +15250,16 @@ class EnergyPanel extends HTMLElement {
       add(device.plug2_switch);
     } else if (otype === 'light') {
       add(device.switch_entity);
-      if (device.power_source === 'sensor') add(device.power_sensor_entity);
-      for (const row of device.light_entities || []) {
-        add(typeof row === 'string' ? row : row?.entity_id);
-      }
+      addPower(device.power_sensor_entity);
     } else if (otype === 'vent' || otype === 'wall_heater') {
       add(device.switch_entity);
-      if (device.power_source === 'sensor') add(device.power_sensor_entity);
+      addPower(device.power_sensor_entity);
     } else if (otype === 'door' || otype === 'window') {
       add(device.contact_sensor);
-      add(device.lock_entity);
     } else if (['single_outlet', 'minisplit', 'stove', 'microwave', 'fridge'].includes(otype)) {
-      add(device.plug1_entity);
       add(device.plug1_switch);
-      if (device.power_source === 'sensor') add(device.power_sensor_entity);
+      if (device?.power_source === 'sensor') add(device.power_sensor_entity);
+      else add(device.plug1_entity);
     }
     return [...new Set(ids)];
   }
@@ -15267,7 +15272,7 @@ class EnergyPanel extends HTMLElement {
 
   _deviceOfflineBadge(device) {
     if (!this._deviceIsOffline(device)) return '';
-    return `<span class="device-offline-badge" title="Device offline" aria-label="Device offline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 1l22 22"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></span>`;
+    return `<span class="device-offline-badge" title="Device offline" aria-label="Device offline"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#e53935"/><circle cx="12" cy="12" r="9.2" fill="none" stroke="#fff" stroke-width="1.2"/><path fill="#fff" d="M12 15.6a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5zM8.7 13.7a4.7 4.7 0 0 1 6.6 0l-1.15 1.15a3.05 3.05 0 0 0-4.3 0L8.7 13.7zm-2.45-2.55a8.15 8.15 0 0 1 11.5 0l-1.15 1.15a6.5 6.5 0 0 0-9.2 0L6.25 11.15z"/><path stroke="#fff" stroke-width="1.7" stroke-linecap="round" d="M7 7.2 16.8 17"/></svg></span>`;
   }
 
   _openApplianceContextMenu(e, { roomId, outletIndex, outlet, forcedPlugSlot = null }) {
