@@ -1,10 +1,9 @@
-"""Billing-period energy and presence PDFs.
+"""One monthly energy and presence PDF.
 
-Each report covers one billing period taken from the billing start and end
-sensors. Daily summaries inside that window are rolled up into period totals,
-charts, and per-person presence. Reports are written under the integration data
-directory and are never removed by retention, cleanup, or regenerating a
-different period. Updating a period replaces only that period's file.
+The statement covers the billing range from the statistics billing sensors.
+Each day inside that month is broken down by room. When those sensors are not
+set, the statement is the calendar month instead. Extra day or cycle files are
+not kept.
 """
 from __future__ import annotations
 
@@ -616,7 +615,7 @@ def render_period_pdf(key: str, days: dict[str, Any], generated_label: str) -> b
     # Cover ----------------------------------------------------------------
     pdf.set_font("helvetica", "B", 18)
     pdf.set_text_color(*_NAVY)
-    pdf.cell(182, 9, _safe("Billing period statement"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(182, 9, _safe("Monthly statement"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("helvetica", "", 10)
     pdf.set_text_color(*_MUTED)
     pdf.cell(
@@ -728,29 +727,59 @@ def render_period_pdf(key: str, days: dict[str, Any], generated_label: str) -> b
                     doc.table_row(["    " + str(tracker["name"]), str(int(tracker["days_home"])), _hours(tracker["seconds_home"]), _hours(tracker["seconds_away"])], fill=index % 2 == 1)
             pdf.ln(2)
 
-    # Daily summary ------------------------------------------------------------
-    if recorded:
-        doc.section("Daily summary", "One line per day. 'vs avg' compares the day to the period average. People home counts anyone with at least one hour at home.")
-        top_rooms = ordered_rooms[:3]
-        columns = [(30, "Date", "L"), (24, "kWh", "R"), (22, "vs avg", "R")]
-        room_w = (182 - 76 - 24) / max(1, len(top_rooms)) if top_rooms else 0
-        for rid in top_rooms:
-            columns.append((room_w, str(rooms[rid]["name"]), "R"))
-        columns.append((24, "People home", "R"))
-        doc.table_header(columns)
-        for index, day in enumerate(calendar):
-            if day not in roll["daily_total"]:
-                cells = [_weekday_day(day), "no data", ""] + [""] * len(top_rooms) + [""]
-                doc.table_row(cells, fill=index % 2 == 1)
+    # Daily breakdown by room ------------------------------------------------
+    doc.section(
+        "Daily breakdown by room",
+        "This is the monthly statement. Each recorded day lists that day's energy by room.",
+    )
+    if not recorded:
+        doc.muted("No daily summaries have been recorded inside this billing period yet.")
+    else:
+        last_recorded = recorded[-1]
+        doc.table_header([(40, "Day", "L"), (74, "Room", "L"), (34, "kWh", "R"), (34, "Share of day", "R")])
+        stripe = 0
+        for day in calendar:
+            if day > last_recorded:
+                break
+            total = roll["daily_total"].get(day)
+            if total is None:
+                doc.table_row([_weekday_day(day), "no data", "", ""], fill=stripe % 2 == 1)
+                stripe += 1
                 continue
-            total = float(roll["daily_total"][day])
-            delta = ((total - avg_wh) / avg_wh * 100.0) if avg_wh > 0 else 0.0
-            cells = [_weekday_day(day), _kwh(total, 2), f"{delta:+.0f}%"]
-            for rid in top_rooms:
-                cells.append(_kwh(roll["daily_rooms"].get(day, {}).get(rid, 0.0), 2))
-            home = sum(1 for secs in roll["daily_home"].get(day, {}).values() if secs >= 3600)
-            cells.append(str(home))
-            doc.table_row(cells, fill=index % 2 == 1, bold=day == peak_day)
+            ranked = sorted(
+                (
+                    (rid, float(wh))
+                    for rid, wh in (roll["daily_rooms"].get(day) or {}).items()
+                    if float(wh) > 0
+                ),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            if not ranked:
+                doc.table_row(
+                    [_weekday_day(day), "No room usage", _kwh(float(total), 2), ""],
+                    fill=stripe % 2 == 1,
+                )
+                stripe += 1
+                continue
+            first = True
+            for rid, wh in ranked:
+                name = str(rooms.get(rid, {}).get("name") or rid)
+                share = (wh / float(total) * 100.0) if float(total) > 0 else 0.0
+                doc.table_row(
+                    [
+                        _weekday_day(day) if first else "",
+                        "      " + name,
+                        _kwh(wh, 2),
+                        f"{share:.0f}%",
+                    ],
+                    fill=stripe % 2 == 1,
+                    bold=first and day == peak_day,
+                    swatch=palette.get(rid),
+                )
+                first = False
+                stripe += 1
+            doc.table_row(["", "Day total", _kwh(float(total), 2), "100%"], fill=False, bold=True)
 
     return bytes(pdf.output())
 
@@ -780,6 +809,23 @@ def write_period_pdf(data_dir: str, key: str, days: dict[str, Any], generated_la
             pass
         return None
     return path
+
+
+def prune_reports(data_dir: str, keep_keys: set[str]) -> bool:
+    """Delete statement files that are not the current monthly PDF. Returns True if any were removed."""
+    folder = Path(data_dir) / REPORTS_DIRNAME
+    if not folder.is_dir():
+        return False
+    removed = False
+    for path in folder.glob("*.pdf"):
+        key = valid_key(path.stem)
+        if key is None or key not in keep_keys:
+            try:
+                path.unlink()
+                removed = True
+            except OSError as err:
+                _LOGGER.warning("Could not remove extra report %s: %s", path.name, err)
+    return removed
 
 
 def list_reports(data_dir: str) -> list[dict[str, Any]]:

@@ -2007,10 +2007,10 @@ class EnergyMonitor:
                 )
 
     async def _maybe_refresh_monthly_pdfs(self) -> None:
-        """Rewrite a billing period's PDF when its retained source changed. Never deletes files."""
+        """Rewrite the current monthly PDF. Drop day-range and extra cycle files."""
         import time as time_mod
 
-        from .monthly_reports import fingerprint, key_range, report_path, write_period_pdf
+        from .monthly_reports import fingerprint, key_range, prune_reports, report_path, write_period_pdf
 
         durable = self.config_manager.durable
         data_dir = self.config_manager._data_dir
@@ -2019,7 +2019,16 @@ class EnergyMonitor:
         now_mono = time_mod.monotonic()
         day_changed = self._pdf_written_day != today
         wrote = False
-        for period in self.config_manager.report_periods():
+        periods = self.config_manager.report_periods()
+        # Sensors are set but not readable yet: leave the existing file alone.
+        if not periods and self.config_manager.billing_sensors_configured():
+            return
+        pruned = await self.hass.async_add_executor_job(
+            prune_reports, data_dir, {period["key"] for period in periods}
+        )
+        if pruned:
+            wrote = True
+        for period in periods:
             key = period["key"]
             rng = key_range(key)
             if not rng:
