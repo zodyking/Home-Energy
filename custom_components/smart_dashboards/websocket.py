@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 from copy import deepcopy
 from functools import partial
@@ -274,6 +275,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_event_log)
     websocket_api.async_register_command(hass, websocket_get_door_activity)
     websocket_api.async_register_command(hass, websocket_get_statistics)
+    websocket_api.async_register_command(hass, websocket_get_monthly_report)
     websocket_api.async_register_command(hass, websocket_subscribe_statistics)
     websocket_api.async_register_command(hass, websocket_subscribe_hard_refresh_progress)
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
@@ -423,6 +425,7 @@ async def websocket_get_entities(
                 result["binary_sensors"].append({
                     "entity_id": entity_id,
                     "friendly_name": friendly_name,
+                    "device_class": state.attributes.get("device_class") or "",
                 })
 
         if entity_type is None or entity_type == "light":
@@ -2552,6 +2555,7 @@ async def websocket_get_statistics(
             merged = {**json_cache, "period_source": period_source}
             merged["sensor_values"] = fresh_sensors["sensor_values"]
             merged["sensor_meta"] = fresh_sensors["sensor_meta"]
+            merged.update(_statistics_extras(hass, config_manager))
             connection.send_result(msg["id"], merged)
             return
         # No snapshot yet: return fast shell (no recorder) and prime full build in background
@@ -2564,7 +2568,8 @@ async def websocket_get_statistics(
         )
         shell["statistics_pending"] = True
         connection.send_result(
-            msg["id"], {**shell, "period_source": period_source}
+            msg["id"],
+            {**shell, "period_source": period_source, **_statistics_extras(hass, config_manager)},
         )
         hass.async_create_task(_prime_statistics_cache(hass))
         return
@@ -2573,7 +2578,102 @@ async def websocket_get_statistics(
     result = await async_build_statistics_payload(
         hass, config_manager, date_start=date_start, date_end=date_end
     )
-    connection.send_result(msg["id"], result)
+    connection.send_result(msg["id"], {**result, **_statistics_extras(hass, config_manager)})
+
+
+def _offline_appliance_rows(hass: HomeAssistant, config_manager) -> list[dict[str, Any]]:
+    """Currently unreachable outlets and appliances, with retained last-online times."""
+    from .durable_records import entity_is_online, room_id_of, watch_entities
+
+    rows: list[dict[str, Any]] = []
+    for room in config_manager.energy_config.get("rooms", []):
+        rid = room_id_of(room)
+        room_name = room.get("name") or rid
+        for outlet in room.get("outlets") or []:
+            device_name = outlet.get("name") or "Device"
+            for entity_id, part in watch_entities(outlet):
+                state = hass.states.get(entity_id)
+                raw = state.state if state is not None else None
+                if entity_is_online(raw):
+                    continue
+                rows.append(
+                    {
+                        "name": device_name,
+                        "part": part,
+                        "room_id": rid,
+                        "room_name": room_name,
+                        "entity_id": entity_id,
+                        "last_online": config_manager.durable.last_online(entity_id),
+                    }
+                )
+    return rows
+
+
+def _statistics_extras(hass: HomeAssistant, config_manager) -> dict[str, Any]:
+    reports = list(getattr(config_manager, "monthly_reports_index", []) or [])
+    return {
+        "offline_devices": _offline_appliance_rows(hass, config_manager),
+        "monthly_reports": reports,
+    }
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/get_monthly_report",
+        vol.Required("month"): str,
+        vol.Optional("refresh", default=False): bool,
+    }
+)
+@websocket_api.async_response
+async def websocket_get_monthly_report(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return one retained monthly PDF. Refresh rewrites that month only."""
+    from .monthly_reports import read_report_bytes, report_path, valid_month, write_month_pdf
+
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+    month = valid_month(str(msg.get("month") or ""))
+    if not month:
+        connection.send_error(msg["id"], "invalid_month", "Month must be YYYY-MM")
+        return
+    refresh = bool(msg.get("refresh"))
+    existing = await hass.async_add_executor_job(
+        read_report_bytes, config_manager._data_dir, month
+    )
+    if refresh or existing is None:
+        days = config_manager.durable.month_days(month)
+        already = report_path(config_manager._data_dir, month)
+        # Do not replace a saved month with an empty document.
+        written = True
+        if days or already is None or not already.is_file():
+            generated = dt_util.now().isoformat(timespec="seconds")
+            written = await hass.async_add_executor_job(
+                write_month_pdf, config_manager._data_dir, month, days, generated
+            )
+        if written is None and existing is None:
+            connection.send_error(msg["id"], "write_failed", "Could not create the monthly report")
+            return
+        if written not in (None, True):
+            await hass.async_add_executor_job(config_manager.refresh_monthly_report_index)
+        existing = await hass.async_add_executor_job(
+            read_report_bytes, config_manager._data_dir, month
+        )
+    if not existing:
+        connection.send_error(msg["id"], "not_found", "Monthly report is not available")
+        return
+    connection.send_result(
+        msg["id"],
+        {
+            "month": month,
+            "filename": f"{month}.pdf",
+            "pdf_base64": base64.b64encode(existing).decode("ascii"),
+        },
+    )
 
 
 @websocket_api.websocket_command(
@@ -2598,9 +2698,10 @@ def websocket_subscribe_statistics(
         if config_manager:
             billing_a, billing_b = config_manager.get_billing_date_range()
         period_source = "billing" if (billing_a and billing_b) else "rolling"
+        extras = _statistics_extras(hass, config_manager) if config_manager else {}
         connection.send_message(
             websocket_api.event_message(
-                msg["id"], {**data, "period_source": period_source}
+                msg["id"], {**data, "period_source": period_source, **extras}
             )
         )
 
