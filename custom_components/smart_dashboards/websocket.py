@@ -2611,6 +2611,10 @@ def _offline_appliance_rows(hass: HomeAssistant, config_manager) -> list[dict[st
 
 def _statistics_extras(hass: HomeAssistant, config_manager) -> dict[str, Any]:
     reports = list(getattr(config_manager, "monthly_reports_index", []) or [])
+    periods = config_manager.report_periods()
+    if periods or not config_manager.billing_sensors_configured():
+        allowed = {period["key"] for period in periods}
+        reports = [row for row in reports if row.get("key") in allowed]
     return {
         "offline_devices": _offline_appliance_rows(hass, config_manager),
         "monthly_reports": reports,
@@ -2642,6 +2646,10 @@ async def websocket_get_monthly_report(
     rng = key_range(key) if key else None
     if not key or not rng:
         connection.send_error(msg["id"], "invalid_key", "Report key must be YYYY-MM-DD_YYYY-MM-DD or YYYY-MM")
+        return
+    current = {period["key"] for period in config_manager.report_periods()}
+    if current and key not in current:
+        connection.send_error(msg["id"], "not_current", "Only the current monthly statement is available")
         return
     refresh = bool(msg.get("refresh"))
     existing = await hass.async_add_executor_job(

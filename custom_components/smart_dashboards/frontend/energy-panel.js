@@ -9867,7 +9867,7 @@ class EnergyPanel extends HTMLElement {
         <div class="monthly-report-row">
           <div>
             <div class="monthly-report-title">${title}</div>
-            <div class="monthly-report-meta">Billing period · updated ${generated} · kept permanently</div>
+            <div class="monthly-report-meta">Monthly statement · updated ${generated}</div>
           </div>
           <div class="monthly-report-actions">
             <button type="button" class="btn btn-secondary" data-monthly-report="${key}" data-monthly-action="open">Open</button>
@@ -9876,11 +9876,11 @@ class EnergyPanel extends HTMLElement {
         </div>
       `;
     }).join('');
-    const body = rows || '<p class="monthly-reports-empty">No billing period statements yet. One is saved here once usage or presence is recorded for the current billing period, and it is never removed by cleanup.</p>';
+    const body = rows || '<p class="monthly-reports-empty">No monthly statement yet. One PDF is saved for the current billing period, with each day broken down by room.</p>';
     return `
-      <section class="monthly-reports" aria-label="Billing period PDF statements">
-        <h3>Billing period statements</h3>
-        <p class="statistics-section-sub">One PDF per billing period from your billing sensors: usage by day and room, appliances, and who was home. Opening a statement refreshes only that period.</p>
+      <section class="monthly-reports" aria-label="Monthly energy statement">
+        <h3>Monthly statement</h3>
+        <p class="statistics-section-sub">One PDF for the billing range in Statistics settings. Each day in that period is broken down by room. If the billing sensors are not set, the statement uses the calendar month.</p>
         ${body}
       </section>
     `;
