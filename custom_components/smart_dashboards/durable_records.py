@@ -35,7 +35,7 @@ _APPLIANCE_TYPES = frozenset(
 
 
 def _default_store() -> dict[str, Any]:
-    return {"version": SCHEMA_VERSION, "availability": {}, "days": {}, "periods": {}}
+    return {"version": SCHEMA_VERSION, "availability": {}, "days": {}, "periods": {}, "connectivity": []}
 
 
 def _day_bucket(days: dict[str, Any], day: str) -> dict[str, Any]:
@@ -126,11 +126,13 @@ class DurableHistory:
         availability = raw.get("availability")
         days = raw.get("days")
         periods = raw.get("periods")
+        connectivity = raw.get("connectivity")
         self.data = {
             "version": SCHEMA_VERSION,
             "availability": availability if isinstance(availability, dict) else {},
             "days": days if isinstance(days, dict) else {},
             "periods": periods if isinstance(periods, dict) else {},
+            "connectivity": connectivity if isinstance(connectivity, list) else [],
         }
 
     def note_period(self, start: str, end: str, when_iso: str) -> bool:
@@ -177,21 +179,91 @@ class DurableHistory:
 
     def note_online(self, entity_id: str, when_iso: str, *, name: str, room_id: str, room_name: str, part: str) -> None:
         """Record that Home Assistant could read this entity. Never deletes prior rows."""
+        self.note_observed(
+            entity_id,
+            when_iso,
+            online=True,
+            name=name,
+            room_id=room_id,
+            room_name=room_name,
+            part=part,
+        )
+
+    def note_observed(
+        self,
+        entity_id: str,
+        when_iso: str,
+        *,
+        online: bool,
+        name: str,
+        room_id: str,
+        room_name: str,
+        part: str,
+    ) -> bool:
+        """Remember online or offline. Append a log row only when that status changes.
+
+        The first time an entity is seen online, no event is written. The first time it
+        is seen offline, a disconnect is written. Later changes are disconnects or
+        reconnects. Returns True when a log row was added.
+        """
         eid = str(entity_id or "").strip()
         if not eid:
-            return
-        prev = self.data["availability"].get(eid)
+            return False
+        availability = self.data.setdefault("availability", {})
+        prev = availability.get(eid)
         row = dict(prev) if isinstance(prev, dict) else {}
+        previous = str(row.get("status") or "")
+        status = "online" if online else "offline"
         row.update(
             {
                 "name": name or row.get("name") or eid,
                 "room_id": room_id or row.get("room_id") or "",
                 "room_name": room_name or row.get("room_name") or "",
                 "part": part or row.get("part") or "",
-                "last_online": when_iso,
+                "status": status,
+                "status_at": when_iso,
             }
         )
-        self.data["availability"][eid] = row
+        if online:
+            row["last_online"] = when_iso
+        availability[eid] = row
+        if previous == status:
+            return False
+        if not previous and online:
+            return False
+        event = "reconnected" if online else "disconnected"
+        log = self.data.setdefault("connectivity", [])
+        if not isinstance(log, list):
+            log = []
+            self.data["connectivity"] = log
+        log.append(
+            {
+                "at": when_iso,
+                "entity_id": eid,
+                "name": row["name"],
+                "room_id": row["room_id"],
+                "room_name": row["room_name"],
+                "part": row["part"],
+                "event": event,
+            }
+        )
+        return True
+
+    def events_between(self, start: str, end: str) -> list[dict[str, Any]]:
+        """Connectivity events whose timestamp falls on an inclusive YYYY-MM-DD range."""
+        a = str(start or "").strip()[:10]
+        b = str(end or "").strip()[:10]
+        out: list[dict[str, Any]] = []
+        if not a or not b or a > b:
+            return out
+        for row in self.data.get("connectivity") or []:
+            if not isinstance(row, dict):
+                continue
+            day = str(row.get("at") or "")[:10]
+            if a <= day <= b:
+                out.append(dict(row))
+        out.sort(key=lambda row: str(row.get("at") or ""))
+        return out
 
     def last_online(self, entity_id: str) -> str | None:
         row = self.data["availability"].get(str(entity_id or "").strip())
