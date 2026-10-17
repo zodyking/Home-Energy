@@ -381,6 +381,12 @@ class EnergyMonitor:
         self._door_activity_log: dict[str, list[dict[str, str]]] = {}
         # group:{room_id} / ind:{room_id}:{entity_id} -> segment transition + burst reconcile timing
         self._light_auto_apply_state: dict[str, dict] = {}
+        # Edge state for optional light ↔ presence/motion links. Not persisted.
+        self._light_presence_state: dict[str, dict] = {}
+        self._presence_sample_at: datetime | None = None
+        self._pdf_fingerprints: dict[str, str] = {}
+        self._pdf_written_at: dict[str, float] = {}
+        self._pdf_written_day: str | None = None
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -1850,6 +1856,202 @@ class EnergyMonitor:
                 eid,
                 "on" if turn_on else "off",
                 e,
+            )
+
+    def _light_entity_ids(self, outlet: dict) -> list[str]:
+        ids: list[str] = []
+        for row in outlet.get("light_entities") or []:
+            if isinstance(row, dict):
+                eid = str(row.get("entity_id") or "").strip()
+            else:
+                eid = str(row or "").strip()
+            if eid.startswith("light.") and eid not in ids:
+                ids.append(eid)
+        return ids
+
+    async def _command_light_group(self, outlet: dict, turn_on: bool) -> None:
+        """Turn a light's room relay and mapped bulbs on or off together.
+
+        Uses the same switch and light services as manual control. Omits
+        brightness so Home Assistant keeps the bulb's last level. A missing
+        or unavailable entity is skipped.
+        """
+        switch_id = str(outlet.get("switch_entity") or "").strip()
+        light_ids = [
+            eid
+            for eid in self._light_entity_ids(outlet)
+            if not self._skip_light_auto_if_unusable(eid)
+        ]
+        try:
+            if turn_on:
+                if switch_id.startswith("switch.") and not self._skip_light_auto_if_unusable(switch_id):
+                    await self._async_switch_set(switch_id, True)
+                if light_ids:
+                    await self.hass.services.async_call(
+                        "light",
+                        "turn_on",
+                        {"entity_id": light_ids},
+                        blocking=True,
+                    )
+            else:
+                if light_ids:
+                    await self.hass.services.async_call(
+                        "light",
+                        "turn_off",
+                        {"entity_id": light_ids},
+                        blocking=True,
+                    )
+                if switch_id.startswith("switch.") and not self._skip_light_auto_if_unusable(switch_id):
+                    await self._async_switch_set(switch_id, False)
+        except Exception as err:
+            _LOGGER.warning(
+                "Light presence command failed for %s: %s",
+                outlet.get("name") or switch_id or light_ids,
+                err,
+            )
+
+    async def _tick_light_presence(
+        self, room_id: str, outlet: dict, now: datetime
+    ) -> None:
+        """Optional presence/motion link. No sensor means the light stays manual."""
+        if outlet.get("type") != "light":
+            return
+        sensor = str(outlet.get("light_presence_entity") or "").strip()
+        key = f"{room_id}:{outlet.get('name') or ''}:{sensor}"
+        if not sensor.startswith("binary_sensor."):
+            self._light_presence_state.pop(key, None)
+            return
+        st = self.hass.states.get(sensor)
+        if st is None or str(st.state or "").lower() in ("unknown", "unavailable", ""):
+            return
+        present = self._binary_presence_positive(sensor)
+        slot = self._light_presence_state.setdefault(
+            key, {"present": None, "clear_since": None}
+        )
+        if present:
+            slot["clear_since"] = None
+            if slot.get("present") is True:
+                return
+            slot["present"] = True
+            await self._command_light_group(outlet, True)
+            return
+        if slot.get("present") is not True:
+            slot["present"] = False
+            return
+        clear_since = slot.get("clear_since")
+        if clear_since is None:
+            slot["clear_since"] = now
+            return
+        if (now - clear_since).total_seconds() < 5:
+            return
+        slot["present"] = False
+        slot["clear_since"] = None
+        await self._command_light_group(outlet, False)
+
+    def _note_outlet_availability(self, room: dict, room_id: str, room_name: str, outlet: dict) -> None:
+        from .durable_records import entity_is_online, watch_entities
+
+        name = str(outlet.get("name") or "Device")
+        when = dt_util.now().isoformat(timespec="seconds")
+        for entity_id, part in watch_entities(outlet):
+            state = self.hass.states.get(entity_id)
+            raw = state.state if state is not None else None
+            if entity_is_online(raw):
+                self.config_manager.durable.note_online(
+                    entity_id,
+                    when,
+                    name=name,
+                    room_id=room_id,
+                    room_name=room_name,
+                    part=part,
+                )
+
+    def _sample_person_presence(self, now: datetime) -> None:
+        """Add observed home/away seconds for each person's device trackers."""
+        if self._presence_sample_at is None:
+            elapsed = 1.0
+        else:
+            elapsed = (now - self._presence_sample_at).total_seconds()
+        self._presence_sample_at = now
+        elapsed = max(0.0, min(5.0, elapsed))
+        if elapsed <= 0:
+            return
+        day = now.strftime("%Y-%m-%d")
+        try:
+            person_states = self.hass.states.async_all("person")
+        except Exception:
+            person_states = []
+        for person_state in person_states:
+            person_id = getattr(person_state, "entity_id", "") or ""
+            if not str(person_id).startswith("person."):
+                continue
+            person_name = (person_state.attributes or {}).get("friendly_name") or person_id
+            trackers = get_person_device_tracker_entity_ids(self.hass, person_id)
+            if not trackers:
+                trackers = [person_id]
+            for tracker_id in trackers:
+                st = self.hass.states.get(tracker_id)
+                if st is None or str(st.state or "").lower() in ("unknown", "unavailable", ""):
+                    continue
+                raw = str(st.state or "").strip()
+                tracker_name = (st.attributes or {}).get("friendly_name") or tracker_id
+                self.config_manager.durable.add_presence(
+                    day,
+                    person_id,
+                    str(person_name),
+                    tracker_id,
+                    str(tracker_name),
+                    raw,
+                    is_home=raw.lower() == "home",
+                    seconds=elapsed,
+                )
+
+    async def _maybe_refresh_monthly_pdfs(self) -> None:
+        """Rewrite a month's PDF when its retained source changed. Never deletes files."""
+        import time as time_mod
+
+        from .monthly_reports import fingerprint, report_path, valid_month, write_month_pdf
+
+        durable = self.config_manager.durable
+        data_dir = self.config_manager._data_dir
+        today = dt_util.now().strftime("%Y-%m-%d")
+        months: set[str] = set()
+        current = valid_month(today[:7])
+        if current:
+            months.add(current)
+        for day in list(durable.data.get("days", {})):
+            if isinstance(day, str) and len(day) >= 7:
+                key = valid_month(day[:7])
+                if key:
+                    months.add(key)
+        generated = dt_util.now().isoformat(timespec="seconds")
+        now_mono = time_mod.monotonic()
+        day_changed = self._pdf_written_day != today
+        wrote = False
+        for month in sorted(months):
+            days = durable.month_days(month)
+            existing_path = report_path(data_dir, month)
+            if not days and existing_path is not None and existing_path.is_file():
+                continue
+            fp = fingerprint(days)
+            previous = self._pdf_fingerprints.get(month)
+            if previous == fp:
+                continue
+            last = self._pdf_written_at.get(month, 0.0)
+            due = previous is None or day_changed or (now_mono - last) >= 300
+            if not due:
+                continue
+            path = await self.hass.async_add_executor_job(
+                write_month_pdf, data_dir, month, days, generated
+            )
+            if path is not None:
+                wrote = True
+                self._pdf_fingerprints[month] = fp
+                self._pdf_written_at[month] = now_mono
+        self._pdf_written_day = today
+        if wrote:
+            await self.hass.async_add_executor_job(
+                self.config_manager.refresh_monthly_report_index
             )
 
     def _mark_switch_internal(self, entity_id: str) -> None:
@@ -3678,6 +3880,13 @@ class EnergyMonitor:
             elif outlet.get("plug2_switch") == switch_id:
                 if self._shutoff_pending.get(f"{room_id}_{oname}_Plug 2"):
                     return True
+            if outlet.get("type") == "light":
+                sensor = str(outlet.get("light_presence_entity") or "").strip()
+                if sensor.startswith("binary_sensor."):
+                    sensor_state = self.hass.states.get(sensor)
+                    raw = str(sensor_state.state or "").lower() if sensor_state else ""
+                    if raw not in ("", "unknown", "unavailable") and not self._binary_presence_positive(sensor):
+                        return True
         return False
 
     async def _maybe_keep_on_switch(self, room: dict, switch_id: str) -> None:
@@ -4345,6 +4554,7 @@ class EnergyMonitor:
                 outlet_name = outlet.get("name", "Outlet")
                 outlet_threshold = outlet.get("threshold", 0)
                 outlet_total_watts = 0.0
+                self._note_outlet_availability(room, room_id, room_name, outlet)
 
                 # Light outlets: configured watts from map, or power_sensor_entity when switch on
                 if outlet.get("type") == "light":
@@ -4387,6 +4597,7 @@ class EnergyMonitor:
                                         tracking_key, outlet_total_watts
                                     )
                     room_total_watts += outlet_total_watts
+                    await self._tick_light_presence(room_id, outlet, now)
                     continue
 
                 # Vent / wall heater: power sensor reads directly (like AC), or static watts when switch on
@@ -4564,11 +4775,14 @@ class EnergyMonitor:
         # Keep-on switches (runs every tick)
         await self._tick_keep_on_switches()
 
+        self._sample_person_presence(now)
+
         # Periodically save energy tracking data (every 15 seconds, survives restarts)
         self._save_counter += 1
         if self._save_counter >= 15:
             self._save_counter = 0
             await self.config_manager.async_save_persistent_data()
+            await self._maybe_refresh_monthly_pdfs()
 
     def _get_power_value(self, entity_id: str) -> float:
         """Get power value from an entity in Watts."""

@@ -14,6 +14,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import DEFAULT_CONFIG, DOMAIN
+from .durable_records import FILENAME as DURABLE_HISTORY_FILENAME
+from .durable_records import DurableHistory, room_id_of
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -439,6 +441,10 @@ class ConfigManager:
         # Light automations JSON — in-memory cache invalidated by file mtime
         self._light_automations_cache: dict[str, Any] | None = None
         self._light_automations_mtime: float | None = None
+        # Daily energy, presence, and last-online. Not trimmed by retention jobs.
+        self.durable = DurableHistory(self._data_path(DURABLE_HISTORY_FILENAME))
+        # Cached monthly PDF index so statistics updates do not touch the disk.
+        self.monthly_reports_index: list[dict[str, Any]] = []
 
     def _ensure_data_dir(self) -> str:
         """Ensure data directory exists and return its path."""
@@ -683,6 +689,8 @@ class ConfigManager:
         await self._async_load_intraday_history()
         # Load statistics cache for instant page load
         await self._async_load_statistics_cache()
+        await self.hass.async_add_executor_job(self.durable.load)
+        await self.hass.async_add_executor_job(self.refresh_monthly_report_index)
 
     async def async_save(self) -> None:
         """Save configuration to file."""
@@ -978,6 +986,9 @@ class ConfigManager:
                             ps, pse = _power_source_for_light_vent(outlet)
                             item["power_source"] = ps
                             item["power_sensor_entity"] = pse
+                            item["light_presence_entity"] = _normalize_binary_sensor_entity(
+                                outlet.get("light_presence_entity")
+                            )
                         elif outlet_type == "minisplit":
                             item["plug2_entity"] = None
                             item["plug1_switch"] = outlet.get("plug1_switch")
@@ -2001,6 +2012,8 @@ class ConfigManager:
         await self._async_save_intraday_history()
         await self._async_save_enforcement_state()
         await self._async_save_event_counts()
+        self._upsert_durable_today()
+        await self.hass.async_add_executor_job(self.durable.save)
 
     async def _async_save_energy_tracking(self) -> None:
         """Save day energy tracking data."""
@@ -2636,6 +2649,93 @@ class ConfigManager:
         except IOError as err:
             _LOGGER.error("Error saving statistics cache: %s", err)
 
+    def _durable_device_wh(self, room_id: str, outlet: dict) -> list[dict[str, Any]]:
+        """Per-device Wh for the durable ledger. Same tracking keys as the day energy file."""
+        otype = str(outlet.get("type") or "outlet")
+        name = str(outlet.get("name") or "Device")
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def add(part: str, key: Any) -> None:
+            eid = str(key or "").strip()
+            if not eid or eid in seen:
+                return
+            seen.add(eid)
+            wh = float(self._day_energy_data.get(eid, {}).get("energy", 0.0) or 0.0)
+            rows.append({"name": name, "part": part, "wh": round(wh, 2), "key": eid})
+
+        if otype == "light":
+            if outlet.get("power_source") == "sensor":
+                add("Power", outlet.get("power_sensor_entity"))
+            else:
+                light_name = (outlet.get("name") or "light").lower().replace(" ", "_")
+                add("Configured wattage", f"light_{room_id}_{light_name}")
+        elif otype in ("vent", "wall_heater"):
+            if outlet.get("power_source") == "sensor":
+                add("Power", outlet.get("power_sensor_entity"))
+            else:
+                add("Configured wattage", vent_like_energy_tracking_key(room_id, outlet))
+        elif otype in ("door", "window"):
+            return []
+        else:
+            pe = outlet.get("power_sensor_entity")
+            if pe and isinstance(pe, str) and pe.strip():
+                add("Power", pe.strip())
+            plug1 = outlet.get("plug1_entity")
+            plug2 = outlet.get("plug2_entity")
+            if plug1:
+                add("Plug 1", plug1)
+            if plug2 and otype == "outlet":
+                add("Plug 2", plug2)
+        return rows
+
+    def durable_energy_payload(self) -> tuple[str, dict[str, Any], dict[str, Any]]:
+        """Today's room/device energy from the live day ledger (not the pruned totals file)."""
+        today = dt_util.now().strftime("%Y-%m-%d")
+        rooms_out: dict[str, Any] = {}
+        total_wh = 0.0
+        for room in self.energy_config.get("rooms", []):
+            rid = room_id_of(room)
+            devices: list[dict[str, Any]] = []
+            room_wh = 0.0
+            for outlet in room.get("outlets", []):
+                for row in self._durable_device_wh(rid, outlet):
+                    devices.append(row)
+                    room_wh += float(row.get("wh") or 0.0)
+            room_wh = round(room_wh, 2)
+            total_wh += room_wh
+            counts = self._event_counts or {}
+            rooms_out[rid] = {
+                "name": room.get("name") or rid,
+                "wh": room_wh,
+                "warnings": int((counts.get("room_warnings") or {}).get(rid, 0) or 0),
+                "shutoffs": int((counts.get("room_shutoffs") or {}).get(rid, 0) or 0),
+                "power_cycles": int((counts.get("room_power_cycles") or {}).get(rid, 0) or 0),
+                "devices": devices,
+            }
+        totals = {
+            "total_wh": round(total_wh, 2),
+            "total_warnings": int((self._event_counts or {}).get("total_warnings", 0) or 0),
+            "total_shutoffs": int((self._event_counts or {}).get("total_shutoffs", 0) or 0),
+            "total_power_cycles": int((self._event_counts or {}).get("total_power_cycles", 0) or 0),
+        }
+        return today, rooms_out, totals
+
+    def _upsert_durable_today(self) -> None:
+        day, rooms, totals = self.durable_energy_payload()
+        self.durable.upsert_energy_day(day, rooms, totals)
+
+    def refresh_monthly_report_index(self) -> list[dict[str, Any]]:
+        """Rebuild the in-memory list of retained monthly PDFs."""
+        from .monthly_reports import list_reports
+
+        try:
+            self.monthly_reports_index = list_reports(self._data_dir)
+        except OSError as err:
+            _LOGGER.warning("Monthly report index refresh failed: %s", err)
+            self.monthly_reports_index = []
+        return self.monthly_reports_index
+
     async def async_snapshot_day_and_reset_if_rolled_over(self) -> None:
         """If date rolled over, snapshot previous day's totals to history, then reset."""
         today = dt_util.now().strftime("%Y-%m-%d")
@@ -2696,6 +2796,11 @@ class ConfigManager:
             "rooms": rooms_data,
         }
         await self._async_save_daily_totals()
+
+        # Copy the finished day into the never-pruned ledger before the day file resets.
+        _today, rooms_kept, totals_kept = self.durable_energy_payload()
+        self.durable.upsert_energy_day(old_date, rooms_kept, totals_kept)
+        await self.hass.async_add_executor_job(self.durable.save)
 
         self._day_energy_data = {}
         self._last_reset_date = today

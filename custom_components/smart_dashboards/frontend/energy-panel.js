@@ -188,9 +188,10 @@ class EnergyPanel extends HTMLElement {
     this._statsRadarSyncChain = Promise.resolve();
     this._statRadarBillingDelegation = false;
     this._applianceToggleDelegation = false;
-    /** Appliance card context menu: Escape handler + scroll-close. */
+    /** Appliance card context menu: Escape plus optional user-scroll dismiss. */
     this._applianceMenuEsc = null;
     this._applianceMenuScrollClose = null;
+    this._applianceMenuGestureCleanup = null;
     this._summaryStatsResizeObs = null;
     this._summaryStatsWindowResizeBound = null;
     this._summaryFitDebounce = null;
@@ -2002,6 +2003,73 @@ class EnergyPanel extends HTMLElement {
         opacity: 0.95;
         text-align: center;
       }
+      .offline-appliances {
+        margin: 0 0 12px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 152, 0, 0.45);
+        background: rgba(255, 152, 0, 0.08);
+      }
+      .offline-appliances h3 {
+        margin: 0 0 4px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+      .offline-appliances p {
+        margin: 0 0 8px;
+        font-size: 12px;
+        line-height: 1.4;
+        color: var(--secondary-text-color);
+      }
+      .offline-appliances ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .offline-appliances li {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        align-items: baseline;
+        padding: 8px 0;
+        border-top: 1px solid var(--card-border);
+        font-size: 13px;
+        line-height: 1.35;
+      }
+      .offline-appliances .offline-name { font-weight: 600; }
+      .offline-appliances .offline-meta { color: var(--secondary-text-color); }
+      .monthly-reports {
+        margin-top: 12px;
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 10px;
+        padding: clamp(12px, 3vw, 16px);
+      }
+      .monthly-reports h3 {
+        margin: 0 0 4px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .monthly-reports .statistics-section-sub { margin-bottom: 10px; }
+      .monthly-reports-empty {
+        margin: 0;
+        font-size: 13px;
+        color: var(--secondary-text-color);
+      }
+      .monthly-report-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px 12px;
+        padding: 10px 0;
+        border-top: 1px solid var(--card-border);
+      }
+      .monthly-report-title { font-weight: 600; font-size: 14px; }
+      .monthly-report-meta { font-size: 12px; color: var(--secondary-text-color); }
+      .monthly-report-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .monthly-report-actions .btn { min-height: 44px; }
       .statistics-cards {
         display: block;
         width: 100%;
@@ -9571,6 +9639,8 @@ class EnergyPanel extends HTMLElement {
             </div>
           </div>
 
+          ${this._renderOfflineAppliancesNotice()}
+
           <div class="statistics-content-grid">
             <div class="statistics-radar-panel">
               <div class="statistics-section-header">
@@ -9612,9 +9682,100 @@ class EnergyPanel extends HTMLElement {
               </div>
             </div>
           </div>
+          ${this._renderMonthlyReportsArchive()}
         </div>
       </div>
     `;
+  }
+
+  _formatOfflineWhen(iso) {
+    if (!iso) return 'No online time recorded';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return 'No online time recorded';
+    try {
+      return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    } catch (_err) {
+      return d.toLocaleString();
+    }
+  }
+
+  _renderOfflineAppliancesNotice() {
+    const devices = Array.isArray(this._statsData?.offline_devices) ? this._statsData.offline_devices : [];
+    if (!devices.length) return '';
+    const items = devices.map((device) => {
+      const name = this._eventLogEscape(device.name || 'Device');
+      const part = device.part ? ` (${this._eventLogEscape(device.part)})` : '';
+      const room = this._eventLogEscape(device.room_name || device.room_id || 'Unknown room');
+      const when = this._eventLogEscape(this._formatOfflineWhen(device.last_online));
+      return `<li><span class="offline-name">${name}${part}</span><span class="offline-meta">${room}</span><span class="offline-meta">Last online ${when}</span></li>`;
+    }).join('');
+    return `
+      <section class="offline-appliances" aria-label="Offline appliances">
+        <h3>Offline appliances</h3>
+        <p>Home Assistant could not reach these outlets or appliances. This list stays on the page until they are back online.</p>
+        <ul>${items}</ul>
+      </section>
+    `;
+  }
+
+  _renderMonthlyReportsArchive() {
+    const reports = Array.isArray(this._statsData?.monthly_reports) ? this._statsData.monthly_reports : [];
+    const rows = reports.map((report) => {
+      const month = this._eventLogEscape(report.month || '');
+      const title = this._eventLogEscape(report.title || report.month || 'Report');
+      const generated = this._eventLogEscape(this._formatOfflineWhen(report.generated_at));
+      return `
+        <div class="monthly-report-row">
+          <div>
+            <div class="monthly-report-title">${title}</div>
+            <div class="monthly-report-meta">Saved ${generated}. Kept permanently.</div>
+          </div>
+          <div class="monthly-report-actions">
+            <button type="button" class="btn btn-secondary" data-monthly-report="${month}" data-monthly-action="open">Open</button>
+            <button type="button" class="btn btn-secondary" data-monthly-report="${month}" data-monthly-action="download">Download</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+    const body = rows || '<p class="monthly-reports-empty">No monthly reports yet. A report is saved here after usage or presence is recorded, and it is not removed by cleanup.</p>';
+    return `
+      <section class="monthly-reports" aria-label="Monthly PDF reports">
+        <h3>Monthly reports</h3>
+        <p class="statistics-section-sub">Daily room energy and device-tracker presence. Updating a month replaces only that file.</p>
+        ${body}
+      </section>
+    `;
+  }
+
+  async _openMonthlyReport(month, download) {
+    if (!month || !this._hass) return;
+    try {
+      const res = await this._hass.callWS({
+        type: 'smart_dashboards/get_monthly_report',
+        month,
+        refresh: true,
+      });
+      const binary = atob(res.pdf_base64 || '');
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      if (download) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = res.filename || `${month}.pdf`;
+        link.click();
+      } else {
+        window.open(url, '_blank', 'noopener');
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      if (this._dashboardView === 'statistics') {
+        void this._loadStatistics();
+      }
+    } catch (err) {
+      console.error('Monthly report failed:', err);
+      this._showToast('Could not open the monthly report', 'error');
+    }
   }
 
   /** Match Python datetime.weekday(): Monday=0 … Sunday=6. */
@@ -12700,6 +12861,27 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _readLightPresenceEntity(item) {
+    const input = item?.querySelector?.('.entity-datalist-input.light-presence-entity')
+      || item?.querySelector?.('input.light-presence-entity');
+    const value = (input?.value || '').trim();
+    return value.startsWith('binary_sensor.') ? value : null;
+  }
+
+  _lightPresenceStatusLabel(entityId) {
+    const id = String(entityId || '').trim();
+    if (!id) return 'Not linked. This light stays manual.';
+    const st = this._hass?.states?.[id];
+    if (!st) return `${id} — missing. The light will not change until this sensor exists.`;
+    const name = st.attributes?.friendly_name || id;
+    const raw = String(st.state || '').trim().toLowerCase();
+    if (!raw || raw === 'unavailable' || raw === 'unknown') {
+      return `${name} — unavailable. The light stays as it is until the sensor is back.`;
+    }
+    const detected = raw === 'on' || raw === 'home' || raw === 'occupied' || raw === 'detected' || raw === 'motion' || raw === 'present';
+    return `${name} — ${detected ? 'Detected' : 'Clear'}`;
+  }
+
   _renderPresenceAutoOffRow(inputClass, checked, helpText) {
     const esc = (helpText || '').replace(/</g, '&lt;');
     return `
@@ -12892,6 +13074,13 @@ class EnergyPanel extends HTMLElement {
       const name = st.attributes?.friendly_name || pid;
       const report = this._presenceLabelFromPersonState(st);
       textEl.textContent = `${name} — ${report}`;
+    });
+    this.shadowRoot.querySelectorAll('.light-presence-live').forEach((el) => {
+      const textEl = el.querySelector('.light-presence-live-text');
+      if (!textEl) return;
+      const input = el.closest('.outlet-settings-item')?.querySelector('.light-presence-entity');
+      const id = (input?.value || el.dataset.entity || '').trim();
+      textEl.textContent = this._lightPresenceStatusLabel(id);
     });
   }
 
@@ -13176,6 +13365,10 @@ class EnergyPanel extends HTMLElement {
     if (this._applianceMenuScrollClose) {
       window.removeEventListener('scroll', this._applianceMenuScrollClose, true);
       this._applianceMenuScrollClose = null;
+    }
+    if (this._applianceMenuGestureCleanup) {
+      this._applianceMenuGestureCleanup();
+      this._applianceMenuGestureCleanup = null;
     }
     this.shadowRoot?.querySelector('.appliance-context-menu-backdrop')?.remove();
   }
@@ -14993,8 +15186,43 @@ class EnergyPanel extends HTMLElement {
       }
     }
 
+    const closeItem = document.createElement('button');
+    closeItem.type = 'button';
+    closeItem.className = 'appliance-context-menu-item';
+    closeItem.setAttribute('role', 'menuitem');
+    closeItem.textContent = 'Close';
+    closeItem.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      this._closeApplianceMenu();
+    });
+    menu.appendChild(closeItem);
+
     menu.addEventListener('click', (ev) => ev.stopPropagation());
-    backdrop.addEventListener('click', () => this._closeApplianceMenu());
+
+    const openedAt = performance.now();
+    const originX = e.clientX ?? 0;
+    const originY = e.clientY ?? 0;
+    const sameOpeningGesture = (ev) => {
+      if (performance.now() - openedAt > 700) return false;
+      const dx = Math.abs((ev.clientX ?? originX) - originX);
+      const dy = Math.abs((ev.clientY ?? originY) - originY);
+      return dx < 28 && dy < 28;
+    };
+    backdrop.addEventListener('pointerdown', (ev) => {
+      if (ev.target !== backdrop) return;
+      if (sameOpeningGesture(ev)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+    });
+    backdrop.addEventListener('click', (ev) => {
+      if (sameOpeningGesture(ev)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+      this._closeApplianceMenu();
+    });
 
     backdrop.appendChild(menu);
     this.shadowRoot.appendChild(backdrop);
@@ -15022,14 +15250,44 @@ class EnergyPanel extends HTMLElement {
     });
 
     const first = menu.querySelector('.appliance-context-menu-item');
-    first?.focus?.();
+    try {
+      first?.focus?.({ preventScroll: true });
+    } catch (_err) {
+      first?.focus?.();
+    }
 
     this._applianceMenuEsc = (kev) => {
       if (kev.key === 'Escape') this._closeApplianceMenu();
     };
     window.addEventListener('keydown', this._applianceMenuEsc);
 
-    this._applianceMenuScrollClose = () => this._closeApplianceMenu();
+    // Phones emit scroll on their own after a tap (browser chrome, focus,
+    // and the 1s power refresh shifting a scroll container). Those events
+    // were closing the menu a second or two after it opened. Only a real
+    // wheel or a touch drag dismisses it, and not during the opening gesture.
+    let userMoved = false;
+    const onWheel = (ev) => {
+      if (Math.abs(ev.deltaY || 0) + Math.abs(ev.deltaX || 0) > 2) userMoved = true;
+    };
+    const onTouchMove = (ev) => {
+      const t = ev.touches && ev.touches[0];
+      if (!t) return;
+      const dx = t.clientX - originX;
+      const dy = t.clientY - originY;
+      if (Math.hypot(dx, dy) > 24) userMoved = true;
+    };
+    window.addEventListener('wheel', onWheel, { passive: true, capture: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: true, capture: true });
+    this._applianceMenuGestureCleanup = () => {
+      window.removeEventListener('wheel', onWheel, true);
+      window.removeEventListener('touchmove', onTouchMove, true);
+    };
+    this._applianceMenuScrollClose = (ev) => {
+      if (!userMoved) return;
+      if (performance.now() - openedAt < 700) return;
+      if (ev.target && menu.contains(ev.target)) return;
+      this._closeApplianceMenu();
+    };
     window.addEventListener('scroll', this._applianceMenuScrollClose, true);
   }
 
@@ -16928,6 +17186,15 @@ class EnergyPanel extends HTMLElement {
                 <svg viewBox="0 0 24 24">${icons.power}</svg>
                 <span>Test switch</span>
               </button>
+              <div class="form-group light-presence-link" style="margin-top: 14px;">
+                <label class="form-label">Presence or motion sensor (optional)</label>
+                ${this._renderEntityAutocomplete(device.light_presence_entity || '', 'presence_motion', roomIndex, 'light-presence-entity', 'binary_sensor.room_motion')}
+                <div class="tts-msg-desc" style="margin-top: 4px;">Leave this empty and the light stays manual. When a sensor is linked, detected presence turns this room switch and its mapped lights on together. When presence clears, they turn off. Brightness is left to the bulb.</div>
+                <div class="light-presence-live" data-entity="${(device.light_presence_entity || '').replace(/"/g, '&quot;')}" style="margin-top: 8px;">
+                  <span class="light-presence-live-text">${this._eventLogEscape(this._lightPresenceStatusLabel(device.light_presence_entity || ''))}</span>
+                </div>
+                <button type="button" class="btn btn-secondary light-presence-unlink" style="margin-top: 8px; min-height: 44px;">Unlink sensor</button>
+              </div>
               ${this._renderPresenceAutoOffRow(
                 'presence-auto-off-appliance',
                 !!device.presence_auto_off,
@@ -18044,6 +18311,15 @@ class EnergyPanel extends HTMLElement {
         void this._loadStatisticsSourceBreakdown();
       });
     }
+    this.shadowRoot.querySelectorAll('[data-monthly-report]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const month = btn.dataset.monthlyReport;
+        const download = btn.dataset.monthlyAction === 'download';
+        void this._openMonthlyReport(month, download);
+      });
+    });
     this.shadowRoot.querySelectorAll('[data-stat-rooms-view]').forEach((seg) => {
       seg.addEventListener('click', (e) => {
         e.preventDefault();
@@ -18430,6 +18706,17 @@ class EnergyPanel extends HTMLElement {
     }
     if (entityType === 'binary_sensor') {
       const list = (this._entities?.binary_sensors || []).filter(b => (b.entity_id || '').startsWith('binary_sensor.'));
+      return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
+    }
+    if (entityType === 'presence_motion') {
+      const all = (this._entities?.binary_sensors || []).filter(b => (b.entity_id || '').startsWith('binary_sensor.'));
+      const presence = all.filter((b) => {
+        const dc = String(b.device_class || '').toLowerCase();
+        if (dc === 'motion' || dc === 'occupancy' || dc === 'presence') return true;
+        const blob = `${b.entity_id || ''} ${b.friendly_name || ''}`.toLowerCase();
+        return /motion|occupancy|presence|mmwave|pir/.test(blob);
+      });
+      const list = presence.length ? presence : all;
       return list.map(e => ({ entity_id: e.entity_id, friendly_name: e.friendly_name || e.entity_id }));
     }
     if (entityType === 'zone') {
@@ -18852,6 +19139,30 @@ class EnergyPanel extends HTMLElement {
       };
       lightPowerSourceSel.addEventListener('change', syncLightPowerUi);
       syncLightPowerUi();
+    }
+
+    const lightPresenceUnlink = outletItem.querySelector('.light-presence-unlink');
+    if (lightPresenceUnlink) {
+      lightPresenceUnlink.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const input = outletItem.querySelector('.light-presence-entity');
+        if (input) input.value = '';
+        const live = outletItem.querySelector('.light-presence-live');
+        if (live) live.dataset.entity = '';
+        const text = outletItem.querySelector('.light-presence-live-text');
+        if (text) text.textContent = this._lightPresenceStatusLabel('');
+      });
+    }
+    const lightPresenceInput = outletItem.querySelector('.light-presence-entity');
+    if (lightPresenceInput) {
+      const syncPresence = () => {
+        const text = outletItem.querySelector('.light-presence-live-text');
+        const live = outletItem.querySelector('.light-presence-live');
+        if (live) live.dataset.entity = lightPresenceInput.value.trim();
+        if (text) text.textContent = this._lightPresenceStatusLabel(lightPresenceInput.value);
+      };
+      lightPresenceInput.addEventListener('change', syncPresence);
+      lightPresenceInput.addEventListener('input', syncPresence);
     }
 
     const ventPowerSourceSel = outletItem.querySelector('.ceiling-vent-power-source');
@@ -19282,6 +19593,7 @@ class EnergyPanel extends HTMLElement {
               && (lpse.startsWith('sensor.') || lpse.startsWith('switch.'))
                 ? lpse
                 : null;
+            device.light_presence_entity = this._readLightPresenceEntity(item);
           } else if (deviceTypeFromItem === 'minisplit') {
             device.type = 'minisplit';
             device.plug2_entity = null;
@@ -19895,6 +20207,7 @@ class EnergyPanel extends HTMLElement {
               && (lpse2.startsWith('sensor.') || lpse2.startsWith('switch.'))
                 ? lpse2
                 : null;
+            device.light_presence_entity = this._readLightPresenceEntity(item);
           } else if (deviceTypeFromItem === 'minisplit') {
             device.type = 'minisplit';
             device.plug2_entity = null;
