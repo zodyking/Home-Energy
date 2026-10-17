@@ -192,6 +192,8 @@ class EnergyPanel extends HTMLElement {
     this._applianceMenuEsc = null;
     this._applianceMenuScrollClose = null;
     this._applianceMenuGestureCleanup = null;
+    /** Offline-appliance disclosure stays collapsed unless the user opened it. */
+    this._offlineListOpen = false;
     this._summaryStatsResizeObs = null;
     this._summaryStatsWindowResizeBound = null;
     this._summaryFitDebounce = null;
@@ -2005,16 +2007,52 @@ class EnergyPanel extends HTMLElement {
       }
       .offline-appliances {
         margin: 0 0 12px;
-        padding: 12px 14px;
         border-radius: 10px;
         border: 1px solid rgba(255, 152, 0, 0.45);
         background: rgba(255, 152, 0, 0.08);
       }
-      .offline-appliances h3 {
-        margin: 0 0 4px;
+      .offline-appliances summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 44px;
+        padding: 10px 14px;
+        cursor: pointer;
+        list-style: none;
         font-size: 14px;
         font-weight: 600;
         color: var(--primary-text-color);
+      }
+      .offline-appliances summary::-webkit-details-marker { display: none; }
+      .offline-appliances summary::after {
+        content: "";
+        width: 8px;
+        height: 8px;
+        margin-left: 8px;
+        border-right: 2px solid var(--secondary-text-color);
+        border-bottom: 2px solid var(--secondary-text-color);
+        transform: rotate(45deg);
+        flex: 0 0 auto;
+      }
+      .offline-appliances[open] summary::after {
+        transform: rotate(225deg);
+        margin-top: 4px;
+      }
+      .offline-summary-text {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 4px 10px;
+        min-width: 0;
+      }
+      .offline-count {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--secondary-text-color);
+      }
+      .offline-appliances .offline-body {
+        padding: 0 14px 12px;
       }
       .offline-appliances p {
         margin: 0 0 8px;
@@ -2026,6 +2064,8 @@ class EnergyPanel extends HTMLElement {
         margin: 0;
         padding: 0;
         list-style: none;
+        max-height: min(40vh, 280px);
+        overflow: auto;
       }
       .offline-appliances li {
         display: flex;
@@ -2039,6 +2079,25 @@ class EnergyPanel extends HTMLElement {
       }
       .offline-appliances .offline-name { font-weight: 600; }
       .offline-appliances .offline-meta { color: var(--secondary-text-color); }
+      .recording-accuracy-note {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 42em;
+        margin: 0 0 12px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: rgba(244, 67, 54, 0.12);
+        color: #ff5252;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.4;
+        text-align: center;
+        overflow-wrap: anywhere;
+      }
+      .graph-modal-body .recording-accuracy-note {
+        margin: 4px 16px 8px;
+        max-width: none;
+      }
       .monthly-reports {
         margin-top: 12px;
         background: var(--card-bg);
@@ -4887,6 +4946,38 @@ class EnergyPanel extends HTMLElement {
         min-width: min-content;
       }
 
+      .outlet-card,
+      .device-card,
+      .door-card,
+      .window-card {
+        position: relative;
+      }
+      .device-offline-badge {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        z-index: 4;
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #e53935;
+        pointer-events: none;
+        filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.85));
+      }
+      .device-offline-badge svg {
+        width: 14px;
+        height: 14px;
+        display: block;
+      }
+      .outlet-card.is-offline .outlet-name-top,
+      .device-card.is-offline .outlet-name-top,
+      .door-card.is-offline .door-card-name,
+      .window-card.is-offline .window-card-name {
+        padding-right: 14px;
+        box-sizing: border-box;
+      }
       .outlet-card.outlet-face {
         width: 81px;
         min-width: 81px;
@@ -6360,6 +6451,12 @@ class EnergyPanel extends HTMLElement {
         padding: 8px 12px 6px;
         border-bottom: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
         white-space: normal;
+      }
+      .appliance-context-menu-offline {
+        color: #ff5252;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
       }
 
       .door-activity-modal-shell {
@@ -8629,7 +8726,8 @@ class EnergyPanel extends HTMLElement {
         </div>
       `;
     } else {
-      bodyContent = '<div class="graph-chart-container" id="graph-apex-chart"></div>';
+      const chartRoom = type.includes('room_') ? roomName : '';
+      bodyContent = `${this._renderRecordingAccuracyNote(chartRoom)}<div class="graph-chart-container" id="graph-apex-chart"></div>`;
     }
     return `
       <div class="graph-modal-overlay" id="graph-modal-overlay">
@@ -9647,6 +9745,7 @@ class EnergyPanel extends HTMLElement {
                 <h3 class="statistics-section-title">Room Usage</h3>
                 <p class="statistics-section-sub">Percent of tracked energy by room (non-zero rooms only)</p>
               </div>
+              ${this._renderRecordingAccuracyNote()}
               <div id="stat-rooms-radar-chart" class="stat-rooms-radar-mount" aria-label="Room usage share pie chart"></div>
               <div id="stat-radar-selection" class="stat-radar-selection" role="region" aria-live="polite">
                 <p class="stat-radar-selection-meta">Tap a slice or room in the legend for details and to open a usage graph.</p>
@@ -9699,8 +9798,34 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  _offlineDevices() {
+    return Array.isArray(this._statsData?.offline_devices) ? this._statsData.offline_devices : [];
+  }
+
+  _offlineRoomNames() {
+    const names = [];
+    const seen = new Set();
+    for (const device of this._offlineDevices()) {
+      const room = String(device.room_name || device.room_id || '').trim();
+      if (!room || seen.has(room)) continue;
+      seen.add(room);
+      names.push(room);
+    }
+    return names;
+  }
+
+  _renderRecordingAccuracyNote(roomName) {
+    const rooms = this._offlineRoomNames();
+    const scoped = roomName
+      ? rooms.filter((room) => room === roomName)
+      : rooms;
+    if (!scoped.length) return '';
+    const list = scoped.map((room) => this._eventLogEscape(room)).join(', ');
+    return `<p class="recording-accuracy-note" role="status">Recording is not accurate for the following rooms: ${list} due to appliance connectivity issues.</p>`;
+  }
+
   _renderOfflineAppliancesNotice() {
-    const devices = Array.isArray(this._statsData?.offline_devices) ? this._statsData.offline_devices : [];
+    const devices = this._offlineDevices();
     if (!devices.length) return '';
     const items = devices.map((device) => {
       const name = this._eventLogEscape(device.name || 'Device');
@@ -9709,12 +9834,20 @@ class EnergyPanel extends HTMLElement {
       const when = this._eventLogEscape(this._formatOfflineWhen(device.last_online));
       return `<li><span class="offline-name">${name}${part}</span><span class="offline-meta">${room}</span><span class="offline-meta">Last online ${when}</span></li>`;
     }).join('');
+    const countLabel = devices.length === 1 ? '1 unreachable' : `${devices.length} unreachable`;
     return `
-      <section class="offline-appliances" aria-label="Offline appliances">
-        <h3>Offline appliances</h3>
-        <p>Home Assistant could not reach these outlets or appliances. This list stays on the page until they are back online.</p>
-        <ul>${items}</ul>
-      </section>
+      <details class="offline-appliances" id="offline-appliances" ${this._offlineListOpen ? 'open' : ''}>
+        <summary>
+          <span class="offline-summary-text">
+            <span>Offline appliances</span>
+            <span class="offline-count">${countLabel}</span>
+          </span>
+        </summary>
+        <div class="offline-body">
+          <p>Home Assistant could not reach these outlets or appliances. This list stays available until they are back online.</p>
+          <ul>${items}</ul>
+        </div>
+      </details>
     `;
   }
 
@@ -10608,7 +10741,8 @@ class EnergyPanel extends HTMLElement {
     const timerHidden = !timerLine;
 
     return `
-      <div class="device-card stove-card" data-outlet-index="${index}">
+      <div class="device-card stove-card ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
+        ${this._deviceOfflineBadge(device)}
         <div class="stove-faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="stove-body">
@@ -10649,7 +10783,8 @@ class EnergyPanel extends HTMLElement {
     const isActive = watts > 0.1;
 
     return `
-      <div class="device-card microwave-card" data-outlet-index="${index}">
+      <div class="device-card microwave-card ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
+        ${this._deviceOfflineBadge(device)}
         <div class="mw-faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="mw-body ${isActive ? 'mw-on' : ''}">
@@ -10695,7 +10830,8 @@ class EnergyPanel extends HTMLElement {
     const isOn = deviceData?.switch_state === true;
     const totalWatts = isOn ? (deviceData?.plug1?.watts || 0) : 0;
     return `
-      <div class="outlet-card outlet-face light-outlet ${isOn ? 'light-on' : ''}" data-outlet-index="${index}">
+      <div class="outlet-card outlet-face light-outlet ${isOn ? 'light-on' : ''} ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
+        ${this._deviceOfflineBadge(device)}
         <div class="faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="center-screw plate-screw" aria-hidden="true"></div>
@@ -10723,7 +10859,8 @@ class EnergyPanel extends HTMLElement {
     const hasLock = !!lockEntity;
     
     return `
-      <div class="door-card ${isOpen ? 'door-open' : 'door-closed'} ${hasLock ? (isLocked ? 'door-locked' : 'door-unlocked') : ''}" data-outlet-index="${index}" data-device-type="door" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}" data-lock-entity="${(lockEntity || '').replace(/"/g, '&quot;')}">
+      <div class="door-card ${isOpen ? 'door-open' : 'door-closed'} ${hasLock ? (isLocked ? 'door-locked' : 'door-unlocked') : ''} ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}" data-device-type="door" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}" data-lock-entity="${(lockEntity || '').replace(/"/g, '&quot;')}">
+        ${this._deviceOfflineBadge(device)}
         <div class="door-card-name" title="${escapeAttr(device.name)}">${escapeHtml(device.name || 'Door')}</div>
         <div class="door-frame">
           <div class="door-body ${isOpen ? 'open' : ''}">
@@ -10755,7 +10892,8 @@ class EnergyPanel extends HTMLElement {
     const isOpen = isContactOpen(contactState);
 
     return `
-      <div class="window-card ${isOpen ? 'window-open' : 'window-closed'}" data-outlet-index="${index}" data-device-type="window" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}">
+      <div class="window-card ${isOpen ? 'window-open' : 'window-closed'} ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}" data-device-type="window" data-contact-sensor="${(contactSensor || '').replace(/"/g, '&quot;')}">
+        ${this._deviceOfflineBadge(device)}
         <div class="window-card-name" title="${escapeAttr(device.name)}">${escapeHtml(device.name || 'Window')}</div>
         <div class="window-frame">
           <div class="window-sash ${isOpen ? 'open' : ''}">
@@ -10784,7 +10922,8 @@ class EnergyPanel extends HTMLElement {
     const isActive = watts > 0.1;
 
     return `
-      <div class="device-card minisplit-card" data-outlet-index="${index}">
+      <div class="device-card minisplit-card ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
+        ${this._deviceOfflineBadge(device)}
         <div class="ms-faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="ms-unit ${isActive ? 'ms-on' : ''}">
@@ -10820,7 +10959,8 @@ class EnergyPanel extends HTMLElement {
     const isActive = watts > 0.1;
 
     return `
-      <div class="device-card fridge-card" data-outlet-index="${index}">
+      <div class="device-card fridge-card ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
+        ${this._deviceOfflineBadge(device)}
         <div class="fridge-faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name)}">${escapeHtml(device.name)}</div>
           <div class="fridge-body ${isActive ? 'fridge-on' : ''}">
@@ -10884,7 +11024,8 @@ class EnergyPanel extends HTMLElement {
     const cvTitleAttr = wFmt.title ? ` title="${wFmt.title.replace(/"/g, '&quot;')}"` : '';
 
     return `
-      <div class="device-card ceiling-vent-card" data-outlet-index="${index}">
+      <div class="device-card ceiling-vent-card ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
+        ${this._deviceOfflineBadge(device)}
         <div class="ceiling-vent-faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(displayTitle)}">${escapeHtml(displayTitle)}</div>
           <div class="ceiling-vent-body ${isActive ? 'vent-on' : ''}">
@@ -10927,7 +11068,8 @@ class EnergyPanel extends HTMLElement {
 
     if (isSingleOutlet) {
       return `
-      <div class="outlet-card outlet-face single-outlet" data-outlet-index="${index}">
+      <div class="outlet-card outlet-face single-outlet ${this._deviceIsOffline(outlet) ? 'is-offline' : ''}" data-outlet-index="${index}">
+        ${this._deviceOfflineBadge(outlet)}
         <div class="faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(outlet.name)}">${escapeHtml(outlet.name)}</div>
           <div class="center-screw plate-screw" aria-hidden="true"></div>
@@ -10955,7 +11097,8 @@ class EnergyPanel extends HTMLElement {
     }
 
     return `
-      <div class="outlet-card outlet-face" data-outlet-index="${index}">
+      <div class="outlet-card outlet-face ${this._deviceIsOffline(outlet) ? 'is-offline' : ''}" data-outlet-index="${index}">
+        ${this._deviceOfflineBadge(outlet)}
         <div class="faceplate">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(outlet.name)}">${escapeHtml(outlet.name)}</div>
           <div class="receptacle plug-receptacle ${plug1Active ? 'active' : ''}" data-plug-index="1" title="Tap for usage graph and power">
@@ -15075,6 +15218,58 @@ class EnergyPanel extends HTMLElement {
     return on ? `Turn off${plugBit}` : `Turn on${plugBit}`;
   }
 
+  _entityLooksOffline(entityId) {
+    const eid = String(entityId || '').trim();
+    if (!eid || !eid.includes('.')) return false;
+    const state = this._hass?.states?.[eid];
+    if (!state) return true;
+    const raw = String(state.state || '').trim().toLowerCase();
+    return !raw || raw === 'unknown' || raw === 'unavailable' || raw === 'none';
+  }
+
+  _deviceWatchEntities(device) {
+    const otype = String(device?.type || 'outlet').trim().toLowerCase();
+    const ids = [];
+    const add = (entityId) => {
+      const eid = String(entityId || '').trim();
+      if (eid && eid.includes('.')) ids.push(eid);
+    };
+    if (otype === 'outlet') {
+      add(device.plug1_entity);
+      add(device.plug2_entity);
+      add(device.plug1_switch);
+      add(device.plug2_switch);
+    } else if (otype === 'light') {
+      add(device.switch_entity);
+      if (device.power_source === 'sensor') add(device.power_sensor_entity);
+      for (const row of device.light_entities || []) {
+        add(typeof row === 'string' ? row : row?.entity_id);
+      }
+    } else if (otype === 'vent' || otype === 'wall_heater') {
+      add(device.switch_entity);
+      if (device.power_source === 'sensor') add(device.power_sensor_entity);
+    } else if (otype === 'door' || otype === 'window') {
+      add(device.contact_sensor);
+      add(device.lock_entity);
+    } else if (['single_outlet', 'minisplit', 'stove', 'microwave', 'fridge'].includes(otype)) {
+      add(device.plug1_entity);
+      add(device.plug1_switch);
+      if (device.power_source === 'sensor') add(device.power_sensor_entity);
+    }
+    return [...new Set(ids)];
+  }
+
+  _deviceIsOffline(device) {
+    const ids = this._deviceWatchEntities(device);
+    if (!ids.length) return false;
+    return ids.some((entityId) => this._entityLooksOffline(entityId));
+  }
+
+  _deviceOfflineBadge(device) {
+    if (!this._deviceIsOffline(device)) return '';
+    return `<span class="device-offline-badge" title="Device offline" aria-label="Device offline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 1l22 22"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></span>`;
+  }
+
   _openApplianceContextMenu(e, { roomId, outletIndex, outlet, forcedPlugSlot = null }) {
     e.preventDefault();
     e.stopPropagation();
@@ -15090,6 +15285,15 @@ class EnergyPanel extends HTMLElement {
     const menu = document.createElement('div');
     menu.className = 'appliance-context-menu';
     menu.setAttribute('role', 'menu');
+
+    if (this._deviceIsOffline(outlet)) {
+      const offlineNote = document.createElement('div');
+      offlineNote.className = 'appliance-context-menu-static appliance-context-menu-offline';
+      offlineNote.setAttribute('role', 'status');
+      offlineNote.tabIndex = -1;
+      offlineNote.textContent = 'Device Offline';
+      menu.appendChild(offlineNote);
+    }
 
     const addStatic = (text) => {
       const div = document.createElement('div');
@@ -15249,7 +15453,8 @@ class EnergyPanel extends HTMLElement {
       menu.style.top = `${top}px`;
     });
 
-    const first = menu.querySelector('.appliance-context-menu-item');
+    const first = menu.querySelector('.appliance-context-menu-offline')
+      || menu.querySelector('.appliance-context-menu-item');
     try {
       first?.focus?.({ preventScroll: true });
     } catch (_err) {
@@ -18309,6 +18514,12 @@ class EnergyPanel extends HTMLElement {
       statSourceBreakdown.addEventListener('click', (e) => {
         e.stopPropagation();
         void this._loadStatisticsSourceBreakdown();
+      });
+    }
+    const offlineList = this.shadowRoot.querySelector('#offline-appliances');
+    if (offlineList) {
+      offlineList.addEventListener('toggle', () => {
+        this._offlineListOpen = offlineList.open;
       });
     }
     this.shadowRoot.querySelectorAll('[data-monthly-report]').forEach((btn) => {
