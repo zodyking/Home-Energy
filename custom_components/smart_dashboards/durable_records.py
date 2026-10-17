@@ -28,12 +28,14 @@ _APPLIANCE_TYPES = frozenset(
         "stove",
         "microwave",
         "fridge",
+        "door",
+        "window",
     }
 )
 
 
 def _default_store() -> dict[str, Any]:
-    return {"version": SCHEMA_VERSION, "availability": {}, "days": {}}
+    return {"version": SCHEMA_VERSION, "availability": {}, "days": {}, "periods": {}}
 
 
 def _day_bucket(days: dict[str, Any], day: str) -> dict[str, Any]:
@@ -79,23 +81,21 @@ def watch_entities(outlet: dict | None) -> list[tuple[str, str]]:
         add(outlet.get("plug1_switch"), "Plug 1 switch")
         add(outlet.get("plug2_switch"), "Plug 2 switch")
     elif otype == "light":
-        add(outlet.get("switch_entity"), "Room switch")
+        add(outlet.get("switch_entity"), "Switch")
         if outlet.get("power_source") == "sensor":
-            add(outlet.get("power_sensor_entity"), "Power sensor")
-        for row in outlet.get("light_entities") or []:
-            if isinstance(row, dict):
-                add(row.get("entity_id"), "Light")
-            elif isinstance(row, str):
-                add(row, "Light")
+            add(outlet.get("power_sensor_entity"), "Power")
     elif otype in ("vent", "wall_heater"):
         add(outlet.get("switch_entity"), "Switch")
         if outlet.get("power_source") == "sensor":
-            add(outlet.get("power_sensor_entity"), "Power sensor")
+            add(outlet.get("power_sensor_entity"), "Power")
+    elif otype in ("door", "window"):
+        add(outlet.get("contact_sensor"), "Open/closed")
     elif otype in ("single_outlet", "minisplit", "stove", "microwave", "fridge"):
-        add(outlet.get("plug1_entity"), "Power")
         add(outlet.get("plug1_switch"), "Switch")
         if outlet.get("power_source") == "sensor":
-            add(outlet.get("power_sensor_entity"), "Power sensor")
+            add(outlet.get("power_sensor_entity"), "Power")
+        else:
+            add(outlet.get("plug1_entity"), "Power")
 
     deduped: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -125,11 +125,51 @@ class DurableHistory:
             return
         availability = raw.get("availability")
         days = raw.get("days")
+        periods = raw.get("periods")
         self.data = {
             "version": SCHEMA_VERSION,
             "availability": availability if isinstance(availability, dict) else {},
             "days": days if isinstance(days, dict) else {},
+            "periods": periods if isinstance(periods, dict) else {},
         }
+
+    def note_period(self, start: str, end: str, when_iso: str) -> bool:
+        """Remember a billing period seen on the billing sensors. Returns True when new."""
+        a = str(start or "").strip()
+        b = str(end or "").strip()
+        if len(a) != 10 or len(b) != 10 or a > b:
+            return False
+        key = f"{a}_{b}"
+        periods = self.data.setdefault("periods", {})
+        if key in periods:
+            return False
+        periods[key] = {"start": a, "end": b, "first_seen": when_iso}
+        return True
+
+    def periods(self) -> list[dict[str, str]]:
+        """All billing periods ever seen, newest first."""
+        rows = []
+        for key, row in (self.data.get("periods") or {}).items():
+            if not isinstance(row, dict):
+                continue
+            start = str(row.get("start") or "")
+            end = str(row.get("end") or "")
+            if start and end:
+                rows.append({"key": str(key), "start": start, "end": end})
+        rows.sort(key=lambda r: (r["start"], r["end"]), reverse=True)
+        return rows
+
+    def range_days(self, start: str, end: str) -> dict[str, Any]:
+        """Return YYYY-MM-DD → day bucket for an inclusive date range. Read-only copy."""
+        a = str(start or "").strip()[:10]
+        b = str(end or "").strip()[:10]
+        out: dict[str, Any] = {}
+        if not a or not b or a > b:
+            return out
+        for day, bucket in self.data.get("days", {}).items():
+            if isinstance(day, str) and a <= day[:10] <= b and isinstance(bucket, dict):
+                out[day] = bucket
+        return out
 
     def save(self) -> bool:
         """Persist the full ledger. Does not drop old days or availability rows."""

@@ -2007,47 +2007,42 @@ class EnergyMonitor:
                 )
 
     async def _maybe_refresh_monthly_pdfs(self) -> None:
-        """Rewrite a month's PDF when its retained source changed. Never deletes files."""
+        """Rewrite a billing period's PDF when its retained source changed. Never deletes files."""
         import time as time_mod
 
-        from .monthly_reports import fingerprint, report_path, valid_month, write_month_pdf
+        from .monthly_reports import fingerprint, key_range, report_path, write_period_pdf
 
         durable = self.config_manager.durable
         data_dir = self.config_manager._data_dir
         today = dt_util.now().strftime("%Y-%m-%d")
-        months: set[str] = set()
-        current = valid_month(today[:7])
-        if current:
-            months.add(current)
-        for day in list(durable.data.get("days", {})):
-            if isinstance(day, str) and len(day) >= 7:
-                key = valid_month(day[:7])
-                if key:
-                    months.add(key)
         generated = dt_util.now().isoformat(timespec="seconds")
         now_mono = time_mod.monotonic()
         day_changed = self._pdf_written_day != today
         wrote = False
-        for month in sorted(months):
-            days = durable.month_days(month)
-            existing_path = report_path(data_dir, month)
+        for period in self.config_manager.report_periods():
+            key = period["key"]
+            rng = key_range(key)
+            if not rng:
+                continue
+            days = durable.range_days(rng[0], rng[1])
+            existing_path = report_path(data_dir, key)
             if not days and existing_path is not None and existing_path.is_file():
                 continue
             fp = fingerprint(days)
-            previous = self._pdf_fingerprints.get(month)
+            previous = self._pdf_fingerprints.get(key)
             if previous == fp:
                 continue
-            last = self._pdf_written_at.get(month, 0.0)
+            last = self._pdf_written_at.get(key, 0.0)
             due = previous is None or day_changed or (now_mono - last) >= 300
             if not due:
                 continue
             path = await self.hass.async_add_executor_job(
-                write_month_pdf, data_dir, month, days, generated
+                write_period_pdf, data_dir, key, days, generated
             )
             if path is not None:
                 wrote = True
-                self._pdf_fingerprints[month] = fp
-                self._pdf_written_at[month] = now_mono
+                self._pdf_fingerprints[key] = fp
+                self._pdf_written_at[key] = now_mono
         self._pdf_written_day = today
         if wrote:
             await self.hass.async_add_executor_job(
@@ -2598,6 +2593,8 @@ class EnergyMonitor:
                 "auto_session_announced": False,
             },
         )
+        if not self._heater_door_window_blocks(outlet):
+            st["block_announced"] = None
         smart_st = self._get_heater_smart_state(key)
 
         sw_on = self._appliance_entity_is_on(switch)
@@ -2730,6 +2727,20 @@ class EnergyMonitor:
                     integration_auto=True,
                 )
 
+        async def _start_heater_unless_blocked() -> bool:
+            """Turn the heater on, or announce once while a door or window stays open."""
+            blocker = self._heater_door_window_blocks(outlet)
+            if not blocker:
+                st["block_announced"] = None
+                await _turn_heater_on()
+                return True
+            if st.get("block_announced") != blocker:
+                await self._announce_heater_blocked(
+                    room, str(room.get("name") or room_id), blocker
+                )
+                st["block_announced"] = blocker
+            return False
+
         if sw_on and not prev_sw and not internal:
             st["mode"] = "manual"
             st["run_until"] = now + stay_delta
@@ -2786,6 +2797,7 @@ class EnergyMonitor:
 
         if smart_mode == "idle":
             should_heat = False
+            preheat = False
             if int(temp) < int(turn_on_temp):
                 if _presence_allows() or not need_presence:
                     should_heat = True
@@ -2796,18 +2808,11 @@ class EnergyMonitor:
                 if self._forecast_needs_preheat(forecast, outdoor_temp, temp, comfort, preheat_mins):
                     if _presence_allows() or not need_presence:
                         should_heat = True
-                        smart_st["smart_mode"] = "pre_heating"
+                        preheat = True
 
-            if should_heat:
-                blocker = self._heater_door_window_blocks(outlet)
-                if blocker:
-                    room_name = str(room.get("name") or room_id)
-                    await self._announce_heater_blocked(room, room_name, blocker)
-                    return
-                await _turn_heater_on()
+            if should_heat and await _start_heater_unless_blocked():
                 st["mode"] = "auto"
-                if smart_st.get("smart_mode") != "pre_heating":
-                    smart_st["smart_mode"] = "heating"
+                smart_st["smart_mode"] = "pre_heating" if preheat else "heating"
                 await _announce_heater_on()
 
         elif smart_mode in ("heating", "pre_heating"):
@@ -2843,8 +2848,8 @@ class EnergyMonitor:
             duty_until = smart_st.get("duty_pause_until")
             if duty_until and now >= duty_until:
                 if temp < turn_off_temp:
-                    await _turn_heater_on()
-                    smart_st["smart_mode"] = "heating"
+                    if await _start_heater_unless_blocked():
+                        smart_st["smart_mode"] = "heating"
                 else:
                     smart_st["smart_mode"] = "idle"
                     st["mode"] = None
@@ -2854,8 +2859,8 @@ class EnergyMonitor:
             home_power = self._sum_all_rooms_watts_only()
             if home_power <= power_threshold * 0.8:
                 if temp < turn_off_temp:
-                    await _turn_heater_on()
-                    smart_st["smart_mode"] = "heating"
+                    if await _start_heater_unless_blocked():
+                        smart_st["smart_mode"] = "heating"
                 else:
                     smart_st["smart_mode"] = "idle"
                     st["mode"] = None

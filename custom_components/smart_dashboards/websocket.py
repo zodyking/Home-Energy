@@ -2620,7 +2620,8 @@ def _statistics_extras(hass: HomeAssistant, config_manager) -> dict[str, Any]:
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "smart_dashboards/get_monthly_report",
-        vol.Required("month"): str,
+        vol.Optional("key"): str,
+        vol.Optional("month"): str,
         vol.Optional("refresh", default=False): bool,
     }
 )
@@ -2630,47 +2631,49 @@ async def websocket_get_monthly_report(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Return one retained monthly PDF. Refresh rewrites that month only."""
-    from .monthly_reports import read_report_bytes, report_path, valid_month, write_month_pdf
+    """Return one retained billing-period PDF. Refresh rewrites that period only."""
+    from .monthly_reports import key_range, read_report_bytes, report_path, valid_key, write_period_pdf
 
     config_manager = hass.data[DOMAIN].get("config_manager")
     if not config_manager:
         connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
         return
-    month = valid_month(str(msg.get("month") or ""))
-    if not month:
-        connection.send_error(msg["id"], "invalid_month", "Month must be YYYY-MM")
+    key = valid_key(str(msg.get("key") or msg.get("month") or ""))
+    rng = key_range(key) if key else None
+    if not key or not rng:
+        connection.send_error(msg["id"], "invalid_key", "Report key must be YYYY-MM-DD_YYYY-MM-DD or YYYY-MM")
         return
     refresh = bool(msg.get("refresh"))
     existing = await hass.async_add_executor_job(
-        read_report_bytes, config_manager._data_dir, month
+        read_report_bytes, config_manager._data_dir, key
     )
     if refresh or existing is None:
-        days = config_manager.durable.month_days(month)
-        already = report_path(config_manager._data_dir, month)
-        # Do not replace a saved month with an empty document.
+        days = config_manager.durable.range_days(rng[0], rng[1])
+        already = report_path(config_manager._data_dir, key)
+        # Do not replace a saved period with an empty document.
         written = True
         if days or already is None or not already.is_file():
             generated = dt_util.now().isoformat(timespec="seconds")
             written = await hass.async_add_executor_job(
-                write_month_pdf, config_manager._data_dir, month, days, generated
+                write_period_pdf, config_manager._data_dir, key, days, generated
             )
         if written is None and existing is None:
-            connection.send_error(msg["id"], "write_failed", "Could not create the monthly report")
+            connection.send_error(msg["id"], "write_failed", "Could not create the report")
             return
         if written not in (None, True):
             await hass.async_add_executor_job(config_manager.refresh_monthly_report_index)
         existing = await hass.async_add_executor_job(
-            read_report_bytes, config_manager._data_dir, month
+            read_report_bytes, config_manager._data_dir, key
         )
     if not existing:
-        connection.send_error(msg["id"], "not_found", "Monthly report is not available")
+        connection.send_error(msg["id"], "not_found", "Report is not available")
         return
     connection.send_result(
         msg["id"],
         {
-            "month": month,
-            "filename": f"{month}.pdf",
+            "key": key,
+            "month": key,
+            "filename": f"Home-Energy {key}.pdf",
             "pdf_base64": base64.b64encode(existing).decode("ascii"),
         },
     )
