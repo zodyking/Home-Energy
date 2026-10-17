@@ -315,461 +315,738 @@ def _rollup(start: str, end: str, days: dict[str, Any]) -> dict[str, Any]:
 
 
 class _ReportPdf:
-    """Editorial A4 energy statement. All dimensions are millimeters.
+    """Premium editorial A4 statement. All positioning is in millimeters."""
 
-    The document deliberately separates the compact period overview from the
-    complete day-by-day record. Long tables repeat their headings on new pages.
-    """
-
-    INK = (24, 46, 57)
-    DEEP = (13, 38, 49)
-    ACCENT = (12, 112, 128)
-    SEA = (47, 146, 150)
-    MUTED = (105, 117, 124)
-    FAINT = (154, 165, 170)
-    RULE = (223, 230, 231)
-    PALE = (246, 249, 249)
-    SOFT = (236, 244, 244)
+    INK = (28, 46, 78)
+    DARK = (18, 35, 70)
+    ACCENT = (38, 96, 196)
+    TEAL = (82, 133, 224)
+    MINT = (228, 238, 252)
+    MUTED = (103, 116, 142)
+    DIM = (149, 160, 181)
+    LINE = (219, 227, 240)
+    PALE = (247, 250, 255)
     WHITE = (255, 255, 255)
-    GOLD = (179, 120, 50)
-    RED = (165, 41, 49)
-    ROSE = (253, 243, 243)
-    ROOM_COLORS = (
-        (12, 112, 128), (45, 144, 148), (90, 160, 153),
-        (145, 167, 163), (92, 129, 150), (141, 119, 153),
-        (179, 145, 105), (101, 145, 113),
-    )
+    AMBER = (179, 115, 44)
+    AMBER_PALE = (252, 246, 236)
+    RED = (164, 45, 57)
+    RED_PALE = (252, 242, 242)
+    NAVY_PALE = (235, 243, 243)
     LEFT = 14.0
     RIGHT = 196.0
     WIDTH = 182.0
+    ROOM_COLORS = (
+        (38, 96, 196), (82, 133, 224), (115, 154, 231),
+        (73, 113, 191), (119, 136, 202), (97, 122, 171),
+        (146, 167, 223), (92, 126, 211),
+    )
 
     def __init__(self, title: str, period: str = "") -> None:
         from fpdf import FPDF
-        self.title = title
-        self.period = period
+        self.title, self.period = title, period
         self.pdf = FPDF(format="A4", unit="mm")
         self.pdf.set_margins(14, 33, 14)
         self.pdf.set_auto_page_break(auto=True, margin=34)
+        self.pdf.alias_nb_pages()
         self.pdf.set_title(_safe(title))
         self.pdf.set_author("Home Energy")
-        self.pdf.set_subject("Estimated electricity usage and connectivity record")
-        self.pdf.alias_nb_pages()
+        self.pdf.set_subject("Estimated household energy statement")
         self.pdf.header = self._header  # type: ignore[method-assign]
         self.pdf.footer = self._footer  # type: ignore[method-assign]
         self._columns: list[tuple[float, str, str]] = []
+        self._table_title: str = ""
 
-    def font(self, size: float, bold: bool = False, color=None) -> None:
+    def font(self, size: float = 8.5, bold: bool = False, color=None) -> None:
         self.pdf.set_font("helvetica", "B" if bold else "", size)
         self.pdf.set_text_color(*(color or self.INK))
 
     def _header(self) -> None:
-        pdf = self.pdf
-        pdf.set_fill_color(*self.ACCENT)
-        pdf.rect(14, 12.1, 3.0, 8.0, "F")
-        self.font(11.3, True, self.DEEP)
-        pdf.set_xy(21.1, 12.2)
-        pdf.cell(60, 5.7, "HOME ENERGY")
-        self.font(7.0, False, self.MUTED)
-        pdf.set_xy(21.2, 18.4)
-        pdf.cell(80, 3.7, "RESIDENTIAL ENERGY RECORD")
-        self.font(7.7, True, self.ACCENT)
-        pdf.set_xy(125, 12.7)
-        pdf.cell(71, 5, "PERIOD STATEMENT", align="R")
+        p = self.pdf
+        p.set_fill_color(*self.ACCENT)
+        p.rect(14, 11.2, 3, 11, "F")
+        p.set_fill_color(*self.DARK)
+        p.rect(14, 11.2, 3, 2, "F")
+        self.font(10.7, True, self.DARK)
+        p.set_xy(21, 11.3)
+        p.cell(82, 6.0, "Home Energy")
+        self.font(7.1, False, self.MUTED)
+        p.set_xy(21, 17.5)
+        p.cell(96, 4.1, "Residential Energy Intelligence")
+        self.font(8, True, self.ACCENT)
+        p.set_xy(128, 12)
+        p.cell(68, 4.6, "Period Statement", align="R")
         self.font(7.3, False, self.MUTED)
-        pdf.set_xy(120, 18.1)
-        pdf.cell(76, 4, _safe("PAGE " + str(pdf.page_no()) + " OF {nb}"), align="R")
-        pdf.set_draw_color(*self.RULE)
-        pdf.set_line_width(0.24)
-        pdf.line(14, 27.1, 196, 27.1)
-        pdf.set_y(33)
+        p.set_xy(128, 18.1)
+        p.cell(68, 4.0, f"Page {p.page_no()} / {{nb}}", align="R")
+        p.set_draw_color(*self.LINE)
+        p.set_line_width(0.25)
+        p.line(14, 27.5, 196, 27.5)
+        p.set_y(33)
 
     def _footer(self) -> None:
-        pdf = self.pdf
-        pdf.set_auto_page_break(auto=False)
-        pdf.set_draw_color(*self.RULE)
-        pdf.line(14, 262.7, 196, 262.7)
-        pdf.set_fill_color(*self.ROSE)
-        pdf.rect(14, 267.1, 182, 20.1, "F")
-        pdf.set_fill_color(*self.RED)
-        pdf.rect(14, 267.1, 1.4, 20.1, "F")
-        pdf.set_xy(19, 269.1)
-        self.font(8.1, True, self.RED)
-        # There is room for the complete, legally important disclaimer.
-        pdf.multi_cell(
-            w=172, h=4.7, text=_safe(_DISCLAIMER), align="L",
-            new_x="LMARGIN", new_y="NEXT",
-        )
-        pdf.set_auto_page_break(auto=True, margin=34)
+        p = self.pdf
+        p.set_auto_page_break(auto=False)
+        p.set_draw_color(*self.LINE)
+        p.set_line_width(0.2)
+        p.line(14, 263.0, 196, 263.0)
+        p.set_fill_color(*self.RED_PALE)
+        p.rect(14, 268.4, 182, 18.3, "F")
+        p.set_fill_color(*self.RED)
+        p.rect(14, 268.4, 1.3, 18.3, "F")
+        self.font(7.8, True, self.RED)
+        p.set_xy(18.7, 270)
+        p.multi_cell(w=172.4, h=4.5, text=_safe(_DISCLAIMER), align="L",
+                     new_x="LMARGIN", new_y="NEXT")
+        p.set_auto_page_break(auto=True, margin=34)
 
     def need(self, height: float) -> None:
         if self.pdf.get_y() + height > self.pdf.page_break_trigger:
             self.pdf.add_page()
 
-    def gap(self, mm: float) -> None:
+    def space(self, mm: float) -> None:
         self.pdf.set_y(self.pdf.get_y() + mm)
 
-    def rule(self, x1: float = 14, x2: float = 196, color=None) -> None:
-        pdf = self.pdf
-        pdf.set_draw_color(*(color or self.RULE))
-        pdf.set_line_width(0.2)
-        pdf.line(x1, pdf.get_y(), x2, pdf.get_y())
+    def rule(self, y: float | None = None, color=None) -> None:
+        p = self.pdf
+        at = p.get_y() if y is None else y
+        p.set_draw_color(*(color or self.LINE))
+        p.set_line_width(0.2)
+        p.line(14, at, 196, at)
 
-    def wrap(self, value: Any, width: float, size: float = 8.5,
+    def fit(self, value: Any, width: float, size: float = 8.2,
+            bold: bool = False) -> str:
+        """For static labels only. Customer data uses wrapped row cells."""
+        self.pdf.set_font("helvetica", "B" if bold else "", size)
+        p = self.pdf
+        v = _safe(value)
+        if p.get_string_width(v) <= width:
+            return v
+        while v and p.get_string_width(v + "...") > width:
+            v = v[:-1]
+        return v + "..." if v else ""
+
+    def wrap(self, value: Any, width: float, size: float = 8.0,
              bold: bool = False) -> list[str]:
-        """Return every printable line without truncating customer data."""
-        pdf = self.pdf
         self.font(size, bold)
-        text = _safe(value).replace("\r", "")
-        if not text:
-            return [""]
-        output: list[str] = []
-        for paragraph in text.split("\n"):
-            if not paragraph.strip():
-                output.append("")
+        p = self.pdf
+        result: list[str] = []
+        for para in _safe(value).replace("\r", "").split("\n"):
+            if not para.strip():
+                result.append("")
                 continue
-            words = paragraph.split()
-            line = ""
-            for word in words:
-                possible = (line + " " + word) if line else word
-                if pdf.get_string_width(possible) <= width:
-                    line = possible
+            current = ""
+            for word in para.split():
+                attempt = (current + " " + word).strip()
+                if p.get_string_width(attempt) <= width:
+                    current = attempt
                     continue
-                if line:
-                    output.append(line)
-                    line = ""
-                if pdf.get_string_width(word) <= width:
-                    line = word
+                if current:
+                    result.append(current)
+                current = ""
+                if p.get_string_width(word) <= width:
+                    current = word
                     continue
-                # Even uninterrupted tracker names, IDs and device labels wrap.
-                piece = ""
-                for char in word:
-                    candidate = piece + char
-                    if piece and pdf.get_string_width(candidate) > width:
-                        output.append(piece)
-                        piece = char
+                part = ""
+                for c in word:
+                    if part and p.get_string_width(part + c) > width:
+                        result.append(part)
+                        part = c
                     else:
-                        piece = candidate
-                line = piece
-            output.append(line)
-        return output or [""]
+                        part += c
+                current = part
+            result.append(current)
+        return result or [""]
 
-    def text(self, value: Any, size: float = 8.6, color=None,
-             bold: bool = False, line_height: float = 4.6,
-             width: float = 182, x: float = 14) -> None:
-        lines = self.wrap(value, width - 1, size, bold)
+    def paragraph(self, value: str, size: float = 8.2, color=None,
+                  x: float = 14, w: float = 182, line_height: float = 4.4,
+                  bold: bool = False) -> None:
+        lines = self.wrap(value, w - 1, size, bold)
         self.need(len(lines) * line_height)
         self.font(size, bold, color)
         for line in lines:
             self.pdf.set_x(x)
-            self.pdf.cell(width, line_height, line, new_x="LMARGIN", new_y="NEXT")
+            self.pdf.cell(w, line_height, line, new_x="LMARGIN", new_y="NEXT")
 
-    def section(self, number: str, title: str, note: str = "", reserve: float = 22) -> None:
-        self.gap(3.4)
+    def section(self, number: str, title: str, subtitle: str = "",
+                reserve: float = 20) -> None:
+        self.space(2.0)
         self.need(reserve)
-        pdf = self.pdf
-        y = pdf.get_y()
-        self.font(7.0, True, self.ACCENT)
-        pdf.set_xy(14, y + 0.3)
-        pdf.cell(13, 6.2, _safe(number))
-        self.font(13.7, True, self.DEEP)
-        pdf.set_xy(28.4, y)
-        pdf.cell(152, 7.0, _safe(title))
-        pdf.set_y(y + 9.1)
+        p = self.pdf
+        y = p.get_y()
+        self.font(7.3, True, self.ACCENT)
+        p.set_xy(14, y + 1.1)
+        p.cell(13, 5.2, number)
+        self.font(11.9, True, self.DARK)
+        p.set_xy(28, y)
+        p.cell(168, 6.2, self.fit(title, 165, 11.9, True))
+        p.set_y(y + 7.2)
         self.rule()
-        self.gap(3.2)
-        if note:
-            self.text(note, 8.15, self.MUTED, line_height=4.25)
-            self.gap(2)
+        self.space(1.2)
+        if subtitle:
+            self.paragraph(subtitle, 7.2, self.MUTED, line_height=3.8)
+            self.space(0.5)
 
-    def hero(self, start: str, end: str, generated: str,
-             total_wh: float, days: int, recorded: int,
-             missing: int, future: int, avg_wh: float,
-             peak_day: str, peak_wh: float, connections: int) -> None:
-        pdf = self.pdf
-        y = pdf.get_y()
-        self.font(7.7, True, self.ACCENT)
-        pdf.set_xy(14, y)
-        pdf.cell(102, 5, "YOUR ELECTRICITY, AT A GLANCE")
-        self.font(23.5, True, self.DEEP)
-        pdf.set_xy(13.6, y + 7)
-        pdf.cell(118, 13, "Monthly statement")
-        self.font(10.2, False, self.MUTED)
-        pdf.set_xy(14, y + 21.1)
-        pdf.cell(122, 6, _safe(period_label(self.period)))
+    def hero(self, key: str, start: str, end: str, generated: str,
+             total_wh: float) -> None:
+        p = self.pdf
+        y = p.get_y()
+        p.set_fill_color(*self.DARK)
+        p.rect(14, y, 182, 31.5, "F")
+        p.set_fill_color(*self.TEAL)
+        p.rect(14, y, 1.5, 31.5, "F")
+        p.set_fill_color(42, 82, 166)
+        p.rect(144, y, 52, 31.5, "F")
+        self.font(7.6, True, (147, 212, 203))
+        p.set_xy(21, y + 3.1)
+        p.cell(110, 5, "Your Monthly Energy Record")
+        self.font(17.2, True, self.WHITE)
+        p.set_xy(21, y + 8.2)
+        p.cell(116, 10.8, "Electricity Statement")
+        self.font(10.1, False, (209, 226, 227))
+        p.set_xy(21, y + 21.0)
+        p.cell(118, 6.1, self.fit(period_label(key), 115, 10.1))
+        self.font(7.5, True, (182, 212, 210))
+        p.set_xy(148.5, y + 3.2)
+        p.cell(42, 5, "Total Estimate", align="R")
+        amount = _kwh(total_wh, 2)
+        amount_font = 21.0 if len(amount) < 9 else 16.0
+        self.font(amount_font, True, self.WHITE)
+        p.set_xy(148, y + 11.5)
+        p.cell(43, 13, amount, align="R")
+        self.font(10.0, False, (167, 222, 210))
+        p.set_xy(149, y + 25.2)
+        p.cell(42, 5, "kWh", align="R")
+        p.set_y(y + 34.5)
+        self.font(7.1, True, self.MUTED)
+        p.set_xy(14, p.get_y())
+        p.cell(32, 4.2, "Billing Window")
+        p.set_xy(104, p.get_y())
+        p.cell(92, 4.2, "Statement Prepared")
+        yy = p.get_y() + 4.2
+        self.font(8.7, True, self.INK)
+        p.set_xy(14, yy)
+        p.cell(88, 5.2, self.fit(f"{_weekday_day(start)}  -  {_weekday_day(end)}", 87, 8.7, True))
+        self.font(8.6, False, self.INK)
+        p.set_xy(104, yy)
+        p.cell(92, 5.2, self.fit(_pretty_generated(generated), 90, 8.6))
+        p.set_y(yy + 6.0)
 
-        pdf.set_draw_color(*self.RULE)
-        pdf.line(138.2, y + 5, 138.2, y + 33)
-        self.font(7.6, True, self.MUTED)
-        pdf.set_xy(143, y + 7.5)
-        pdf.cell(53, 4, "ESTIMATED USAGE", align="R")
-        amount = f"{_kwh(total_wh, 2)}"
-        size = 20.5 if len(amount) <= 8 else 15
-        self.font(size, True, self.DEEP)
-        pdf.set_xy(143, y + 14)
-        pdf.cell(53, 11, _safe(amount), align="R")
-        self.font(9, False, self.ACCENT)
-        pdf.set_xy(143, y + 25.3)
-        pdf.cell(53, 5, "kWh / period", align="R")
-        pdf.set_y(y + 38)
-        self.rule()
-        self.gap(5.0)
-
-        # Metadata is printed as labelled document details, not miniature charts.
-        yy = pdf.get_y()
-        self.font(7.0, True, self.MUTED)
-        pdf.set_xy(14, yy)
-        pdf.cell(90, 4, "BILLING PERIOD")
-        pdf.set_xy(112, yy)
-        pdf.cell(84, 4, "PREPARED ON")
-        self.font(9, True, self.INK)
-        pdf.set_xy(14, yy + 4.5)
-        pdf.cell(95, 6, _safe(_weekday_day(start) + " - " + _weekday_day(end)))
-        self.font(9.0, False, self.INK)
-        pdf.set_xy(112, yy + 4.5)
-        pdf.cell(84, 6, _safe(_pretty_generated(generated)))
-        pdf.set_y(yy + 14)
-
-        yy = pdf.get_y()
-        self.need(27)
-        pdf.set_fill_color(*self.PALE)
-        pdf.rect(14, yy, 182, 25.1, "F")
-        blocks = [
-            ("AVERAGE READING DAY", f"{_kwh(avg_wh, 2)} kWh", f"Across {recorded} recorded days"),
-            ("HIGHEST READING", f"{_kwh(peak_wh, 2)} kWh" if peak_day else "None", _weekday_day(peak_day) if peak_day else "No readings yet"),
-            ("CONNECTIVITY EVENTS", str(connections), "Disconnects and reconnects"),
+    def metrics(self, avg: float, peak_day: str, peak: float,
+                low_day: str, low: float, outages: int) -> None:
+        p = self.pdf
+        y = p.get_y()
+        self.need(17.8)
+        data = [
+            ("Recorded-Day Avg", f"{_kwh(avg, 2)} kWh", "Average with a reading"),
+            ("Highest Day", f"{_kwh(peak, 2)} kWh" if peak_day else "-", _weekday_day(peak_day) if peak_day else "No reading"),
+            ("Lowest Day", f"{_kwh(low, 2)} kWh" if low_day else "-", _weekday_day(low_day) if low_day else "No reading"),
+            ("Outage Episodes", str(outages), "Collapsed connection log"),
         ]
-        for i, (label, value, caption) in enumerate(blocks):
-            x = 18 + i * 60.6
-            if i:
-                pdf.set_draw_color(*self.RULE)
-                pdf.line(x - 4, yy + 4, x - 4, yy + 21)
-            self.font(6.8, True, self.MUTED)
-            pdf.set_xy(x, yy + 3.7)
-            pdf.cell(55, 4, label)
-            self.font(14.0, True, self.DEEP)
-            pdf.set_xy(x, yy + 8.8)
-            pdf.cell(55, 7.5, _safe(value))
-            self.font(7.2, False, self.MUTED)
-            pdf.set_xy(x, yy + 17.7)
-            pdf.cell(56, 4, _safe(caption))
-        pdf.set_y(yy + 29)
+        width = 44.75
+        for idx, (label, value, desc) in enumerate(data):
+            x = 14 + idx * 45.75
+            p.set_fill_color(*self.PALE)
+            p.rect(x, y, width, 16.4, "F")
+            p.set_fill_color(*self.ACCENT)
+            p.rect(x, y, 0.9, 16.4, "F")
+            self.font(6.4, True, self.MUTED)
+            p.set_xy(x + 3.0, y + 1.4)
+            p.cell(width - 6.6, 4, self.fit(label, width - 6.6, 6.7, True))
+            self.font(11.8 if len(value) < 13 else 9.8, True, self.DARK)
+            p.set_xy(x + 3.0, y + 4.6)
+            p.cell(width - 6.0, 6.6, self.fit(value, width - 6.0, 11.8 if len(value) < 13 else 9.8, True))
+            self.font(6.4, False, self.MUTED)
+            p.set_xy(x + 3.0, y + 11.7)
+            p.cell(width - 6.6, 4, self.fit(desc, width - 6.6, 6.8))
+        p.set_y(y + 18.1)
 
-        yy = pdf.get_y()
-        self.need(16)
-        self.font(7.0, True, self.MUTED)
-        pdf.set_xy(14, yy)
-        pdf.cell(34, 4.8, "DATA COVERAGE")
-        coverage = [
-            (recorded, "recorded", self.ACCENT),
-            (missing, "no reading", self.GOLD),
-            (future, "not elapsed", self.MUTED),
-        ]
-        x = 51
-        for count, name, tone in coverage:
-            pdf.set_fill_color(*tone)
-            pdf.circle(x + 1.7, yy + 2.3, 1.45, "F")
-            self.font(8.2, True, self.INK)
-            label = f"{count} {name}"
-            pdf.set_xy(x + 5.3, yy)
-            pdf.cell(46, 4.8, _safe(label))
-            x += 48
-        pdf.set_y(yy + 8.0)
-        self.text(
-            f"{days} calendar days in the period. Missing readings are not counted as zero usage. "
-            "Connectivity changes are recorded only when a change is detected; earlier outages cannot be reconstructed.",
-            7.9, self.MUTED, line_height=4.15,
-        )
+    def coverage(self, recorded: int, missing: int, future: int,
+                 total: int) -> None:
+        self.need(14)
+        p = self.pdf
+        y = p.get_y()
+        self.font(7.2, True, self.DARK)
+        p.set_xy(14, y)
+        p.cell(91, 4.2, "Reading Completeness")
+        self.font(7.2, False, self.MUTED)
+        p.set_xy(100, y)
+        p.cell(96, 5, f"{recorded} of {total} calendar days recorded", align="R")
+        y += 5
+        p.set_fill_color(*self.LINE)
+        p.rect(14, y, 182, 4.1, "F")
+        cur = 14.0
+        if total:
+            for n, color in ((recorded, self.ACCENT), (missing, self.AMBER), (future, (185, 195, 196))):
+                if n:
+                    w = 182 * n / total
+                    p.set_fill_color(*color)
+                    p.rect(cur, y, w, 4.1, "F")
+                    cur += w
+        y += 5
+        labels = [(recorded, "READINGS", self.ACCENT),
+                  (missing, "UNAVAILABLE", self.AMBER),
+                  (future, "UPCOMING", self.MUTED)]
+        for i, (num, label, color) in enumerate(labels):
+            x = 14 + i * 61
+            p.set_fill_color(*color)
+            p.rect(x, y + 0.9, 2.3, 2.3, "F")
+            self.font(7.0, True, self.INK)
+            p.set_xy(x + 4.3, y)
+            p.cell(54, 3.7, f"{num} {label.title()}")
+        p.set_y(y + 4.8)
 
-    def room_list(self, rows: list[tuple[str, float]], total: float) -> None:
-        pdf = self.pdf
-        self.font(7.0, True, self.MUTED)
-        yy = pdf.get_y()
-        pdf.set_xy(16, yy)
-        pdf.cell(59, 5.5, "ROOM")
-        pdf.set_xy(142, yy)
-        pdf.cell(35, 5.5, "TOTAL (kWh)", align="R")
-        pdf.set_xy(177, yy)
-        pdf.cell(19, 5.5, "SHARE", align="R")
-        pdf.set_y(yy + 6)
-        self.rule()
-        for i, (name, wh) in enumerate(rows):
-            lines = self.wrap(name, 58, 8.55)
-            height = max(9.5, 3.7 + 4.25 * len(lines))
-            self.need(height)
-            yy = pdf.get_y()
-            if i % 2:
-                pdf.set_fill_color(*self.PALE)
-                pdf.rect(14, yy, 182, height, "F")
-            self.font(8.55, True, self.INK)
-            for j, line in enumerate(lines):
-                pdf.set_xy(16.5, yy + 2.1 + j * 4.25)
-                pdf.cell(58, 4.1, line)
-            color = self.ROOM_COLORS[i % len(self.ROOM_COLORS)]
-            frac = wh / total if total > 0 else 0
-            pdf.set_fill_color(*self.SOFT)
-            pdf.rect(79, yy + 3.6, 59, 2.8, "F")
-            if frac > 0:
-                pdf.set_fill_color(*color)
-                pdf.rect(79, yy + 3.6, 59 * min(frac, 1), 2.8, "F")
-            self.font(8.45, True, self.INK)
-            pdf.set_xy(144, yy + 2.15)
-            pdf.cell(33, 5.3, _kwh(wh, 2), align="R")
-            self.font(8.0, False, self.MUTED)
-            pdf.set_xy(177, yy + 2.15)
-            share = f"{(wh / total * 100) if total > 0 else 0:.0f}%"
-            pdf.cell(19, 5.3, share, align="R")
-            pdf.set_y(yy + height)
-            self.rule()
-        self.need(9)
-        yy = pdf.get_y()
-        self.font(8.8, True, self.DEEP)
-        pdf.set_xy(16.5, yy + 2)
-        pdf.cell(102, 5.4, "WHOLE HOME")
-        pdf.set_xy(141, yy + 2)
-        pdf.cell(36, 5.4, _kwh(total, 2), align="R")
-        pdf.set_xy(177, yy + 2)
-        pdf.cell(19, 5.4, "100%" if total > 0 else "0%", align="R")
-        pdf.set_y(yy + 10)
-
-    def day_heading(self, day: str, status: str, kind: str) -> None:
-        self.need(20)
-        pdf = self.pdf
-        y = pdf.get_y()
-        pdf.set_fill_color(*(self.SOFT if kind == "recorded" else self.PALE))
-        pdf.rect(14, y, 182, 9.2, "F")
-        pdf.set_fill_color(*(
-            self.ACCENT if kind == "recorded" else
-            self.GOLD if kind == "missing" else self.FAINT
-        ))
-        pdf.rect(14, y, 1.45, 9.2, "F")
-        self.font(9.7, True, self.DEEP)
-        pdf.set_xy(18.5, y + 1.6)
-        pdf.cell(102, 5.6, _safe(_weekday_day(day)))
-        self.font(8.2, True, self.ACCENT if kind == "recorded" else self.MUTED)
-        pdf.set_xy(123, y + 1.8)
-        pdf.cell(69, 5.2, _safe(status), align="R")
-        pdf.set_y(y + 10.6)
-
-    def daily_room(self, label: str, energy_wh: float, total_wh: float) -> None:
-        pdf = self.pdf
-        lines = self.wrap(label, 110, 8.25)
-        height = max(5.5, 1 + 4.3 * len(lines))
-        self.need(height)
-        y = pdf.get_y()
-        self.font(8.25, False, self.INK)
-        for i, line in enumerate(lines):
-            pdf.set_xy(22, y + i * 4.3)
-            pdf.cell(108, 4.3, line)
-        self.font(8.35, True, self.INK)
-        pdf.set_xy(134, y)
-        pdf.cell(35, 4.3, f"{_kwh(energy_wh, 2)} kWh", align="R")
-        share = f"{(energy_wh / total_wh * 100) if total_wh > 0 else 0:.0f}%"
-        self.font(8.0, False, self.MUTED)
-        pdf.set_xy(173, y)
-        pdf.cell(20, 4.3, share, align="R")
-        pdf.set_y(y + height)
-
-    def daily_event(self, row: dict[str, Any]) -> None:
-        pdf = self.pdf
-        at = _clock(str(row.get("at") or ""))
-        event = "Disconnected" if row.get("event") == "disconnected" else "Reconnected"
-        detail = f"{row.get('room_name') or 'Room'} / {row.get('name') or 'Device'} / {row.get('part') or 'reading'}"
-        label_lines = self.wrap(detail, 98, 8.0)
-        time_lines = self.wrap(at, 34, 7.65)
-        height = max(len(label_lines), len(time_lines), 1) * 4.35 + 1.5
-        self.need(height)
-        y = pdf.get_y()
-        pdf.set_fill_color(*(self.RED if event == "Disconnected" else self.ACCENT))
-        pdf.circle(23, y + 2.55, 1.1, "F")
-        self.font(7.65, False, self.MUTED)
-        for i, line in enumerate(time_lines):
-            pdf.set_xy(27, y + i * 4.35)
-            pdf.cell(35, 4.3, line)
-        self.font(8.0, False, self.INK)
-        for i, line in enumerate(label_lines):
-            pdf.set_xy(62, y + i * 4.35)
-            pdf.cell(98, 4.3, line)
-        self.font(7.25, True, self.RED if event == "Disconnected" else self.ACCENT)
-        pdf.set_xy(165.5, y)
-        pdf.cell(27.5, 4.3, event.upper(), align="R")
-        pdf.set_y(y + height)
-
-    def table_header(self, columns: list[tuple[float, str, str]]) -> None:
-        assert abs(sum(col[0] for col in columns) - 182) < 0.01, "Table must be 182 mm wide"
-        self._columns = columns
-        self.need(15)
-        pdf = self.pdf
-        yy = pdf.get_y()
-        pdf.set_fill_color(*self.DEEP)
-        pdf.rect(14, yy, 182, 8.4, "F")
-        self.font(7.05, True, self.WHITE)
-        x = 14
-        for width, label, align in columns:
-            pdf.set_xy(x + 2.3, yy + 2.1)
-            pdf.cell(width - 4.6, 4, _safe(label.upper()), align=align)
-            x += width
-        pdf.set_y(yy + 8.4)
-
-    def table_row(self, cells: list[str], *, fill: bool = False,
-                  bold: bool = False, size: float = 8.2,
-                  state: str = "") -> None:
-        if not self._columns:
-            raise RuntimeError("A table header must precede a table row")
-        lines = [self.wrap(value, width - 5, size, bold) for
-                 value, (width, _, _) in zip(cells, self._columns)]
-        nlines = max((len(v) for v in lines), default=1)
-        row_h = nlines * 4.3 + 4.3
-        if self.pdf.get_y() + row_h > self.pdf.page_break_trigger:
-            self.pdf.add_page()
-            self.table_header(self._columns)
-        pdf = self.pdf
-        yy = pdf.get_y()
-        if fill:
-            pdf.set_fill_color(*self.PALE)
-            pdf.rect(14, yy, 182, row_h, "F")
-        x = 14
-        for j, ((width, _, alignment), column_lines) in enumerate(zip(self._columns, lines)):
-            color = self.INK
-            if state and j == len(cells) - 1:
-                color = self.RED if state == "disconnected" else self.ACCENT
-            elif bold:
-                color = self.DEEP
-            self.font(size, bold or bool(state and j == len(cells) - 1), color)
-            for k, part in enumerate(column_lines):
-                pdf.set_xy(x + 2.3, yy + 2.3 + k * 4.3)
-                pdf.cell(width - 4.6, 4.2, part, align=alignment)
-            x += width
-        pdf.set_y(yy + row_h)
-        self.rule()
-
-    def note_panel(self, heading: str, text: str) -> None:
-        text_lines = self.wrap(text, 171, 8.1)
-        height = 14 + 4.4 * len(text_lines)
-        self.need(height + 3)
-        pdf = self.pdf
-        y = pdf.get_y()
-        pdf.set_fill_color(*self.PALE)
-        pdf.rect(14, y, 182, height, "F")
-        pdf.set_fill_color(*self.ACCENT)
-        pdf.rect(14, y, 1.1, height, "F")
-        self.font(7.0, True, self.ACCENT)
-        pdf.set_xy(19.0, y + 3)
-        pdf.cell(170, 4.2, heading.upper())
-        self.font(8.1, False, self.MUTED)
-        for i, line in enumerate(text_lines):
-            pdf.set_xy(19, y + 9 + i * 4.4)
-            pdf.cell(171, 4.3, line)
-        pdf.set_y(y + height + 2)
+    def trend(self, calendar: list[str], daily: dict[str, float],
+              as_of: date | None, avg: float) -> None:
+        self.need(43)
+        p = self.pdf
+        y0 = p.get_y()
+        self.font(8.2, True, self.DARK)
+        p.set_xy(14, y0)
+        p.cell(100, 4.4, "Energy Trend")
+        self.font(7.3, False, self.MUTED)
+        p.set_xy(100, y0)
+        p.cell(96, 4.4, "kWh Per Calendar Day", align="R")
+        top = y0 + 8
+        bottom = top + 20.8
+        left = 29.0
+        chart_w = 167.0
+        peak = max([float(v) for v in daily.values()] or [0.0])
+        maximum = self.nice(max(peak, avg) / 1000.0)
+        self.font(6.7, False, self.MUTED)
+        p.set_draw_color(*self.LINE)
+        for step in range(4):
+            level = maximum * step / 3
+            gy = bottom - 20.8 * step / 3
+            p.set_line_width(0.17)
+            p.line(left, gy, left + chart_w, gy)
+            p.set_xy(14, gy - 1.9)
+            p.cell(12, 4, f"{level:.2f}".rstrip("0").rstrip("."), align="R")
+        n = len(calendar)
+        if n:
+            slot = chart_w / n
+            bw = min(7.4, max(0.25, slot * 0.61))
+            label_step = max(1, math.ceil(n / 10))
+            for i, day in enumerate(calendar):
+                value = daily.get(day)
+                center = left + (i + 0.5) * slot
+                x = center - bw / 2
+                if value is not None:
+                    h = 20.8 * (max(0, float(value)) / 1000.0) / maximum
+                    h = min(20.8, h)
+                    p.set_fill_color(*self.ACCENT)
+                    if h > 0:
+                        p.rect(x, bottom - h, bw, h, "F")
+                    else:
+                        p.circle(center, bottom - 1.2, 0.7, "F")
+                elif as_of is not None and day > as_of.isoformat():
+                    p.set_draw_color(187, 199, 200)
+                    p.set_line_width(0.5)
+                    p.line(x, bottom - 1.6, x + bw, bottom - 1.6)
+                else:
+                    p.set_fill_color(*self.AMBER)
+                    p.rect(x, bottom - 1.9, bw, 1.9, "F")
+                if i % label_step == 0 or i == n - 1:
+                    label = _short_day(day) if n <= 12 else str(_parse_day(day).day if _parse_day(day) else day)
+                    self.font(6.4, False, self.MUTED)
+                    p.set_xy(center - 10, bottom + 1.1)
+                    p.cell(20, 4, _safe(label), align="C")
+        if avg > 0:
+            line_y = bottom - min(20.8, (avg / 1000.0) / maximum * 20.8)
+            p.set_draw_color(*self.DARK)
+            p.set_line_width(0.23)
+            p.set_dash_pattern(dash=1.6, gap=1.4)
+            p.line(left, line_y, left + chart_w, line_y)
+            p.set_dash_pattern()
+            self.font(6.4, True, self.DARK)
+            caption = f"AVG {_kwh(avg, 2)}"
+            w = p.get_string_width(caption) + 4
+            p.set_fill_color(*self.WHITE)
+            p.rect(196 - w, top - 3.5, w, 4.1, "F")
+            p.set_xy(196 - w, top - 3.5)
+            p.cell(w, 4.1, caption, align="R")
+        p.set_y(bottom + 5.6)
+        self.font(7, False, self.MUTED)
+        p.cell(182, 4, "Solid: Recorded    Orange: Unavailable Reading    Grey: Future Day    Dashed: Recorded-Day Average",
+               new_x="LMARGIN", new_y="NEXT")
 
     @staticmethod
-    def _nice_ceiling(value: float) -> float:
+    def nice(value: float) -> float:
         if value <= 0:
             return 1.0
-        magnitude = 10 ** math.floor(math.log10(value))
-        for factor in (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10):
-            if value <= factor * magnitude:
-                return factor * magnitude
-        return 10 * magnitude
+        unit = 10 ** math.floor(math.log10(value))
+        for k in (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10):
+            if value <= k * unit:
+                return k * unit
+        return unit * 10
+
+    def room_rows(self, rows: list[tuple[str, float]], total: float) -> None:
+        p = self.pdf
+        if not rows:
+            self.paragraph("No room energy was recorded.", color=self.MUTED)
+            return
+        self.need(15)
+        y = p.get_y()
+        cursor = 14.0
+        for i, (_, value) in enumerate(rows):
+            w = 182 * value / total if total > 0 else 0
+            if w > 0:
+                p.set_fill_color(*self.ROOM_COLORS[i % len(self.ROOM_COLORS)])
+                p.rect(cursor, y, w, 3.8, "F")
+                cursor += w
+        if total <= 0:
+            p.set_fill_color(*self.LINE)
+            p.rect(14, y, 182, 3.8, "F")
+        p.set_y(y + 5.7)
+        self.font(6.3, True, self.MUTED)
+        yy = p.get_y()
+        p.set_xy(14, yy)
+        p.cell(109, 3.9, "Room")
+        p.set_xy(127, yy)
+        p.cell(43, 3.9, "Energy", align="R")
+        p.set_xy(173, yy)
+        p.cell(23, 3.9, "Share", align="R")
+        p.set_y(yy + 4.4)
+        self.rule()
+        for index, (name, wh) in enumerate(rows):
+            lines = self.wrap(name, 103, 7.8)
+            h = max(5.8, 1.5 + 3.6 * len(lines))
+            self.need(h)
+            y = p.get_y()
+            self.font(7.8, False, self.INK)
+            p.set_fill_color(*self.ROOM_COLORS[index % len(self.ROOM_COLORS)])
+            p.rect(14, y + 1.8, 2.0, 2.0, "F")
+            for j, part in enumerate(lines):
+                p.set_xy(18.0, y + 0.9 + j * 3.6)
+                p.cell(103, 3.5, part)
+            self.font(7.9, True, self.DARK)
+            p.set_xy(126, y + 0.8)
+            p.cell(44, 3.8, f"{_kwh(wh, 2)} kWh", align="R")
+            self.font(7.6, False, self.MUTED)
+            p.set_xy(173, y + 0.8)
+            p.cell(23, 3.8, f"{(wh / total * 100) if total else 0:.0f}%", align="R")
+            p.set_y(y + h)
+            self.rule()
+        self.need(8)
+        y = p.get_y()
+        self.font(8.2, True, self.DARK)
+        p.set_xy(14, y + 1.1)
+        p.cell(110, 5.2, "Total Household")
+        p.set_xy(122, y + 1.1)
+        p.cell(48, 5.2, f"{_kwh(total, 2)} kWh", align="R")
+        p.set_xy(173, y + 0.8)
+        p.cell(23, 5.2, "100%" if total > 0 else "0%", align="R")
+        p.set_y(y + 6.2)
+
+    def table_header(self, columns: list[tuple[float, str, str]],
+                     title: str = "") -> None:
+        if abs(sum(c[0] for c in columns) - 182.0) > .001:
+            raise AssertionError("All tables must be exactly 182 mm wide")
+        self._columns = columns
+        if title:
+            self._table_title = title
+        self.need(11.2)
+        p = self.pdf
+        y = p.get_y()
+        p.set_fill_color(*self.DARK)
+        p.rect(14, y, 182, 6.4, "F")
+        self.font(6.6, True, self.WHITE)
+        x = 14
+        for width, label, align in columns:
+            p.set_xy(x + 2.0, y + 1.35)
+            p.cell(width - 4, 3.9, self.fit(label, width - 4, 6.6, True), align=align)
+            x += width
+        p.set_y(y + 6.4)
+
+    def table_row(self, cells: list[Any], index: int = 0,
+                  bold: bool = False, size: float = 8.0,
+                  state: str = "") -> None:
+        if not self._columns or len(cells) != len(self._columns):
+            raise ValueError("A table header with matching columns is required")
+        texts = [self.wrap(val, width - 4.6, size, bold) for val, (width, _, _) in zip(cells, self._columns)]
+        nlines = max(len(parts) for parts in texts)
+        h = 2.8 + 3.8 * nlines
+        if self.pdf.get_y() + h > self.pdf.page_break_trigger:
+            self.pdf.add_page()
+            self.table_header(self._columns)
+        p = self.pdf
+        y = p.get_y()
+        if index % 2:
+            p.set_fill_color(*self.PALE)
+            p.rect(14, y, 182, h, "F")
+        x = 14
+        for j, (width, _, align) in enumerate(self._columns):
+            color = self.RED if state == "offline" and j == len(texts) - 1 else self.DARK if bold else self.INK
+            self.font(size, bold or (state == "offline" and j == len(texts) - 1), color)
+            for li, line in enumerate(texts[j]):
+                p.set_xy(x + 2, y + 1.0 + li * 3.8)
+                p.cell(width - 4, 3.6, line, align=align)
+            x += width
+        p.set_y(y + h)
+        self.rule()
+
+    def insight_cards(self, groups: list[tuple[str, str, str]]) -> None:
+        """Two columns; each value is derived from the existing rollup only."""
+        p = self.pdf
+        card_w = 89.3
+        for idx in range(0, len(groups), 2):
+            self.need(19)
+            y = p.get_y()
+            for column, (label, value, detail) in enumerate(groups[idx:idx + 2]):
+                x = 14 + column * 92.7
+                p.set_fill_color(*self.PALE)
+                p.rect(x, y, card_w, 17.0, "F")
+                p.set_fill_color(*self.ACCENT)
+                p.rect(x, y, 1, 17.0, "F")
+                self.font(7, True, self.MUTED)
+                p.set_xy(x + 4, y + 1.6)
+                p.cell(81, 3.9, self.fit(label, 80, 7, True))
+                self.font(11.3, True, self.DARK)
+                p.set_xy(x + 4, y + 5.4)
+                p.cell(81, 5.2, self.fit(value, 80, 10.7, True))
+                self.font(7.0, False, self.MUTED)
+                p.set_xy(x + 4, y + 11.2)
+                p.cell(81, 4.0, self.fit(detail, 80, 7))
+            p.set_y(y + 18.8)
+
+    def daily_card(self, day: str, state: str, total_wh: float | None,
+                   room_list: list[tuple[str, float]], avg: float,
+                   home_line: str) -> None:
+        p = self.pdf
+        if state == "future":
+            self.need(11.2)
+            y = p.get_y()
+            p.set_fill_color(*self.PALE)
+            p.rect(14, y, 182, 9.5, "F")
+            p.set_fill_color(*(178, 193, 192))
+            p.rect(14, y, 1.5, 9.5, "F")
+            self.font(8.5, True, self.INK)
+            p.set_xy(18.7, y + 2.0)
+            p.cell(94, 4.8, _weekday_day(day))
+            self.font(7.4, True, self.MUTED)
+            p.set_xy(114, y + 2.1)
+            p.cell(78, 4.4, "NOT YET ELAPSED", align="R")
+            p.set_y(y + 11.4)
+            return
+        if state == "missing":
+            self.need(11.2)
+            y = p.get_y()
+            p.set_fill_color(*self.AMBER_PALE)
+            p.rect(14, y, 182, 9.5, "F")
+            p.set_fill_color(*self.AMBER)
+            p.rect(14, y, 1.5, 9.5, "F")
+            self.font(8.5, True, self.INK)
+            p.set_xy(18.7, y + 2)
+            p.cell(96, 4.8, _weekday_day(day))
+            self.font(7.3, True, self.AMBER)
+            p.set_xy(116, y + 2)
+            p.cell(76, 4.8, "NO READING STORED", align="R")
+            p.set_y(y + 11.4)
+            return
+        # For a recorded day, keep all room rows and presence together when feasible.
+        count = max(1, len(room_list))
+        height = 10.5 + count * 5.0 + (4.6 if avg > 0 else 0) + (4.4 if home_line else 0) + 3.0
+        if height <= 105:
+            self.need(height + 2)
+        else:
+            self.need(22)
+        y = p.get_y()
+        p.set_fill_color(*self.NAVY_PALE)
+        p.rect(14, y, 182, 9.6, "F")
+        p.set_fill_color(*self.ACCENT)
+        p.rect(14, y, 1.55, 9.6, "F")
+        self.font(8.6, True, self.DARK)
+        p.set_xy(18.7, y + 1.8)
+        p.cell(97, 5.2, _weekday_day(day))
+        self.font(9.2, True, self.ACCENT)
+        p.set_xy(116, y + 1.7)
+        p.cell(76, 5.4, f"{_kwh(total_wh or 0, 2)} kWh", align="R")
+        p.set_y(y + 10.8)
+        if room_list:
+            for room_name, wh in room_list:
+                lines = self.wrap(room_name, 90, 7.9)
+                h = max(4.9, 4.1 * len(lines) + 0.8)
+                self.need(h)
+                yy = p.get_y()
+                self.font(7.9, False, self.INK)
+                for line_i, line in enumerate(lines):
+                    p.set_xy(20, yy + line_i * 4.1)
+                    p.cell(89, 4.0, line)
+                share = wh / total_wh if total_wh and total_wh > 0 else 0
+                p.set_fill_color(*self.LINE)
+                p.rect(111, yy + 1.4, 36, 2.3, "F")
+                if share > 0:
+                    p.set_fill_color(*self.TEAL)
+                    p.rect(111, yy + 1.4, 36 * min(share, 1), 2.3, "F")
+                self.font(7.8, True, self.INK)
+                p.set_xy(149, yy)
+                p.cell(29, 4.4, f"{_kwh(wh, 2)} kWh", align="R")
+                self.font(7.6, False, self.MUTED)
+                p.set_xy(179, yy)
+                p.cell(14, 4.4, f"{share * 100:.0f}%", align="R")
+                p.set_y(yy + h)
+        else:
+            self.paragraph("No positive room-level usage was stored.", 7.8, self.MUTED, x=20, w=173, line_height=4.5)
+        if avg > 0:
+            compared = _vs_typical(float(total_wh or 0), avg)
+            if compared:
+                self.paragraph(compared, 7.3, self.MUTED, x=20, w=172, line_height=4.3)
+        if home_line:
+            self.paragraph(home_line, 7.3, self.ACCENT, x=20, w=172, line_height=4.2)
+        self.space(3)
+
+    def note(self, heading: str, text: str, tint: str = "neutral") -> None:
+        bg = self.AMBER_PALE if tint == "amber" else self.PALE
+        tone = self.AMBER if tint == "amber" else self.ACCENT
+        lines = self.wrap(text, 171, 7.7)
+        height = 9 + len(lines) * 4.2
+        self.need(height + 2)
+        p = self.pdf
+        y = p.get_y()
+        p.set_fill_color(*bg)
+        p.rect(14, y, 182, height, "F")
+        p.set_fill_color(*tone)
+        p.rect(14, y, 1.2, height, "F")
+        self.font(7.0, True, tone)
+        p.set_xy(19, y + 2.5)
+        p.cell(171, 4.0, heading.upper())
+        self.font(7.7, False, self.MUTED)
+        for i, line in enumerate(lines):
+            p.set_xy(19, y + 7 + i * 4.2)
+            p.cell(171, 4.1, line)
+        p.set_y(y + height + 2)
+
+
+def _vs_typical(total: float, avg: float) -> str:
+    if avg <= 0:
+        return ""
+    delta = float(total) - avg
+    if abs(delta) < 5:
+        return f"In line with a typical day ({_kwh(avg, 2)} kWh)."
+    word = "above" if delta > 0 else "below"
+    return f"{_kwh(abs(delta), 2)} kWh {word} a typical day ({_kwh(avg, 2)} kWh)."
+
+
+def _home_line(roll: dict[str, Any], day: str) -> str:
+    people = (roll.get("daily_home") or {}).get(day) or {}
+    persons = roll.get("persons") or {}
+    bits: list[str] = []
+    ranked = sorted(people.items(), key=lambda item: float(item[1] or 0.0), reverse=True)
+    for person_id, seconds in ranked:
+        seconds = float(seconds or 0.0)
+        if seconds <= 0:
+            continue
+        name = str((persons.get(person_id) or {}).get("name") or person_id)
+        bits.append(f"{name} {seconds / 3600.0:.1f} h")
+    if not bits:
+        return ""
+    return "At home: " + ", ".join(bits[:4])
+
+
+def _span_label(start: str, end: str) -> str:
+    try:
+        opened = datetime.fromisoformat(str(start or "").strip())
+        closed = datetime.fromisoformat(str(end or "").strip())
+        seconds = int((closed - opened).total_seconds())
+    except (TypeError, ValueError):
+        return ""
+    if seconds < 60:
+        return "under 1 min"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, mins = divmod(minutes, 60)
+    if hours < 48:
+        return f"{hours} h {mins} min" if mins else f"{hours} h"
+    days, rem = divmod(hours, 24)
+    return f"{days} d {rem} h" if rem else f"{days} d"
+
+
+def _insight_lines(roll: dict[str, Any]) -> list[str]:
+    """Short energy comparisons. Missing days are left out of every average."""
+    daily = roll["daily_total"]
+    n = len(daily)
+    total = float(roll["total_wh"])
+    if n == 0:
+        return ["No energy readings were stored in this period."]
+    avg = total / n
+    peak_day = str(roll["peak_day"] or "")
+    low_day = str(roll["low_day"] or "")
+    peak_wh = float(daily.get(peak_day, 0.0))
+    low_wh = float(daily.get(low_day, 0.0))
+    lines = [f"Typical recorded day: {_kwh(avg, 2)} kWh across {n} days with a reading."]
+    if n == 1:
+        lines.append(
+            f"Only {_weekday_day(peak_day)} has a reading, {_kwh(peak_wh, 2)} kWh. "
+            "Comparisons need at least two recorded days."
+        )
+    else:
+        lines.append(
+            f"Busiest day was {_weekday_day(peak_day)} at {_kwh(peak_wh, 2)} kWh, "
+            f"{_kwh(max(peak_wh - avg, 0.0), 2)} kWh above a typical day."
+        )
+        if low_day and low_day != peak_day:
+            lines.append(
+                f"Quietest day was {_weekday_day(low_day)} at {_kwh(low_wh, 2)} kWh, "
+                f"{_kwh(max(avg - low_wh, 0.0), 2)} kWh below a typical day."
+            )
+        weekday: list[float] = []
+        weekend: list[float] = []
+        for day, wh in daily.items():
+            parsed = _parse_day(str(day))
+            if parsed is None:
+                continue
+            (weekday if parsed.weekday() < 5 else weekend).append(float(wh))
+        if weekday and weekend:
+            lines.append(
+                f"Weekdays averaged {_kwh(sum(weekday) / len(weekday), 2)} kWh. "
+                f"Weekends averaged {_kwh(sum(weekend) / len(weekend), 2)} kWh."
+            )
+    rooms = roll["rooms"]
+    ordered = sorted(rooms, key=lambda rid: float(rooms[rid]["wh"]), reverse=True)
+    if ordered:
+        top = rooms[ordered[0]]
+        share = (float(top["wh"]) / total * 100.0) if total > 0 else 0.0
+        if len(ordered) > 1:
+            second = rooms[ordered[1]]
+            diff = max(float(top["wh"]) - float(second["wh"]), 0.0)
+            lines.append(
+                f"{top['name']} used the most, {_kwh(top['wh'], 2)} kWh ({share:.0f}%). "
+                f"That is {_kwh(diff, 2)} kWh more than {second['name']}."
+            )
+        else:
+            lines.append(f"{top['name']} was the only room with stored energy, {_kwh(top['wh'], 2)} kWh.")
+    devices = list(roll["devices"].values())
+    if devices:
+        device = max(devices, key=lambda item: float(item["wh"]))
+        room_name = str(rooms.get(device["room_id"], {}).get("name") or device["room_id"])
+        share = (float(device["wh"]) / total * 100.0) if total > 0 else 0.0
+        lines.append(
+            f"{device['name']} in {room_name} was the largest device at {_kwh(device['wh'], 2)} kWh ({share:.0f}%)."
+        )
+    warnings = sum(int(room.get("warnings") or 0) for room in rooms.values())
+    shutoffs = sum(int(room.get("shutoffs") or 0) for room in rooms.values())
+    cycles = sum(int(room.get("power_cycles") or 0) for room in rooms.values())
+    activity = []
+    if warnings:
+        activity.append(f"{warnings} warning" if warnings == 1 else f"{warnings} warnings")
+    if shutoffs:
+        activity.append(f"{shutoffs} shutoff" if shutoffs == 1 else f"{shutoffs} shutoffs")
+    if cycles:
+        activity.append(f"{cycles} power cycle" if cycles == 1 else f"{cycles} power cycles")
+    if activity:
+        lines.append("Threshold activity this period: " + ", ".join(activity) + ".")
+    if roll["persons"]:
+        home_totals: list[float] = []
+        away_totals: list[float] = []
+        for day, wh in daily.items():
+            present = any(float(seconds or 0) > 0 for seconds in (roll["daily_home"].get(day) or {}).values())
+            (home_totals if present else away_totals).append(float(wh))
+        if home_totals and away_totals:
+            lines.append(
+                f"Days with someone home averaged {_kwh(sum(home_totals) / len(home_totals), 2)} kWh. "
+                f"Days with no one tracked at home averaged {_kwh(sum(away_totals) / len(away_totals), 2)} kWh."
+            )
+    return lines
 
 
 def render_period_pdf(
@@ -778,151 +1055,134 @@ def render_period_pdf(
     generated_label: str,
     events: list[dict[str, Any]] | None = None,
 ) -> bytes:
-    """Render a complete printable energy statement from the existing rollup."""
+    """Generate an editorial statement using the unmodified energy rollup."""
+    from .durable_records import collapse_connectivity_events
+
     rng = key_range(key)
     if not rng:
         raise ValueError(f"Invalid report key {key!r}")
     start, end = rng
     roll = _rollup(start, end, days)
     doc = _ReportPdf(report_display_title(key), key)
-    pdf = doc.pdf
-    pdf.add_page()
+    p = doc.pdf
+    p.add_page()
 
     calendar = roll["calendar"]
-    recorded = roll["recorded"]
+    daily = roll["daily_total"]
+    n_recorded = len(roll["recorded"])
     total_wh = float(roll["total_wh"])
-    n_recorded = len(recorded)
     avg_wh = total_wh / n_recorded if n_recorded else 0.0
-    peak_day = roll["peak_day"]
-    peak_wh = float(roll["daily_total"].get(peak_day, 0)) if peak_day else 0.0
-    log = [row for row in (events or []) if isinstance(row, dict)]
-    log.sort(key=lambda row: str(row.get("at") or ""))
-    by_day: dict[str, list[dict[str, Any]]] = {}
-    for row in log:
-        by_day.setdefault(str(row.get("at") or "")[:10], []).append(row)
+    max_day = roll["peak_day"]
+    min_day = roll["low_day"]
+    peak_wh = float(daily.get(max_day, 0)) if max_day else 0.0
+    low_wh = float(daily.get(min_day, 0)) if min_day else 0.0
     as_of = _parse_day(str(generated_label or "")[:10])
-    elapsed = [d for d in calendar if as_of is None or d <= as_of.isoformat()]
-    missing = [d for d in elapsed if d not in roll["daily_total"]]
+    elapsed = [day for day in calendar if as_of is None or day <= as_of.isoformat()]
+    missing = len([day for day in elapsed if day not in daily])
     future = len(calendar) - len(elapsed)
-
-    # PAGE 1: the concise reading of the period, with clear source coverage.
-    doc.hero(
-        start, end, generated_label, total_wh, len(calendar), n_recorded,
-        len(missing), future, avg_wh, peak_day, peak_wh, len(log),
-    )
+    episodes = collapse_connectivity_events(events)
     rooms = roll["rooms"]
-    ordered_room_ids = sorted(rooms, key=lambda k: float(rooms[k]["wh"]), reverse=True)
-    doc.section("01", "Usage by room",
-                "Estimated energy totals across the billing period.", reserve=24)
-    if not ordered_room_ids:
-        doc.text("No room energy was recorded in this period.", 8.6, doc.MUTED)
-    else:
-        doc.room_list(
-            [(str(rooms[rid]["name"]), float(rooms[rid]["wh"]))
-             for rid in ordered_room_ids], total_wh,
-        )
+    ordered_rids = sorted(rooms, key=lambda rid: float(rooms[rid]["wh"]), reverse=True)
+    devices = sorted(roll["devices"].values(), key=lambda row: float(row["wh"]), reverse=True)
 
-    # The detailed device register stays with the period summary on page one.
-    devices = roll["devices"]
-    doc.section("02", "Appliances and outlets",
-                "Each device with a stored energy reading, sorted by estimated usage.", reserve=28)
-    if not devices:
-        doc.text("No device energy was recorded in this period.", 8.5, doc.MUTED)
+    # FIRST PAGE: summary, sample coverage, chronological plot, complete room register.
+    doc.hero(key, start, end, generated_label, total_wh)
+    doc.metrics(avg_wh, max_day, peak_wh, min_day, low_wh, len(episodes))
+    doc.coverage(n_recorded, missing, future, len(calendar))
+    doc.trend(calendar, daily, as_of, avg_wh)
+    doc.section("01", "Energy By Room", "Period totals, with each room's share of estimated household energy.", reserve=26)
+    doc.room_rows([(str(rooms[rid]["name"]), float(rooms[rid]["wh"])) for rid in ordered_rids], total_wh)
+
+    # Presence is promoted to page one so the household context is visible with the main period summary.
+    doc.section("02", "Household Presence", "At-home hours are deduplicated by the longest tracker reading each day.", reserve=24)
+    persons = roll["persons"]
+    if persons:
+        doc.table_header([(71, "Person", "L"), (34, "Days Home", "R"),
+                          (39, "Hours Home", "R"), (38, "Hours / Day", "R")])
+        for i, person in enumerate(sorted(persons.values(), key=lambda a: str(a["name"]).lower())):
+            seen = int(person["days_seen"])
+            hours = float(person["seconds_home"]) / 3600.0
+            doc.table_row([str(person["name"]), str(int(person["days_home"])),
+                           f"{hours:.1f}", f"{hours / seen if seen else 0:.1f}"], index=i)
     else:
-        doc.table_header([(77, "Device", "L"), (55, "Room", "L"),
-                          (27, "kWh", "R"), (23, "Share", "R")])
-        ordered_devices = sorted(devices.values(), key=lambda item: item["wh"], reverse=True)
-        for i, device in enumerate(ordered_devices):
+        doc.paragraph("No household presence history was stored for this period.", color=doc.MUTED)
+
+    # All appliances remain in the report; large device lists get continued pages.
+    doc.section("03", "Device Consumption", "Every device with stored energy, ordered from highest to lowest.", reserve=24)
+    if devices:
+        doc.table_header([(78, "Device", "L"), (57, "Room", "L"),
+                          (25, "kWh", "R"), (22, "Share", "R")])
+        for i, device in enumerate(devices):
             wh = float(device["wh"])
             room = rooms.get(device["room_id"], {})
-            share = (wh / total_wh * 100.0) if total_wh > 0 else 0.0
-            doc.table_row([
-                str(device["name"]), str(room.get("name") or device["room_id"]),
-                _kwh(wh, 2), f"{share:.0f}%",
-            ], fill=i % 2 == 1)
+            share = (wh / total_wh * 100) if total_wh > 0 else 0.0
+            doc.table_row([str(device["name"]), str(room.get("name") or device["room_id"]),
+                           _kwh(wh, 2), f"{share:.0f}%"], index=i, size=8)
+    else:
+        doc.paragraph("No device energy was recorded in this period.", color=doc.MUTED)
 
+    # ANALYSIS: compact direct comparisons without repeating entire breakdowns.
+    doc.section("04", "Highlights And Comparisons", "All comparisons use days with readings.", reserve=24)
+    weekdays = [(d, float(v)) for d, v in daily.items() if _parse_day(d) and _parse_day(d).weekday() < 5]
+    weekends = [(d, float(v)) for d, v in daily.items() if _parse_day(d) and _parse_day(d).weekday() >= 5]
+    insights = []
+    if weekdays:
+        insights.append(("Weekday average", f"{_kwh(sum(v for _, v in weekdays) / len(weekdays), 2)} kWh", f"{len(weekdays)} recorded weekday" + ("s" if len(weekdays) != 1 else "")))
+    if weekends:
+        insights.append(("Weekend average", f"{_kwh(sum(v for _, v in weekends) / len(weekends), 2)} kWh", f"{len(weekends)} recorded weekend " + ("days" if len(weekends) != 1 else "day")))
+    if insights:
+        doc.insight_cards(insights)
+    else:
+        doc.paragraph("No weekday or weekend reading was available to compare.", color=doc.MUTED)
+    warnings = sum(int(row.get("warnings") or 0) for row in rooms.values())
+    shutoffs = sum(int(row.get("shutoffs") or 0) for row in rooms.values())
+    cycles = sum(int(row.get("power_cycles") or 0) for row in rooms.values())
+    notes = []
+    if ordered_rids and devices:
+        room_item = rooms[ordered_rids[0]]
+        notes.append(f"Largest sources: {room_item['name']} ({_kwh(room_item['wh'], 2)} kWh) and {devices[0]['name']} ({_kwh(devices[0]['wh'], 2)} kWh).")
+    if warnings or shutoffs or cycles:
+        notes.append(f"Threshold activity: {warnings} warning{'s' if warnings != 1 else ''}, "
+                     f"{shutoffs} shutoff{'s' if shutoffs != 1 else ''}, "
+                     f"{cycles} power cycle{'s' if cycles != 1 else ''}.")
+    if notes:
+        doc.space(1.1)
+        doc.paragraph(" ".join(notes), size=7.6, color=doc.MUTED, line_height=4.3)
 
-    # The daily ledger always starts cleanly, never as an orphaned page heading.
-    pdf.add_page()
-    doc.section("03", "Day-by-day record",
-                "Every calendar day is included. Room energy and each detected connection change appear under the day they occurred.",
-                reserve=33)
+    # EVERY DAY, without implying missing equals zero. Presence stays tied to that day.
+    doc.section("05", "Daily Activity Ledger", "Every day in the billing window, including unavailable and future days.", reserve=24)
     for day in calendar:
-        day_events = by_day.get(day, [])
         if as_of is not None and day > as_of.isoformat():
-            doc.day_heading(day, "NOT YET ELAPSED", "future")
-            doc.text("Not yet elapsed. No energy or connectivity record exists for this day.",
-                     8.2, doc.MUTED, width=173, x=19)
-            # Defensive handling for provided events with a future date.
-            for row in day_events:
-                doc.daily_event(row)
-            doc.gap(2.1)
+            doc.daily_card(day, "future", None, [], avg_wh, "")
             continue
-        total = roll["daily_total"].get(day)
-        if total is None:
-            doc.day_heading(day, "NO ENERGY READING", "missing")
-            doc.text("No energy reading was recorded.", 8.3, doc.MUTED,
-                     width=173, x=19)
-        else:
-            doc.day_heading(day, f"{_kwh(float(total), 2)} kWh", "recorded")
-            day_rooms = roll["daily_rooms"].get(day) or {}
-            ranked = sorted(
-                ((rid, float(value)) for rid, value in day_rooms.items()
-                 if float(value) > 0),
-                key=lambda pair: pair[1], reverse=True,
-            )
-            if ranked:
-                for room_id, wh in ranked:
-                    room_name = str(rooms.get(room_id, {}).get("name") or room_id)
-                    doc.daily_room(room_name, wh, float(total))
-            else:
-                doc.text(f"Energy total {_kwh(float(total), 2)} kWh. No room breakdown was stored.",
-                         8.3, doc.MUTED, width=173, x=19)
-        if day_events:
-            doc.gap(1)
-            for row in day_events:
-                doc.daily_event(row)
-        else:
-            doc.text("No disconnect or reconnect recorded.", 7.8, doc.MUTED,
-                     width=173, x=19)
-        doc.gap(2.1)
+        if day not in daily:
+            doc.daily_card(day, "missing", None, [], avg_wh, "")
+            continue
+        wh = float(daily[day])
+        room_values = roll["daily_rooms"].get(day) or {}
+        day_rooms = sorted([(str(rooms.get(rid, {}).get("name") or rid), float(v))
+                            for rid, v in room_values.items() if float(v) > 0],
+                           key=lambda item: item[1], reverse=True)
+        doc.daily_card(day, "recorded", wh, day_rooms, avg_wh if n_recorded > 1 else 0,
+                       _home_line(roll, day))
 
-    persons = roll["persons"]
-    doc.section("04", "Time spent at home",
-                "For multiple trackers, the longest daily at-home reading is used to avoid double counting.",
-                reserve=27)
-    if not persons:
-        doc.text("No one was tracked at home in this period.", 8.5, doc.MUTED)
+    # Exactly one row per collapsed outage; no duplicate day-by-day connection logs.
+    doc.section("06", "Connectivity Incidents",
+                "One row per outage; short reconnects may be stitched together. Episodes before logging began are not reconstructed.", reserve=26)
+    if episodes:
+        doc.table_header([(40, "Offline From", "L"), (33, "Room", "L"),
+                          (43, "Device", "L"), (40, "Back Online", "L"), (26, "Duration", "R")])
+        for i, episode in enumerate(episodes):
+            restored = bool(episode.get("online_at"))
+            back = _clock(str(episode.get("online_at") or "")) if restored else "Still offline"
+            duration = _span_label(str(episode.get("offline_at") or ""), str(episode.get("online_at") or "")) if restored else "Ongoing"
+            doc.table_row([_clock(str(episode.get("offline_at") or "")),
+                           str(episode.get("room_name") or ""), str(episode.get("name") or ""),
+                           back, duration], index=i, size=7.6,
+                          state="" if restored else "offline")
     else:
-        doc.table_header([(71, "Person", "L"), (34, "Days home", "R"),
-                          (39, "Hours home", "R"), (38, "Hours / day", "R")])
-        ordered_people = sorted(persons.values(), key=lambda p: str(p["name"]).lower())
-        for i, person in enumerate(ordered_people):
-            days_seen = int(person["days_seen"])
-            home_hours = float(person["seconds_home"]) / 3600.0
-            doc.table_row([
-                str(person["name"]), str(int(person["days_home"])),
-                f"{home_hours:.1f}", f"{(home_hours / days_seen if days_seen else 0):.1f}",
-            ], fill=i % 2 == 1)
-
-    doc.section("05", "Connectivity event history",
-                "All recorded disconnect and reconnect events, oldest first. Each also appears in the daily record.",
-                reserve=28)
-    if not log:
-        doc.text("No disconnect or reconnect was stored in this period.", 8.5, doc.MUTED)
-    else:
-        doc.table_header([(38, "When", "L"), (37, "Room", "L"),
-                          (44, "Device", "L"), (31, "Reading", "L"),
-                          (32, "Event", "L")])
-        for i, row in enumerate(log):
-            state = "disconnected" if row.get("event") == "disconnected" else "reconnected"
-            doc.table_row([
-                _clock(str(row.get("at") or "")), str(row.get("room_name") or ""),
-                str(row.get("name") or ""), str(row.get("part") or ""),
-                "Disconnected" if state == "disconnected" else "Reconnected",
-            ], fill=i % 2 == 1, state=state, size=7.8)
-
-    return bytes(pdf.output())
+        doc.paragraph("No connectivity outage episode was logged for this period.", color=doc.MUTED)
+    return bytes(p.output())
 
 
 # --------------------------------------------------------------------------- files

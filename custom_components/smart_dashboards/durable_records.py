@@ -7,6 +7,7 @@ the event archive do not touch this store.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from .json_store import atomic_save_json, load_json
@@ -111,6 +112,132 @@ def entity_is_online(state: str | None) -> bool:
     return str(state or "").strip().lower() not in _OFFLINE_STATES
 
 
+# A wifi device that is really offline stays unavailable. Home Assistant also
+# marks entities unavailable for a short time while it starts, and may restore
+# the last on/off state before that. Wait out that flap before logging.
+HOLD_SECONDS = 180
+# A reconnect and a new disconnect this close together are the same outage.
+STITCH_SECONDS = 300
+
+
+def _parse_ts(text: Any) -> datetime | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _device_key(row: dict[str, Any]) -> tuple[str, str]:
+    room = str(row.get("room_name") or row.get("room_id") or "").strip().lower()
+    name = str(row.get("name") or row.get("entity_id") or "device").strip().lower()
+    return room, name
+
+
+def collapse_connectivity_events(
+    events: list[dict[str, Any]] | None,
+    stitch_seconds: int = STITCH_SECONDS,
+) -> list[dict[str, Any]]:
+    """One row per device outage.
+
+    Extra disconnects while the device is already offline are dropped. A reconnect
+    that is followed by another disconnect within stitch_seconds is treated as
+    Home Assistant starting, not as the device coming back.
+    """
+    rows = [row for row in (events or []) if isinstance(row, dict)]
+    rows.sort(key=lambda row: str(row.get("at") or ""))
+    active: dict[tuple[str, str], dict[str, Any]] = {}
+    finished: list[dict[str, Any]] = []
+
+    def flush_closed(key: tuple[str, str], now: datetime | None) -> None:
+        episode = active.get(key)
+        if not episode or not episode.get("online_at"):
+            return
+        ended = _parse_ts(episode.get("online_at"))
+        if ended is None or now is None:
+            return
+        try:
+            gap = (now - ended).total_seconds()
+        except TypeError:
+            return
+        if gap > stitch_seconds:
+            finished.append(episode)
+            active.pop(key, None)
+
+    for row in rows:
+        key = _device_key(row)
+        now = _parse_ts(row.get("at"))
+        flush_closed(key, now)
+        kind = str(row.get("event") or "")
+        part = str(row.get("part") or "").strip()
+        episode = active.get(key)
+        if kind == "disconnected":
+            if episode and not episode.get("online_at"):
+                if part:
+                    episode["offline_parts"].add(part)
+                    episode["parts"].add(part)
+                continue
+            if episode and episode.get("online_at"):
+                episode["online_at"] = ""
+                if part:
+                    episode["offline_parts"].add(part)
+                    episode["parts"].add(part)
+                elif not episode["offline_parts"]:
+                    episode["offline_parts"].add("")
+                continue
+            active[key] = {
+                "name": str(row.get("name") or ""),
+                "room_name": str(row.get("room_name") or ""),
+                "room_id": str(row.get("room_id") or ""),
+                "entity_id": str(row.get("entity_id") or ""),
+                "offline_at": str(row.get("at") or ""),
+                "online_at": "",
+                "parts": {part} if part else set(),
+                "offline_parts": {part} if part else {""},
+            }
+            continue
+        if kind != "reconnected" or episode is None or episode.get("online_at"):
+            continue
+        if part and episode["offline_parts"]:
+            episode["offline_parts"].discard(part)
+            if episode["offline_parts"]:
+                continue
+        elif episode["offline_parts"] == {""}:
+            episode["offline_parts"].clear()
+        episode["online_at"] = str(row.get("at") or "")
+
+    finished.extend(active.values())
+    finished.sort(key=lambda episode: str(episode.get("offline_at") or ""))
+    return finished
+
+
+def _episodes_to_events(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for episode in episodes:
+        parts = sorted(part for part in episode.get("parts") or set() if part)
+        base = {
+            "entity_id": episode.get("entity_id") or "",
+            "name": episode.get("name") or "",
+            "room_id": episode.get("room_id") or "",
+            "room_name": episode.get("room_name") or "",
+            "part": ", ".join(parts),
+        }
+        out.append({**base, "at": episode.get("offline_at") or "", "event": "disconnected"})
+        if episode.get("online_at"):
+            out.append({**base, "at": episode.get("online_at") or "", "event": "reconnected"})
+    return out
+
+
+def _compact_connectivity(events: list[Any]) -> list[dict[str, Any]]:
+    raw = [row for row in events if isinstance(row, dict)]
+    compacted = _episodes_to_events(collapse_connectivity_events(raw))
+    if len(compacted) < len(raw):
+        return compacted
+    return raw
+
+
 class DurableHistory:
     """Append-only daily ledger plus last-online map. No prune method."""
 
@@ -127,12 +254,20 @@ class DurableHistory:
         days = raw.get("days")
         periods = raw.get("periods")
         connectivity = raw.get("connectivity")
+        if not isinstance(availability, dict):
+            availability = {}
+        for row in availability.values():
+            if isinstance(row, dict):
+                row.pop("pending_status", None)
+                row.pop("pending_since", None)
+        if not isinstance(connectivity, list):
+            connectivity = []
         self.data = {
             "version": SCHEMA_VERSION,
-            "availability": availability if isinstance(availability, dict) else {},
+            "availability": availability,
             "days": days if isinstance(days, dict) else {},
             "periods": periods if isinstance(periods, dict) else {},
-            "connectivity": connectivity if isinstance(connectivity, list) else [],
+            "connectivity": _compact_connectivity(connectivity),
         }
 
     def note_period(self, start: str, end: str, when_iso: str) -> bool:
@@ -200,11 +335,12 @@ class DurableHistory:
         room_name: str,
         part: str,
     ) -> bool:
-        """Remember online or offline. Append a log row only when that status changes.
+        """Remember online or offline. Log a row only after the new status holds.
 
-        The first time an entity is seen online, no event is written. The first time it
-        is seen offline, a disconnect is written. Later changes are disconnects or
-        reconnects. Returns True when a log row was added.
+        Home Assistant startup often looks like a disconnect, then a reconnect, even
+        when the device never came back. A new status must stay in place for
+        HOLD_SECONDS before it is stored. The first confirmed online reading does
+        not write an event. Returns True when a log row was added.
         """
         eid = str(entity_id or "").strip()
         if not eid:
@@ -220,15 +356,41 @@ class DurableHistory:
                 "room_id": room_id or row.get("room_id") or "",
                 "room_name": room_name or row.get("room_name") or "",
                 "part": part or row.get("part") or "",
-                "status": status,
-                "status_at": when_iso,
             }
         )
+        if previous == status:
+            row.pop("pending_status", None)
+            row.pop("pending_since", None)
+            if online:
+                row["last_online"] = when_iso
+            availability[eid] = row
+            return False
+
+        pending = str(row.get("pending_status") or "")
+        if pending != status:
+            row["pending_status"] = status
+            row["pending_since"] = when_iso
+            availability[eid] = row
+            return False
+
+        started = _parse_ts(row.get("pending_since"))
+        seen = _parse_ts(when_iso)
+        try:
+            held = started is not None and seen is not None and (seen - started).total_seconds() >= HOLD_SECONDS
+        except TypeError:
+            held = False
+        if not held:
+            availability[eid] = row
+            return False
+
+        event_at = str(row.get("pending_since") or when_iso)
+        row.pop("pending_status", None)
+        row.pop("pending_since", None)
+        row["status"] = status
+        row["status_at"] = event_at
         if online:
             row["last_online"] = when_iso
         availability[eid] = row
-        if previous == status:
-            return False
         if not previous and online:
             return False
         event = "reconnected" if online else "disconnected"
@@ -238,7 +400,7 @@ class DurableHistory:
             self.data["connectivity"] = log
         log.append(
             {
-                "at": when_iso,
+                "at": event_at,
                 "entity_id": eid,
                 "name": row["name"],
                 "room_id": row["room_id"],

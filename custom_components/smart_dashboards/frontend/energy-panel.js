@@ -1482,6 +1482,7 @@ class EnergyPanel extends HTMLElement {
             const targetEl = deviceCard.querySelector('.heater-dash-target-val');
             const timerEl = deviceCard.querySelector('.heater-dash-timer');
             const runRow = deviceCard.querySelector('.heater-dash-row-run');
+            const boostRow = deviceCard.querySelector('.heater-dash-row-boost');
             if (nowEl) {
               const ct = outlet.heater_current_temperature;
               nowEl.textContent = ct != null && ct !== '' && !Number.isNaN(Number(ct))
@@ -1505,6 +1506,7 @@ class EnergyPanel extends HTMLElement {
             const runRemaining = this._formatHeaterRunRemaining(outlet.heater_time_remaining_sec);
             if (timerEl) timerEl.textContent = runRemaining;
             if (runRow) runRow.style.display = runRemaining ? '' : 'none';
+            if (boostRow) boostRow.style.display = outlet.heater_cold_boost_active === true ? '' : 'none';
           }
         }
         if (isFridge) {
@@ -5546,7 +5548,7 @@ class EnergyPanel extends HTMLElement {
         text-align: center;
       }
       .window-state-label {
-        color: rgba(0, 0, 0, 0.7);
+        color: var(--primary-text-color);
         font-weight: 600;
       }
       .window-card.window-open .window-state-label {
@@ -6399,6 +6401,19 @@ class EnergyPanel extends HTMLElement {
       }
       .device-card.ceiling-vent-card .heater-dash-timer {
         color: var(--panel-accent, #03a9f4);
+      }
+      .device-card.ceiling-vent-card .heater-dash-row-boost {
+        margin-top: 1px;
+        max-width: 100%;
+      }
+      .device-card.ceiling-vent-card .heater-dash-boost {
+        font-size: 7px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        line-height: 1.15;
+        color: #8ecfff;
+        text-align: center;
+        white-space: nowrap;
       }
 
       .appliance-context-menu-backdrop {
@@ -11015,12 +11030,16 @@ class EnergyPanel extends HTMLElement {
     }
     const ht = isWallHeater ? (data.heater_time_remaining_sec || 0) : 0;
     const timerStr = ht > 0 ? this._formatHeaterRunRemaining(ht) : '';
+    const boostActive = isWallHeater && data.heater_cold_boost_active === true;
     const heaterDash = isWallHeater ? `
             <div class="heater-dash-meta">
               <div class="heater-dash-row heater-dash-row-temps">
                 <div class="heater-dash-temp-line"><span class="heater-dash-lbl">Temp:</span><span class="heater-dash-val heater-dash-now-val">${tempStr}</span></div>
                 <div class="heater-dash-temp-line"><span class="heater-dash-lbl">Auto:</span><span class="heater-dash-val heater-dash-threshold-val">${Number(autoN).toFixed(autoDec)}°</span></div>
                 <div class="heater-dash-temp-line"><span class="heater-dash-lbl">Target:</span><span class="heater-dash-val heater-dash-target-val">${Number(targetN).toFixed(targetDec)}°</span></div>
+              </div>
+              <div class="heater-dash-row heater-dash-row-boost"${boostActive ? '' : ' style="display:none"'} title="Cold weather boost active">
+                <span class="heater-dash-boost">Cold boost</span>
               </div>
               <div class="heater-dash-row heater-dash-row-run"${timerStr ? '' : ' style="display:none"'}>
                 <span class="heater-dash-lbl">Run</span><span class="heater-dash-val heater-dash-timer">${timerStr}</span>
