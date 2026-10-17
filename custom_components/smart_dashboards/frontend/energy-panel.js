@@ -13017,6 +13017,35 @@ class EnergyPanel extends HTMLElement {
     return value.startsWith('binary_sensor.') ? value : null;
   }
 
+  _readLightPresenceOffSeconds(item) {
+    const raw = parseInt(item?.querySelector?.('.light-presence-off-seconds')?.value, 10);
+    if (!Number.isFinite(raw)) return 5;
+    return Math.max(0, Math.min(3600, raw));
+  }
+
+  async _setLightPresenceMode(roomId, outletIndex, auto) {
+    const room = (this._config?.rooms || []).find(
+      (candidate) => String(candidate.id) === String(roomId) || this._canonicalRoomId(candidate) === String(roomId),
+    );
+    const outlet = room?.outlets?.[outletIndex];
+    if (!room || !outlet || outlet.type !== 'light') {
+      this._showToast('Light not found', 'error');
+      return;
+    }
+    outlet.light_presence_auto = auto === true;
+    try {
+      await this._hass.callWS({
+        type: 'smart_dashboards/save_energy',
+        config: this._config,
+      });
+      this._showToast(auto ? 'Presence control is automatic' : 'Presence control is manual', 'success');
+      this._render();
+    } catch (err) {
+      console.error('Failed to save light presence mode:', err);
+      this._showToast('Could not save light control mode', 'error');
+    }
+  }
+
   _lightPresenceStatusLabel(entityId) {
     const id = String(entityId || '').trim();
     if (!id) return 'Not linked. This light stays manual.';
@@ -15329,6 +15358,8 @@ class EnergyPanel extends HTMLElement {
           await this._openSensorHistory(outlet);
         } else if (action === 'door_activity') {
           await this._openDoorActivityHistory(roomId, outletIndex, outlet);
+        } else if (action === 'presence_manual' || action === 'presence_auto') {
+          await this._setLightPresenceMode(roomId, outletIndex, action === 'presence_auto');
         } else {
           void this._executeApplianceToggle({ roomId, outletIndex, plugSlot: slot });
         }
@@ -15386,6 +15417,15 @@ class EnergyPanel extends HTMLElement {
       }
       addItem('View sensor history', 'sensor_history', null);
     } else {
+      if (otype === 'light' && String(outlet.light_presence_entity || '').trim().startsWith('binary_sensor.')) {
+        const presenceAuto = outlet.light_presence_auto !== false;
+        addStatic(presenceAuto ? 'Presence control: Auto' : 'Presence control: Manual');
+        addItem(
+          presenceAuto ? 'Switch to manual control' : 'Switch to auto control',
+          presenceAuto ? 'presence_manual' : 'presence_auto',
+          null,
+        );
+      }
       addItem('Open usage graph', 'graph', null);
       if (this._resolveApplianceToggleTarget(outlet, null)) {
         addItem(this._applianceToggleMenuLabel(outlet, null), 'toggle', null);
@@ -17399,9 +17439,14 @@ class EnergyPanel extends HTMLElement {
               <div class="form-group light-presence-link" style="margin-top: 14px;">
                 <label class="form-label">Presence or motion sensor (optional)</label>
                 ${this._renderEntityAutocomplete(device.light_presence_entity || '', 'presence_motion', roomIndex, 'light-presence-entity', 'binary_sensor.room_motion')}
-                <div class="tts-msg-desc" style="margin-top: 4px;">Leave this empty and the light stays manual. When a sensor is linked, detected presence turns this room switch and its mapped lights on together. When presence clears, they turn off. Brightness is left to the bulb.</div>
+                <div class="tts-msg-desc" style="margin-top: 4px;">Leave this empty and the light stays manual. When a sensor is linked, detected presence turns this room switch and its mapped lights on together. They turn off after the sensor stays clear for the time below. Brightness is left to the bulb.</div>
                 <div class="light-presence-live" data-entity="${(device.light_presence_entity || '').replace(/"/g, '&quot;')}" style="margin-top: 8px;">
                   <span class="light-presence-live-text">${this._eventLogEscape(this._lightPresenceStatusLabel(device.light_presence_entity || ''))}</span>
+                </div>
+                <div class="form-group" style="margin-top: 10px;">
+                  <label class="form-label">Turn off after no detection (seconds)</label>
+                  <input type="number" class="form-input light-presence-off-seconds" value="${Number.isFinite(Number(device.light_presence_off_seconds)) ? Number(device.light_presence_off_seconds) : 5}" min="0" max="3600" step="1" style="width: 110px;">
+                  <div class="tts-msg-desc" style="margin-top: 4px;">How long the sensor must stay clear before this light turns off. 0 turns it off as soon as presence clears. Up to 3600 seconds (1 hour). Lights already saved use 5 seconds until you change this.</div>
                 </div>
                 <button type="button" class="btn btn-secondary light-presence-unlink" style="margin-top: 8px; min-height: 44px;">Unlink sensor</button>
               </div>
@@ -19810,6 +19855,8 @@ class EnergyPanel extends HTMLElement {
                 ? lpse
                 : null;
             device.light_presence_entity = this._readLightPresenceEntity(item);
+            device.light_presence_off_seconds = this._readLightPresenceOffSeconds(item);
+            device.light_presence_auto = originalRoom?.outlets?.[parseInt(item.dataset.outletIndex, 10)]?.light_presence_auto !== false;
           } else if (deviceTypeFromItem === 'minisplit') {
             device.type = 'minisplit';
             device.plug2_entity = null;
@@ -20424,6 +20471,8 @@ class EnergyPanel extends HTMLElement {
                 ? lpse2
                 : null;
             device.light_presence_entity = this._readLightPresenceEntity(item);
+            device.light_presence_off_seconds = this._readLightPresenceOffSeconds(item);
+            device.light_presence_auto = originalRoom?.outlets?.[parseInt(item.dataset.outletIndex, 10)]?.light_presence_auto !== false;
           } else if (deviceTypeFromItem === 'minisplit') {
             device.type = 'minisplit';
             device.plug2_entity = null;
