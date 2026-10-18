@@ -2038,15 +2038,15 @@ class EnergyMonitor:
         for entity_id, part in watch_entities(outlet):
             state = self.hass.states.get(entity_id)
             raw = state.state if state is not None else None
-            if entity_is_online(raw):
-                self.config_manager.durable.note_online(
-                    entity_id,
-                    when,
-                    name=name,
-                    room_id=room_id,
-                    room_name=room_name,
-                    part=part,
-                )
+            self.config_manager.durable.note_observed(
+                entity_id,
+                when,
+                online=entity_is_online(raw),
+                name=name,
+                room_id=room_id,
+                room_name=room_name,
+                part=part,
+            )
 
     def _sample_person_presence(self, now: datetime) -> None:
         """Add observed home/away seconds for each person's device trackers."""
@@ -2116,10 +2116,11 @@ class EnergyMonitor:
             if not rng:
                 continue
             days = durable.range_days(rng[0], rng[1])
+            events = durable.events_between(rng[0], rng[1])
             existing_path = report_path(data_dir, key)
-            if not days and existing_path is not None and existing_path.is_file():
+            if not days and not events and existing_path is not None and existing_path.is_file():
                 continue
-            fp = fingerprint(days)
+            fp = fingerprint({"days": days, "events": events})
             previous = self._pdf_fingerprints.get(key)
             if previous == fp:
                 continue
@@ -2128,7 +2129,7 @@ class EnergyMonitor:
             if not due:
                 continue
             path = await self.hass.async_add_executor_job(
-                write_period_pdf, data_dir, key, days, generated
+                write_period_pdf, data_dir, key, days, generated, events
             )
             if path is not None:
                 wrote = True

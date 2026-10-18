@@ -2657,13 +2657,14 @@ async def websocket_get_monthly_report(
     )
     if refresh or existing is None:
         days = config_manager.durable.range_days(rng[0], rng[1])
+        events = config_manager.durable.events_between(rng[0], rng[1])
         already = report_path(config_manager._data_dir, key)
         # Do not replace a saved period with an empty document.
         written = True
-        if days or already is None or not already.is_file():
+        if days or events or already is None or not already.is_file():
             generated = dt_util.now().isoformat(timespec="seconds")
             written = await hass.async_add_executor_job(
-                write_period_pdf, config_manager._data_dir, key, days, generated
+                write_period_pdf, config_manager._data_dir, key, days, generated, events
             )
         if written is None and existing is None:
             connection.send_error(msg["id"], "write_failed", "Could not create the report")
