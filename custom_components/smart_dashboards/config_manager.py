@@ -989,6 +989,12 @@ class ConfigManager:
                             item["light_presence_entity"] = _normalize_binary_sensor_entity(
                                 outlet.get("light_presence_entity")
                             )
+                            try:
+                                presence_off = int(outlet.get("light_presence_off_seconds", 5))
+                            except (TypeError, ValueError):
+                                presence_off = 5
+                            item["light_presence_off_seconds"] = max(0, min(3600, presence_off))
+                            item["light_presence_auto"] = outlet.get("light_presence_auto") is not False
                         elif outlet_type == "minisplit":
                             item["plug2_entity"] = None
                             item["plug1_switch"] = outlet.get("plug1_switch")

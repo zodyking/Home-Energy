@@ -387,6 +387,9 @@ class EnergyMonitor:
         self._pdf_fingerprints: dict[str, str] = {}
         self._pdf_written_at: dict[str, float] = {}
         self._pdf_written_day: str | None = None
+        # Offline sets already spoken, and a set waiting out a short confirmation.
+        self._offline_announced: dict[str, frozenset[str]] = {}
+        self._offline_pending: dict[str, tuple[frozenset[str], datetime]] = {}
 
     @staticmethod
     def _notification_enable_key(notification_type: str) -> str:
@@ -1286,6 +1289,74 @@ class EnergyMonitor:
                 f"Heater cannot turn on—the {blocker} is open.",
             )
 
+    def _room_offline_device_keys(self, room: dict) -> frozenset[str]:
+        """Devices in this room whose watched switch or power reading is offline."""
+        from .durable_records import entity_is_online, watch_entities
+
+        keys: set[str] = set()
+        for index, outlet in enumerate(room.get("outlets") or []):
+            watched = watch_entities(outlet)
+            if not watched:
+                continue
+            for entity_id, _part in watched:
+                state = self.hass.states.get(entity_id)
+                raw = state.state if state is not None else None
+                if not entity_is_online(raw):
+                    keys.add(str(index))
+                    break
+        return frozenset(keys)
+
+    async def _announce_room_offline(self, room: dict, room_name: str, count: int) -> None:
+        """Speak a per-room count, then a vague push. Do not name each device."""
+        tts_settings = self.config_manager.energy_config.get("tts_settings") or {}
+        if self._tts_line_enabled(tts_settings, "offline_devices"):
+            prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
+            spoken = spoken_cardinal(count)
+            noun = "device" if count == 1 else "devices"
+            await self._async_speak_appliance_automation_tts(
+                room,
+                f"{prefix} {room_name} has {spoken} {noun} disconnected.",
+            )
+        person_ent = _normalize_presence_person_entity(room.get("presence_person_entity"))
+        if person_ent:
+            recipients = [person_ent]
+        else:
+            recipients = self._distinct_presence_person_entity_ids()
+        title = f"{room_name} disconnected"
+        message = (
+            "One or more appliances or outlets are disconnected from Wi-Fi. "
+            "Full operation of the receptacle will continue, but reporting to the smart home has stopped. "
+            "Please check your app for outlets and appliances with a red Wi-Fi symbol."
+        )
+        for recipient in recipients:
+            await self._async_send_mobile_notification_to_person(recipient, title, message)
+
+    async def _maybe_announce_room_offline(
+        self, room: dict, room_id: str, room_name: str, now: datetime
+    ) -> None:
+        """Announce once when a room's offline set gains a device and stays that way."""
+        current = self._room_offline_device_keys(room)
+        announced = self._offline_announced.get(room_id, frozenset())
+        if current == announced:
+            self._offline_pending.pop(room_id, None)
+            return
+        if not current or current <= announced:
+            if current:
+                self._offline_announced[room_id] = current
+            else:
+                self._offline_announced.pop(room_id, None)
+            self._offline_pending.pop(room_id, None)
+            return
+        pending = self._offline_pending.get(room_id)
+        if pending is None or pending[0] != current:
+            self._offline_pending[room_id] = (current, now)
+            return
+        if (now - pending[1]).total_seconds() < 45:
+            return
+        self._offline_announced[room_id] = current
+        self._offline_pending.pop(room_id, None)
+        await self._announce_room_offline(room, room_name, len(current))
+
     def _enforcement_cycle_enter(self, room_id: str) -> None:
         self._enforcement_power_cycle_depth[room_id] = (
             self._enforcement_power_cycle_depth.get(room_id, 0) + 1
@@ -1910,6 +1981,15 @@ class EnergyMonitor:
                 err,
             )
 
+    @staticmethod
+    def _light_presence_off_seconds(outlet: dict) -> int:
+        """Seconds the linked sensor must stay clear before the light turns off."""
+        try:
+            seconds = int(outlet.get("light_presence_off_seconds", 5))
+        except (TypeError, ValueError):
+            seconds = 5
+        return max(0, min(3600, seconds))
+
     async def _tick_light_presence(
         self, room_id: str, outlet: dict, now: datetime
     ) -> None:
@@ -1918,7 +1998,7 @@ class EnergyMonitor:
             return
         sensor = str(outlet.get("light_presence_entity") or "").strip()
         key = f"{room_id}:{outlet.get('name') or ''}:{sensor}"
-        if not sensor.startswith("binary_sensor."):
+        if not sensor.startswith("binary_sensor.") or outlet.get("light_presence_auto") is False:
             self._light_presence_state.pop(key, None)
             return
         st = self.hass.states.get(sensor)
@@ -1935,14 +2015,16 @@ class EnergyMonitor:
             slot["present"] = True
             await self._command_light_group(outlet, True)
             return
-        if slot.get("present") is not True:
-            slot["present"] = False
+        if slot.get("present") is False:
             return
         clear_since = slot.get("clear_since")
+        off_seconds = self._light_presence_off_seconds(outlet)
         if clear_since is None:
             slot["clear_since"] = now
-            return
-        if (now - clear_since).total_seconds() < 5:
+            if off_seconds > 0:
+                return
+            clear_since = now
+        if (now - clear_since).total_seconds() < off_seconds:
             return
         slot["present"] = False
         slot["clear_since"] = None
@@ -3894,7 +3976,7 @@ class EnergyMonitor:
             elif outlet.get("plug2_switch") == switch_id:
                 if self._shutoff_pending.get(f"{room_id}_{oname}_Plug 2"):
                     return True
-            if outlet.get("type") == "light":
+            if outlet.get("type") == "light" and outlet.get("light_presence_auto") is not False:
                 sensor = str(outlet.get("light_presence_entity") or "").strip()
                 if sensor.startswith("binary_sensor."):
                     sensor_state = self.hass.states.get(sensor)
@@ -4748,6 +4830,8 @@ class EnergyMonitor:
                         volume=room_volume,
                         tts_settings=tts_settings,
                     )
+
+            await self._maybe_announce_room_offline(room, room_id, room_name, now)
 
             await self._maybe_restore_minisplit_hold(
                 room_id=room_id,

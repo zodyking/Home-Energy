@@ -347,7 +347,7 @@ class _ReportPdf:
         pdf.set_xy(14, 4)
         pdf.set_font("helvetica", "B", 12)
         pdf.set_text_color(255, 255, 255)
-        pdf.cell(140, 8, _safe(self._title), align="L")
+        pdf.cell(140, 8, self.fit(self._title, 138, style="B", size=12), align="L")
         pdf.set_font("helvetica", "", 9)
         pdf.set_xy(140, 4)
         pdf.cell(56, 8, _safe(f"Page {pdf.page_no()}/{{nb}}"), align="R")
@@ -395,6 +395,19 @@ class _ReportPdf:
         if note:
             pdf.ln(1)
             self.muted(note)
+        pdf.ln(1.5)
+
+    def day_line(self, heading: str, detail: str) -> None:
+        """One recorded day: a heading bar and a single room sentence under it."""
+        pdf = self.pdf
+        self.need(16)
+        pdf.set_fill_color(*_PANEL)
+        pdf.set_text_color(*_NAVY)
+        pdf.set_font("helvetica", "B", 9)
+        pdf.cell(182, 7, self.fit(f"  {heading}", 180, style="B", size=9), fill=True, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(*_INK)
+        pdf.set_font("helvetica", "", 9)
+        pdf.multi_cell(w=182, h=5, text=_safe(detail), align="L", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(1.5)
 
     def muted(self, text: str, size: int = 9) -> None:
@@ -526,11 +539,6 @@ class _ReportPdf:
                     pdf.set_text_color(*_MUTED)
                     pdf.set_font("helvetica", "", 6.5)
                     pdf.cell(12, 4, _safe(labels[index]), align="C")
-                if n <= 16 and value > 0:
-                    pdf.set_xy(x - 6 + bar_w / 2, bottom - h - 4)
-                    pdf.set_text_color(*_INK)
-                    pdf.set_font("helvetica", "", 6.5)
-                    pdf.cell(12, 4, _safe(f"{value / scale:.1f}"), align="C")
         if average is not None and nice > 0 and average > 0:
             y = bottom - min(height, height * (average / scale) / nice)
             pdf.set_draw_color(*_NAVY)
@@ -540,7 +548,7 @@ class _ReportPdf:
             pdf.set_font("helvetica", "B", 6.5)
             label = _safe(f"avg {average / scale:.1f} {unit}/day")
             label_w = pdf.get_string_width(label) + 3
-            label_y = top - 5.5 if y - 5 < top else y - 4.6
+            label_y = top - 5.5
             pdf.set_fill_color(255, 255, 255)
             pdf.rect(left + width - label_w, label_y, label_w, 4, "F")
             pdf.set_xy(left + width - label_w, label_y)
@@ -555,9 +563,10 @@ class _ReportPdf:
         pdf = self.pdf
         if not rows:
             return
-        label_w = 46.0
+        label_w = 48.0
+        value_w = 36.0
         bar_left = 14 + label_w
-        bar_w = 182 - label_w - 30
+        bar_w = 182 - label_w - value_w
         peak = max(value for _, value, _ in rows) or 1.0
         for label, value, color in rows:
             self.need(8)
@@ -575,10 +584,10 @@ class _ReportPdf:
                 pdf.set_fill_color(*color)
                 pdf.rect(bar_left, y + 1, w, 4.6, "F")
             share = (value / total * 100.0) if total > 0 else 0.0
-            pdf.set_xy(bar_left + bar_w + 2, y)
+            pdf.set_xy(bar_left + bar_w + 1, y)
             pdf.set_font("helvetica", "B", 8)
             pdf.set_text_color(*_NAVY)
-            pdf.cell(28, 6.5, _safe(f"{unit_fmt(value)}  {share:.0f}%"), align="R")
+            pdf.cell(value_w - 1, 6.5, self.fit(f"{unit_fmt(value)} {share:.0f}%", value_w - 1, style="B", size=8), align="R")
             pdf.ln(6.8)
         pdf.set_text_color(*_INK)
 
@@ -612,46 +621,50 @@ def render_period_pdf(key: str, days: dict[str, Any], generated_label: str) -> b
     peak_day = roll["peak_day"]
     peak_wh = roll["daily_total"].get(peak_day, 0.0) if peak_day else 0.0
 
-    # Cover ----------------------------------------------------------------
+    shown = [day for day in calendar if not recorded or day <= recorded[-1]]
+
     pdf.set_font("helvetica", "B", 18)
     pdf.set_text_color(*_NAVY)
     pdf.cell(182, 9, _safe("Monthly statement"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("helvetica", "", 10)
     pdf.set_text_color(*_MUTED)
-    pdf.cell(
-        182,
-        6,
-        _safe(f"{_weekday_day(start)} through {_weekday_day(end)}  ·  {len(calendar)} days  ·  generated {_pretty_generated(generated_label)}"),
+    pdf.multi_cell(
+        w=182,
+        h=5.5,
+        text=_safe(
+            f"{_weekday_day(start)} through {_weekday_day(end)}. "
+            f"{n_rec} of {len(calendar)} days recorded. "
+            f"Prepared {_pretty_generated(generated_label)}."
+        ),
+        align="L",
         new_x="LMARGIN",
         new_y="NEXT",
     )
     pdf.ln(2)
     doc.tiles(
         [
-            ("Estimated usage", f"{_kwh(total_wh, 1)} kWh", f"{n_rec} of {len(calendar)} days recorded"),
-            ("Average per day", f"{_kwh(avg_wh, 2)} kWh", "across recorded days"),
-            ("Highest day", f"{_kwh(peak_wh, 2)} kWh" if peak_day else "-", _weekday_day(peak_day) if peak_day else "no readings yet"),
-            ("People tracked", str(len(roll["persons"])), "device trackers seen"),
+            ("Total", f"{_kwh(total_wh, 1)} kWh", "estimated for this period"),
+            ("Typical day", f"{_kwh(avg_wh, 2)} kWh", "average of recorded days"),
+            ("Busiest day", f"{_kwh(peak_wh, 2)} kWh" if peak_day else "-", _weekday_day(peak_day) if peak_day else "no readings yet"),
+            ("People", str(len(roll["persons"])), "tracked at home"),
         ]
     )
 
-    # Daily usage chart ----------------------------------------------------
-    doc.section("Usage by day", "One bar per day for the whole home. Dashed line: period average. Red bar: highest day.")
+    doc.section("Usage by day", "Each bar is one recorded day for the whole home. The red bar is the busiest day. The dashed line is the average. Days after the latest reading are left off this chart.")
     if not recorded:
-        doc.muted("No daily summaries have been recorded inside this billing period yet.")
+        doc.muted("No daily summaries have been recorded in this period yet.")
     else:
-        labels = [_short_day(d) for d in calendar]
-        values = [float(roll["daily_total"].get(d, 0.0)) for d in calendar]
-        highlight = calendar.index(peak_day) if peak_day in calendar else None
+        labels = [_short_day(day) for day in shown]
+        values = [float(roll["daily_total"].get(day, 0.0)) for day in shown]
+        highlight = shown.index(peak_day) if peak_day in shown else None
         doc.bar_chart(labels, values, highlight=highlight, average=avg_wh)
 
-    # Rooms ------------------------------------------------------------------
     rooms = roll["rooms"]
     ordered_rooms = sorted(rooms, key=lambda rid: rooms[rid]["wh"], reverse=True)
     palette = {rid: _ROOM_COLORS[i % len(_ROOM_COLORS)] for i, rid in enumerate(ordered_rooms)}
-    doc.section("Usage by room", "Share of the period total. Rooms are ordered from most to least energy.")
+    doc.section("Usage by room", "Where this period's energy went. The longest bar is the room that used the most.")
     if not ordered_rooms:
-        doc.muted("No room energy recorded in this period.")
+        doc.muted("No room energy was recorded in this period.")
     else:
         doc.share_bars(
             [(str(rooms[rid]["name"]), float(rooms[rid]["wh"]), palette[rid]) for rid in ordered_rooms],
@@ -659,92 +672,22 @@ def render_period_pdf(key: str, days: dict[str, Any], generated_label: str) -> b
             lambda wh: f"{_kwh(wh, 1)} kWh",
         )
         pdf.ln(2)
-        doc.table_header([(50, "Room", "L"), (26, "kWh", "R"), (20, "Share", "R"), (26, "Avg / day", "R"), (34, "Highest day", "L"), (26, "Events", "R")])
+        doc.table_header([(100, "Room", "L"), (42, "kWh", "R"), (40, "Share", "R")])
         for index, rid in enumerate(ordered_rooms):
             room = rooms[rid]
             wh = float(room["wh"])
             share = (wh / total_wh * 100.0) if total_wh > 0 else 0.0
-            per_day = wh / room["days"] if room["days"] else 0.0
-            events = [str(room[k]) + s for k, s in (("warnings", "w"), ("shutoffs", "s"), ("power_cycles", "c")) if room[k]]
-            doc.table_row(
-                ["      " + str(room["name"]), _kwh(wh, 2), f"{share:.0f}%", _kwh(per_day, 2), f"{_short_day(room['peak_day'])}  {_kwh(room['peak_wh'], 1)}" if room["peak_day"] else "-", " ".join(events) or "-"],
-                fill=index % 2 == 1,
-                swatch=palette[rid],
-            )
-        doc.table_row(["Whole home", _kwh(total_wh, 2), "100%", _kwh(avg_wh, 2), f"{_short_day(peak_day)}  {_kwh(peak_wh, 1)}" if peak_day else "-", ""], fill=False, bold=True)
-        pdf.set_font("helvetica", "", 7)
-        pdf.set_text_color(*_MUTED)
-        pdf.cell(182, 5, _safe("Events: w = threshold warnings, s = safety shutoffs, c = enforcement cycles."), new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(*_INK)
+            doc.table_row([str(room["name"]), _kwh(wh, 2), f"{share:.0f}%"], fill=index % 2 == 1)
+        doc.table_row(["Whole home", _kwh(total_wh, 2), "100%"], fill=False, bold=True)
 
-    # Devices ---------------------------------------------------------------
-    devices = roll["devices"]
-    if devices:
-        ordered_devices = sorted(devices.values(), key=lambda d: d["wh"], reverse=True)
-        doc.section("Appliances and outlets", "Period totals per device, highest first. Share is against the whole-home total.")
-        doc.table_header([(58, "Device", "L"), (50, "Room", "L"), (28, "kWh", "R"), (22, "Share", "R"), (24, "Avg / day", "R")])
-        for index, device in enumerate(ordered_devices[:40]):
-            wh = float(device["wh"])
-            room = rooms.get(device["room_id"], {})
-            share = (wh / total_wh * 100.0) if total_wh > 0 else 0.0
-            doc.table_row(
-                ["      " + str(device["name"]), str(room.get("name") or device["room_id"]), _kwh(wh, 2), f"{share:.0f}%", _kwh(wh / n_rec if n_rec else 0.0, 2)],
-                fill=index % 2 == 1,
-                swatch=palette.get(device["room_id"]),
-            )
-        if len(ordered_devices) > 40:
-            doc.muted(f"{len(ordered_devices) - 40} smaller devices are not listed.")
-
-    # People -----------------------------------------------------------------
-    persons = roll["persons"]
-    doc.section("People at home", "Hours at home per day come from each person's device trackers. When a person has several trackers, the highest reading for the day is used.")
-    if not persons:
-        doc.muted("No device-tracker presence was recorded in this period.")
-    else:
-        for pid in sorted(persons, key=lambda p: str(persons[p]["name"]).lower()):
-            person = persons[pid]
-            days_seen = int(person["days_seen"])
-            hours_home = float(person["seconds_home"]) / 3600.0
-            avg_hours = hours_home / days_seen if days_seen else 0.0
-            doc.need(60)
-            pdf.set_font("helvetica", "B", 11)
-            pdf.set_text_color(*_NAVY)
-            pdf.cell(182, 7, _safe(str(person["name"])), new_x="LMARGIN", new_y="NEXT")
-            doc.tiles(
-                [
-                    ("Days home", str(int(person["days_home"])), f"of {days_seen} days with tracker data"),
-                    ("Hours home", f"{hours_home:.1f} h", "total for the period"),
-                    ("Average per day", f"{avg_hours:.1f} h", "on days with tracker data"),
-                ]
-            )
-            values = [float(roll["daily_home"].get(d, {}).get(pid, 0.0)) for d in calendar]
-            doc.bar_chart([_short_day(d) for d in calendar], values, height=30, unit="hours", color=(0, 150, 136), scale=3600.0)
-            trackers = person["trackers"]
-            if len(trackers) > 1:
-                doc.table_header([(80, "Tracker", "L"), (34, "Days home", "R"), (34, "Hours home", "R"), (34, "Hours away", "R")])
-                for index, tid in enumerate(sorted(trackers, key=lambda t: str(trackers[t]["name"]).lower())):
-                    tracker = trackers[tid]
-                    doc.table_row(["    " + str(tracker["name"]), str(int(tracker["days_home"])), _hours(tracker["seconds_home"]), _hours(tracker["seconds_away"])], fill=index % 2 == 1)
-            pdf.ln(2)
-
-    # Daily breakdown by room ------------------------------------------------
-    doc.section(
-        "Daily breakdown by room",
-        "This is the monthly statement. Each recorded day lists that day's energy by room.",
-    )
+    doc.section("Each day by room", "One block per day, from the start of the period through the latest reading. The line under the date is that day's rooms, largest first.")
     if not recorded:
-        doc.muted("No daily summaries have been recorded inside this billing period yet.")
+        doc.muted("No daily summaries have been recorded in this period yet.")
     else:
-        last_recorded = recorded[-1]
-        doc.table_header([(40, "Day", "L"), (74, "Room", "L"), (34, "kWh", "R"), (34, "Share of day", "R")])
-        stripe = 0
-        for day in calendar:
-            if day > last_recorded:
-                break
+        for day in shown:
             total = roll["daily_total"].get(day)
             if total is None:
-                doc.table_row([_weekday_day(day), "no data", "", ""], fill=stripe % 2 == 1)
-                stripe += 1
+                doc.day_line(_weekday_day(day), "No reading this day.")
                 continue
             ranked = sorted(
                 (
@@ -755,31 +698,49 @@ def render_period_pdf(key: str, days: dict[str, Any], generated_label: str) -> b
                 key=lambda item: item[1],
                 reverse=True,
             )
+            heading = f"{_weekday_day(day)}  -  {_kwh(float(total), 2)} kWh"
             if not ranked:
-                doc.table_row(
-                    [_weekday_day(day), "No room usage", _kwh(float(total), 2), ""],
-                    fill=stripe % 2 == 1,
-                )
-                stripe += 1
+                doc.day_line(heading, "No room usage recorded.")
                 continue
-            first = True
+            parts = []
             for rid, wh in ranked:
                 name = str(rooms.get(rid, {}).get("name") or rid)
                 share = (wh / float(total) * 100.0) if float(total) > 0 else 0.0
-                doc.table_row(
-                    [
-                        _weekday_day(day) if first else "",
-                        "      " + name,
-                        _kwh(wh, 2),
-                        f"{share:.0f}%",
-                    ],
-                    fill=stripe % 2 == 1,
-                    bold=first and day == peak_day,
-                    swatch=palette.get(rid),
-                )
-                first = False
-                stripe += 1
-            doc.table_row(["", "Day total", _kwh(float(total), 2), "100%"], fill=False, bold=True)
+                parts.append(f"{name} {_kwh(wh, 2)} kWh ({share:.0f}%)")
+            doc.day_line(heading, ", ".join(parts))
+
+    devices = roll["devices"]
+    if devices:
+        ordered_devices = sorted(devices.values(), key=lambda item: item["wh"], reverse=True)[:12]
+        doc.section("Largest appliances", "The twelve devices that used the most energy in this period.")
+        doc.table_header([(78, "Device", "L"), (52, "Room", "L"), (26, "kWh", "R"), (26, "Share", "R")])
+        for index, device in enumerate(ordered_devices):
+            wh = float(device["wh"])
+            room = rooms.get(device["room_id"], {})
+            share = (wh / total_wh * 100.0) if total_wh > 0 else 0.0
+            doc.table_row(
+                [str(device["name"]), str(room.get("name") or device["room_id"]), _kwh(wh, 2), f"{share:.0f}%"],
+                fill=index % 2 == 1,
+            )
+        hidden = len(roll["devices"]) - len(ordered_devices)
+        if hidden > 0:
+            doc.muted(f"{hidden} smaller devices are not listed.")
+
+    persons = roll["persons"]
+    doc.section("People at home", "Hours at home for this period. When someone has more than one tracker, the longer reading for each day is used so they are not counted twice.")
+    if not persons:
+        doc.muted("No one was tracked at home in this period.")
+    else:
+        doc.table_header([(70, "Person", "L"), (36, "Days home", "R"), (40, "Hours home", "R"), (36, "Hours / day", "R")])
+        ordered_people = sorted(persons.values(), key=lambda person: str(person["name"]).lower())
+        for index, person in enumerate(ordered_people):
+            days_seen = int(person["days_seen"])
+            hours_home = float(person["seconds_home"]) / 3600.0
+            avg_hours = hours_home / days_seen if days_seen else 0.0
+            doc.table_row(
+                [str(person["name"]), str(int(person["days_home"])), f"{hours_home:.1f}", f"{avg_hours:.1f}"],
+                fill=index % 2 == 1,
+            )
 
     return bytes(pdf.output())
 
