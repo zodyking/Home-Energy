@@ -44,6 +44,7 @@ class OutletType(str, Enum):
     STOVE = "stove"
     MICROWAVE = "microwave"
     FRIDGE = "fridge"
+    OIL_DIFFUSER = "oil_diffuser"
     UNKNOWN = "unknown"
 
 
@@ -81,6 +82,10 @@ def switch_entity_for_outlet(outlet: dict | None) -> str | None:
         OutletType.FRIDGE,
     ):
         return (outlet or {}).get("plug1_switch") or None
+    if otype == OutletType.OIL_DIFFUSER:
+        from .diffuser_automation import control_switch_entity
+
+        return control_switch_entity(outlet)
     return None
 
 

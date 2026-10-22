@@ -301,6 +301,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_send_efficiency_digest_test)
     websocket_api.async_register_command(hass, websocket_get_light_automations)
     websocket_api.async_register_command(hass, websocket_save_light_automations)
+    websocket_api.async_register_command(hass, websocket_save_diffuser_schedule)
     websocket_api.async_register_command(hass, websocket_test_tuya_scene)
     websocket_api.async_register_command(hass, websocket_encode_tuya_scene)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
@@ -544,6 +545,16 @@ def build_rooms_payload_for_power_and_ratings(
     """Room rows (ids, day Wh, event counts, outlets) for get_power_data and intraday ratings."""
     event_counts = config_manager.get_event_counts()
     energy_monitor = hass.data.get(DOMAIN, {}).get("energy_monitor")
+    from .diffuser_automation import (
+        claimed_non_diffuser_power_entities,
+        control_switch_entity,
+        diffuser_runtime_key,
+        public_diffuser_state,
+    )
+
+    claimed_power = claimed_non_diffuser_power_entities(
+        config_manager.energy_config.get("rooms")
+    )
     rooms_out: list[dict[str, Any]] = []
 
     for room in config_manager.energy_config.get("rooms", []):
@@ -559,7 +570,7 @@ def build_rooms_payload_for_power_and_ratings(
             "outlets": [],
         }
 
-        for outlet in room.get("outlets", []):
+        for outlet_index, outlet in enumerate(room.get("outlets", [])):
             outlet_type = outlet.get("type", "outlet")
             outlet_data = {
                 "name": outlet["name"],
@@ -631,6 +642,23 @@ def build_rooms_payload_for_power_and_ratings(
                 outlet_data["plug1"] = {"watts": watts, "day_wh": round(day_wh, 2)}
                 room_data["total_watts"] += watts
                 room_data["total_day_wh"] += day_wh
+            elif outlet_type == "oil_diffuser":
+                plug_ent = str(outlet.get("plug1_entity") or "").strip()
+                watts = _get_power_value(hass, plug_ent) if plug_ent else 0.0
+                day_wh = config_manager.get_day_energy(plug_ent) if plug_ent else 0.0
+                outlet_data["plug1"] = {"watts": watts, "day_wh": round(day_wh, 2)}
+                if plug_ent and plug_ent not in claimed_power:
+                    room_data["total_watts"] += watts
+                    room_data["total_day_wh"] += day_wh
+                control = control_switch_entity(outlet)
+                state = hass.states.get(control) if control else None
+                is_on = bool(state and str(state.state or "").lower() == "on")
+                phase = None
+                if energy_monitor is not None:
+                    phase = getattr(energy_monitor, "_diffuser_status", {}).get(
+                        diffuser_runtime_key(room_id, outlet_index)
+                    )
+                outlet_data.update(public_diffuser_state(is_on, phase, outlet))
             else:
                 # Get plug 1 data
                 if outlet.get("plug1_entity"):
@@ -847,12 +875,22 @@ async def websocket_get_intraday_history(
         now = dt_util.now().strftime("%Y-%m-%d %H:%M")
 
         current_watts = 0.0
+        from .diffuser_automation import (
+            claimed_non_diffuser_power_entities,
+            diffuser_power_already_counted,
+        )
+
+        claimed_power = claimed_non_diffuser_power_entities(
+            config_manager.energy_config.get("rooms")
+        )
         for room in config_manager.energy_config.get("rooms", []):
             rid = room.get("id", room["name"].lower().replace(" ", "_"))
             if room_id and rid != room_id:
                 continue
             for outlet in room.get("outlets", []):
                 otype = outlet.get("type") or "outlet"
+                if diffuser_power_already_counted(outlet, claimed_power):
+                    continue
                 if otype == "light":
                     switch_entity = outlet.get("switch_entity")
                     if switch_entity:
@@ -1281,11 +1319,21 @@ def _collect_statistics_energy_sources(
     Last mapping wins if the same plug entity appears twice (same as legacy behavior)."""
     entity_to_room: dict[str, str] = {}
     switch_specs: list[dict[str, Any]] = []
+    from .diffuser_automation import (
+        claimed_non_diffuser_power_entities,
+        diffuser_power_already_counted,
+    )
+
+    claimed_power = claimed_non_diffuser_power_entities(
+        config_manager.energy_config.get("rooms")
+    )
 
     for room in config_manager.energy_config.get("rooms", []):
         room_id = room.get("id", room["name"].lower().replace(" ", "_"))
         for outlet in room.get("outlets", []):
             otype = outlet.get("type", "outlet")
+            if diffuser_power_already_counted(outlet, claimed_power):
+                continue
             if otype == "light":
                 pe = (
                     outlet.get("power_sensor_entity")
@@ -2656,15 +2704,22 @@ async def websocket_get_monthly_report(
         read_report_bytes, config_manager._data_dir, key
     )
     if refresh or existing is None:
+        from .durable_records import appliance_type_catalog
+
+        if config_manager.durable.stamp_appliance_types(
+            appliance_type_catalog(config_manager.energy_config.get("rooms"))
+        ):
+            await hass.async_add_executor_job(config_manager.durable.save)
         days = config_manager.durable.range_days(rng[0], rng[1])
         events = config_manager.durable.events_between(rng[0], rng[1])
+        alerts, _alert_truncated = config_manager.get_event_log(date_start=rng[0], date_end=rng[1])
         already = report_path(config_manager._data_dir, key)
         # Do not replace a saved period with an empty document.
         written = True
-        if days or events or already is None or not already.is_file():
+        if days or events or alerts or already is None or not already.is_file():
             generated = dt_util.now().isoformat(timespec="seconds")
             written = await hass.async_add_executor_job(
-                write_period_pdf, config_manager._data_dir, key, days, generated, events
+                write_period_pdf, config_manager._data_dir, key, days, generated, events, alerts
             )
         if written is None and existing is None:
             connection.send_error(msg["id"], "write_failed", "Could not create the report")
@@ -4354,6 +4409,66 @@ async def websocket_save_light_automations(
         connection.send_result(msg["id"], {"success": True})
     except Exception as e:
         _LOGGER.error("Failed to save light automations for room %s: %s", room_id, e)
+        connection.send_error(msg["id"], "save_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/save_diffuser_schedule",
+        vol.Required("room_id"): str,
+        vol.Required("outlet_index"): int,
+        vol.Required("schedule"): dict,
+        vol.Optional("diffuser_mode"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_save_diffuser_schedule(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Save spray frequency for one oil diffuser."""
+    from .diffuser_automation import diffuser_runtime_key, normalize_mode, normalize_schedule
+
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    if not config_manager:
+        connection.send_error(msg["id"], "not_ready", "Config manager not initialized")
+        return
+
+    room_id = str(msg["room_id"])
+    outlet_index = int(msg["outlet_index"])
+    target = None
+    for room in config_manager.energy_config.get("rooms") or []:
+        rid = room.get("id", str(room.get("name") or "").lower().replace(" ", "_"))
+        if rid != room_id:
+            continue
+        outlets = room.get("outlets") or []
+        if 0 <= outlet_index < len(outlets) and outlets[outlet_index].get("type") == "oil_diffuser":
+            target = outlets[outlet_index]
+        break
+    if target is None:
+        connection.send_error(msg["id"], "not_found", "Oil diffuser was not found")
+        return
+
+    if msg.get("diffuser_mode"):
+        target["diffuser_mode"] = normalize_mode(msg.get("diffuser_mode"))
+    incoming = msg.get("schedule") if isinstance(msg.get("schedule"), dict) else {}
+    target["diffuser_schedule"] = normalize_schedule(
+        {**target, "diffuser_schedule": incoming}
+    )
+    monitor = hass.data.get(DOMAIN, {}).get("energy_monitor")
+    if monitor is not None:
+        key = diffuser_runtime_key(room_id, outlet_index)
+        getattr(monitor, "_diffuser_runtime", {}).pop(key, None)
+        getattr(monitor, "_diffuser_status", {}).pop(key, None)
+    try:
+        await config_manager.async_update_energy(config_manager.energy_config)
+        connection.send_result(
+            msg["id"],
+            {"success": True, "schedule": target.get("diffuser_schedule")},
+        )
+    except Exception as e:
+        _LOGGER.error("Failed to save diffuser schedule: %s", e)
         connection.send_error(msg["id"], "save_failed", str(e))
 
 

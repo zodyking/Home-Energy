@@ -31,6 +31,7 @@ _APPLIANCE_TYPES = frozenset(
         "fridge",
         "door",
         "window",
+        "oil_diffuser",
     }
 )
 
@@ -51,6 +52,23 @@ def _day_bucket(days: dict[str, Any], day: str) -> dict[str, Any]:
     if not isinstance(bucket.get("totals"), dict):
         bucket["totals"] = {}
     return bucket
+
+
+def appliance_type_catalog(rooms: list | None) -> dict[tuple[str, str], str]:
+    """Map (room id, device name) to the configured appliance type."""
+    catalog: dict[tuple[str, str], str] = {}
+    for room in rooms or []:
+        if not isinstance(room, dict):
+            continue
+        rid = room_id_of(room)
+        for outlet in room.get("outlets") or []:
+            if not isinstance(outlet, dict):
+                continue
+            name = str(outlet.get("name") or "").strip().lower()
+            if not name:
+                continue
+            catalog[(rid, name)] = str(outlet.get("type") or "outlet").strip().lower() or "outlet"
+    return catalog
 
 
 def room_id_of(room: dict) -> str:
@@ -89,6 +107,15 @@ def watch_entities(outlet: dict | None) -> list[tuple[str, str]]:
         add(outlet.get("switch_entity"), "Switch")
         if outlet.get("power_source") == "sensor":
             add(outlet.get("power_sensor_entity"), "Power")
+    elif otype == "oil_diffuser":
+        from .diffuser_automation import control_switch_entity
+
+        control = control_switch_entity(outlet)
+        add(control, "Diffuser")
+        add(outlet.get("plug1_entity"), "Power")
+        plug_switch = str(outlet.get("plug1_switch") or "").strip()
+        if plug_switch and plug_switch != (control or ""):
+            add(plug_switch, "Plug")
     elif otype in ("door", "window"):
         add(outlet.get("contact_sensor"), "Open/closed")
     elif otype in ("single_outlet", "minisplit", "stove", "microwave", "fridge"):
@@ -192,6 +219,7 @@ def collapse_connectivity_events(
                 "room_name": str(row.get("room_name") or ""),
                 "room_id": str(row.get("room_id") or ""),
                 "entity_id": str(row.get("entity_id") or ""),
+                "appliance_type": str(row.get("appliance_type") or "").strip().lower(),
                 "offline_at": str(row.get("at") or ""),
                 "online_at": "",
                 "parts": {part} if part else set(),
@@ -207,6 +235,8 @@ def collapse_connectivity_events(
         elif episode["offline_parts"] == {""}:
             episode["offline_parts"].clear()
         episode["online_at"] = str(row.get("at") or "")
+        if not episode.get("appliance_type"):
+            episode["appliance_type"] = str(row.get("appliance_type") or "").strip().lower()
 
     finished.extend(active.values())
     finished.sort(key=lambda episode: str(episode.get("offline_at") or ""))
@@ -223,6 +253,7 @@ def _episodes_to_events(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "room_id": episode.get("room_id") or "",
             "room_name": episode.get("room_name") or "",
             "part": ", ".join(parts),
+            "appliance_type": episode.get("appliance_type") or "",
         }
         out.append({**base, "at": episode.get("offline_at") or "", "event": "disconnected"})
         if episode.get("online_at"):
@@ -334,6 +365,7 @@ class DurableHistory:
         room_id: str,
         room_name: str,
         part: str,
+        appliance_type: str = "",
     ) -> bool:
         """Remember online or offline. Log a row only after the new status holds.
 
@@ -356,6 +388,7 @@ class DurableHistory:
                 "room_id": room_id or row.get("room_id") or "",
                 "room_name": room_name or row.get("room_name") or "",
                 "part": part or row.get("part") or "",
+                "appliance_type": str(appliance_type or row.get("appliance_type") or "").strip().lower(),
             }
         )
         if previous == status:
@@ -406,6 +439,7 @@ class DurableHistory:
                 "room_id": row["room_id"],
                 "room_name": row["room_name"],
                 "part": row["part"],
+                "appliance_type": row.get("appliance_type") or "",
                 "event": event,
             }
         )
@@ -426,6 +460,39 @@ class DurableHistory:
                 out.append(dict(row))
         out.sort(key=lambda row: str(row.get("at") or ""))
         return out
+
+    def stamp_appliance_types(self, catalog: dict[tuple[str, str], str]) -> bool:
+        """Fill a missing appliance type from the current device setup. Returns True if anything changed."""
+        changed = False
+
+        def apply(row: dict[str, Any], field: str, room_id: str | None = None) -> None:
+            nonlocal changed
+            if not isinstance(row, dict) or str(row.get(field) or "").strip():
+                return
+            name = str(row.get("name") or "").strip().lower()
+            rid = str(room_id if room_id is not None else row.get("room_id") or "")
+            otype = catalog.get((rid, name))
+            if not otype:
+                return
+            row[field] = otype
+            changed = True
+
+        for bucket in (self.data.get("days") or {}).values():
+            rooms = bucket.get("rooms") if isinstance(bucket, dict) else None
+            if not isinstance(rooms, dict):
+                continue
+            for room_id, room in rooms.items():
+                if not isinstance(room, dict):
+                    continue
+                for device in room.get("devices") or []:
+                    apply(device, "type", str(room_id))
+        for row in self.data.get("connectivity") or []:
+            apply(row, "appliance_type")
+        availability = self.data.get("availability")
+        if isinstance(availability, dict):
+            for row in availability.values():
+                apply(row, "appliance_type")
+        return changed
 
     def last_online(self, entity_id: str) -> str | None:
         row = self.data["availability"].get(str(entity_id or "").strip())
