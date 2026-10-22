@@ -124,6 +124,74 @@ function isContactOpen(state) {
   return state === 'on' || state === 'open';
 }
 
+const DIFFUSER_MODES = {
+  airversa: {
+    patterns: [
+      { id: 'continuous', label: 'Continuous while scheduled' },
+      { id: 'intermittent', label: 'Intermittent spray' },
+    ],
+    defaultPattern: 'intermittent',
+    onLabel: 'Spray',
+    offLabel: 'Pause',
+    onUnit: 'seconds',
+    offUnit: 'seconds',
+    onMin: 1,
+    onMax: 180,
+    onDefault: 10,
+    offMin: 5,
+    offMax: 600,
+    offDefault: 20,
+    help: 'Uses the on/off switch from the Airversa Scenta integration. That integration only turns the diffuser on and off, so intermittent mode pulses the switch to set the spray interval.',
+  },
+  generic: {
+    patterns: [
+      { id: 'continuous', label: 'On while scheduled' },
+      { id: 'cycle', label: 'Cycle the plug' },
+    ],
+    defaultPattern: 'cycle',
+    onLabel: 'On',
+    offLabel: 'Off',
+    onUnit: 'minutes',
+    offUnit: 'minutes',
+    onMin: 1,
+    onMax: 240,
+    onDefault: 30,
+    offMin: 1,
+    offMax: 240,
+    offDefault: 30,
+    help: 'The diffuser runs whenever its plug has power. Cycling uses minutes so the unit is not power-cycled every few seconds.',
+  },
+  water: {
+    patterns: [
+      { id: 'continuous', label: 'Continuous while scheduled' },
+      { id: 'burst', label: 'Short bursts' },
+    ],
+    defaultPattern: 'burst',
+    onLabel: 'Spray',
+    offLabel: 'Pause',
+    onUnit: 'seconds',
+    offUnit: 'minutes',
+    onMin: 1,
+    onMax: 120,
+    onDefault: 8,
+    offMin: 1,
+    offMax: 180,
+    offDefault: 10,
+    help: 'A short spray followed by a longer pause, so a water diffuser does not soak the room.',
+  },
+};
+
+const DIFFUSER_PHASE_LABELS = {
+  spraying: 'Spraying',
+  paused: 'Resting',
+  idle: 'Off hours',
+  manual: 'Manual',
+  offline: 'Offline',
+  unconfigured: 'Set switch',
+  on: 'On',
+  off: 'Off',
+};
+
 /** Escape a string for safe interpolation into an HTML text node. */
 function escapeHtml(s) {
   return String(s ?? '')
@@ -194,6 +262,19 @@ class EnergyPanel extends HTMLElement {
     this._applianceMenuGestureCleanup = null;
     /** Offline-appliance disclosure stays collapsed unless the user opened it. */
     this._offlineListOpen = false;
+    /** In-panel monthly statement. The node is kept across statistics re-renders. */
+    this._statementViewer = null;
+    this._statementPdfBytes = null;
+    this._statementPdfDoc = null;
+    this._statementRenderToken = 0;
+    this._statementBlobUrl = null;
+    this._statementEscapeHandler = null;
+    this._pdfjsLib = null;
+    /** Statistics subpage: 'statement' shows the latest PDF. 'activity' lists warnings. */
+    this._statsPage = 'statement';
+    this._activityLog = null;
+    this._activityLogToken = 0;
+    this._statementDetached = null;
     this._summaryStatsResizeObs = null;
     this._summaryStatsWindowResizeBound = null;
     this._summaryFitDebounce = null;
@@ -605,6 +686,43 @@ class EnergyPanel extends HTMLElement {
       this.shadowRoot.appendChild(overlay);
       this.classList.add('hard-refresh-lock');
     }
+  }
+
+  _takeStatementViewer() {
+    const el = this.shadowRoot?.getElementById('statement-viewer-root') || this._statementDetached;
+    this._statementDetached = null;
+    if (!el) return null;
+    el.remove();
+    return el;
+  }
+
+  _restoreStatementViewer(saved) {
+    if (!this._statementViewer) {
+      saved?.remove();
+      this._statementDetached = null;
+      return;
+    }
+    if (this._showSettings || !this.shadowRoot) {
+      saved?.remove();
+      this._closeStatementViewer();
+      return;
+    }
+    const root = saved || this._statementDetached;
+    const slot = this.shadowRoot.getElementById('statement-viewer-slot');
+    if (!root) {
+      if (slot) this._mountStatementViewer();
+      return;
+    }
+    if (!slot) {
+      root.remove();
+      this._statementDetached = root;
+      return;
+    }
+    this._statementDetached = null;
+    root.classList.add('statement-viewer-inline');
+    root.classList.remove('statement-viewer-modal');
+    slot.appendChild(root);
+    this._syncStatementViewerChrome();
   }
 
   _syncHardRefreshLock() {
@@ -1536,6 +1654,26 @@ class EnergyPanel extends HTMLElement {
           if (lightSwitchPlate) lightSwitchPlate.classList.toggle('active', isOn);
           deviceCard.classList.toggle('light-on', isOn);
         }
+        if (deviceType === 'oil_diffuser') {
+          const control = this._diffuserControlSwitch(deviceConfig || {});
+          const hassOn = control && this._hass?.states?.[control]?.state === 'on';
+          const isOn = Object.prototype.hasOwnProperty.call(outlet, 'switch_state')
+            ? outlet.switch_state === true
+            : !!hassOn;
+          const phase = outlet.diffuser_phase;
+          const status = DIFFUSER_PHASE_LABELS[phase] || (isOn ? 'On' : 'Off');
+          deviceCard.classList.toggle('diffuser-on', isOn);
+          const statusEl = deviceCard.querySelector('.oil-diffuser-status');
+          if (statusEl) statusEl.textContent = status;
+          const cadenceEl = deviceCard.querySelector('.oil-diffuser-cadence');
+          if (cadenceEl && deviceConfig) cadenceEl.textContent = this._diffuserCadenceLabel(deviceConfig);
+          const wattsEl = deviceCard.querySelector('.oil-diffuser-watts');
+          if (wattsEl) {
+            const hasPlug = Boolean(String(deviceConfig?.plug1_entity || '').trim());
+            wattsEl.hidden = !hasPlug;
+            if (hasPlug) wattsEl.textContent = `${p1W.toFixed(1)} W`;
+          }
+        }
         // Door card live state updates. Phase 6: skip the DOM writes when the
         // contact/lock state has not changed since the last tick (the 1s poll
         // was rewriting identical classes/text every second for every door
@@ -2131,6 +2269,86 @@ class EnergyPanel extends HTMLElement {
       .monthly-report-meta { font-size: 12px; color: var(--secondary-text-color); }
       .monthly-report-actions { display: flex; flex-wrap: wrap; gap: 8px; }
       .monthly-report-actions .btn { min-height: 44px; }
+      .statement-viewer-root { box-sizing: border-box; }
+      .statement-viewer-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 1100;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(8px, 2vw, 20px);
+      }
+      .statement-viewer-inline {
+        position: static;
+        display: block;
+        background: transparent;
+        padding: 0;
+      }
+      .statement-viewer-frame {
+        background: var(--card-bg, #1c1c1c);
+        border-radius: clamp(8px, 2vw, 12px);
+        border: 1px solid var(--card-border, rgba(255,255,255,0.12));
+        width: min(96vw, 920px);
+        max-width: 100%;
+        height: min(92vh, 900px);
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      }
+      .statement-viewer-inline .statement-viewer-frame {
+        width: 100%;
+        height: min(78vh, 900px);
+        box-shadow: none;
+      }
+      .statement-viewer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: clamp(10px, 2.5vw, 16px) clamp(12px, 3vw, 20px);
+        border-bottom: 1px solid var(--card-border, rgba(255,255,255,0.12));
+        flex-shrink: 0;
+      }
+      .statement-viewer-title {
+        margin: 0;
+        min-width: 0;
+        font-size: clamp(14px, 3.5vw, 18px);
+        font-weight: 600;
+        color: var(--primary-text-color, #fff);
+      }
+      .statement-viewer-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+      .statement-viewer-actions .btn { min-height: 44px; }
+      .statement-viewer-actions .graph-modal-close { min-width: 44px; min-height: 44px; }
+      .statement-viewer-body {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+        padding: 12px;
+        background: #111;
+      }
+      .statement-viewer-pages {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .statement-viewer-pages canvas,
+      .statement-viewer-pages iframe {
+        width: 100%;
+        height: auto;
+        background: #fff;
+        border: 0;
+        border-radius: 2px;
+      }
+      .statement-viewer-pages iframe { height: 70vh; }
+      .statement-viewer-status {
+        margin: 0;
+        color: var(--secondary-text-color, #aaa);
+        text-align: center;
+        padding: 24px 12px;
+      }
       .statistics-cards {
         display: block;
         width: 100%;
@@ -5347,6 +5565,7 @@ class EnergyPanel extends HTMLElement {
       .device-card.minisplit-card .outlet-name-top,
       .device-card.fridge-card .outlet-name-top,
       .device-card.ceiling-vent-card .outlet-name-top,
+      .device-card.oil-diffuser-card .outlet-name-top,
       .device-card.door-card .outlet-name-top,
       .device-card.window-card .outlet-name-top {
         font-size: 12px;
@@ -6229,6 +6448,126 @@ class EnergyPanel extends HTMLElement {
       }
       .device-card.fridge-card .fridge-watts.over-threshold {
         color: var(--panel-danger, #ff5252);
+      }
+
+      .device-card.oil-diffuser-card {
+        width: 81px;
+        min-width: 81px;
+        flex-shrink: 0;
+        background: transparent;
+        cursor: pointer;
+      }
+      .device-card.oil-diffuser-card .oil-diffuser-face {
+        min-height: 200px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 6px 4px 5px;
+        box-sizing: border-box;
+      }
+      .oil-diffuser-body {
+        width: 69px;
+        height: 78px;
+        margin: 4px 0 2px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        position: relative;
+      }
+      .oil-bottle {
+        position: relative;
+        width: 36px;
+        height: 62px;
+      }
+      .oil-neck {
+        width: 10px;
+        height: 8px;
+        margin: 0 auto;
+        border: 2px solid rgba(186, 214, 214, 0.9);
+        border-bottom: none;
+        border-radius: 3px 3px 0 0;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .oil-glass {
+        width: 34px;
+        height: 44px;
+        margin: 0 auto;
+        border: 2px solid rgba(186, 214, 214, 0.9);
+        border-radius: 7px 7px 14px 14px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(90, 170, 160, 0.16));
+        position: relative;
+        overflow: hidden;
+      }
+      .oil-liquid {
+        position: absolute;
+        left: 3px;
+        right: 3px;
+        bottom: 3px;
+        height: 42%;
+        border-radius: 3px 3px 10px 10px;
+        background: linear-gradient(180deg, #8fd0b0, #1d6d58);
+      }
+      .device-card.oil-diffuser-card.diffuser-on .oil-liquid {
+        background: linear-gradient(180deg, #d4ffe4, #14a37a);
+        box-shadow: 0 0 8px rgba(20, 163, 122, 0.45);
+      }
+      .oil-mist {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        height: 22px;
+        pointer-events: none;
+      }
+      .oil-puff {
+        position: absolute;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: rgba(210, 255, 236, 0.75);
+        opacity: 0;
+      }
+      .device-card.oil-diffuser-card.diffuser-on .oil-puff {
+        animation: oil-rise 1.8s ease-in infinite;
+      }
+      .oil-puff:nth-child(1) { left: 8px; animation-delay: 0s; }
+      .oil-puff:nth-child(2) { left: 16px; animation-delay: 0.45s; }
+      .oil-puff:nth-child(3) { left: 24px; animation-delay: 0.9s; }
+      @keyframes oil-rise {
+        0% { transform: translateY(10px); opacity: 0; }
+        25% { opacity: 0.85; }
+        100% { transform: translateY(-16px); opacity: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .device-card.oil-diffuser-card.diffuser-on .oil-puff {
+          animation: none;
+          opacity: 0.55;
+          transform: translateY(-6px);
+        }
+      }
+      .oil-diffuser-status,
+      .oil-diffuser-cadence,
+      .oil-diffuser-watts {
+        font-size: 9px;
+        line-height: 1.2;
+        text-align: center;
+        max-width: 74px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .oil-diffuser-status {
+        font-weight: 700;
+        color: var(--primary-text-color, #e8e8e8);
+        min-height: 12px;
+      }
+      .device-card.oil-diffuser-card.diffuser-on .oil-diffuser-status {
+        color: #7dcea0;
+      }
+      .oil-diffuser-cadence,
+      .oil-diffuser-watts {
+        color: var(--secondary-text-color, #9aa0a6);
+        margin-top: 2px;
       }
 
       /* Ceiling vent fan card - single width, square, detailed vent grill */
@@ -8357,6 +8696,7 @@ class EnergyPanel extends HTMLElement {
 
     if (this._loading) {
       const hrOverlay = this._takeHardRefreshOverlay();
+      const statementNode = this._takeStatementViewer();
       this.shadowRoot.innerHTML = `
         <style>${styles}</style>
         <div class="panel-container">
@@ -8379,11 +8719,13 @@ class EnergyPanel extends HTMLElement {
       `;
       this._attachMenuButton();
       this._putHardRefreshOverlay(hrOverlay);
+      this._restoreStatementViewer(statementNode);
       return;
     }
 
     if (this._error) {
       const hrOverlay = this._takeHardRefreshOverlay();
+      const statementNode = this._takeStatementViewer();
       this.shadowRoot.innerHTML = `
         <style>${styles}</style>
         <div class="panel-container">
@@ -8414,6 +8756,7 @@ class EnergyPanel extends HTMLElement {
       // (previously only the main/settings render paths attached it).
       this._attachMenuButton();
       this._putHardRefreshOverlay(hrOverlay);
+      this._restoreStatementViewer(statementNode);
       return;
     }
 
@@ -8443,6 +8786,7 @@ class EnergyPanel extends HTMLElement {
     const totalPowerCycles = this._powerData?.total_power_cycles || 0;
 
     const hrOverlay = this._takeHardRefreshOverlay();
+    const statementNode = this._takeStatementViewer();
     // Tear down transient UI (modals/popups + their window/document listeners)
     // before replacing innerHTML, matching _renderSettings. Without this a
     // dashboard re-render leaked listeners from any open modal/popup.
@@ -8508,14 +8852,19 @@ class EnergyPanel extends HTMLElement {
     this._syncGraphModalAfterRender();
     this._syncRoomsGridTitleFitObserver();
     this._putHardRefreshOverlay(hrOverlay);
+    this._restoreStatementViewer(statementNode);
     if (this._dashboardView === 'rooms' && rooms.length > 0 && !showStatistics) {
       queueMicrotask(() => {
         this._scheduleRoomHeaderTitleFit();
         this._updatePowerDisplay();
       });
     }
-    if (this._dashboardView === 'statistics') {
+    if (this._dashboardView === 'statistics' && this.shadowRoot.getElementById('stat-rooms-radar-chart')) {
       queueMicrotask(() => void this._syncStatsRoomsRadar());
+    }
+    if (this._dashboardView === 'statistics' && !this._showSettings) {
+      if (this._statsPage === 'activity') this._ensureActivityLog();
+      else this._ensureLatestStatement();
     }
   }
 
@@ -8574,7 +8923,11 @@ class EnergyPanel extends HTMLElement {
         if (!Number.isNaN(ot)) parts.push(`Limit ${Math.round(ot)} W`);
       }
     }
-    if (e.enforcement_phase != null && e.enforcement_phase !== '') {
+    if (e.from_phase != null && e.from_phase !== '' && e.to_phase != null && e.to_phase !== '') {
+      const from = Number(e.from_phase);
+      const to = Number(e.to_phase);
+      if (!Number.isNaN(from) && !Number.isNaN(to)) parts.push(`Phase ${Math.round(from)} to ${Math.round(to)}`);
+    } else if (e.enforcement_phase != null && e.enforcement_phase !== '') {
       const p = Number(e.enforcement_phase);
       if (!Number.isNaN(p)) parts.push(`Phase ${Math.round(p)}`);
     }
@@ -9694,6 +10047,128 @@ class EnergyPanel extends HTMLElement {
     return cum;
   }
 
+  _activityRangeKey() {
+    const s = this._statsData || {};
+    return `${s.date_start || ''}|${s.date_end || ''}`;
+  }
+
+  _ensureLatestStatement() {
+    if (this._showSettings || this._dashboardView !== 'statistics' || this._statsPage !== 'statement') return;
+    const reports = Array.isArray(this._statsData?.monthly_reports) ? this._statsData.monthly_reports : [];
+    const latest = reports[0];
+    const key = latest && (latest.key || latest.month);
+    const generated = latest?.generated_at || '';
+    if (!key) {
+      if (this._statementViewer) this._closeStatementViewer();
+      return;
+    }
+    const same = this._statementViewer?.key === key
+      && this._statementViewer.generated === generated
+      && (this._statementViewer.loading || this._statementPdfBytes);
+    if (same) {
+      this._mountStatementViewer();
+      const pages = this.shadowRoot?.querySelector('#statement-pages');
+      if (pages && !pages.querySelector('canvas') && !pages.querySelector('iframe') && this._statementPdfBytes && !this._statementViewer.loading) {
+        void this._paintStatementPages(this._statementRenderToken);
+      }
+      return;
+    }
+    void this._openStatementViewer(key);
+  }
+
+  _ensureActivityLog() {
+    if (this._showSettings || this._dashboardView !== 'statistics' || this._statsPage !== 'activity') return;
+    const key = this._activityRangeKey();
+    if (!key || key === '|') return;
+    const statsAt = this._statsFetchedAt || 0;
+    const log = this._activityLog;
+    if (log && log.key === key && log.statsAt === statsAt && (log.loading || log.loaded)) return;
+    void this._loadActivityLog(statsAt);
+  }
+
+  async _loadActivityLog(statsAt) {
+    const s = this._statsData || {};
+    const key = this._activityRangeKey();
+    if (!this._hass || !s.date_start || !s.date_end) return;
+    const token = (this._activityLogToken = (this._activityLogToken || 0) + 1);
+    const stamp = statsAt || this._statsFetchedAt || 0;
+    this._activityLog = { key, statsAt: stamp, loading: true, loaded: false, events: [], truncated: false, error: '' };
+    try {
+      const res = await this._hass.callWS({
+        type: 'smart_dashboards/get_event_log',
+        date_start: s.date_start,
+        date_end: s.date_end,
+      });
+      if (token !== this._activityLogToken) return;
+      this._activityLog = {
+        key,
+        statsAt: stamp,
+        loading: false,
+        loaded: true,
+        events: Array.isArray(res?.events) ? res.events : [],
+        truncated: !!res?.truncated,
+        error: '',
+      };
+    } catch (err) {
+      console.error('Warning log failed:', err);
+      if (token !== this._activityLogToken) return;
+      this._activityLog = { key, statsAt: stamp, loading: false, loaded: true, events: [], truncated: false, error: 'Could not load warnings' };
+    }
+    if (this._statsPage === 'activity' && this._dashboardView === 'statistics' && !this._showSettings) this._render();
+  }
+
+  _renderWarningLog() {
+    const log = this._activityLog;
+    if (!log || log.loading) {
+      return '<p class="statistics-section-sub">Loading warnings…</p>';
+    }
+    if (log.error) return `<p class="statistics-section-sub">${this._eventLogEscape(log.error)}</p>`;
+    const kinds = new Set(['warning', 'shutoff', 'power_cycle', 'phase_change']);
+    const events = (log.events || []).filter((event) => kinds.has(event.type));
+    if (!events.length) {
+      return '<p class="monthly-reports-empty">No warnings were logged for this date range.</p>';
+    }
+    const items = events.map((event) => {
+      const kind = event.type === 'shutoff'
+        ? 'Shutoff'
+        : event.type === 'power_cycle'
+          ? 'Power cycle'
+          : event.type === 'phase_change'
+            ? 'Phase change'
+            : 'Warning';
+      const when = event.ts ? String(event.ts).replace('T', ' ').slice(0, 19) : '';
+      const room = event.room_name || 'Home';
+      const who = event.outlet_name ? `${room} – ${event.outlet_name}` : room;
+      const badgeStyle = event.type === 'power_cycle'
+        ? 'background: rgba(3, 169, 244, 0.2); color: var(--panel-accent, #03a9f4);'
+        : event.type === 'phase_change'
+          ? 'background: rgba(255, 152, 0, 0.2); color: #ffb74d;'
+          : (event.tts_succeeded
+            ? 'background: rgba(76, 175, 80, 0.2); color: #4caf50;'
+            : 'background: rgba(244, 67, 54, 0.2); color: #f44336;');
+      const detail = this._eventLogReadingsLine(event);
+      const spoken = event.tts_message != null && String(event.tts_message).trim() !== ''
+        ? this._eventLogEscape(event.tts_message)
+        : 'No announcement was spoken.';
+      return `
+        <li class="event-log-entry">
+          <div class="event-log-entry-row">
+            <span class="event-log-ts">${this._eventLogEscape(when)}</span>
+            <span class="event-log-who">${this._eventLogEscape(who)}</span>
+            <span class="event-log-badge" style="${badgeStyle}">${kind}</span>
+          </div>
+          <div class="event-log-detail">
+            ${detail ? `<p class="event-log-readings">${this._eventLogEscape(detail)}</p>` : ''}
+            <p class="event-log-message">${spoken}</p>
+          </div>
+        </li>`;
+    }).join('');
+    const note = log.truncated
+      ? '<p class="statistics-section-sub">Showing the most recent 5000 events; the list was truncated.</p>'
+      : '';
+    return `<div class="event-log-container"><ul class="event-log-list">${items}</ul></div>${note}`;
+  }
+
   _renderStatisticsView() {
     const s = this._statsData || {};
     const dateStart = s.date_start || '';
@@ -9704,11 +10179,11 @@ class EnergyPanel extends HTMLElement {
     const rangeBanner = dateStart && dateEnd
       ? `${startFormatted} – ${endFormatted}`
       : 'No date range available';
-    const totalKwh = s.total_kwh ?? 0;
     const totalWarnings = s.total_warnings ?? 0;
     const totalShutoffs = s.total_shutoffs ?? 0;
     const totalPowerCycles = s.total_power_cycles ?? 0;
     const rooms = s.rooms || [];
+    const activity = this._statsPage === 'activity';
 
     const showOverlay = this._statsLoading;
     const staleLine = s.statistics_pending
@@ -9721,6 +10196,62 @@ class EnergyPanel extends HTMLElement {
     const shutoffIcon = `<svg class="statistics-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`;
     const cycleIcon = `<svg class="statistics-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`;
 
+    const eventBar = `
+            <div class="statistics-event-bar">
+            <div class="statistics-event-item">
+              ${warningIcon}
+              <span class="statistics-event-value" id="stat-total-warnings">${totalWarnings}</span>
+              <span class="statistics-event-label">Warnings</span>
+            </div>
+            <div class="statistics-event-item">
+              ${shutoffIcon}
+              <span class="statistics-event-value" id="stat-total-shutoffs">${totalShutoffs}</span>
+              <span class="statistics-event-label">Shutoffs</span>
+            </div>
+            <div class="statistics-event-item">
+              ${cycleIcon}
+              <span class="statistics-event-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
+              <span class="statistics-event-label">Cycles</span>
+            </div>
+            </div>`;
+
+    const roomDetails = `
+          ${this._renderOfflineAppliancesNotice()}
+          <div class="statistics-table-panel">
+            <div class="statistics-section-header">
+              <h3 class="statistics-section-title">Room Details</h3>
+              <p class="statistics-section-sub">Efficiency and daily metrics for each room</p>
+            </div>
+            ${this._renderRecordingAccuracyNote()}
+            <div class="statistics-table-wrap">
+              <table class="statistics-table statistics-table-compact" aria-describedby="stat-table-desc">
+                <caption id="stat-table-desc" class="sr-only">Room statistics showing efficiency ratings, percentage of total usage, event counts, and daily high/low/average metrics.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Room</th>
+                    <th scope="col"><abbr title="Efficiency rating">Eff</abbr></th>
+                    <th scope="col"><abbr title="Percent of total">%</abbr></th>
+                    <th scope="col"><abbr title="Voice warnings">Warn</abbr></th>
+                    <th scope="col"><abbr title="Safety shutoffs">Shut</abbr></th>
+                    <th scope="col"><abbr title="Enforcement cycles">Cyc</abbr></th>
+                    <th scope="col"><abbr title="Highest daily kWh">High</abbr></th>
+                    <th scope="col"><abbr title="Lowest daily kWh">Low</abbr></th>
+                    <th scope="col"><abbr title="Average daily kWh">Avg</abbr></th>
+                  </tr>
+                </thead>
+                <tbody id="stat-rooms-tbody">
+                  ${rooms.length === 0 ? '<tr><td colspan="9" class="statistics-empty">No room data for this range.</td></tr>' : ''}
+                  ${rooms.map((r) => this._statRoomTableRowHtml(r, dateStart, dateEnd, 'stat')).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <section class="monthly-reports" aria-label="Warning log">
+            <h3>Warnings</h3>
+            <p class="statistics-section-sub">Every logged warning for this date range, with the room, what was measured, and the words spoken out loud. Shutoffs, power cycles, and phase changes are listed too.</p>
+            ${this._renderWarningLog()}
+          </section>`;
+
     return `
       <div class="statistics-view-shell">
         <div class="statistics-loading-overlay" id="statistics-loading-overlay" style="display:${showOverlay ? 'flex' : 'none'}">
@@ -9732,6 +10263,10 @@ class EnergyPanel extends HTMLElement {
           </div>
         </div>
         <div class="statistics-view">
+          <div class="view-tabs" role="tablist" aria-label="Statistics pages">
+            <button type="button" class="view-tab ${activity ? '' : 'active'}" data-stats-page="statement" role="tab" aria-selected="${activity ? 'false' : 'true'}">Statement</button>
+            <button type="button" class="view-tab ${activity ? 'active' : ''}" data-stats-page="activity" role="tab" aria-selected="${activity ? 'true' : 'false'}">Room activity</button>
+          </div>
           <div class="statistics-banner">
             <div class="statistics-banner-row">
               <span class="statistics-banner-label" id="stat-period-label">${s.period_source === 'billing' ? 'Current billing cycle' : 'Statistics window'}</span>
@@ -9739,142 +10274,25 @@ class EnergyPanel extends HTMLElement {
               <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Narrowed to dates you picked.</span>
             </div>
             ${s.statistics_pending ? `<div class="statistics-pending-banner" id="stat-pending-banner">Building usage totals — numbers update automatically when the snapshot is ready.</div>` : ''}
-            <div class="statistics-event-bar">
-            <div class="statistics-event-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_warnings" title="Open threshold warning log"' : ''}>
-              ${warningIcon}
-              <span class="statistics-event-value" id="stat-total-warnings">${totalWarnings}</span>
-              <span class="statistics-event-label">Warnings</span>
-            </div>
-            <div class="statistics-event-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_shutoffs" title="Open safety shutoff log"' : ''}>
-              ${shutoffIcon}
-              <span class="statistics-event-value" id="stat-total-shutoffs">${totalShutoffs}</span>
-              <span class="statistics-event-label">Shutoffs</span>
-            </div>
-            <div class="statistics-event-item${dateStart && dateEnd ? ' graph-clickable' : ''}" ${dateStart && dateEnd ? 'data-graph-type="stat_total_power_cycles" title="Open enforcement cycle log"' : ''}>
-              ${cycleIcon}
-              <span class="statistics-event-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
-              <span class="statistics-event-label">Cycles</span>
-            </div>
-            </div>
+            ${activity ? eventBar : ''}
           </div>
-
-          ${this._renderOfflineAppliancesNotice()}
-
-          <div class="statistics-content-grid">
-            <div class="statistics-radar-panel">
-              <div class="statistics-section-header">
-                <h3 class="statistics-section-title">Room Usage</h3>
-                <p class="statistics-section-sub">Percent of tracked energy by room (non-zero rooms only)</p>
-              </div>
-              ${this._renderRecordingAccuracyNote()}
-              <div id="stat-rooms-radar-chart" class="stat-rooms-radar-mount" aria-label="Room usage share pie chart"></div>
-              <div id="stat-radar-selection" class="stat-radar-selection" role="region" aria-live="polite">
-                <p class="stat-radar-selection-meta">Tap a slice or room in the legend for details and to open a usage graph.</p>
-              </div>
-            </div>
-
-            <div class="statistics-table-panel">
-              <div class="statistics-section-header">
-                <h3 class="statistics-section-title">Room Details</h3>
-                <p class="statistics-section-sub">Efficiency and daily metrics for each room</p>
-              </div>
-              <div class="statistics-table-wrap">
-                <table class="statistics-table statistics-table-compact" aria-describedby="stat-table-desc">
-                  <caption id="stat-table-desc" class="sr-only">Room statistics showing efficiency ratings, percentage of total usage, event counts, and daily high/low/average metrics.</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">Room</th>
-                      <th scope="col"><abbr title="Efficiency rating">Eff</abbr></th>
-                      <th scope="col"><abbr title="Percent of total">%</abbr></th>
-                      <th scope="col"><abbr title="Voice warnings">Warn</abbr></th>
-                      <th scope="col"><abbr title="Safety shutoffs">Shut</abbr></th>
-                      <th scope="col"><abbr title="Enforcement cycles">Cyc</abbr></th>
-                      <th scope="col"><abbr title="Highest daily kWh">High</abbr></th>
-                      <th scope="col"><abbr title="Lowest daily kWh">Low</abbr></th>
-                      <th scope="col"><abbr title="Average daily kWh">Avg</abbr></th>
-                    </tr>
-                  </thead>
-                  <tbody id="stat-rooms-tbody">
-                    ${rooms.length === 0 ? '<tr><td colspan="9" class="statistics-empty">No room data for this range.</td></tr>' : ''}
-                    ${rooms.map((r) => this._statRoomTableRowHtml(r, dateStart, dateEnd, 'stat')).join('')}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-          ${this._renderMonthlyReportsArchive()}
+          ${activity ? roomDetails : this._renderMonthlyReportsArchive()}
         </div>
       </div>
     `;
   }
 
-  _formatOfflineWhen(iso) {
-    if (!iso) return 'No online time recorded';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return 'No online time recorded';
-    try {
-      return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-    } catch (_err) {
-      return d.toLocaleString();
-    }
-  }
-
-  _offlineDevices() {
-    return Array.isArray(this._statsData?.offline_devices) ? this._statsData.offline_devices : [];
-  }
-
-  _offlineRoomNames() {
-    const names = [];
-    const seen = new Set();
-    for (const device of this._offlineDevices()) {
-      const room = String(device.room_name || device.room_id || '').trim();
-      if (!room || seen.has(room)) continue;
-      seen.add(room);
-      names.push(room);
-    }
-    return names;
-  }
-
-  _renderRecordingAccuracyNote(roomName) {
-    const rooms = this._offlineRoomNames();
-    const scoped = roomName
-      ? rooms.filter((room) => room === roomName)
-      : rooms;
-    if (!scoped.length) return '';
-    const list = scoped.map((room) => this._eventLogEscape(room)).join(', ');
-    return `<p class="recording-accuracy-note" role="status">Recording is not accurate for the following rooms: ${list} due to appliance connectivity issues.</p>`;
-  }
-
-  _renderOfflineAppliancesNotice() {
-    const devices = this._offlineDevices();
-    if (!devices.length) return '';
-    const items = devices.map((device) => {
-      const name = this._eventLogEscape(device.name || 'Device');
-      const part = device.part ? ` (${this._eventLogEscape(device.part)})` : '';
-      const room = this._eventLogEscape(device.room_name || device.room_id || 'Unknown room');
-      const when = this._eventLogEscape(this._formatOfflineWhen(device.last_online));
-      return `<li><span class="offline-name">${name}${part}</span><span class="offline-meta">${room}</span><span class="offline-meta">Last online ${when}</span></li>`;
-    }).join('');
-    const countLabel = devices.length === 1 ? '1 unreachable' : `${devices.length} unreachable`;
-    return `
-      <details class="offline-appliances" id="offline-appliances" ${this._offlineListOpen ? 'open' : ''}>
-        <summary>
-          <span class="offline-summary-text">
-            <span>Offline appliances</span>
-            <span class="offline-count">${countLabel}</span>
-          </span>
-        </summary>
-        <div class="offline-body">
-          <p>Home Assistant could not reach these outlets or appliances. This list stays available until they are back online.</p>
-          <ul>${items}</ul>
-        </div>
-      </details>
-    `;
-  }
-
   _renderMonthlyReportsArchive() {
     const reports = Array.isArray(this._statsData?.monthly_reports) ? this._statsData.monthly_reports : [];
-    const rows = reports.map((report) => {
+    if (!reports.length) {
+      return `
+      <section class="monthly-reports" aria-label="Monthly energy statement">
+        <h3>Monthly statement</h3>
+        <p class="statistics-section-sub">One PDF for the billing range in Statistics settings. Each day in that period is broken down by room. If the billing sensors are not set, the statement uses the calendar month.</p>
+        <p class="monthly-reports-empty">No monthly statement yet. One PDF is saved for the current billing period, with each day broken down by room.</p>
+      </section>`;
+    }
+    const older = reports.slice(1).map((report) => {
       const key = this._eventLogEscape(report.key || report.month || '');
       const title = this._eventLogEscape(report.label || report.title || key || 'Report');
       const generated = this._eventLogEscape(this._formatOfflineWhen(report.generated_at));
@@ -9885,50 +10303,283 @@ class EnergyPanel extends HTMLElement {
             <div class="monthly-report-meta">Monthly statement · updated ${generated}</div>
           </div>
           <div class="monthly-report-actions">
-            <button type="button" class="btn btn-secondary" data-monthly-report="${key}" data-monthly-action="open">Open</button>
             <button type="button" class="btn btn-secondary" data-monthly-report="${key}" data-monthly-action="download">Download</button>
           </div>
-        </div>
-      `;
+        </div>`;
     }).join('');
-    const body = rows || '<p class="monthly-reports-empty">No monthly statement yet. One PDF is saved for the current billing period, with each day broken down by room.</p>';
     return `
       <section class="monthly-reports" aria-label="Monthly energy statement">
         <h3>Monthly statement</h3>
         <p class="statistics-section-sub">One PDF for the billing range in Statistics settings. Each day in that period is broken down by room. If the billing sensors are not set, the statement uses the calendar month.</p>
-        ${body}
-      </section>
-    `;
+        <div id="statement-viewer-slot"></div>
+        ${older}
+      </section>`;
+  }
+
+  _statementViewerTitle(key) {
+    const reports = Array.isArray(this._statsData?.monthly_reports) ? this._statsData.monthly_reports : [];
+    const row = reports.find((report) => (report.key || report.month) === key);
+    return row?.label || row?.title || key || 'Monthly statement';
+  }
+
+  _bytesFromBase64(b64) {
+    const binary = atob(b64 || '');
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  async _fetchMonthlyReport(key) {
+    const res = await this._hass.callWS({
+      type: 'smart_dashboards/get_monthly_report',
+      key,
+      refresh: true,
+    });
+    return {
+      filename: res.filename || `Home-Energy ${key}.pdf`,
+      bytes: this._bytesFromBase64(res.pdf_base64 || ''),
+    };
+  }
+
+  _downloadPdfBytes(bytes, filename) {
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename || 'Home-Energy.pdf';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  async _loadPdfJs() {
+    if (this._pdfjsLib) return this._pdfjsLib;
+    const lib = await import(new URL('./pdfjs/pdf.min.mjs', import.meta.url));
+    lib.GlobalWorkerOptions.workerSrc = new URL('./pdfjs/pdf.worker.min.mjs', import.meta.url).href;
+    this._pdfjsLib = lib;
+    return lib;
   }
 
   async _openMonthlyReport(key, download) {
     if (!key || !this._hass) return;
+    if (download) {
+      try {
+        const res = await this._fetchMonthlyReport(key);
+        this._downloadPdfBytes(res.bytes, res.filename);
+        if (this._dashboardView === 'statistics') void this._loadStatistics();
+      } catch (err) {
+        console.error('Monthly report failed:', err);
+        this._showToast('Could not open the monthly report', 'error');
+      }
+      return;
+    }
+    await this._openStatementViewer(key);
+  }
+
+  async _openStatementViewer(key) {
+    const token = (this._statementRenderToken = (this._statementRenderToken || 0) + 1);
+    this._closeStatementDocument();
+    if (this._statementBlobUrl) {
+      URL.revokeObjectURL(this._statementBlobUrl);
+      this._statementBlobUrl = null;
+    }
+    this._statementPdfBytes = null;
+    const reports = Array.isArray(this._statsData?.monthly_reports) ? this._statsData.monthly_reports : [];
+    const row = reports.find((report) => (report.key || report.month) === key);
+    this._statementViewer = {
+      key,
+      title: this._statementViewerTitle(key),
+      filename: `Home-Energy ${key}.pdf`,
+      generated: row?.generated_at || '',
+      loading: true,
+      error: '',
+    };
+    this._mountStatementViewer();
     try {
-      const res = await this._hass.callWS({
-        type: 'smart_dashboards/get_monthly_report',
-        key,
-        refresh: true,
-      });
-      const binary = atob(res.pdf_base64 || '');
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      if (download) {
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = res.filename || `Home-Energy ${key}.pdf`;
-        link.click();
-      } else {
-        window.open(url, '_blank', 'noopener');
-      }
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-      if (this._dashboardView === 'statistics') {
-        void this._loadStatistics();
-      }
+      const res = await this._fetchMonthlyReport(key);
+      if (token !== this._statementRenderToken || !this._statementViewer) return;
+      this._statementViewer.loading = false;
+      this._statementViewer.filename = res.filename;
+      this._statementPdfBytes = res.bytes;
+      this._syncStatementViewerChrome();
+      await this._paintStatementPages(token);
     } catch (err) {
       console.error('Monthly report failed:', err);
+      if (token !== this._statementRenderToken || !this._statementViewer) return;
+      this._statementViewer.loading = false;
+      this._statementViewer.error = 'Could not open the monthly report';
+      this._syncStatementViewerChrome();
       this._showToast('Could not open the monthly report', 'error');
+    }
+  }
+
+  _closeStatementDocument() {
+    const doc = this._statementPdfDoc;
+    this._statementPdfDoc = null;
+    if (doc && typeof doc.destroy === 'function') {
+      try { doc.destroy(); } catch (_err) { /* already closed */ }
+    }
+  }
+
+  _closeStatementViewer() {
+    this._statementRenderToken = (this._statementRenderToken || 0) + 1;
+    this._closeStatementDocument();
+    this._statementPdfBytes = null;
+    this._statementViewer = null;
+    this._statementDetached?.remove();
+    this._statementDetached = null;
+    this.shadowRoot?.getElementById('statement-viewer-root')?.remove();
+    if (this._statementBlobUrl) {
+      URL.revokeObjectURL(this._statementBlobUrl);
+      this._statementBlobUrl = null;
+    }
+    if (this._statementEscapeHandler) {
+      window.removeEventListener('keydown', this._statementEscapeHandler);
+      this._statementEscapeHandler = null;
+    }
+  }
+
+  _syncStatementViewerChrome() {
+    const root = this.shadowRoot?.getElementById('statement-viewer-root');
+    const viewer = this._statementViewer;
+    if (!root || !viewer) return;
+    const title = root.querySelector('#statement-viewer-title');
+    if (title) title.textContent = viewer.title || 'Monthly statement';
+    const download = root.querySelector('#statement-viewer-download');
+    if (download) download.disabled = !this._statementPdfBytes;
+    const inline = root.classList.contains('statement-viewer-inline');
+    const close = root.querySelector('#statement-viewer-close');
+    if (close) close.hidden = inline;
+    const frame = root.querySelector('.statement-viewer-frame');
+    if (frame) {
+      frame.setAttribute('role', inline ? 'region' : 'dialog');
+      frame.setAttribute('aria-label', viewer.title || 'Monthly statement');
+      if (inline) frame.removeAttribute('aria-modal');
+      else frame.setAttribute('aria-modal', 'true');
+    }
+    const pages = root.querySelector('#statement-pages');
+    if (!pages) return;
+    if (viewer.loading) {
+      if (!pages.querySelector('canvas') && !pages.querySelector('iframe')) {
+        pages.innerHTML = '<p class="statement-viewer-status">Opening statement…</p>';
+      }
+    } else if (viewer.error) {
+      pages.innerHTML = `<p class="statement-viewer-status">${this._eventLogEscape(viewer.error)}</p>`;
+    }
+  }
+
+  _mountStatementViewer() {
+    if (!this._statementViewer || !this.shadowRoot) return;
+    let root = this.shadowRoot.getElementById('statement-viewer-root') || this._statementDetached;
+    const slot = this.shadowRoot.getElementById('statement-viewer-slot');
+    if (!root) {
+      root = document.createElement('div');
+      root.id = 'statement-viewer-root';
+      root.innerHTML = `
+        <div class="statement-viewer-frame" role="dialog" aria-modal="true" aria-labelledby="statement-viewer-title">
+          <div class="statement-viewer-header">
+            <h2 class="statement-viewer-title" id="statement-viewer-title"></h2>
+            <div class="statement-viewer-actions">
+              <button type="button" class="btn btn-secondary" id="statement-viewer-download">Download</button>
+              <button type="button" class="graph-modal-close" id="statement-viewer-close" aria-label="Close statement">×</button>
+            </div>
+          </div>
+          <div class="statement-viewer-body">
+            <div class="statement-viewer-pages" id="statement-pages"></div>
+          </div>
+        </div>`;
+      root.querySelector('#statement-viewer-close').addEventListener('click', () => this._closeStatementViewer());
+      root.addEventListener('click', (event) => {
+        if (event.target === root && root.classList.contains('statement-viewer-modal')) this._closeStatementViewer();
+      });
+      root.querySelector('#statement-viewer-download').addEventListener('click', () => {
+        if (this._statementPdfBytes && this._statementViewer) {
+          this._downloadPdfBytes(this._statementPdfBytes, this._statementViewer.filename);
+        }
+      });
+      if (!this._statementEscapeHandler) {
+        this._statementEscapeHandler = (event) => {
+          const open = this.shadowRoot?.getElementById('statement-viewer-root');
+          if (event.key === 'Escape' && open && open.classList.contains('statement-viewer-modal')) {
+            this._closeStatementViewer();
+          }
+        };
+        window.addEventListener('keydown', this._statementEscapeHandler);
+      }
+      const closeBtn = root.querySelector('#statement-viewer-close');
+      if (closeBtn && !slot) closeBtn.focus();
+    }
+    this._statementDetached = null;
+    root.classList.toggle('statement-viewer-modal', !slot);
+    root.classList.toggle('statement-viewer-inline', !!slot);
+    (slot || this.shadowRoot).appendChild(root);
+    this._syncStatementViewerChrome();
+  }
+
+  _showStatementFallback(host) {
+    if (!this._statementPdfBytes || !host) return;
+    if (this._statementBlobUrl) URL.revokeObjectURL(this._statementBlobUrl);
+    this._statementBlobUrl = URL.createObjectURL(new Blob([this._statementPdfBytes], { type: 'application/pdf' }));
+    host.innerHTML = '';
+    const note = document.createElement('p');
+    note.className = 'statement-viewer-status';
+    note.textContent = 'Showing the statement in the browser viewer. Use Download if the page stays blank.';
+    const frame = document.createElement('iframe');
+    frame.title = this._statementViewer?.title || 'Monthly statement';
+    frame.src = this._statementBlobUrl;
+    host.appendChild(note);
+    host.appendChild(frame);
+  }
+
+  async _paintStatementPages(token) {
+    const root = this.shadowRoot?.getElementById('statement-viewer-root');
+    const host = root?.querySelector('#statement-pages');
+    if (!host || !this._statementPdfBytes) return;
+    host.innerHTML = '<p class="statement-viewer-status">Opening statement…</p>';
+    let pdfjs;
+    try {
+      pdfjs = await this._loadPdfJs();
+    } catch (err) {
+      console.error('PDF viewer failed to load:', err);
+      if (token !== this._statementRenderToken) return;
+      this._showStatementFallback(host);
+      return;
+    }
+    if (token !== this._statementRenderToken) return;
+    try {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const data = this._statementPdfBytes.slice(0);
+      const doc = await pdfjs.getDocument({ data, isEvalSupported: false }).promise;
+      if (token !== this._statementRenderToken) {
+        doc.destroy();
+        return;
+      }
+      this._closeStatementDocument();
+      this._statementPdfDoc = doc;
+      host.innerHTML = '';
+      const frame = root.querySelector('.statement-viewer-frame');
+      const cssWidth = Math.max(260, (host.clientWidth || frame?.clientWidth || 320) - 8);
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      for (let i = 1; i <= doc.numPages; i += 1) {
+        if (token !== this._statementRenderToken) return;
+        const page = await doc.getPage(i);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: (cssWidth / base.width) * ratio });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        canvas.style.width = '100%';
+        canvas.style.height = 'auto';
+        canvas.setAttribute('role', 'img');
+        canvas.setAttribute('aria-label', `Statement page ${i} of ${doc.numPages}`);
+        host.appendChild(canvas);
+        await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport }).promise;
+      }
+    } catch (err) {
+      console.error('PDF render failed:', err);
+      if (token !== this._statementRenderToken) return;
+      this._showStatementFallback(host);
     }
   }
 
@@ -10715,6 +11366,7 @@ class EnergyPanel extends HTMLElement {
     if (type === 'light') return this._renderLightCard(device, index, deviceData);
     if (type === 'door') return this._renderDoorCard(device, index);
     if (type === 'window') return this._renderWindowCard(device, index);
+    if (type === 'oil_diffuser') return this._renderDiffuserCard(device, index, deviceData);
     return this._renderOutletCard(device, index, deviceData);
   }
 
@@ -11081,6 +11733,97 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _diffuserControlSwitch(outlet) {
+    const mode = outlet?.diffuser_mode || 'airversa';
+    const dedicated = String(outlet?.diffuser_switch || '');
+    const plug = String(outlet?.plug1_switch || '');
+    if (mode === 'generic') return plug.startsWith('switch.') ? plug : '';
+    if (mode === 'water') {
+      if (dedicated.startsWith('switch.')) return dedicated;
+      return plug.startsWith('switch.') ? plug : '';
+    }
+    return dedicated.startsWith('switch.') ? dedicated : '';
+  }
+
+  _diffuserModeFor(roomId, outletIndex, outlet) {
+    const rooms = this._config?.rooms || [];
+    const roomIndex = rooms.findIndex((room) => {
+      const id = room.id || String(room.name || '').toLowerCase().replace(/\s+/g, '_');
+      return id === roomId;
+    });
+    if (roomIndex >= 0) {
+      const item = this.shadowRoot?.querySelector(
+        `.outlet-settings-item[data-room-index="${roomIndex}"][data-outlet-index="${outletIndex}"][data-device-type="oil_diffuser"]`,
+      );
+      const selected = item?.querySelector('.diffuser-mode')?.value;
+      if (selected && DIFFUSER_MODES[selected]) return selected;
+    }
+    const saved = outlet?.diffuser_mode;
+    return DIFFUSER_MODES[saved] ? saved : 'airversa';
+  }
+
+  _diffuserScheduleDraft(outlet, mode) {
+    const spec = DIFFUSER_MODES[mode] || DIFFUSER_MODES.airversa;
+    const raw = outlet?.diffuser_schedule || {};
+    const patternOk = spec.patterns.some((pattern) => pattern.id === raw.pattern);
+    const onAmount = Number(raw.on_amount);
+    const offAmount = Number(raw.off_amount);
+    return {
+      enabled: raw.enabled === true,
+      start: /^\d{2}:\d{2}$/.test(String(raw.start || '')) ? raw.start : '08:00',
+      end: /^\d{2}:\d{2}$/.test(String(raw.end || '')) ? raw.end : '22:00',
+      pattern: patternOk ? raw.pattern : spec.defaultPattern,
+      on_amount: Number.isFinite(onAmount) ? onAmount : spec.onDefault,
+      off_amount: Number.isFinite(offAmount) ? offAmount : spec.offDefault,
+    };
+  }
+
+  _diffuserCadenceLabel(device) {
+    const mode = DIFFUSER_MODES[device?.diffuser_mode] ? device.diffuser_mode : 'airversa';
+    const spec = DIFFUSER_MODES[mode];
+    const draft = this._diffuserScheduleDraft(device, mode);
+    if (!draft.enabled) return 'Manual';
+    if (draft.pattern === 'continuous') return `${draft.start}–${draft.end}`;
+    const onUnit = spec.onUnit === 'minutes' ? 'm' : 's';
+    const offUnit = spec.offUnit === 'minutes' ? 'm' : 's';
+    return `${draft.on_amount}${onUnit} / ${draft.off_amount}${offUnit}`;
+  }
+
+  _renderDiffuserCard(device, index, deviceData) {
+    const control = this._diffuserControlSwitch(device);
+    const hassOn = control && this._hass?.states?.[control]?.state === 'on';
+    const isOn = deviceData && Object.prototype.hasOwnProperty.call(deviceData, 'switch_state')
+      ? deviceData.switch_state === true
+      : !!hassOn;
+    const phase = deviceData?.diffuser_phase;
+    const status = DIFFUSER_PHASE_LABELS[phase] || (isOn ? 'On' : 'Off');
+    const hasPlug = Boolean(String(device.plug1_entity || '').trim());
+    const watts = Number(deviceData?.plug1?.watts) || 0;
+    const cadence = this._diffuserCadenceLabel(device);
+    return `
+      <div class="device-card oil-diffuser-card ${isOn ? 'diffuser-on' : ''} ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
+        <div class="oil-diffuser-face">
+          <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name || 'Oil diffuser')}">${escapeHtml(device.name || 'Oil diffuser')}</div>
+          <div class="oil-diffuser-body">
+            ${this._deviceOfflineBadge(device)}
+            <div class="oil-bottle" aria-hidden="true">
+              <div class="oil-mist">
+                <span class="oil-puff"></span>
+                <span class="oil-puff"></span>
+                <span class="oil-puff"></span>
+              </div>
+              <div class="oil-neck"></div>
+              <div class="oil-glass"><div class="oil-liquid"></div></div>
+            </div>
+          </div>
+          <div class="oil-diffuser-status">${escapeHtml(status)}</div>
+          <div class="oil-diffuser-cadence">${escapeHtml(cadence)}</div>
+          <div class="oil-diffuser-watts"${hasPlug ? '' : ' hidden'}>${watts.toFixed(1)} W</div>
+        </div>
+      </div>
+    `;
+  }
+
   _renderOutletCard(outlet, index, outletData) {
     const isSingleOutlet = (outlet.type || 'outlet') === 'single_outlet';
     const data = outletData || { plug1: { watts: 0 }, plug2: { watts: 0 } };
@@ -11382,6 +12125,7 @@ class EnergyPanel extends HTMLElement {
       (ttsSettings.tts_default_media_player || ttsSettings.budget_boost_announce_media_player || '').trim();
 
     const hrOverlay = this._takeHardRefreshOverlay();
+    const statementNode = this._takeStatementViewer();
     this._teardownTransientUI();
     this.shadowRoot.innerHTML = `
       <style>
@@ -12956,6 +13700,7 @@ class EnergyPanel extends HTMLElement {
     this._updateRoomPresenceLiveLabels();
     initCustomSelects(this.shadowRoot);
     this._putHardRefreshOverlay(hrOverlay);
+    this._restoreStatementViewer(statementNode);
     this._syncHardRefreshLock();
   }
 
@@ -15247,6 +15992,128 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  _closeDiffuserScheduleModal() {
+    if (this._diffuserScheduleEsc) {
+      window.removeEventListener('keydown', this._diffuserScheduleEsc);
+      this._diffuserScheduleEsc = null;
+    }
+    this.shadowRoot?.querySelector('.diffuser-schedule-overlay')?.remove();
+  }
+
+  async _openDiffuserScheduleModal(roomId, outletIndex, outlet) {
+    this._closeDiffuserScheduleModal();
+    const mode = this._diffuserModeFor(roomId, outletIndex, outlet);
+    const spec = DIFFUSER_MODES[mode] || DIFFUSER_MODES.airversa;
+    const draft = this._diffuserScheduleDraft(outlet, mode);
+    const modeName = mode === 'generic' ? 'Generic plug' : mode === 'water' ? 'Water diffuser' : 'Airversa oil diffuser';
+    const patternOptions = spec.patterns
+      .map((pattern) => `<option value="${pattern.id}" ${draft.pattern === pattern.id ? 'selected' : ''}>${escapeHtml(pattern.label)}</option>`)
+      .join('');
+    const overlay = document.createElement('div');
+    overlay.className = 'load-rate-popup-overlay diffuser-schedule-overlay';
+    overlay.innerHTML = `
+      <div class="load-rate-popup" role="dialog" aria-modal="true" aria-labelledby="diffuser-schedule-title" style="width: min(92vw, 420px);">
+        <div class="load-rate-popup-header">
+          <h2 class="load-rate-popup-title" id="diffuser-schedule-title">Spray schedule</h2>
+          <button type="button" class="load-rate-popup-close diffuser-schedule-close" aria-label="Close">×</button>
+        </div>
+        <div class="load-rate-popup-body" style="padding: 14px 16px 16px;">
+          <p class="tts-msg-desc" style="margin-top: 0;">${escapeHtml(outlet.name || 'Diffuser')} · ${escapeHtml(modeName)}</p>
+          <p class="tts-msg-desc">${escapeHtml(spec.help)}</p>
+          <label class="toggle-row" style="margin: 12px 0;">
+            <input type="checkbox" class="form-checkbox diffuser-schedule-enabled" ${draft.enabled ? 'checked' : ''}>
+            <span class="toggle-label">Run on a schedule</span>
+          </label>
+          <div class="grid-2" style="gap: 10px;">
+            <div class="form-group">
+              <label class="form-label" for="diffuser-schedule-start">Start</label>
+              <input id="diffuser-schedule-start" type="time" class="form-input diffuser-schedule-start" value="${draft.start}">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="diffuser-schedule-end">End</label>
+              <input id="diffuser-schedule-end" type="time" class="form-input diffuser-schedule-end" value="${draft.end}">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="diffuser-schedule-pattern">Pattern</label>
+            <select id="diffuser-schedule-pattern" class="form-input diffuser-pattern">${patternOptions}</select>
+          </div>
+          <div class="grid-2 diffuser-duration-fields" style="gap: 10px;">
+            <div class="form-group">
+              <label class="form-label" for="diffuser-schedule-on">${escapeHtml(spec.onLabel)} (${spec.onUnit})</label>
+              <input id="diffuser-schedule-on" type="number" class="form-input diffuser-schedule-on" min="${spec.onMin}" max="${spec.onMax}" step="1" value="${draft.on_amount}">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="diffuser-schedule-off">${escapeHtml(spec.offLabel)} (${spec.offUnit})</label>
+              <input id="diffuser-schedule-off" type="number" class="form-input diffuser-schedule-off" min="${spec.offMin}" max="${spec.offMax}" step="1" value="${draft.off_amount}">
+            </div>
+          </div>
+          <p class="tts-msg-desc">Outside these hours the diffuser turns off. The same start and end time runs all day. Turning it on or off from the card holds until the schedule window ends.</p>
+          <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
+            <button type="button" class="btn btn-secondary diffuser-schedule-cancel">Cancel</button>
+            <button type="button" class="btn btn-primary diffuser-schedule-save">Save schedule</button>
+          </div>
+        </div>
+      </div>
+    `;
+    const close = () => this._closeDiffuserScheduleModal();
+    const syncPattern = () => {
+      const continuous = overlay.querySelector('.diffuser-pattern')?.value === 'continuous';
+      const fields = overlay.querySelector('.diffuser-duration-fields');
+      if (fields) fields.hidden = continuous;
+    };
+    overlay.querySelector('.diffuser-schedule-close')?.addEventListener('click', close);
+    overlay.querySelector('.diffuser-schedule-cancel')?.addEventListener('click', close);
+    overlay.querySelector('.diffuser-pattern')?.addEventListener('change', syncPattern);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+    overlay.querySelector('.diffuser-schedule-save')?.addEventListener('click', async () => {
+      const clamp = (input, min, max, fallback) => {
+        const value = parseInt(input?.value, 10);
+        if (!Number.isFinite(value)) return fallback;
+        return Math.max(min, Math.min(max, value));
+      };
+      const schedule = {
+        enabled: overlay.querySelector('.diffuser-schedule-enabled')?.checked === true,
+        start: overlay.querySelector('.diffuser-schedule-start')?.value || '08:00',
+        end: overlay.querySelector('.diffuser-schedule-end')?.value || '22:00',
+        pattern: overlay.querySelector('.diffuser-pattern')?.value || spec.defaultPattern,
+        on_amount: clamp(overlay.querySelector('.diffuser-schedule-on'), spec.onMin, spec.onMax, spec.onDefault),
+        off_amount: clamp(overlay.querySelector('.diffuser-schedule-off'), spec.offMin, spec.offMax, spec.offDefault),
+      };
+      const saveBtn = overlay.querySelector('.diffuser-schedule-save');
+      if (saveBtn) saveBtn.disabled = true;
+      try {
+        const result = await this._hass.callWS({
+          type: 'smart_dashboards/save_diffuser_schedule',
+          room_id: roomId,
+          outlet_index: outletIndex,
+          diffuser_mode: mode,
+          schedule,
+        });
+        outlet.diffuser_mode = mode;
+        outlet.diffuser_schedule = result?.schedule || schedule;
+        const cadence = this.shadowRoot.querySelector(
+          `.room-card[data-room-id="${roomId}"] [data-outlet-index="${outletIndex}"] .oil-diffuser-cadence`,
+        );
+        if (cadence) cadence.textContent = this._diffuserCadenceLabel(outlet);
+        showToast(this.shadowRoot, 'Spray schedule saved', 'success');
+        close();
+      } catch (err) {
+        if (saveBtn) saveBtn.disabled = false;
+        showToast(this.shadowRoot, `Could not save schedule: ${err.message || err}`, 'error');
+      }
+    });
+    this.shadowRoot.appendChild(overlay);
+    syncPattern();
+    this._diffuserScheduleEsc = (event) => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', this._diffuserScheduleEsc);
+    overlay.querySelector('.diffuser-schedule-enabled')?.focus();
+  }
+
   _openOutletUsageGraph(roomId, outletIndex, outlet, plugSlot) {
     const name = outlet.name || 'Appliance';
     let seriesLabel = name;
@@ -15308,6 +16175,10 @@ class EnergyPanel extends HTMLElement {
       add(device.plug1_switch);
       if (device?.power_source === 'sensor') add(device.power_sensor_entity);
       else add(device.plug1_entity);
+    } else if (otype === 'oil_diffuser') {
+      add(device.diffuser_switch);
+      add(device.plug1_switch);
+      add(device.plug1_entity);
     }
     return [...new Set(ids)];
   }
@@ -15379,6 +16250,8 @@ class EnergyPanel extends HTMLElement {
           await this._openDoorActivityHistory(roomId, outletIndex, outlet);
         } else if (action === 'presence_manual' || action === 'presence_auto') {
           await this._setLightPresenceMode(roomId, outletIndex, action === 'presence_auto');
+        } else if (action === 'diffuser_schedule') {
+          await this._openDiffuserScheduleModal(roomId, outletIndex, outlet);
         } else {
           void this._executeApplianceToggle({ roomId, outletIndex, plugSlot: slot });
         }
@@ -15435,6 +16308,21 @@ class EnergyPanel extends HTMLElement {
         addStatic(line);
       }
       addItem('View sensor history', 'sensor_history', null);
+    } else if (otype === 'oil_diffuser') {
+      const phase = this._powerData?.rooms
+        ?.find((room) => room.id === roomId)
+        ?.outlets?.[outletIndex]?.diffuser_phase;
+      const phaseLabel = DIFFUSER_PHASE_LABELS[phase];
+      if (phaseLabel) addStatic(phaseLabel);
+      if (this._resolveApplianceToggleTarget(outlet, null)) {
+        addItem(this._applianceToggleMenuLabel(outlet, null), 'toggle', null);
+      } else {
+        addStatic('Choose a control switch in settings');
+      }
+      if (String(outlet.plug1_entity || '').trim()) {
+        addItem('Open usage graph', 'graph', 1);
+      }
+      addItem('Spray schedule', 'diffuser_schedule', null);
     } else {
       if (otype === 'light' && String(outlet.light_presence_entity || '').trim().startsWith('binary_sensor.')) {
         const presenceAuto = outlet.light_presence_auto !== false;
@@ -15736,6 +16624,10 @@ class EnergyPanel extends HTMLElement {
         ? { switchEntity: s, plugName: '' }
         : null;
     }
+    if (otype === 'oil_diffuser') {
+      const s = this._diffuserControlSwitch(outlet);
+      return s ? { switchEntity: s, plugName: '' } : null;
+    }
     return null;
   }
 
@@ -16018,7 +16910,8 @@ class EnergyPanel extends HTMLElement {
         otype === 'vent' ||
         otype === 'wall_heater' ||
         otype === 'door' ||
-        otype === 'window'
+        otype === 'window' ||
+        otype === 'oil_diffuser'
       )
     ) {
       return;
@@ -17221,6 +18114,7 @@ class EnergyPanel extends HTMLElement {
                 <button class="add-device-option" data-type="light">Light</button>
                 <button class="add-device-option" data-type="door">Door</button>
                 <button class="add-device-option" data-type="window">Window</button>
+                <button class="add-device-option" data-type="oil_diffuser">Oil Diffuser</button>
               </div>
             </div>
           </div>
@@ -17322,6 +18216,9 @@ class EnergyPanel extends HTMLElement {
     if (type === 'window') {
       return this._renderWindowSettings(device, deviceIndex, roomIndex, isCollapsed);
     }
+    if (type === 'oil_diffuser') {
+      return this._renderOilDiffuserSettings(device, deviceIndex, roomIndex, isCollapsed);
+    }
     return this._renderOutletSettings(device, deviceIndex, powerSensors, roomIndex, isCollapsed);
   }
 
@@ -17375,6 +18272,82 @@ class EnergyPanel extends HTMLElement {
         </div>
       </div>
     `;
+  }
+
+  _renderOilDiffuserSettings(device, deviceIndex, roomIndex, isCollapsed = true) {
+    const mode = DIFFUSER_MODES[device.diffuser_mode] ? device.diffuser_mode : 'airversa';
+    const spec = DIFFUSER_MODES[mode];
+    const collapsedClass = isCollapsed ? 'collapsed' : '';
+    const displayName = device.name || 'Unnamed diffuser';
+    const modeOptions = [
+      ['airversa', 'Airversa oil diffuser'],
+      ['generic', 'Generic (power plug)'],
+      ['water', 'Water diffuser'],
+    ].map(([value, label]) => `<option value="${value}" ${mode === value ? 'selected' : ''}>${label}</option>`).join('');
+    return `
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="oil_diffuser" draggable="true">
+        <div class="outlet-settings-bar">
+          <div class="outlet-drag-handle" title="Drag to reorder">
+            <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0-4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
+          </div>
+          <span class="outlet-name-display ${device.name ? '' : 'empty'}">${escapeHtml(displayName)}</span>
+          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${deviceIndex}" title="Delete">
+            <svg viewBox="0 0 24 24">${icons.delete}</svg>
+          </button>
+          <div class="outlet-expand-icon">
+            <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+          </div>
+        </div>
+        <div class="outlet-settings-body">
+          <div class="form-group">
+            <label class="form-label" for="diffuser-name-${roomIndex}-${deviceIndex}">Name</label>
+            <input id="diffuser-name-${roomIndex}-${deviceIndex}" type="text" class="form-input outlet-name" value="${escapeAttr(device.name || '')}" placeholder="Bedroom diffuser">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="diffuser-mode-${roomIndex}-${deviceIndex}">Diffuser type</label>
+            <select id="diffuser-mode-${roomIndex}-${deviceIndex}" class="form-input diffuser-mode">${modeOptions}</select>
+            <p class="tts-msg-desc diffuser-mode-help" style="margin-top: 6px;">${escapeHtml(spec.help)}</p>
+          </div>
+          <div class="form-group diffuser-switch-block" style="display: ${mode === 'generic' ? 'none' : 'block'};">
+            <label class="form-label">Control switch</label>
+            ${this._renderEntityAutocomplete(device.diffuser_switch || '', 'switch', roomIndex, 'diffuser-switch', 'switch.airversa_diffuser')}
+            <p class="tts-msg-desc" style="margin-top: 4px;">Airversa: the switch created by the Airversa Scenta integration. Water: its own switch, if it has one. Leave this empty on a water diffuser to use the plug below.</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Power plug sensor (optional)</label>
+            ${this._renderEntityAutocomplete(device.plug1_entity || '', 'power_watts', roomIndex, 'diffuser-plug-power', 'sensor.diffuser_power')}
+            <p class="tts-msg-desc" style="margin-top: 4px;">Optional. If this plug is already monitored by another device, its watts stay on that device and are not added again.</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Power plug switch (optional)</label>
+            ${this._renderEntityAutocomplete(device.plug1_switch || '', 'switch', roomIndex, 'diffuser-plug-switch', 'switch.diffuser_plug')}
+            <p class="tts-msg-desc diffuser-plug-help" style="margin-top: 4px;">${mode === 'generic' ? 'Generic mode turns this plug on and off.' : 'Used for watts display, and as the water diffuser control when no switch is set above.'}</p>
+          </div>
+          <p class="tts-msg-desc">Spray timing is set from the device card menu, and follows the type saved here.</p>
+        </div>
+      </div>
+    `;
+  }
+
+  _applyOilDiffuserFromItem(item, device, originalOutlet) {
+    const modeRaw = item.querySelector('.diffuser-mode')?.value || 'airversa';
+    const mode = DIFFUSER_MODES[modeRaw] ? modeRaw : 'airversa';
+    const readEntity = (className, prefixes) => {
+      const input = item.querySelector(`.entity-datalist-input.${className}`) || item.querySelector(`input.${className}`);
+      const value = (input?.value || '').trim();
+      return prefixes.some((prefix) => value.startsWith(prefix)) ? value : null;
+    };
+    device.type = 'oil_diffuser';
+    device.diffuser_mode = mode;
+    device.diffuser_switch = readEntity('diffuser-switch', ['switch.']);
+    device.plug1_entity = readEntity('diffuser-plug-power', ['sensor.', 'switch.']);
+    device.plug1_switch = readEntity('diffuser-plug-switch', ['switch.']);
+    device.plug2_entity = null;
+    device.plug2_switch = null;
+    device.plug1_shutoff = 0;
+    device.plug2_shutoff = 0;
+    device.threshold = 0;
+    device.diffuser_schedule = originalOutlet?.diffuser_schedule || null;
   }
 
   _renderLightSettings(device, deviceIndex, roomIndex, isCollapsed = true) {
@@ -18521,6 +19494,15 @@ class EnergyPanel extends HTMLElement {
       });
     }
 
+    this.shadowRoot.querySelectorAll('[data-stats-page]').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const page = tab.dataset.statsPage === 'activity' ? 'activity' : 'statement';
+        if (page === this._statsPage) return;
+        this._statsPage = page;
+        this._render();
+      });
+    });
+
     this.shadowRoot.querySelectorAll('.view-tab').forEach(tab => {
       tab.addEventListener('click', () => {
         const view = tab.dataset.view;
@@ -19304,6 +20286,15 @@ class EnergyPanel extends HTMLElement {
       newOutlet.minisplit_enforcement_off_seconds = 60;
       newOutlet.minisplit_enforcement_min_watts = 0;
     }
+    if (deviceType === 'oil_diffuser') {
+      newOutlet.diffuser_mode = 'airversa';
+      newOutlet.diffuser_switch = '';
+      newOutlet.plug1_entity = '';
+      newOutlet.plug1_switch = '';
+      newOutlet.plug2_entity = null;
+      newOutlet.plug2_switch = null;
+      newOutlet.diffuser_schedule = null;
+    }
 
     // Render as expanded (not collapsed)
     const html = this._renderDeviceSettings(newOutlet, 0, sensors, roomIndex, roomOutlets, false);
@@ -19419,6 +20410,26 @@ class EnergyPanel extends HTMLElement {
       };
       lightPowerSourceSel.addEventListener('change', syncLightPowerUi);
       syncLightPowerUi();
+    }
+
+    const diffuserModeSel = outletItem.querySelector('.diffuser-mode');
+    if (diffuserModeSel) {
+      const syncDiffuserModeUi = () => {
+        const mode = DIFFUSER_MODES[diffuserModeSel.value] ? diffuserModeSel.value : 'airversa';
+        const spec = DIFFUSER_MODES[mode];
+        const help = outletItem.querySelector('.diffuser-mode-help');
+        const plugHelp = outletItem.querySelector('.diffuser-plug-help');
+        const switchBlock = outletItem.querySelector('.diffuser-switch-block');
+        if (help) help.textContent = spec.help;
+        if (plugHelp) {
+          plugHelp.textContent = mode === 'generic'
+            ? 'Generic mode turns this plug on and off.'
+            : 'Used for watts display, and as the water diffuser control when no switch is set above.';
+        }
+        if (switchBlock) switchBlock.style.display = mode === 'generic' ? 'none' : 'block';
+      };
+      diffuserModeSel.addEventListener('change', syncDiffuserModeUi);
+      syncDiffuserModeUi();
     }
 
     const lightPresenceUnlink = outletItem.querySelector('.light-presence-unlink');
@@ -19961,6 +20972,8 @@ class EnergyPanel extends HTMLElement {
               device.heater_door_sensor_entity = (item.querySelector('.entity-datalist-input.heater-door-sensor-entity') || item.querySelector('input.heater-door-sensor-entity'))?.value?.trim() || null;
               device.heater_window_sensor_entity = (item.querySelector('.entity-datalist-input.heater-window-sensor-entity') || item.querySelector('input.heater-window-sensor-entity'))?.value?.trim() || null;
             }
+          } else if (deviceTypeFromItem === 'oil_diffuser') {
+            this._applyOilDiffuserFromItem(item, device, originalRoom?.outlets?.[parseInt(item.dataset.outletIndex, 10)]);
           } else if (deviceTypeFromItem === 'door') {
             device.type = 'door';
             device.plug1_entity = null;
@@ -20577,6 +21590,8 @@ class EnergyPanel extends HTMLElement {
             device.heater_door_sensor_entity = (item.querySelector('.entity-datalist-input.heater-door-sensor-entity') || item.querySelector('input.heater-door-sensor-entity'))?.value?.trim() || null;
             device.heater_window_sensor_entity = (item.querySelector('.entity-datalist-input.heater-window-sensor-entity') || item.querySelector('input.heater-window-sensor-entity'))?.value?.trim() || null;
           }
+        } else if (deviceTypeFromItem === 'oil_diffuser') {
+          this._applyOilDiffuserFromItem(item, device, originalRoom?.outlets?.[parseInt(item.dataset.outletIndex, 10)]);
         } else {
           device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
           device.plug2_entity = isSingleOutlet ? null : (plug2 || null);

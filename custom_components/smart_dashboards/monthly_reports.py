@@ -251,7 +251,10 @@ def _rollup(start: str, end: str, days: dict[str, Any]) -> dict[str, Any]:
                 if part and part not in ("Power", "Configured wattage", "Light"):
                     label = f"{label} ({part})"
                 dkey = (str(room_id), label)
-                dslot = devices.setdefault(dkey, {"room_id": str(room_id), "name": label, "wh": 0.0})
+                dtype = str(device.get("type") or "").strip().lower()
+                dslot = devices.setdefault(dkey, {"room_id": str(room_id), "name": label, "wh": 0.0, "type": dtype})
+                if dtype:
+                    dslot["type"] = dtype
                 dslot["wh"] += float(device.get("wh") or 0.0)
         daily_total[day] = total
 
@@ -1049,11 +1052,327 @@ def _insight_lines(roll: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _alert_label(event: dict[str, Any]) -> str:
+    if event.get("door_reminder"):
+        return "Reminder"
+    kind = str(event.get("type") or "")
+    return {
+        "warning": "Warning",
+        "shutoff": "Shutoff",
+        "power_cycle": "Power cycle",
+        "phase_change": "Phase change",
+    }.get(kind, "Alert")
+
+
+def _alert_detail(event: dict[str, Any]) -> str:
+    parts: list[str] = []
+    outlet = str(event.get("outlet_name") or "").strip()
+    if outlet:
+        parts.append(outlet)
+    if event.get("from_phase") is not None and event.get("to_phase") is not None:
+        parts.append(f"Phase {event.get('from_phase')} to {event.get('to_phase')}")
+    if event.get("room_watts") is not None:
+        parts.append(f"Room {event.get('room_watts')} W")
+    if event.get("room_threshold") not in (None, ""):
+        parts.append(f"Room limit {event.get('room_threshold')} W")
+    if event.get("outlet_watts") is not None:
+        parts.append(f"Outlet {event.get('outlet_watts')} W")
+    if event.get("outlet_threshold") not in (None, ""):
+        parts.append(f"Outlet limit {event.get('outlet_threshold')} W")
+    if event.get("kwh_limit") not in (None, ""):
+        parts.append(f"{event.get('kwh_limit')} kWh mark")
+    if event.get("alert_kind") == "room_kwh":
+        parts.append("Daily room energy alert")
+    elif event.get("alert_kind") == "home_kwh":
+        parts.append("Daily home energy alert")
+    reminder = str(event.get("door_reminder") or "").replace("_", " ").strip()
+    if reminder:
+        parts.append(reminder)
+    if event.get("outlets_cycled") not in (None, ""):
+        parts.append(f"{event.get('outlets_cycled')} outlets cycled")
+    return ", ".join(parts) if parts else "Logged alert"
+
+
+def _alert_spoken(event: dict[str, Any]) -> str:
+    text = str(event.get("tts_message") or "").strip()
+    return text or "No announcement was spoken."
+
+
+def _alert_counts(alerts: list[dict[str, Any]] | None) -> tuple[int, int, int, list[dict[str, Any]]]:
+    """Warnings exclude reminders that are stored as warnings but not counted."""
+    warnings = shutoffs = cycles = 0
+    rows: list[dict[str, Any]] = []
+    for event in alerts or []:
+        if not isinstance(event, dict):
+            continue
+        kind = str(event.get("type") or "")
+        if kind == "warning" and not event.get("door_reminder") and event.get("counted_as_warning") is not False:
+            warnings += 1
+        elif kind == "shutoff":
+            shutoffs += 1
+        elif kind == "power_cycle":
+            cycles += 1
+        if kind in ("warning", "phase_change", "shutoff", "power_cycle"):
+            rows.append(event)
+    rows.sort(key=lambda event: str(event.get("ts") or ""))
+    return warnings, shutoffs, cycles, rows
+
+
+def _draw_alert_counts(doc: _ReportPdf, warnings: int, shutoffs: int, cycles: int) -> None:
+    blocks = (
+        ("Warnings", warnings, "A spoken alert when a room or outlet goes over a limit you set. The outlet keeps running."),
+        ("Shutoffs", shutoffs, "A short automatic pause of one outlet that crossed a limit you set. That outlet turns back on after the pause."),
+        ("Power cycles", cycles, "An automatic off, then on, of the room outlets after repeated warnings, using the enforcement phase you configured."),
+    )
+    for label, count, explanation in blocks:
+        doc.need(12)
+        y = doc.pdf.get_y()
+        doc.font(8, True, doc.MUTED)
+        doc.pdf.set_xy(14, y)
+        doc.pdf.cell(130, 5.2, label)
+        doc.font(12, True, doc.DARK)
+        doc.pdf.set_xy(144, y)
+        doc.pdf.cell(52, 5.2, str(int(count)), align="R")
+        doc.pdf.set_y(y + 6.2)
+        doc.paragraph(explanation, 8.0, doc.INK, line_height=4.2)
+        doc.space(1.4)
+
+
+_TYPE_WORD = {
+    "outlet": "outlet",
+    "single_outlet": "outlet",
+    "light": "light",
+    "vent": "vent",
+    "wall_heater": "heater",
+    "minisplit": "minisplit",
+    "stove": "stove",
+    "microwave": "microwave",
+    "fridge": "fridge",
+    "door": "door",
+    "window": "window",
+}
+
+
+def smart_device_name(name: Any, appliance_type: Any) -> str:
+    """Append the appliance type once when the user's name does not already say it."""
+    label = str(name or "").strip() or "Device"
+    word = _TYPE_WORD.get(str(appliance_type or "").strip().lower(), "")
+    if not word or word in label.lower():
+        return label
+    return f"{label} {word}"
+
+
+def _fits(doc: _ReportPdf, height: float) -> bool:
+    return doc.pdf.get_y() + height <= doc.pdf.page_break_trigger - 1
+
+
+def _write_capped(doc: _ReportPdf, text: str, size: float = 8.2, color=None,
+                  line_height: float = 4.3, bold: bool = False) -> None:
+    """Write wrapped lines, and stop rather than open another page."""
+    lines = doc.wrap(text, 180, size, bold)
+    doc.font(size, bold, color or doc.INK)
+    for line in lines:
+        if not _fits(doc, line_height):
+            return
+        doc.pdf.set_x(14)
+        doc.pdf.cell(182, line_height, line, new_x="LMARGIN", new_y="NEXT")
+
+
+def _gap(doc: _ReportPdf, mm: float) -> None:
+    if _fits(doc, mm):
+        doc.space(mm)
+
+
+def _draw_recorded_bars(doc: _ReportPdf, calendar: list[str], daily: dict[str, float],
+                        as_of: date | None, avg: float) -> None:
+    """Small daily bars in the same rect and line style as the cover trend."""
+    if not calendar or not _fits(doc, 42):
+        return
+    p = doc.pdf
+    y0 = p.get_y()
+    doc.font(8.2, True, doc.DARK)
+    p.set_xy(14, y0)
+    p.cell(100, 4.4, "Recorded days")
+    doc.font(7.3, False, doc.MUTED)
+    p.set_xy(100, y0)
+    p.cell(96, 4.4, "kWh", align="R")
+    top = y0 + 7
+    plot_h = 18.0
+    bottom = top + plot_h
+    left = 29.0
+    chart_w = 167.0
+    peak = max([float(v) for v in daily.values()] or [0.0])
+    maximum = doc.nice(max(peak, avg) / 1000.0)
+    doc.font(6.5, False, doc.MUTED)
+    p.set_draw_color(*doc.LINE)
+    for step in range(3):
+        level = maximum * step / 2
+        gy = bottom - plot_h * step / 2
+        p.set_line_width(0.17)
+        p.line(left, gy, left + chart_w, gy)
+        p.set_xy(14, gy - 1.8)
+        p.cell(12, 3.6, f"{level:.2f}".rstrip("0").rstrip("."), align="R")
+    slot = chart_w / len(calendar)
+    bw = min(6.0, max(0.4, slot * 0.62))
+    label_step = max(1, math.ceil(len(calendar) / 8))
+    for i, day in enumerate(calendar):
+        value = daily.get(day)
+        center = left + (i + 0.5) * slot
+        x = center - bw / 2
+        if value is not None:
+            height = plot_h * (max(0.0, float(value)) / 1000.0) / maximum if maximum else 0
+            height = min(plot_h, max(0.4, height))
+            p.set_fill_color(*doc.ACCENT)
+            p.rect(x, bottom - height, bw, height, "F")
+        elif as_of is not None and day > as_of.isoformat():
+            p.set_draw_color(187, 199, 200)
+            p.set_line_width(0.45)
+            p.line(x, bottom - 1.2, x + bw, bottom - 1.2)
+        else:
+            p.set_fill_color(*doc.AMBER)
+            p.rect(x, bottom - 1.6, bw, 1.6, "F")
+        if i % label_step == 0 or i == len(calendar) - 1:
+            parsed = _parse_day(day)
+            label = str(parsed.day) if parsed else ""
+            doc.font(6.2, False, doc.MUTED)
+            p.set_xy(center - 6, bottom + 0.8)
+            p.cell(12, 3.4, label, align="C")
+    if avg > 0 and maximum:
+        line_y = bottom - min(plot_h, (avg / 1000.0) / maximum * plot_h)
+        p.set_draw_color(*doc.DARK)
+        p.set_line_width(0.23)
+        p.set_dash_pattern(dash=1.5, gap=1.2)
+        p.line(left, line_y, left + chart_w, line_y)
+        p.set_dash_pattern()
+    p.set_y(bottom + 5.2)
+    _write_capped(
+        doc,
+        "Blue bars are recorded days. Orange marks a day with no reading. A grey line marks a future day. The dashed line is the average recorded day.",
+        size=7.0,
+        color=doc.MUTED,
+        line_height=3.6,
+    )
+
+
+def _draw_bill_analysis(
+    doc: _ReportPdf,
+    roll: dict[str, Any],
+    as_of: date | None,
+    avg_wh: float,
+    total_wh: float,
+    n_recorded: int,
+    missing: int,
+    rooms: dict[str, Any],
+    ordered_rids: list[str],
+    devices: list[dict[str, Any]],
+) -> None:
+    """One page. Stops early instead of flowing onto a second analysis page."""
+    doc.section(
+        " ",
+        "Bill Analysis",
+        "Why recorded use looks like this, which loads are largest, and how that sits with the people, rooms, and devices that were stored.",
+        reserve=22,
+    )
+    daily = roll["daily_total"]
+    if n_recorded <= 0 or total_wh <= 0:
+        _write_capped(
+            doc,
+            "No energy readings were stored for this period, so there is no usage to explain and no efficiency figure to compute.",
+            color=doc.MUTED,
+        )
+        return
+    peak_day = str(roll.get("peak_day") or "")
+    peak_wh = float(daily.get(peak_day, 0) or 0)
+    why = (
+        f"Stored readings cover {n_recorded} day{'s' if n_recorded != 1 else ''} and {_kwh(total_wh, 2)} kWh. "
+        f"The highest recorded day was {_weekday_day(peak_day)} at {_kwh(peak_wh, 2)} kWh, "
+        f"against {_kwh(avg_wh, 2)} kWh on an average recorded day."
+    )
+    if missing:
+        why += (
+            f" {missing} elapsed day{'s' if missing != 1 else ''} had no reading, "
+            "so those days are not counted as zero."
+        )
+    home_totals: list[float] = []
+    away_totals: list[float] = []
+    for day, wh in daily.items():
+        present = any(float(seconds or 0) > 0 for seconds in (roll["daily_home"].get(day) or {}).values())
+        (home_totals if present else away_totals).append(float(wh))
+    if home_totals and away_totals:
+        why += (
+            f" Days with someone tracked at home averaged {_kwh(sum(home_totals) / len(home_totals), 2)} kWh. "
+            f"Days with nobody tracked at home averaged {_kwh(sum(away_totals) / len(away_totals), 2)} kWh."
+        )
+    _write_capped(doc, why)
+    _gap(doc, 1.4)
+    _draw_recorded_bars(doc, roll["calendar"], daily, as_of, avg_wh)
+    _gap(doc, 1.6)
+    _write_capped(doc, "Largest loads", size=8.6, bold=True, color=doc.DARK)
+    shown_rooms = 0
+    for rid in ordered_rids:
+        wh = float(rooms[rid]["wh"])
+        if wh <= 0:
+            continue
+        if shown_rooms >= 4:
+            break
+        share = wh / total_wh * 100 if total_wh else 0
+        _write_capped(doc, f"{rooms[rid]['name']}: {_kwh(wh, 2)} kWh, {share:.0f} percent of recorded energy.", size=8.0)
+        shown_rooms += 1
+    shown_devices = 0
+    for device in devices:
+        wh = float(device["wh"])
+        if wh <= 0:
+            continue
+        if shown_devices >= 4:
+            break
+        share = wh / total_wh * 100 if total_wh else 0
+        label = smart_device_name(device.get("name"), device.get("type"))
+        room_name = str(rooms.get(device["room_id"], {}).get("name") or device.get("room_id") or "")
+        _write_capped(doc, f"{label} in {room_name}: {_kwh(wh, 2)} kWh, {share:.0f} percent.", size=8.0)
+        shown_devices += 1
+    people = [person for person in roll["persons"].values() if float(person.get("seconds_home") or 0) > 0]
+    active_rooms = [room for room in rooms.values() if float(room.get("wh") or 0) > 0]
+    active_devices = [device for device in devices if float(device.get("wh") or 0) > 0]
+    person_days = sum(int(person.get("days_home") or 0) for person in people)
+    top_room = rooms[ordered_rids[0]] if ordered_rids else None
+    top_device = devices[0] if devices else None
+    top_room_share = (float(top_room["wh"]) / total_wh * 100) if top_room and total_wh else 0
+    top_device_share = (float(top_device["wh"]) / total_wh * 100) if top_device and total_wh else 0
+    if top_device_share >= 45 and top_device:
+        spread = (
+            f"Use is concentrated in {smart_device_name(top_device.get('name'), top_device.get('type'))}, "
+            f"at {top_device_share:.0f} percent of recorded energy."
+        )
+    elif top_room_share >= 50 and top_room:
+        spread = f"Use is concentrated in {top_room['name']}, at {top_room_share:.0f} percent of recorded energy."
+    else:
+        spread = "Use is spread across the rooms and devices that recorded energy, rather than sitting in one place."
+    who = (
+        f"{len(people)} {'person was' if len(people) == 1 else 'people were'} tracked at home"
+        if people else "nobody was tracked at home"
+    )
+    per_person = ""
+    if people and person_days > 0:
+        per_person = (
+            f" That is {_kwh(total_wh / person_days, 2)} kWh for each tracked day someone was home."
+        )
+    _gap(doc, 1.2)
+    _write_capped(
+        doc,
+        "No rate, dollar amount, or weather value is stored, so none is estimated here. "
+        f"Against this home's own readings, {who}, across {len(active_rooms)} "
+        f"{'room' if len(active_rooms) == 1 else 'rooms'} and {len(active_devices)} "
+        f"{'device' if len(active_devices) == 1 else 'devices'} with stored energy. "
+        f"The average recorded day was {_kwh(avg_wh, 2)} kWh. {spread}{per_person}",
+    )
+
+
 def render_period_pdf(
     key: str,
     days: dict[str, Any],
     generated_label: str,
     events: list[dict[str, Any]] | None = None,
+    alerts: list[dict[str, Any]] | None = None,
 ) -> bytes:
     """Generate an editorial statement using the unmodified energy rollup."""
     from .durable_records import collapse_connectivity_events
@@ -1107,7 +1426,14 @@ def render_period_pdf(
     else:
         doc.paragraph("No household presence history was stored for this period.", color=doc.MUTED)
 
+    p.add_page()
+    _draw_bill_analysis(
+        doc, roll, as_of, avg_wh, total_wh, n_recorded, missing,
+        rooms, ordered_rids, devices,
+    )
+
     # All appliances remain in the report; large device lists get continued pages.
+    p.add_page()
     doc.section("03", "Device Consumption", "Every device with stored energy, ordered from highest to lowest.", reserve=24)
     if devices:
         doc.table_header([(78, "Device", "L"), (57, "Room", "L"),
@@ -1116,12 +1442,16 @@ def render_period_pdf(
             wh = float(device["wh"])
             room = rooms.get(device["room_id"], {})
             share = (wh / total_wh * 100) if total_wh > 0 else 0.0
-            doc.table_row([str(device["name"]), str(room.get("name") or device["room_id"]),
-                           _kwh(wh, 2), f"{share:.0f}%"], index=i, size=8)
+            doc.table_row([
+                smart_device_name(device.get("name"), device.get("type")),
+                str(room.get("name") or device["room_id"]),
+                _kwh(wh, 2), f"{share:.0f}%",
+            ], index=i, size=8)
     else:
         doc.paragraph("No device energy was recorded in this period.", color=doc.MUTED)
 
-    # ANALYSIS: compact direct comparisons without repeating entire breakdowns.
+    # Highlights sit at the top of the same page as the daily ledger.
+    p.add_page()
     doc.section("04", "Highlights And Comparisons", "All comparisons use days with readings.", reserve=24)
     weekdays = [(d, float(v)) for d, v in daily.items() if _parse_day(d) and _parse_day(d).weekday() < 5]
     weekends = [(d, float(v)) for d, v in daily.items() if _parse_day(d) and _parse_day(d).weekday() >= 5]
@@ -1140,7 +1470,8 @@ def render_period_pdf(
     notes = []
     if ordered_rids and devices:
         room_item = rooms[ordered_rids[0]]
-        notes.append(f"Largest sources: {room_item['name']} ({_kwh(room_item['wh'], 2)} kWh) and {devices[0]['name']} ({_kwh(devices[0]['wh'], 2)} kWh).")
+        device_label = smart_device_name(devices[0].get("name"), devices[0].get("type"))
+        notes.append(f"Largest sources: {room_item['name']} ({_kwh(room_item['wh'], 2)} kWh) and {device_label} ({_kwh(devices[0]['wh'], 2)} kWh).")
     if warnings or shutoffs or cycles:
         notes.append(f"Threshold activity: {warnings} warning{'s' if warnings != 1 else ''}, "
                      f"{shutoffs} shutoff{'s' if shutoffs != 1 else ''}, "
@@ -1166,7 +1497,44 @@ def render_period_pdf(
         doc.daily_card(day, "recorded", wh, day_rooms, avg_wh if n_recorded > 1 else 0,
                        _home_line(roll, day))
 
+    # Alerts start on their own page, ahead of connectivity.
+    p.add_page()
+    doc.section(
+        " ",
+        "Warnings And Phase Changes",
+        "Alerts and automatic pauses you configured. Each saved warning and phase change is listed below.",
+        reserve=28,
+    )
+    doc.paragraph(
+        "These are alerts and automatic pauses you configured in Home Energy. Each one applies only to the room or outlet named in the row.",
+        size=8.2,
+        line_height=4.3,
+    )
+    doc.space(1.2)
+    warning_count, shutoff_count, cycle_count, alert_rows = _alert_counts(alerts)
+    _draw_alert_counts(doc, warning_count, shutoff_count, cycle_count)
+    doc.space(1.0)
+    if alert_rows:
+        doc.table_header([
+            (34, "When", "L"),
+            (32, "Room", "L"),
+            (28, "Event", "L"),
+            (44, "Detail", "L"),
+            (44, "Spoken", "L"),
+        ])
+        for i, event in enumerate(alert_rows):
+            doc.table_row([
+                _clock(str(event.get("ts") or "")),
+                str(event.get("room_name") or ""),
+                _alert_label(event),
+                _alert_detail(event),
+                _alert_spoken(event),
+            ], index=i, size=7.2)
+    else:
+        doc.paragraph("No warnings or phase changes were logged for this period.", color=doc.MUTED)
+
     # Exactly one row per collapsed outage; no duplicate day-by-day connection logs.
+    p.add_page()
     doc.section("06", "Connectivity Incidents",
                 "One row per outage; short reconnects may be stitched together. Episodes before logging began are not reconstructed.", reserve=26)
     if episodes:
@@ -1176,10 +1544,12 @@ def render_period_pdf(
             restored = bool(episode.get("online_at"))
             back = _clock(str(episode.get("online_at") or "")) if restored else "Still offline"
             duration = _span_label(str(episode.get("offline_at") or ""), str(episode.get("online_at") or "")) if restored else "Ongoing"
-            doc.table_row([_clock(str(episode.get("offline_at") or "")),
-                           str(episode.get("room_name") or ""), str(episode.get("name") or ""),
-                           back, duration], index=i, size=7.6,
-                          state="" if restored else "offline")
+            doc.table_row([
+                _clock(str(episode.get("offline_at") or "")),
+                str(episode.get("room_name") or ""),
+                smart_device_name(episode.get("name"), episode.get("appliance_type")),
+                back, duration,
+            ], index=i, size=7.6, state="" if restored else "offline")
     else:
         doc.paragraph("No connectivity outage episode was logged for this period.", color=doc.MUTED)
     return bytes(p.output())
@@ -1194,13 +1564,14 @@ def write_period_pdf(
     days: dict[str, Any],
     generated_label: str,
     events: list[dict[str, Any]] | None = None,
+    alerts: list[dict[str, Any]] | None = None,
 ) -> Path | None:
     """Write or replace one billing period. Other files are left in place."""
     path = report_path(data_dir, key)
     if path is None:
         return None
     try:
-        data = render_period_pdf(path.stem, days, generated_label, events or [])
+        data = render_period_pdf(path.stem, days, generated_label, events or [], alerts or [])
     except Exception as err:  # noqa: BLE001 - never let a report crash the monitor
         _LOGGER.warning("Report render failed for %s: %s", key, err)
         return None

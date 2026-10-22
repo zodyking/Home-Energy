@@ -909,7 +909,7 @@ class ConfigManager:
                         if outlet_type not in (
                             "outlet", "single_outlet", "stove", "microwave",
                             "minisplit", "light", "fridge", "vent", "wall_heater",
-                            "door", "window",
+                            "door", "window", "oil_diffuser",
                         ):
                             outlet_type = "outlet"
                         item = {
@@ -1160,6 +1160,31 @@ class ConfigManager:
                                 item["heater_door_sensor_entity"] = door_ent if door_ent.startswith("binary_sensor.") else None
                                 window_ent = str(outlet.get("heater_window_sensor_entity") or "").strip()
                                 item["heater_window_sensor_entity"] = window_ent if window_ent.startswith("binary_sensor.") else None
+                        elif outlet_type == "oil_diffuser":
+                            from .diffuser_automation import normalize_mode, normalize_schedule
+
+                            item["plug2_entity"] = None
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = 0
+                            item["plug2_shutoff"] = 0
+                            item["diffuser_mode"] = normalize_mode(outlet.get("diffuser_mode"))
+                            dedicated = str(outlet.get("diffuser_switch") or "").strip()
+                            item["diffuser_switch"] = (
+                                dedicated if dedicated.startswith("switch.") else None
+                            )
+                            power = str(outlet.get("plug1_entity") or "").strip()
+                            item["plug1_entity"] = (
+                                power
+                                if power.startswith("sensor.") or power.startswith("switch.")
+                                else None
+                            )
+                            plug_switch = str(outlet.get("plug1_switch") or "").strip()
+                            item["plug1_switch"] = (
+                                plug_switch if plug_switch.startswith("switch.") else None
+                            )
+                            item["diffuser_schedule"] = normalize_schedule(
+                                {**outlet, "diffuser_mode": item["diffuser_mode"]}
+                            )
                         elif outlet_type == "door":
                             item["plug1_entity"] = None
                             item["plug2_entity"] = None
@@ -2117,7 +2142,7 @@ class ConfigManager:
                 return str(pe).strip() if pe else None
             return vent_like_energy_tracking_key(room_id, outlet)
 
-        if otype in ("single_outlet", "minisplit", "stove", "microwave", "fridge"):
+        if otype in ("single_outlet", "minisplit", "stove", "microwave", "fridge", "oil_diffuser"):
             e = outlet.get("plug1_entity")
             return str(e).strip() if e else None
 
@@ -2133,10 +2158,18 @@ class ConfigManager:
                 break
         if not room:
             return {"timestamps": [], "watts": []}
-        
+
+        from .diffuser_automation import (
+            claimed_non_diffuser_power_entities,
+            diffuser_power_already_counted,
+        )
+
+        claimed = claimed_non_diffuser_power_entities(self.energy_config.get("rooms"))
         # Collect all entity IDs / tracking keys for this room
         entity_ids = []
         for outlet in room.get("outlets", []):
+            if diffuser_power_already_counted(outlet, claimed):
+                continue
             if outlet.get("type") == "light":
                 if outlet.get("power_source") == "sensor":
                     pe = outlet.get("power_sensor_entity")
@@ -2668,7 +2701,7 @@ class ConfigManager:
                 return
             seen.add(eid)
             wh = float(self._day_energy_data.get(eid, {}).get("energy", 0.0) or 0.0)
-            rows.append({"name": name, "part": part, "wh": round(wh, 2), "key": eid})
+            rows.append({"name": name, "part": part, "wh": round(wh, 2), "key": eid, "type": otype})
 
         if otype == "light":
             if outlet.get("power_source") == "sensor":
@@ -2683,6 +2716,13 @@ class ConfigManager:
                 add("Configured wattage", vent_like_energy_tracking_key(room_id, outlet))
         elif otype in ("door", "window"):
             return []
+        elif otype == "oil_diffuser":
+            from .diffuser_automation import claimed_non_diffuser_power_entities
+
+            plug = str(outlet.get("plug1_entity") or "").strip()
+            claimed = claimed_non_diffuser_power_entities(self.energy_config.get("rooms"))
+            if plug and plug not in claimed:
+                add("Power", plug)
         else:
             pe = outlet.get("power_sensor_entity")
             if pe and isinstance(pe, str) and pe.strip():
@@ -2782,12 +2822,20 @@ class ConfigManager:
         if not old_date or old_date == today:
             return
 
+        from .diffuser_automation import (
+            claimed_non_diffuser_power_entities,
+            diffuser_power_already_counted,
+        )
+
+        claimed = claimed_non_diffuser_power_entities(self.energy_config.get("rooms"))
         rooms_data = {}
         energy_config = self.energy_config
         for room in energy_config.get("rooms", []):
             room_id = room.get("id", room["name"].lower().replace(" ", "_"))
             room_wh = 0.0
             for outlet in room.get("outlets", []):
+                if diffuser_power_already_counted(outlet, claimed):
+                    continue
                 if outlet.get("type") == "light":
                     if outlet.get("power_source") == "sensor":
                         pe = outlet.get("power_sensor_entity")
@@ -2858,12 +2906,20 @@ class ConfigManager:
 
     def _build_today_totals(self) -> dict[str, Any]:
         """Build today's running totals from current data."""
+        from .diffuser_automation import (
+            claimed_non_diffuser_power_entities,
+            diffuser_power_already_counted,
+        )
+
+        claimed = claimed_non_diffuser_power_entities(self.energy_config.get("rooms"))
         self._ensure_event_counts_for_today()
         rooms_data = {}
         for room in self.energy_config.get("rooms", []):
             rid = room.get("id", room["name"].lower().replace(" ", "_"))
             room_wh = 0.0
             for outlet in room.get("outlets", []):
+                if diffuser_power_already_counted(outlet, claimed):
+                    continue
                 if outlet.get("type") == "light":
                     if outlet.get("power_source") == "sensor":
                         pe = outlet.get("power_sensor_entity")
@@ -3168,6 +3224,7 @@ class ConfigManager:
                     "plug2_switch": outlet.get("plug2_switch"),
                     "plug1_entity": outlet.get("plug1_entity"),
                     "plug2_entity": outlet.get("plug2_entity"),
+                    "type": outlet.get("type"),
                 })
         return outlets
 
@@ -3254,12 +3311,20 @@ class ConfigManager:
 
     def get_room_day_kwh(self, room_id: str) -> float:
         """Get total kWh for a room today."""
+        from .diffuser_automation import (
+            claimed_non_diffuser_power_entities,
+            diffuser_power_already_counted,
+        )
+
+        claimed = claimed_non_diffuser_power_entities(self.energy_config.get("rooms"))
         room_wh = 0.0
         for room in self.energy_config.get("rooms", []):
             rid = room.get("id", room["name"].lower().replace(" ", "_"))
             if rid != room_id:
                 continue
             for outlet in room.get("outlets", []):
+                if diffuser_power_already_counted(outlet, claimed):
+                    continue
                 if outlet.get("type") == "light":
                     if outlet.get("power_source") == "sensor":
                         pe = outlet.get("power_sensor_entity")

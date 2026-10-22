@@ -323,6 +323,8 @@ class EnergyMonitor:
         self._heater_automation_state: dict[str, dict] = {}
         # Smart heater state with thermal learning (key: room_id|outlet_name_slug)
         self._heater_smart_state: dict[str, dict] = {}
+        self._diffuser_runtime: dict[str, dict] = {}
+        self._diffuser_status: dict[str, str] = {}
         # Entities skipped while unavailable (debug log once until usable again)
         self._light_auto_unavail_logged: set[str] = set()
         # Light automation enforcement pause (for testing scenes)
@@ -2046,6 +2048,7 @@ class EnergyMonitor:
                 room_id=room_id,
                 room_name=room_name,
                 part=part,
+                appliance_type=str(outlet.get("type") or ""),
             )
 
     def _sample_person_presence(self, now: datetime) -> None:
@@ -2092,9 +2095,12 @@ class EnergyMonitor:
         """Rewrite the current monthly PDF. Drop day-range and extra cycle files."""
         import time as time_mod
 
+        from .durable_records import appliance_type_catalog
         from .monthly_reports import fingerprint, key_range, prune_reports, report_path, write_period_pdf
 
         durable = self.config_manager.durable
+        if durable.stamp_appliance_types(appliance_type_catalog(self.config_manager.energy_config.get("rooms"))):
+            await self.hass.async_add_executor_job(durable.save)
         data_dir = self.config_manager._data_dir
         today = dt_util.now().strftime("%Y-%m-%d")
         generated = dt_util.now().isoformat(timespec="seconds")
@@ -2117,10 +2123,13 @@ class EnergyMonitor:
                 continue
             days = durable.range_days(rng[0], rng[1])
             events = durable.events_between(rng[0], rng[1])
+            alerts, _alert_truncated = self.config_manager.get_event_log(
+                date_start=rng[0], date_end=rng[1]
+            )
             existing_path = report_path(data_dir, key)
-            if not days and not events and existing_path is not None and existing_path.is_file():
+            if not days and not events and not alerts and existing_path is not None and existing_path.is_file():
                 continue
-            fp = fingerprint({"days": days, "events": events})
+            fp = fingerprint({"days": days, "events": events, "alerts": alerts})
             previous = self._pdf_fingerprints.get(key)
             if previous == fp:
                 continue
@@ -2129,7 +2138,7 @@ class EnergyMonitor:
             if not due:
                 continue
             path = await self.hass.async_add_executor_job(
-                write_period_pdf, data_dir, key, days, generated, events
+                write_period_pdf, data_dir, key, days, generated, events, alerts
             )
             if path is not None:
                 wrote = True
@@ -2408,6 +2417,13 @@ class EnergyMonitor:
                 if outlet.get("switch_entity") == switch_entity:
                     return outlet
             elif otype in ("single_outlet", "minisplit", "stove", "microwave", "fridge"):
+                if outlet.get("plug1_switch") == switch_entity:
+                    return outlet
+            elif otype == "oil_diffuser":
+                from .diffuser_automation import control_switch_entity
+
+                if control_switch_entity(outlet) == switch_entity:
+                    return outlet
                 if outlet.get("plug1_switch") == switch_entity:
                     return outlet
         return None
@@ -4531,6 +4547,9 @@ class EnergyMonitor:
             self._room_budget_announced_date = today
         energy_config = self.config_manager.energy_config
         rooms = energy_config.get("rooms", [])
+        from .diffuser_automation import claimed_non_diffuser_power_entities
+
+        claimed_power = claimed_non_diffuser_power_entities(rooms)
         tts_settings = energy_config.get("tts_settings", {})
         await self._maybe_fire_budget_boost_scheduled(now, today, tts_settings)
 
@@ -4647,7 +4666,7 @@ class EnergyMonitor:
             # Calculate total room watts and track energy
             room_total_watts = 0.0
             
-            for outlet in room.get("outlets", []):
+            for outlet_index, outlet in enumerate(room.get("outlets", [])):
                 outlet_name = outlet.get("name", "Outlet")
                 outlet_threshold = outlet.get("threshold", 0)
                 outlet_total_watts = 0.0
@@ -4745,6 +4764,41 @@ class EnergyMonitor:
                             media_player=media_player,
                             volume=room_volume,
                             tts_settings=tts_settings,
+                        )
+                    continue
+
+                if outlet.get("type") == "oil_diffuser":
+                    from .diffuser_automation import (
+                        async_tick_diffuser,
+                        control_switch_entity,
+                        diffuser_runtime_key,
+                    )
+
+                    plug_ent = str(outlet.get("plug1_entity") or "").strip()
+                    if plug_ent and plug_ent not in claimed_power:
+                        outlet_total_watts = self._get_power_value(plug_ent)
+                        self.config_manager.record_intraday_power(plug_ent, outlet_total_watts)
+                        await self.config_manager.async_add_energy_reading(
+                            plug_ent, outlet_total_watts, elapsed_seconds=1.0
+                        )
+                    room_total_watts += outlet_total_watts
+                    control = control_switch_entity(outlet)
+                    state = self.hass.states.get(control) if control else None
+                    try:
+                        await async_tick_diffuser(
+                            entity_state=None if state is None else state.state,
+                            runtime_map=self._diffuser_runtime,
+                            status_map=self._diffuser_status,
+                            key=diffuser_runtime_key(room_id, outlet_index),
+                            outlet=outlet,
+                            now=now,
+                            set_switch=self._async_switch_set,
+                        )
+                    except Exception as err:
+                        _LOGGER.warning(
+                            "Diffuser schedule failed for %s: %s",
+                            outlet_name,
+                            err,
                         )
                     continue
 
@@ -4924,8 +4978,18 @@ class EnergyMonitor:
 
     def _sum_room_total_watts_only(self, room: dict) -> float:
         """Current room total watts without energy accounting side effects."""
+        from .diffuser_automation import (
+            claimed_non_diffuser_power_entities,
+            diffuser_power_already_counted,
+        )
+
+        claimed = claimed_non_diffuser_power_entities(
+            self.config_manager.energy_config.get("rooms")
+        )
         room_total_watts = 0.0
         for outlet in room.get("outlets", []):
+            if diffuser_power_already_counted(outlet, claimed):
+                continue
             outlet_total_watts = 0.0
             if outlet.get("type") == "light":
                 switch_entity = outlet.get("switch_entity")
@@ -5543,6 +5607,7 @@ class EnergyMonitor:
 
         effective_volume = volume
         message = ""
+        phase_change: tuple[int, int] | None = None
         prefix = tts_settings.get("prefix", DEFAULT_TTS_PREFIX)
 
         if enforcement_enabled:
@@ -5565,6 +5630,7 @@ class EnergyMonitor:
 
             if phase2_enabled and warnings_in_phase2_window >= phase2_count and phase < 2:
                 await self.config_manager.async_set_enforcement_phase(room_id, 2)
+                phase_change = (phase, 2)
                 await self._send_notification_to_room_person(
                     room,
                     "enforcement_phase2",
@@ -5598,6 +5664,7 @@ class EnergyMonitor:
 
             elif pe.get("phase1_enabled", True) and warnings_in_phase1_window >= phase1_count and phase < 1:
                 await self.config_manager.async_set_enforcement_phase(room_id, 1)
+                phase_change = (phase, 1)
                 await self._send_notification_to_room_person(
                     room,
                     "enforcement_phase1",
@@ -5792,7 +5859,7 @@ class EnergyMonitor:
 
                 post_send_cb = _power_cycle_and_tts_after
 
-        return effective_volume, message, post_send_cb, enforcement_enabled
+        return effective_volume, message, post_send_cb, enforcement_enabled, phase_change
 
     async def _send_room_alert(
         self,
@@ -5843,6 +5910,7 @@ class EnergyMonitor:
             message,
             post_send_cb,
             enforcement_enabled,
+            phase_change,
         ) = await self._async_room_enforcement_after_threshold_recorded(
             room_id=room_id,
             room_name=room_name,
@@ -5855,7 +5923,27 @@ class EnergyMonitor:
         )
 
         msg_stripped = (message or "").strip()
+
+        async def _log_phase_change(spoken: bool) -> None:
+            if not phase_change:
+                return
+            await self.config_manager.async_add_event_log_entry(
+                room_id,
+                room_name,
+                "phase_change",
+                None,
+                spoken,
+                extra={
+                    "tts_message": message,
+                    "from_phase": phase_change[0],
+                    "to_phase": phase_change[1],
+                    "enforcement_phase": phase_change[1],
+                    "room_watts": int(round(current_watts)),
+                },
+            )
+
         if not msg_stripped and post_send_cb is None:
+            await _log_phase_change(False)
             return
 
         try:
@@ -5898,6 +5986,7 @@ class EnergyMonitor:
                 True,
                 extra=_room_warning_log_extra(),
             )
+            await _log_phase_change(True)
             _LOGGER.warning(
                 "Room threshold alert: %s - %dW (enforcement phase %d, volume %.0f%%)",
                 room_name,
@@ -5931,6 +6020,7 @@ class EnergyMonitor:
                 False,
                 extra=fail_ex,
             )
+            await _log_phase_change(False)
 
     async def _power_cycle_room_outlets(
         self,
@@ -6123,24 +6213,45 @@ class EnergyMonitor:
             # Check for phase reset (no warnings for reset_minutes)
             reset_minutes = phase2_reset if current_phase == 2 else phase1_reset
             if current_phase > 0 and self.config_manager.check_phase_reset(room_id, reset_minutes):
+                previous_phase = int(current_phase or 0)
                 await self.config_manager.async_set_enforcement_phase(room_id, 0)
-                msg_template = tts_settings.get("phase_reset_msg", "")
+                msg_template = tts_settings.get("phase_reset_msg", "") or ""
+                message = ""
+                spoken = False
                 if (
                     msg_template
                     and media_player
                     and self._tts_line_enabled(tts_settings, "phase_reset")
                 ):
-                    message = msg_template.format(
-                        prefix=prefix,
-                        room_name=room_name,
-                    )
                     try:
-                        await self._async_send_tts_with_lights(
-                            room, media_player, message, volume, tts_settings
+                        message = msg_template.format(
+                            prefix=prefix,
+                            room_name=room_name,
                         )
-                        _LOGGER.info("Power enforcement reset for %s", room_name)
-                    except Exception as e:
-                        _LOGGER.error("Failed to send phase reset TTS: %s", e)
+                    except (KeyError, ValueError):
+                        message = ""
+                    if message:
+                        try:
+                            await self._async_send_tts_with_lights(
+                                room, media_player, message, volume, tts_settings
+                            )
+                            spoken = True
+                            _LOGGER.info("Power enforcement reset for %s", room_name)
+                        except Exception as e:
+                            _LOGGER.error("Failed to send phase reset TTS: %s", e)
+                await self.config_manager.async_add_event_log_entry(
+                    room_id,
+                    room_name,
+                    "phase_change",
+                    None,
+                    spoken,
+                    extra={
+                        "tts_message": message,
+                        "from_phase": previous_phase,
+                        "to_phase": 0,
+                        "enforcement_phase": 0,
+                    },
+                )
 
             # Check room kWh intervals (same tier filter as dashboard bar / boost)
             filtered_intervals = self.config_manager.filter_room_kwh_intervals_for_alerts(
@@ -6166,14 +6277,26 @@ class EnergyMonitor:
                         kwh_limit=interval_hit,
                         percentage=percentage,
                     )
+                    kwh_extra = {
+                        "tts_message": message,
+                        "kwh_limit": interval_hit,
+                        "percentage": percentage,
+                        "alert_kind": "room_kwh",
+                    }
                     try:
                         await self._async_send_tts_with_lights(
                             room, media_player, message, volume, tts_settings
+                        )
+                        await self.config_manager.async_add_event_log_entry(
+                            room_id, room_name, "warning", None, True, extra=kwh_extra
                         )
                         _LOGGER.warning(
                             "Room kWh alert: %s exceeded %s kWh", room_name, interval_hit
                         )
                     except Exception as e:
+                        await self.config_manager.async_add_event_log_entry(
+                            room_id, room_name, "warning", None, False, extra=kwh_extra
+                        )
                         _LOGGER.error("Failed to send room kWh alert: %s", e)
 
         # Check home kWh limit
@@ -6196,13 +6319,25 @@ class EnergyMonitor:
                         prefix=prefix,
                         kwh_limit=spoken_cardinal(home_limit),
                     )
+                    home_room_id = room_for_tts.get("id") or str(room_for_tts.get("name") or "home").lower().replace(" ", "_")
+                    home_extra = {
+                        "tts_message": message,
+                        "kwh_limit": home_limit,
+                        "alert_kind": "home_kwh",
+                    }
                     try:
                         volume = float(room_for_tts.get("volume", 0.7))
                         await self._async_send_tts_with_lights(
                             room_for_tts, media_player, message, volume, tts_settings
                         )
+                        await self.config_manager.async_add_event_log_entry(
+                            str(home_room_id), "Home", "warning", None, True, extra=home_extra
+                        )
                         _LOGGER.warning("Home kWh alert: exceeded %d kWh (current: %.1f)", home_limit, total_kwh)
                     except Exception as e:
+                        await self.config_manager.async_add_event_log_entry(
+                            str(home_room_id), "Home", "warning", None, False, extra=home_extra
+                        )
                         _LOGGER.error("Failed to send home kWh alert: %s", e)
 
     async def _check_breaker_lines(self, tts_settings: dict) -> None:
@@ -6221,7 +6356,16 @@ class EnergyMonitor:
             
             # Calculate total power for this breaker
             breaker_total_watts = 0.0
+            from .diffuser_automation import claimed_non_diffuser_power_entities
+
+            claimed_power = claimed_non_diffuser_power_entities(
+                self.config_manager.energy_config.get("rooms")
+            )
             for outlet in outlets:
+                if str(outlet.get("type") or "") == "oil_diffuser":
+                    plug_ent = str(outlet.get("plug1_entity") or "").strip()
+                    if not plug_ent or plug_ent in claimed_power:
+                        continue
                 if outlet.get("plug1_entity"):
                     breaker_total_watts += self._get_power_value(outlet["plug1_entity"])
                 if outlet.get("plug2_entity"):
@@ -7669,6 +7813,7 @@ class EnergyMonitor:
         tts_settings: dict,
         *,
         reminder_kind: str,
+        tts_message: str = "",
     ) -> None:
         """Log door/window still-open or still-unlocked reminders without counting as a room warning.
 
@@ -7701,6 +7846,7 @@ class EnergyMonitor:
                 "volume_percent": volume_pct,
                 "door_reminder": reminder_kind,
                 "counted_as_warning": False,
+                "tts_message": tts_message,
             }
             try:
                 log_extra["enforcement_phase"] = int(
@@ -7793,6 +7939,7 @@ class EnergyMonitor:
                             volume,
                             tts_settings,
                             reminder_kind=msg_key,
+                            tts_message=message,
                         )
 
         self._door_reminder_active[key] = self.hass.async_create_task(reminder_loop())
