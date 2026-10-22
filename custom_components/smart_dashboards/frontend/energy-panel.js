@@ -2299,7 +2299,9 @@ class EnergyPanel extends HTMLElement {
       }
       .statement-viewer-inline .statement-viewer-frame {
         width: 100%;
-        height: min(78vh, 900px);
+        height: min(calc(100vh - 220px), 860px);
+        height: min(calc(100dvh - 220px), 860px);
+        min-height: 380px;
         box-shadow: none;
       }
       .statement-viewer-header {
@@ -2328,21 +2330,33 @@ class EnergyPanel extends HTMLElement {
         -webkit-overflow-scrolling: touch;
         padding: 12px;
         background: #111;
+        container-type: size;
       }
       .statement-viewer-pages {
         display: flex;
         flex-direction: column;
+        align-items: center;
         gap: 12px;
       }
-      .statement-viewer-pages canvas,
+      .statement-viewer-pages canvas {
+        display: block;
+        width: auto;
+        height: auto;
+        max-width: 100%;
+        max-height: 70vh;
+        max-height: 100cqh;
+        background: #fff;
+        border-radius: 2px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+      }
       .statement-viewer-pages iframe {
         width: 100%;
-        height: auto;
+        height: 70vh;
+        height: 100cqh;
         background: #fff;
         border: 0;
         border-radius: 2px;
       }
-      .statement-viewer-pages iframe { height: 70vh; }
       .statement-viewer-status {
         margin: 0;
         color: var(--secondary-text-color, #aaa);
@@ -10124,9 +10138,13 @@ class EnergyPanel extends HTMLElement {
     }
     if (log.error) return `<p class="statistics-section-sub">${this._eventLogEscape(log.error)}</p>`;
     const kinds = new Set(['warning', 'shutoff', 'power_cycle', 'phase_change']);
-    const events = (log.events || []).filter((event) => kinds.has(event.type));
+    const events = (log.events || []).filter((event) => (
+      kinds.has(event.type)
+      && event.tts_succeeded !== false
+      && String(event.tts_message || '').trim() !== ''
+    ));
     if (!events.length) {
-      return '<p class="monthly-reports-empty">No warnings were logged for this date range.</p>';
+      return '<p class="monthly-reports-empty">No spoken announcements were logged for this date range.</p>';
     }
     const items = events.map((event) => {
       const kind = event.type === 'shutoff'
@@ -10147,9 +10165,7 @@ class EnergyPanel extends HTMLElement {
             ? 'background: rgba(76, 175, 80, 0.2); color: #4caf50;'
             : 'background: rgba(244, 67, 54, 0.2); color: #f44336;');
       const detail = this._eventLogReadingsLine(event);
-      const spoken = event.tts_message != null && String(event.tts_message).trim() !== ''
-        ? this._eventLogEscape(event.tts_message)
-        : 'No announcement was spoken.';
+      const spoken = this._eventLogEscape(event.tts_message);
       return `
         <li class="event-log-entry">
           <div class="event-log-entry-row">
@@ -10248,7 +10264,7 @@ class EnergyPanel extends HTMLElement {
           </div>
           <section class="monthly-reports" aria-label="Warning log">
             <h3>Warnings</h3>
-            <p class="statistics-section-sub">Every logged warning for this date range, with the room, what was measured, and the words spoken out loud. Shutoffs, power cycles, and phase changes are listed too.</p>
+            <p class="statistics-section-sub">Announcements that were spoken out loud for this date range, with the room and what was measured. Entries with no spoken announcement are left out.</p>
             ${this._renderWarningLog()}
           </section>`;
 
@@ -10623,18 +10639,19 @@ class EnergyPanel extends HTMLElement {
       this._statementPdfDoc = doc;
       host.innerHTML = '';
       const frame = root.querySelector('.statement-viewer-frame');
-      const cssWidth = Math.max(260, (host.clientWidth || frame?.clientWidth || 320) - 8);
+      const body = root.querySelector('.statement-viewer-body');
+      const availWidth = Math.max(260, host.clientWidth || frame?.clientWidth || 320);
+      const availHeight = Math.max(240, body?.clientHeight ? body.clientHeight - 24 : window.innerHeight * 0.7);
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       for (let i = 1; i <= doc.numPages; i += 1) {
         if (token !== this._statementRenderToken) return;
         const page = await doc.getPage(i);
         const base = page.getViewport({ scale: 1 });
-        const viewport = page.getViewport({ scale: (cssWidth / base.width) * ratio });
+        const fitScale = Math.min(availWidth / base.width, availHeight / base.height);
+        const viewport = page.getViewport({ scale: fitScale * ratio });
         const canvas = document.createElement('canvas');
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
-        canvas.style.width = '100%';
-        canvas.style.height = 'auto';
         canvas.setAttribute('role', 'img');
         canvas.setAttribute('aria-label', `Statement page ${i} of ${doc.numPages}`);
         host.appendChild(canvas);

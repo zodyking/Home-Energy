@@ -1093,9 +1093,15 @@ def _alert_detail(event: dict[str, Any]) -> str:
     return ", ".join(parts) if parts else "Logged alert"
 
 
+def _alert_was_spoken(event: dict[str, Any]) -> bool:
+    """A row belongs on the statement only when an announcement was spoken."""
+    if event.get("tts_succeeded") is False:
+        return False
+    return bool(str(event.get("tts_message") or "").strip())
+
+
 def _alert_spoken(event: dict[str, Any]) -> str:
-    text = str(event.get("tts_message") or "").strip()
-    return text or "No announcement was spoken."
+    return str(event.get("tts_message") or "").strip()
 
 
 def _alert_counts(alerts: list[dict[str, Any]] | None) -> tuple[int, int, int, list[dict[str, Any]]]:
@@ -1112,7 +1118,7 @@ def _alert_counts(alerts: list[dict[str, Any]] | None) -> tuple[int, int, int, l
             shutoffs += 1
         elif kind == "power_cycle":
             cycles += 1
-        if kind in ("warning", "phase_change", "shutoff", "power_cycle"):
+        if kind in ("warning", "phase_change", "shutoff", "power_cycle") and _alert_was_spoken(event):
             rows.append(event)
     rows.sort(key=lambda event: str(event.get("ts") or ""))
     return warnings, shutoffs, cycles, rows
@@ -1502,7 +1508,7 @@ def render_period_pdf(
     doc.section(
         " ",
         "Warnings And Phase Changes",
-        "Alerts and automatic pauses you configured. Each saved warning and phase change is listed below.",
+        "Only announcements that were spoken out loud are listed.",
         reserve=28,
     )
     doc.paragraph(
@@ -1531,7 +1537,7 @@ def render_period_pdf(
                 _alert_spoken(event),
             ], index=i, size=7.2)
     else:
-        doc.paragraph("No warnings or phase changes were logged for this period.", color=doc.MUTED)
+        doc.paragraph("No spoken announcements were logged for this period.", color=doc.MUTED)
 
     # Exactly one row per collapsed outage; no duplicate day-by-day connection logs.
     p.add_page()
