@@ -10282,6 +10282,70 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _formatOfflineWhen(iso) {
+    if (!iso) return 'No online time recorded';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return 'No online time recorded';
+    try {
+      return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    } catch (_err) {
+      return d.toLocaleString();
+    }
+  }
+
+  _offlineDevices() {
+    return Array.isArray(this._statsData?.offline_devices) ? this._statsData.offline_devices : [];
+  }
+
+  _offlineRoomNames() {
+    const names = [];
+    const seen = new Set();
+    for (const device of this._offlineDevices()) {
+      const room = String(device.room_name || device.room_id || '').trim();
+      if (!room || seen.has(room)) continue;
+      seen.add(room);
+      names.push(room);
+    }
+    return names;
+  }
+
+  _renderRecordingAccuracyNote(roomName) {
+    const rooms = this._offlineRoomNames();
+    const scoped = roomName
+      ? rooms.filter((room) => room === roomName)
+      : rooms;
+    if (!scoped.length) return '';
+    const list = scoped.map((room) => this._eventLogEscape(room)).join(', ');
+    return `<p class="recording-accuracy-note" role="status">Recording is not accurate for the following rooms: ${list} due to appliance connectivity issues.</p>`;
+  }
+
+  _renderOfflineAppliancesNotice() {
+    const devices = this._offlineDevices();
+    if (!devices.length) return '';
+    const items = devices.map((device) => {
+      const name = this._eventLogEscape(device.name || 'Device');
+      const part = device.part ? ` (${this._eventLogEscape(device.part)})` : '';
+      const room = this._eventLogEscape(device.room_name || device.room_id || 'Unknown room');
+      const when = this._eventLogEscape(this._formatOfflineWhen(device.last_online));
+      return `<li><span class="offline-name">${name}${part}</span><span class="offline-meta">${room}</span><span class="offline-meta">Last online ${when}</span></li>`;
+    }).join('');
+    const countLabel = devices.length === 1 ? '1 unreachable' : `${devices.length} unreachable`;
+    return `
+      <details class="offline-appliances" id="offline-appliances" ${this._offlineListOpen ? 'open' : ''}>
+        <summary>
+          <span class="offline-summary-text">
+            <span>Offline appliances</span>
+            <span class="offline-count">${countLabel}</span>
+          </span>
+        </summary>
+        <div class="offline-body">
+          <p>Home Assistant could not reach these outlets or appliances. This list stays available until they are back online.</p>
+          <ul>${items}</ul>
+        </div>
+      </details>
+    `;
+  }
+
   _renderMonthlyReportsArchive() {
     const reports = Array.isArray(this._statsData?.monthly_reports) ? this._statsData.monthly_reports : [];
     if (!reports.length) {
