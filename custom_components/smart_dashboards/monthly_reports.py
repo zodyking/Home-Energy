@@ -1260,6 +1260,40 @@ def _draw_recorded_bars(doc: _ReportPdf, calendar: list[str], daily: dict[str, f
     )
 
 
+def _analysis_tile(doc: _ReportPdf, x: float, y: float, w: float, h: float, value: str, label: str) -> None:
+    p = doc.pdf
+    p.set_fill_color(*doc.PALE)
+    p.rect(x, y, w, h, "F")
+    p.set_fill_color(*doc.ACCENT)
+    p.rect(x, y, 1.3, h, "F")
+    doc.font(12, True, doc.DARK)
+    p.set_xy(x + 4, y + 2.4)
+    p.cell(w - 6, 6.2, doc.fit(value, w - 8, 12, True))
+    doc.font(6.3, False, doc.MUTED)
+    p.set_xy(x + 4, y + 9.2)
+    p.cell(w - 6, 5.4, doc.fit(label, w - 8, 6.3))
+
+
+def _analysis_hbar(doc: _ReportPdf, x: float, y: float, width: float, label: str,
+                   fraction: float, caption: str, color: tuple[int, int, int],
+                   label_w: float = 34) -> None:
+    p = doc.pdf
+    doc.font(6.5, False, doc.INK)
+    p.set_xy(x, y)
+    p.cell(label_w, 4.4, doc.fit(label, label_w - 1, 6.5))
+    track_x = x + label_w + 1
+    track_w = max(8.0, width - label_w - 22)
+    p.set_fill_color(*doc.LINE)
+    p.rect(track_x, y + 1.2, track_w, 2.1, "F")
+    span = max(0.0, min(1.0, fraction))
+    if span > 0:
+        p.set_fill_color(*color)
+        p.rect(track_x, y + 1.2, max(0.5, track_w * span), 2.1, "F")
+    doc.font(6.4, True, doc.DARK)
+    p.set_xy(track_x + track_w + 1, y)
+    p.cell(width - (track_x - x) - track_w - 1, 4.4, doc.fit(caption, 20, 6.4, True), align="R")
+
+
 def _draw_bill_analysis(
     doc: _ReportPdf,
     roll: dict[str, Any],
@@ -1272,105 +1306,278 @@ def _draw_bill_analysis(
     ordered_rids: list[str],
     devices: list[dict[str, Any]],
 ) -> None:
-    """One page. Stops early instead of flowing onto a second analysis page."""
+    """One page of charts. Stops rather than opening a second analysis page."""
     doc.section(
         " ",
         "Bill Analysis",
-        "Why recorded use looks like this, which loads are largest, and how that sits with the people, rooms, and devices that were stored.",
-        reserve=22,
+        "What is uneven, what created the spike, and whether presence changes the mix. Totals already shown on other pages are not repeated.",
+        reserve=18,
     )
     daily = roll["daily_total"]
     if n_recorded <= 0 or total_wh <= 0:
         _write_capped(
             doc,
-            "No energy readings were stored for this period, so there is no usage to explain and no efficiency figure to compute.",
+            "No energy readings were stored for this period, so there is nothing to compare.",
             color=doc.MUTED,
         )
         return
-    peak_day = str(roll.get("peak_day") or "")
-    peak_wh = float(daily.get(peak_day, 0) or 0)
-    why = (
-        f"Stored readings cover {n_recorded} day{'s' if n_recorded != 1 else ''} and {_kwh(total_wh, 2)} kWh. "
-        f"The highest recorded day was {_weekday_day(peak_day)} at {_kwh(peak_wh, 2)} kWh, "
-        f"against {_kwh(avg_wh, 2)} kWh on an average recorded day."
-    )
-    if missing:
-        why += (
-            f" {missing} elapsed day{'s' if missing != 1 else ''} had no reading, "
-            "so those days are not counted as zero."
-        )
-    home_totals: list[float] = []
-    away_totals: list[float] = []
-    for day, wh in daily.items():
-        present = any(float(seconds or 0) > 0 for seconds in (roll["daily_home"].get(day) or {}).values())
-        (home_totals if present else away_totals).append(float(wh))
-    if home_totals and away_totals:
-        why += (
-            f" Days with someone tracked at home averaged {_kwh(sum(home_totals) / len(home_totals), 2)} kWh. "
-            f"Days with nobody tracked at home averaged {_kwh(sum(away_totals) / len(away_totals), 2)} kWh."
-        )
-    _write_capped(doc, why)
-    _gap(doc, 1.4)
-    _draw_recorded_bars(doc, roll["calendar"], daily, as_of, avg_wh)
-    _gap(doc, 1.6)
-    _write_capped(doc, "Largest loads", size=8.6, bold=True, color=doc.DARK)
-    shown_rooms = 0
-    for rid in ordered_rids:
-        wh = float(rooms[rid]["wh"])
-        if wh <= 0:
-            continue
-        if shown_rooms >= 4:
-            break
-        share = wh / total_wh * 100 if total_wh else 0
-        _write_capped(doc, f"{rooms[rid]['name']}: {_kwh(wh, 2)} kWh, {share:.0f} percent of recorded energy.", size=8.0)
-        shown_rooms += 1
-    shown_devices = 0
-    for device in devices:
-        wh = float(device["wh"])
-        if wh <= 0:
-            continue
-        if shown_devices >= 4:
-            break
-        share = wh / total_wh * 100 if total_wh else 0
-        label = smart_device_name(device.get("name"), device.get("type"))
-        room_name = str(rooms.get(device["room_id"], {}).get("name") or device.get("room_id") or "")
-        _write_capped(doc, f"{label} in {room_name}: {_kwh(wh, 2)} kWh, {share:.0f} percent.", size=8.0)
-        shown_devices += 1
-    people = [person for person in roll["persons"].values() if float(person.get("seconds_home") or 0) > 0]
-    active_rooms = [room for room in rooms.values() if float(room.get("wh") or 0) > 0]
-    active_devices = [device for device in devices if float(device.get("wh") or 0) > 0]
-    person_days = sum(int(person.get("days_home") or 0) for person in people)
-    top_room = rooms[ordered_rids[0]] if ordered_rids else None
-    top_device = devices[0] if devices else None
-    top_room_share = (float(top_room["wh"]) / total_wh * 100) if top_room and total_wh else 0
-    top_device_share = (float(top_device["wh"]) / total_wh * 100) if top_device and total_wh else 0
-    if top_device_share >= 45 and top_device:
-        spread = (
-            f"Use is concentrated in {smart_device_name(top_device.get('name'), top_device.get('type'))}, "
-            f"at {top_device_share:.0f} percent of recorded energy."
-        )
-    elif top_room_share >= 50 and top_room:
-        spread = f"Use is concentrated in {top_room['name']}, at {top_room_share:.0f} percent of recorded energy."
-    else:
-        spread = "Use is spread across the rooms and devices that recorded energy, rather than sitting in one place."
-    who = (
-        f"{len(people)} {'person was' if len(people) == 1 else 'people were'} tracked at home"
-        if people else "nobody was tracked at home"
-    )
-    per_person = ""
-    if people and person_days > 0:
-        per_person = (
-            f" That is {_kwh(total_wh / person_days, 2)} kWh for each tracked day someone was home."
-        )
-    _gap(doc, 1.2)
-    _write_capped(
-        doc,
-        "No rate, dollar amount, or weather value is stored, so none is estimated here. "
-        f"Against this home's own readings, {who}, across {len(active_rooms)} "
-        f"{'room' if len(active_rooms) == 1 else 'rooms'} and {len(active_devices)} "
-        f"{'device' if len(active_devices) == 1 else 'devices'} with stored energy. "
-        f"The average recorded day was {_kwh(avg_wh, 2)} kWh. {spread}{per_person}",
-    )
+
+    p = doc.pdf
+    floor = p.page_break_trigger - 2
+    p.set_auto_page_break(False)
+    try:
+        peak_day = str(roll.get("peak_day") or "")
+        low_day = str(roll.get("low_day") or "")
+        peak_wh = float(daily.get(peak_day, 0) or 0)
+        low_wh = float(daily.get(low_day, 0) or 0)
+        daily_rooms = roll.get("daily_rooms") or {}
+        home_days: list[str] = []
+        away_days: list[str] = []
+        weekday_wh: list[float] = []
+        weekend_wh: list[float] = []
+        room_series: dict[str, list[float]] = {}
+        for day, wh in daily.items():
+            present = any(float(seconds or 0) > 0 for seconds in (roll["daily_home"].get(day) or {}).values())
+            (home_days if present else away_days).append(str(day))
+            parsed = _parse_day(str(day))
+            if parsed is not None:
+                (weekend_wh if parsed.weekday() >= 5 else weekday_wh).append(float(wh))
+            for rid, room_wh in (daily_rooms.get(day) or {}).items():
+                room_series.setdefault(str(rid), []).append(float(room_wh))
+
+        ranked_days = sorted((float(wh), str(day)) for day, wh in daily.items())
+        ranked_days.reverse()
+        heavy_count = max(1, math.ceil(n_recorded / 5))
+        heavy_wh = sum(wh for wh, _day in ranked_days[:heavy_count])
+        heavy_share = heavy_wh / total_wh * 100 if total_wh else 0.0
+        even_share = heavy_count / n_recorded * 100 if n_recorded else 0.0
+        floor_wh = low_wh * n_recorded
+        above_floor = max(0.0, total_wh - floor_wh)
+        above_share = above_floor / total_wh * 100 if total_wh else 0.0
+
+        home_wh = sum(float(daily[day]) for day in home_days)
+        away_wh = sum(float(daily[day]) for day in away_days)
+        home_day_pct = len(home_days) / n_recorded * 100 if n_recorded else 0.0
+        home_energy_pct = home_wh / total_wh * 100 if total_wh else 0.0
+        away_day_pct = len(away_days) / n_recorded * 100 if n_recorded else 0.0
+        away_energy_pct = away_wh / total_wh * 100 if total_wh else 0.0
+        presence_gap = home_energy_pct - home_day_pct
+
+        excesses: list[tuple[str, float]] = []
+        peak_rooms = daily_rooms.get(peak_day) or {}
+        for rid, series in room_series.items():
+            if not series:
+                continue
+            own_avg = sum(series) / len(series)
+            excesses.append((rid, float(peak_rooms.get(rid) or 0) - own_avg))
+        excesses.sort(key=lambda item: item[1], reverse=True)
+        positive = [(rid, extra) for rid, extra in excesses if extra > 1]
+        spike_wh = sum(extra for _rid, extra in positive)
+
+        swings: list[tuple[str, float]] = []
+        for rid, series in room_series.items():
+            own_avg = sum(series) / len(series) if series else 0.0
+            if own_avg <= 0:
+                continue
+            swings.append((rid, max(series) / own_avg))
+        swings.sort(key=lambda item: item[1], reverse=True)
+        swing_spread = (swings[0][1] - swings[-1][1]) if len(swings) >= 2 else 0.0
+
+        weekend_gap_wh = 0.0
+        if weekday_wh and weekend_wh:
+            weekend_gap_wh = (sum(weekend_wh) / len(weekend_wh) - sum(weekday_wh) / len(weekday_wh)) * len(weekend_wh)
+
+        dominant = None
+        for device in devices:
+            room_id = str(device.get("room_id") or "")
+            room_wh = float(rooms.get(room_id, {}).get("wh") or 0)
+            device_wh = float(device.get("wh") or 0)
+            if room_wh <= 0 or device_wh / room_wh < 0.45:
+                continue
+            share = device_wh / room_wh * 100
+            if dominant is None or share > dominant[0]:
+                dominant = (share, device, room_id)
+
+        y = p.get_y() + 1.0
+        tile_w = 44.5
+        gap = 1.3
+        if y + 16 <= floor:
+            swing_value, swing_label = ("-", "No room swing to compare")
+            if swings and swing_spread < 0.2:
+                swing_value = f"{swings[0][1]:.1f}x"
+                swing_label = "Every room vs its own average"
+            elif swings:
+                swing_value = f"{swings[0][1]:.1f}x"
+                swing_label = f"{rooms.get(swings[0][0], {}).get('name', 'Room')} vs its own average"
+            if home_days and away_days:
+                mix_value = f"{presence_gap:+.0f} pts"
+                mix_label = "Home energy share minus day share"
+            else:
+                mix_value = "No split"
+                mix_label = "Every recorded day had the same presence"
+            tiles = [
+                (f"{heavy_share:.0f}%", f"Energy in the highest {heavy_count} of {n_recorded} days"),
+                (f"{above_share:.0f}%", "Energy above the quiet-day floor"),
+                (mix_value, mix_label),
+                (swing_value, swing_label),
+            ]
+            for index, (value, label) in enumerate(tiles):
+                _analysis_tile(doc, 14 + index * (tile_w + gap), y, tile_w, 16, value, label)
+            y += 19
+
+        panel_h = 62
+        if positive and y + panel_h <= floor:
+            p.set_draw_color(*doc.LINE)
+            p.set_line_width(0.25)
+            p.rect(14, y, 89, panel_h, "D")
+            p.rect(105, y, 91, panel_h, "D")
+            doc.font(8, True, doc.DARK)
+            p.set_xy(17, y + 2.2)
+            p.cell(82, 4.2, "What lifted the busiest day")
+            p.set_xy(108, y + 2.2)
+            p.cell(84, 4.2, "Days against an even share")
+            doc.font(6.2, False, doc.MUTED)
+            p.set_xy(17, y + 6.6)
+            p.cell(82, 3.4, "kWh above that room's own average")
+            p.set_xy(108, y + 6.6)
+            p.cell(84, 3.4, "Highest days first. Line is an even day.")
+            top_extra = positive[0][1] or 1.0
+            bar_y = y + 12
+            for index, (rid, extra) in enumerate(positive[:6]):
+                _analysis_hbar(
+                    doc, 17, bar_y, 83,
+                    str(rooms.get(rid, {}).get("name") or rid),
+                    extra / top_extra,
+                    f"+{_kwh(extra, 1)}",
+                    doc.ROOM_COLORS[index % len(doc.ROOM_COLORS)],
+                )
+                bar_y += 7.2
+            shown = ranked_days[:8]
+            hottest = shown[0][0] if shown else 1.0
+            even_wh = total_wh / n_recorded if n_recorded else 0.0
+            plot_bottom = y + panel_h - 8
+            plot_h = plot_bottom - (y + 14)
+            slot = 82 / max(1, len(shown))
+            if hottest and even_wh:
+                line_h = plot_h * min(1.0, even_wh / hottest)
+                p.set_draw_color(*doc.AMBER)
+                p.set_line_width(0.35)
+                p.line(110, plot_bottom - line_h, 190, plot_bottom - line_h)
+            for index, (wh, day) in enumerate(shown):
+                center = 110 + (index + 0.5) * slot
+                height = plot_h * wh / hottest if hottest else 0
+                p.set_fill_color(*doc.ACCENT if wh > even_wh else doc.TEAL)
+                if height > 0:
+                    p.rect(center - 3.2, plot_bottom - height, 6.4, height, "F")
+                parsed = _parse_day(day)
+                doc.font(5.6, False, doc.MUTED)
+                p.set_xy(center - 5, plot_bottom + 0.5)
+                p.cell(10, 3.2, str(parsed.day) if parsed else "", align="C")
+            y += panel_h + 3
+
+        if home_days and away_days and y + 40 <= floor:
+            p.set_draw_color(*doc.LINE)
+            p.set_line_width(0.25)
+            p.rect(14, y, 182, 38, "D")
+            doc.font(8, True, doc.DARK)
+            p.set_xy(17, y + 2.2)
+            p.cell(120, 4.2, "Presence changes the mix")
+            doc.font(6.2, False, doc.MUTED)
+            p.set_xy(110, y + 2.2)
+            p.cell(82, 4.2, "Share of days beside share of energy", align="R")
+            rows = (
+                (doc.ACCENT, "Home, share of days", home_day_pct),
+                (doc.ACCENT, "Home, share of energy", home_energy_pct),
+                (doc.AMBER, "Away, share of days", away_day_pct),
+                (doc.AMBER, "Away, share of energy", away_energy_pct),
+            )
+            bar_y = y + 8
+            for color, label, pct in rows:
+                _analysis_hbar(doc, 17, bar_y, 176, label, pct / 100, f"{pct:.0f}%", color, label_w=62)
+                bar_y += 7.0
+            y += 41
+        elif y + 12 <= floor:
+            doc.font(7.2, False, doc.MUTED)
+            p.set_xy(14, y)
+            p.cell(182, 4.2, "Presence cannot be separated: every recorded day had the same at-home result.")
+            y += 8
+
+        swing_h = 8 + min(5, len(swings)) * 7.2
+        if swing_spread >= 0.2 and y + swing_h <= floor:
+            p.set_draw_color(*doc.LINE)
+            p.set_line_width(0.25)
+            p.rect(14, y, 182, swing_h, "D")
+            doc.font(8, True, doc.DARK)
+            p.set_xy(17, y + 2.0)
+            p.cell(120, 4.2, "How far each room swings")
+            doc.font(6.2, False, doc.MUTED)
+            p.set_xy(110, y + 2.0)
+            p.cell(82, 4.2, "Busiest day divided by that room's own average", align="R")
+            top_swing = swings[0][1] or 1.0
+            bar_y = y + 8
+            for index, (rid, ratio) in enumerate(swings[:5]):
+                _analysis_hbar(
+                    doc, 17, bar_y, 176,
+                    str(rooms.get(rid, {}).get("name") or rid),
+                    ratio / top_swing,
+                    f"{ratio:.1f}x",
+                    doc.ACCENT if ratio >= 1.5 else doc.TEAL,
+                    label_w=62,
+                )
+                bar_y += 7.2
+            y += swing_h + 3
+
+        findings: list[str] = []
+        if positive and spike_wh > 0:
+            lead_rid, lead_extra = positive[0]
+            lead_name = str(rooms.get(lead_rid, {}).get("name") or lead_rid)
+            findings.append(
+                f"{lead_name} accounts for {lead_extra / spike_wh * 100:.0f}% of the rise on the busiest day, "
+                f"{_kwh(lead_extra, 1)} kWh above its own average."
+            )
+        if len(swings) >= 2 and swing_spread < 0.2:
+            findings.append(
+                f"That rise is house-wide. Every room's busiest day is about {swings[0][1]:.1f}x its own average, "
+                "so no room is swinging on its own."
+            )
+        elif len(swings) >= 2:
+            calm_rid, calm_ratio = swings[-1]
+            hot_rid, hot_ratio = swings[0]
+            findings.append(
+                f"{rooms.get(hot_rid, {}).get('name', 'One room')} swings to {hot_ratio:.1f}x its own average, "
+                f"while {rooms.get(calm_rid, {}).get('name', 'another')} stays near {calm_ratio:.1f}x."
+            )
+        if weekend_gap_wh > 50:
+            findings.append(
+                f"Holding weekend days to the weekday pace would remove {_kwh(weekend_gap_wh, 1)} kWh, "
+                f"{weekend_gap_wh / total_wh * 100:.0f}% of recorded energy."
+            )
+        if above_floor > 0 and low_day and low_day != peak_day:
+            findings.append(
+                f"Matching every recorded day to the quietest day would remove {_kwh(above_floor, 1)} kWh."
+            )
+        if dominant is not None:
+            share, device, room_id = dominant
+            device_name = smart_device_name(device.get("name"), device.get("type"))
+            room_name = str(rooms.get(room_id, {}).get("name") or room_id)
+            findings.append(f"{device_name} is {share:.0f}% of {room_name}, so that room follows one device.")
+        if home_days and away_days and abs(presence_gap) >= 5:
+            direction = "more" if presence_gap > 0 else "less"
+            findings.append(
+                f"Home days carry {abs(presence_gap):.0f} points {direction} energy than their share of days."
+            )
+        if findings and y + 14 <= floor:
+            shown = findings[:4]
+            p.set_fill_color(*doc.PALE)
+            p.rect(14, y, 182, 3.2 + len(shown) * 4.5, "F")
+            doc.font(7.1, False, doc.INK)
+            text_y = y + 1.8
+            for line in shown:
+                p.set_xy(17, text_y)
+                p.cell(176, 4.2, doc.fit(line, 174, 7.1))
+                text_y += 4.5
+    finally:
+        p.set_auto_page_break(auto=True, margin=34)
 
 
 def render_period_pdf(
