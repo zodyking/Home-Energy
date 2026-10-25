@@ -269,6 +269,28 @@ def _compact_connectivity(events: list[Any]) -> list[dict[str, Any]]:
     return raw
 
 
+def person_home_seconds(days: dict[str, Any], person_id: str) -> float:
+    """Home seconds for one person. Each day counts the tracker that was home longest."""
+    total = 0.0
+    wanted = str(person_id or "").strip()
+    if not wanted:
+        return 0.0
+    for bucket in days.values():
+        if not isinstance(bucket, dict):
+            continue
+        persons = bucket.get("persons") if isinstance(bucket.get("persons"), dict) else {}
+        person = persons.get(wanted)
+        if not isinstance(person, dict):
+            continue
+        trackers = person.get("trackers") if isinstance(person.get("trackers"), dict) else {}
+        best = 0.0
+        for tracker in trackers.values():
+            if isinstance(tracker, dict):
+                best = max(best, float(tracker.get("seconds_home") or 0.0))
+        total += best
+    return total
+
+
 class DurableHistory:
     """Append-only daily ledger plus last-online map. No prune method."""
 
