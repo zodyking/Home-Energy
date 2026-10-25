@@ -702,7 +702,7 @@ class EnergyPanel extends HTMLElement {
       this._statementDetached = null;
       return;
     }
-    if (this._showSettings || !this.shadowRoot) {
+    if (this._showSettings || this._dashboardView !== 'statistics' || !this.shadowRoot) {
       saved?.remove();
       this._closeStatementViewer();
       return;
@@ -710,18 +710,13 @@ class EnergyPanel extends HTMLElement {
     const root = saved || this._statementDetached;
     const slot = this.shadowRoot.getElementById('statement-viewer-slot');
     if (!root) {
-      if (slot) this._mountStatementViewer();
-      return;
-    }
-    if (!slot) {
-      root.remove();
-      this._statementDetached = root;
+      this._mountStatementViewer();
       return;
     }
     this._statementDetached = null;
-    root.classList.add('statement-viewer-inline');
-    root.classList.remove('statement-viewer-modal');
-    slot.appendChild(root);
+    root.classList.toggle('statement-viewer-modal', !slot);
+    root.classList.toggle('statement-viewer-inline', !!slot);
+    (slot || this.shadowRoot).appendChild(root);
     this._syncStatementViewerChrome();
   }
 
@@ -1092,6 +1087,10 @@ class EnergyPanel extends HTMLElement {
     const eventCell = (graphType, count, label) => (dateStart && dateEnd
       ? `<span class="graph-clickable stat-room-events" role="button" tabindex="0" data-graph-type="${graphType}" data-room-id="${rid}" data-room-name="${rname}" title="${label}">${count ?? 0}</span>`
       : `${count ?? 0}`);
+    const eventsCell = `<span class="stat-room-events-combined" title="Warnings / shutoffs / cycles">${eventCell('stat_room_warnings', r.warnings, 'Room warning log')}<span class="stat-event-sep">/</span>${eventCell('stat_room_shutoffs', r.shutoffs, 'Room shutoff log')}<span class="stat-event-sep">/</span>${eventCell('stat_room_power_cycles', r.power_cycles, 'Room cycle log')}</span>`;
+    const homeCell = r.home_hours == null
+      ? '<span class="stat-home-na" title="No person is attached to this room">—</span>'
+      : Number(r.home_hours).toFixed(1);
     const hi = (r.daily_high_kwh != null ? Number(r.daily_high_kwh) : 0).toFixed(2);
     const lo = (r.daily_low_kwh != null ? Number(r.daily_low_kwh) : 0).toFixed(2);
     const avg = (r.daily_avg_kwh != null ? Number(r.daily_avg_kwh) : 0).toFixed(2);
@@ -1100,9 +1099,8 @@ class EnergyPanel extends HTMLElement {
       <td>${(r.name || r.id || '').replace(/</g, '&lt;')}</td>
       <td class="stat-efficiency-cell">${effCell}</td>
       <td>${(Number(r.pct) || 0).toFixed(1)}%</td>
-      <td>${eventCell('stat_room_warnings', r.warnings, 'Room warning log')}</td>
-      <td>${eventCell('stat_room_shutoffs', r.shutoffs, 'Room shutoff log')}</td>
-      <td>${eventCell('stat_room_power_cycles', r.power_cycles, 'Room cycle log')}</td>
+      <td>${eventsCell}</td>
+      <td>${homeCell}</td>
       <td>${hi}</td>
       <td>${lo}</td>
       <td>${avg}</td>
@@ -1142,7 +1140,7 @@ class EnergyPanel extends HTMLElement {
     const tbody = this.shadowRoot.querySelector('#stat-rooms-tbody');
     if (tbody) {
       tbody.innerHTML = rooms.length === 0
-        ? '<tr><td colspan="9" class="statistics-empty">No room data for this range.</td></tr>'
+        ? '<tr><td colspan="8" class="statistics-empty">No room data for this range.</td></tr>'
         : rooms.map((r) => this._statRoomTableRowHtml(r, dateStart, dateEnd, 'stat_upd')).join('');
     }
   }
@@ -2460,6 +2458,9 @@ class EnergyPanel extends HTMLElement {
       .statistics-table th, .statistics-table td { padding: clamp(6px, 1.5vw, 10px) clamp(6px, 2vw, 10px); text-align: left; border-bottom: 1px solid var(--card-border); }
       .statistics-table th { font-weight: 600; color: var(--secondary-text-color); }
       .statistics-table th abbr { text-decoration: none; border-bottom: 1px dotted var(--secondary-text-color); cursor: help; }
+      .stat-room-events-combined { white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .stat-event-sep { color: var(--secondary-text-color); padding: 0 3px; }
+      .stat-home-na { color: var(--secondary-text-color); }
       .statistics-table tfoot { background: var(--table-row-alternative-background-color, rgba(var(--rgb-primary-text-color), 0.03)); }
       .statistics-table tfoot tr { border-top: 2px solid var(--divider-color, var(--card-border)); }
       .statistics-table tfoot th, .statistics-table tfoot td { font-weight: 600; }
@@ -8877,8 +8878,7 @@ class EnergyPanel extends HTMLElement {
       queueMicrotask(() => void this._syncStatsRoomsRadar());
     }
     if (this._dashboardView === 'statistics' && !this._showSettings) {
-      if (this._statsPage === 'activity') this._ensureActivityLog();
-      else this._ensureLatestStatement();
+      this._ensureActivityLog();
     }
   }
 
@@ -10091,7 +10091,7 @@ class EnergyPanel extends HTMLElement {
   }
 
   _ensureActivityLog() {
-    if (this._showSettings || this._dashboardView !== 'statistics' || this._statsPage !== 'activity') return;
+    if (this._showSettings || this._dashboardView !== 'statistics') return;
     const key = this._activityRangeKey();
     if (!key || key === '|') return;
     const statsAt = this._statsFetchedAt || 0;
@@ -10128,7 +10128,7 @@ class EnergyPanel extends HTMLElement {
       if (token !== this._activityLogToken) return;
       this._activityLog = { key, statsAt: stamp, loading: false, loaded: true, events: [], truncated: false, error: 'Could not load warnings' };
     }
-    if (this._statsPage === 'activity' && this._dashboardView === 'statistics' && !this._showSettings) this._render();
+    if (this._dashboardView === 'statistics' && !this._showSettings) this._render();
   }
 
   _renderWarningLog() {
@@ -10199,7 +10199,7 @@ class EnergyPanel extends HTMLElement {
     const totalShutoffs = s.total_shutoffs ?? 0;
     const totalPowerCycles = s.total_power_cycles ?? 0;
     const rooms = s.rooms || [];
-    const activity = this._statsPage === 'activity';
+    const countsClickable = dateStart && dateEnd;
 
     const showOverlay = this._statsLoading;
     const staleLine = s.statistics_pending
@@ -10212,62 +10212,6 @@ class EnergyPanel extends HTMLElement {
     const shutoffIcon = `<svg class="statistics-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`;
     const cycleIcon = `<svg class="statistics-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`;
 
-    const eventBar = `
-            <div class="statistics-event-bar">
-            <div class="statistics-event-item">
-              ${warningIcon}
-              <span class="statistics-event-value" id="stat-total-warnings">${totalWarnings}</span>
-              <span class="statistics-event-label">Warnings</span>
-            </div>
-            <div class="statistics-event-item">
-              ${shutoffIcon}
-              <span class="statistics-event-value" id="stat-total-shutoffs">${totalShutoffs}</span>
-              <span class="statistics-event-label">Shutoffs</span>
-            </div>
-            <div class="statistics-event-item">
-              ${cycleIcon}
-              <span class="statistics-event-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
-              <span class="statistics-event-label">Cycles</span>
-            </div>
-            </div>`;
-
-    const roomDetails = `
-          ${this._renderOfflineAppliancesNotice()}
-          <div class="statistics-table-panel">
-            <div class="statistics-section-header">
-              <h3 class="statistics-section-title">Room Details</h3>
-              <p class="statistics-section-sub">Efficiency and daily metrics for each room</p>
-            </div>
-            ${this._renderRecordingAccuracyNote()}
-            <div class="statistics-table-wrap">
-              <table class="statistics-table statistics-table-compact" aria-describedby="stat-table-desc">
-                <caption id="stat-table-desc" class="sr-only">Room statistics showing efficiency ratings, percentage of total usage, event counts, and daily high/low/average metrics.</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Room</th>
-                    <th scope="col"><abbr title="Efficiency rating">Eff</abbr></th>
-                    <th scope="col"><abbr title="Percent of total">%</abbr></th>
-                    <th scope="col"><abbr title="Voice warnings">Warn</abbr></th>
-                    <th scope="col"><abbr title="Safety shutoffs">Shut</abbr></th>
-                    <th scope="col"><abbr title="Enforcement cycles">Cyc</abbr></th>
-                    <th scope="col"><abbr title="Highest daily kWh">High</abbr></th>
-                    <th scope="col"><abbr title="Lowest daily kWh">Low</abbr></th>
-                    <th scope="col"><abbr title="Average daily kWh">Avg</abbr></th>
-                  </tr>
-                </thead>
-                <tbody id="stat-rooms-tbody">
-                  ${rooms.length === 0 ? '<tr><td colspan="9" class="statistics-empty">No room data for this range.</td></tr>' : ''}
-                  ${rooms.map((r) => this._statRoomTableRowHtml(r, dateStart, dateEnd, 'stat')).join('')}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <section class="monthly-reports" aria-label="Warning log">
-            <h3>Warnings</h3>
-            <p class="statistics-section-sub">Announcements that were spoken out loud for this date range, with the room and what was measured. Entries with no spoken announcement are left out.</p>
-            ${this._renderWarningLog()}
-          </section>`;
-
     return `
       <div class="statistics-view-shell">
         <div class="statistics-loading-overlay" id="statistics-loading-overlay" style="display:${showOverlay ? 'flex' : 'none'}">
@@ -10279,10 +10223,6 @@ class EnergyPanel extends HTMLElement {
           </div>
         </div>
         <div class="statistics-view">
-          <div class="view-tabs" role="tablist" aria-label="Statistics pages">
-            <button type="button" class="view-tab ${activity ? '' : 'active'}" data-stats-page="statement" role="tab" aria-selected="${activity ? 'false' : 'true'}">Statement</button>
-            <button type="button" class="view-tab ${activity ? 'active' : ''}" data-stats-page="activity" role="tab" aria-selected="${activity ? 'true' : 'false'}">Room activity</button>
-          </div>
           <div class="statistics-banner">
             <div class="statistics-banner-row">
               <span class="statistics-banner-label" id="stat-period-label">${s.period_source === 'billing' ? 'Current billing cycle' : 'Statistics window'}</span>
@@ -10290,9 +10230,74 @@ class EnergyPanel extends HTMLElement {
               <span class="statistics-narrowed" id="stat-narrowed" style="${isNarrowed ? '' : 'display:none'}">Narrowed to dates you picked.</span>
             </div>
             ${s.statistics_pending ? `<div class="statistics-pending-banner" id="stat-pending-banner">Building usage totals — numbers update automatically when the snapshot is ready.</div>` : ''}
-            ${activity ? eventBar : ''}
+            <div class="statistics-event-bar">
+            <div class="statistics-event-item${countsClickable ? ' graph-clickable' : ''}" ${countsClickable ? 'data-graph-type="stat_total_warnings" title="Open threshold warning log"' : ''}>
+              ${warningIcon}
+              <span class="statistics-event-value" id="stat-total-warnings">${totalWarnings}</span>
+              <span class="statistics-event-label">Warnings</span>
+            </div>
+            <div class="statistics-event-item${countsClickable ? ' graph-clickable' : ''}" ${countsClickable ? 'data-graph-type="stat_total_shutoffs" title="Open safety shutoff log"' : ''}>
+              ${shutoffIcon}
+              <span class="statistics-event-value" id="stat-total-shutoffs">${totalShutoffs}</span>
+              <span class="statistics-event-label">Shutoffs</span>
+            </div>
+            <div class="statistics-event-item${countsClickable ? ' graph-clickable' : ''}" ${countsClickable ? 'data-graph-type="stat_total_power_cycles" title="Open enforcement cycle log"' : ''}>
+              ${cycleIcon}
+              <span class="statistics-event-value" id="stat-total-power-cycles">${totalPowerCycles}</span>
+              <span class="statistics-event-label">Cycles</span>
+            </div>
+            </div>
           </div>
-          ${activity ? roomDetails : this._renderMonthlyReportsArchive()}
+
+          ${this._renderOfflineAppliancesNotice()}
+
+          <div class="statistics-content-grid">
+            <div class="statistics-radar-panel">
+              <div class="statistics-section-header">
+                <h3 class="statistics-section-title">Room Usage</h3>
+                <p class="statistics-section-sub">Percent of tracked energy by room (non-zero rooms only)</p>
+              </div>
+              ${this._renderRecordingAccuracyNote()}
+              <div id="stat-rooms-radar-chart" class="stat-rooms-radar-mount" aria-label="Room usage share pie chart"></div>
+              <div id="stat-radar-selection" class="stat-radar-selection" role="region" aria-live="polite">
+                <p class="stat-radar-selection-meta">Tap a slice or room in the legend for details and to open a usage graph.</p>
+              </div>
+            </div>
+
+            <div class="statistics-table-panel">
+              <div class="statistics-section-header">
+                <h3 class="statistics-section-title">Room Details</h3>
+                <p class="statistics-section-sub">Efficiency and daily metrics for each room</p>
+              </div>
+              <div class="statistics-table-wrap">
+                <table class="statistics-table statistics-table-compact" aria-describedby="stat-table-desc">
+                  <caption id="stat-table-desc" class="sr-only">Room statistics showing efficiency ratings, percentage of total usage, event counts, and daily high/low/average metrics.</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Room</th>
+                      <th scope="col"><abbr title="Efficiency rating">Eff</abbr></th>
+                      <th scope="col"><abbr title="Percent of total">%</abbr></th>
+                      <th scope="col"><abbr title="Warnings / shutoffs / cycles">Events</abbr></th>
+                      <th scope="col"><abbr title="Hours the attached person was home during this range. Only rooms with a person.">Home Hours</abbr></th>
+                      <th scope="col"><abbr title="Highest daily kWh">High</abbr></th>
+                      <th scope="col"><abbr title="Lowest daily kWh">Low</abbr></th>
+                      <th scope="col"><abbr title="Average daily kWh">Avg</abbr></th>
+                    </tr>
+                  </thead>
+                  <tbody id="stat-rooms-tbody">
+                    ${rooms.length === 0 ? '<tr><td colspan="8" class="statistics-empty">No room data for this range.</td></tr>' : ''}
+                    ${rooms.map((r) => this._statRoomTableRowHtml(r, dateStart, dateEnd, 'stat')).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <section class="monthly-reports" aria-label="Warning log">
+            <h3>Warnings</h3>
+            <p class="statistics-section-sub">Announcements that were spoken out loud for this date range, with the room and what was measured. Entries with no spoken announcement are left out.</p>
+            ${this._renderWarningLog()}
+          </section>
+          ${this._renderMonthlyReportsArchive()}
         </div>
       </div>
     `;
@@ -10364,15 +10369,7 @@ class EnergyPanel extends HTMLElement {
 
   _renderMonthlyReportsArchive() {
     const reports = Array.isArray(this._statsData?.monthly_reports) ? this._statsData.monthly_reports : [];
-    if (!reports.length) {
-      return `
-      <section class="monthly-reports" aria-label="Monthly energy statement">
-        <h3>Monthly statement</h3>
-        <p class="statistics-section-sub">One PDF for the billing range in Statistics settings. Each day in that period is broken down by room. If the billing sensors are not set, the statement uses the calendar month.</p>
-        <p class="monthly-reports-empty">No monthly statement yet. One PDF is saved for the current billing period, with each day broken down by room.</p>
-      </section>`;
-    }
-    const older = reports.slice(1).map((report) => {
+    const rows = reports.map((report) => {
       const key = this._eventLogEscape(report.key || report.month || '');
       const title = this._eventLogEscape(report.label || report.title || key || 'Report');
       const generated = this._eventLogEscape(this._formatOfflineWhen(report.generated_at));
@@ -10383,16 +10380,17 @@ class EnergyPanel extends HTMLElement {
             <div class="monthly-report-meta">Monthly statement · updated ${generated}</div>
           </div>
           <div class="monthly-report-actions">
+            <button type="button" class="btn btn-secondary" data-monthly-report="${key}" data-monthly-action="open">Open</button>
             <button type="button" class="btn btn-secondary" data-monthly-report="${key}" data-monthly-action="download">Download</button>
           </div>
         </div>`;
     }).join('');
+    const body = rows || '<p class="monthly-reports-empty">No monthly statement yet. One PDF is saved for the current billing period, with each day broken down by room.</p>';
     return `
       <section class="monthly-reports" aria-label="Monthly energy statement">
         <h3>Monthly statement</h3>
         <p class="statistics-section-sub">One PDF for the billing range in Statistics settings. Each day in that period is broken down by room. If the billing sensors are not set, the statement uses the calendar month.</p>
-        <div id="statement-viewer-slot"></div>
-        ${older}
+        ${body}
       </section>`;
   }
 
@@ -19574,15 +19572,6 @@ class EnergyPanel extends HTMLElement {
         }
       });
     }
-
-    this.shadowRoot.querySelectorAll('[data-stats-page]').forEach((tab) => {
-      tab.addEventListener('click', () => {
-        const page = tab.dataset.statsPage === 'activity' ? 'activity' : 'statement';
-        if (page === this._statsPage) return;
-        this._statsPage = page;
-        this._render();
-      });
-    });
 
     this.shadowRoot.querySelectorAll('.view-tab').forEach(tab => {
       tab.addEventListener('click', () => {

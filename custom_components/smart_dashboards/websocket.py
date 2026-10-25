@@ -19,6 +19,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .config_manager import (
+    _normalize_presence_person_entity,
     _normalize_room_budget_boost_weekdays,
     outdoor_temperature_from_entity,
     resolve_wall_heater_effective_temperatures,
@@ -2169,6 +2170,32 @@ def _fetch_statistics_sensor_values(
     }
 
 
+def _attach_room_home_hours(config_manager, rooms: list[dict[str, Any]], start: str, end: str) -> None:
+    """Set home_hours on rooms that have a person. Other rooms omit the field."""
+    from .durable_records import person_home_seconds
+
+    presence: dict[str, str] = {}
+    for room in config_manager.energy_config.get("rooms", []):
+        rid = room.get("id", str(room.get("name") or "").lower().replace(" ", "_"))
+        person = _normalize_presence_person_entity(room.get("presence_person_entity"))
+        if rid and person:
+            presence[str(rid)] = person
+    if not presence:
+        return
+    days: dict[str, Any] = {}
+    durable = getattr(config_manager, "durable", None)
+    if durable is not None:
+        days = durable.range_days(start, end)
+    hours = {
+        person_id: round(person_home_seconds(days, person_id) / 3600.0, 1)
+        for person_id in set(presence.values())
+    }
+    for row in rooms:
+        person_id = presence.get(str(row.get("id") or ""))
+        if person_id:
+            row["home_hours"] = hours.get(person_id, 0.0)
+
+
 async def async_build_statistics_payload(
     hass: HomeAssistant,
     config_manager,
@@ -2509,6 +2536,7 @@ async def async_build_statistics_payload(
     except Exception as err:
         _LOGGER.warning("Monthly room ratings embed failed: %s", err)
 
+    _attach_room_home_hours(config_manager, result["rooms"], start, end)
     return result
 
 
