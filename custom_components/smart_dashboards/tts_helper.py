@@ -10,7 +10,8 @@ from .const import DEFAULT_TTS_LANGUAGE
 
 _LOGGER = logging.getLogger(__name__)
 
-# States in which TTS may be sent; do not send when off, playing, paused, etc.
+# States that used to gate the queue. tts.speak is sent without waiting for these,
+# because speakers often stay off, paused, or playing and that wait stacked announcements.
 READY_FOR_TTS_STATES = ("on", "idle", "standby")
 
 
@@ -57,9 +58,12 @@ async def async_send_tts(
         _LOGGER.error("Media player %s not found", media_player)
         return
 
-    # Set volume if specified
+    # Set volume if specified. A volume failure must not block the announcement.
     if volume is not None:
-        await async_set_volume(hass, media_player, volume)
+        try:
+            await async_set_volume(hass, media_player, volume)
+        except Exception as err:
+            _LOGGER.warning("Volume change failed for %s, speaking anyway: %s", media_player, err)
 
     # Find a TTS entity if not specified
     if not tts_entity:
@@ -69,15 +73,19 @@ async def async_send_tts(
         _LOGGER.error("No TTS entity found")
         return
 
-    # Send TTS using the correct service call format
+    # Every announcement uses tts.speak. Language is included when one is configured.
+    service_data: dict = {
+        "media_player_entity_id": media_player,
+        "message": message.strip(),
+    }
+    if language:
+        service_data["language"] = language
+
     try:
         await hass.services.async_call(
             "tts",
             "speak",
-            {
-                "media_player_entity_id": media_player,
-                "message": message.strip(),
-            },
+            service_data,
             target={"entity_id": tts_entity},
             blocking=blocking,
         )
@@ -89,26 +97,27 @@ async def async_send_tts(
 
 
 async def _find_tts_entity(hass: HomeAssistant, language: str | None = None) -> str | None:
-    """Find an available TTS entity."""
-    lang = language or DEFAULT_TTS_LANGUAGE
-    
-    # Look for TTS entities
-    tts_entities = []
+    """Find one TTS engine. Every announcement uses this entity with tts.speak."""
+    lang = (language or DEFAULT_TTS_LANGUAGE).lower()
+
+    available: list[str] = []
+    fallback: list[str] = []
     for state in hass.states.async_all():
-        if state.entity_id.startswith("tts."):
-            tts_entities.append(state.entity_id)
-    
-    if not tts_entities:
+        if not state.entity_id.startswith("tts."):
+            continue
+        fallback.append(state.entity_id)
+        if (state.state or "").lower() not in ("unavailable", "unknown"):
+            available.append(state.entity_id)
+
+    candidates = available or fallback
+    if not candidates:
         _LOGGER.warning("No TTS entities found in Home Assistant")
         return None
 
-    # Try to find one matching the language
-    for entity_id in tts_entities:
+    for entity_id in candidates:
         if lang in entity_id.lower():
             return entity_id
-    
-    # Return first available
-    return tts_entities[0] if tts_entities else None
+    return candidates[0]
 
 
 async def async_set_volume(

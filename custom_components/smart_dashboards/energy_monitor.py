@@ -5520,7 +5520,7 @@ class EnergyMonitor:
         tts_settings: dict,
         post_send_callback=None,
     ) -> None:
-        """Send TTS and optionally run responsive light loop. Waits for media player ready (on/idle/standby).
+        """Send TTS and optionally flash responsive lights. Speech uses tts.speak and does not wait on the lights.
         post_send_callback runs after TTS is actually sent (incl. when dequeued from queue)."""
         if not media_player:
             return
@@ -5541,17 +5541,20 @@ class EnergyMonitor:
                         volume=volume,
                     )
                 )
-                light_task = asyncio.create_task(
-                    self._async_light_warning_loop(wrgb_lights, rgb, temp_k, tts_task, interval)
-                )
-                # Restore lights in a finally so they are not stuck in the warning
-                # color when TTS fails (audit BUG 10).
-                try:
-                    await asyncio.gather(tts_task, light_task)
-                except Exception as e:
-                    _LOGGER.warning("Responsive-light TTS gather failed: %s", e)
-                finally:
-                    await self._async_restore_lights(wrgb_lights, restore_data)
+
+                async def _lights_then_restore() -> None:
+                    try:
+                        await self._async_light_warning_loop(
+                            wrgb_lights, rgb, temp_k, tts_task, interval
+                        )
+                    except Exception as e:
+                        _LOGGER.warning("Responsive-light loop failed: %s", e)
+                    finally:
+                        await self._async_restore_lights(wrgb_lights, restore_data)
+
+                # Lights follow the announcement. They do not hold the next TTS call.
+                self.hass.async_create_task(_lights_then_restore())
+                await tts_task
             else:
                 await async_send_tts(
                     self.hass,
