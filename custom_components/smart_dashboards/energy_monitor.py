@@ -2138,7 +2138,15 @@ class EnergyMonitor:
             if not due:
                 continue
             path = await self.hass.async_add_executor_job(
-                write_period_pdf, data_dir, key, days, generated, events, alerts
+                write_period_pdf,
+                data_dir,
+                key,
+                days,
+                generated,
+                events,
+                alerts,
+                self.hass,
+                self.config_manager,
             )
             if path is not None:
                 wrote = True
