@@ -20,6 +20,29 @@ from .durable_records import DurableHistory, room_id_of
 _LOGGER = logging.getLogger(__name__)
 
 
+def spoken_event_counter_key(event: dict[str, Any]) -> str | None:
+    """Map a spoken log row to the statistics counter it belongs on.
+
+    The warnings list shows these same spoken rows. Door reminders are stored
+    as warnings and belong on that counter even though they do not advance
+    enforcement.
+    """
+    if not isinstance(event, dict):
+        return None
+    if event.get("tts_succeeded") is False:
+        return None
+    if not str(event.get("tts_message") or "").strip():
+        return None
+    kind = str(event.get("type") or "")
+    if kind == "warning":
+        return "warnings"
+    if kind == "shutoff":
+        return "shutoffs"
+    if kind == "power_cycle":
+        return "power_cycles"
+    return None
+
+
 def outdoor_temperature_from_entity(hass: HomeAssistant, entity_id: str | None) -> float | None:
     """Current outdoor temperature from weather.* (attribute) or sensor.* (state)."""
     eid = str(entity_id or "").strip()
@@ -2645,6 +2668,31 @@ class ConfigManager:
         if len(collected) > max_n:
             return collected[:max_n], True
         return collected, False
+
+    def count_spoken_events_in_range(self, date_start: str, date_end: str) -> dict[str, Any]:
+        """Count spoken warnings, shutoffs, and cycles in an inclusive date range."""
+        events, _truncated = self.get_event_log(date_start=date_start, date_end=date_end)
+        totals = {"warnings": 0, "shutoffs": 0, "power_cycles": 0}
+        by_room: dict[str, dict[str, int]] = {}
+        by_name: dict[str, dict[str, int]] = {}
+        for event in events:
+            key = spoken_event_counter_key(event)
+            if not key:
+                continue
+            totals[key] += 1
+            rid = str(event.get("room_id") or "").strip()
+            if rid:
+                bucket = by_room.setdefault(
+                    rid, {"warnings": 0, "shutoffs": 0, "power_cycles": 0}
+                )
+                bucket[key] += 1
+            name = str(event.get("room_name") or "").strip().lower()
+            if name:
+                named = by_name.setdefault(
+                    name, {"warnings": 0, "shutoffs": 0, "power_cycles": 0}
+                )
+                named[key] += 1
+        return {"totals": totals, "rooms": by_room, "names": by_name}
 
     # Daily totals history (end-of-day snapshots for 30-day graphs)
     async def _async_load_daily_totals(self) -> None:

@@ -2467,6 +2467,27 @@ async def async_build_statistics_payload(
             room_sums[rid]["warnings"] += int(rdata.get("warnings", 0))
             room_sums[rid]["shutoffs"] += int(rdata.get("shutoffs", 0))
             room_sums[rid]["power_cycles"] += int(rdata.get("power_cycles", 0))
+
+    spoken = config_manager.count_spoken_events_in_range(start, end)
+    spoken_totals = spoken.get("totals") or {}
+    total_warnings = int(spoken_totals.get("warnings", 0))
+    total_shutoffs = int(spoken_totals.get("shutoffs", 0))
+    total_power_cycles = int(spoken_totals.get("power_cycles", 0))
+
+    def _spoken_counts_for(rid: str, name: str) -> dict[str, int]:
+        empty = {"warnings": 0, "shutoffs": 0, "power_cycles": 0}
+        by_room = spoken.get("rooms") or {}
+        if rid and rid in by_room:
+            return by_room[rid]
+        by_name = spoken.get("names") or {}
+        return by_name.get(str(name or "").strip().lower(), empty)
+
+    for rid, rsum in room_sums.items():
+        counts = _spoken_counts_for(rid, rid.replace("_", " "))
+        rsum["warnings"] = int(counts.get("warnings", 0))
+        rsum["shutoffs"] = int(counts.get("shutoffs", 0))
+        rsum["power_cycles"] = int(counts.get("power_cycles", 0))
+
     result["total_kwh"] = round(total_kwh, 2)
     result["total_warnings"] = total_warnings
     result["total_shutoffs"] = total_shutoffs
@@ -2480,6 +2501,7 @@ async def async_build_statistics_payload(
             rid,
             {"kwh": 0.0, "warnings": 0, "shutoffs": 0, "power_cycles": 0},
         )
+        counts = _spoken_counts_for(rid, name)
         kwh = round(rsum["kwh"], 2)
         pct = round((kwh / total_kwh * 100) if total_kwh > 0 else 0, 1)
         result["rooms"].append({
@@ -2487,9 +2509,9 @@ async def async_build_statistics_payload(
             "name": name,
             "kwh": kwh,
             "pct": pct,
-            "warnings": rsum["warnings"],
-            "shutoffs": rsum["shutoffs"],
-            "power_cycles": rsum.get("power_cycles", 0),
+            "warnings": int(counts.get("warnings", 0)),
+            "shutoffs": int(counts.get("shutoffs", 0)),
+            "power_cycles": int(counts.get("power_cycles", 0)),
             **_room_daily_kwh_stats(rid, kwh),
         })
 
@@ -2511,12 +2533,13 @@ async def async_build_statistics_payload(
 
     try:
         room_event_totals = {
-            rid: {
-                "warnings": int(rsum["warnings"]),
-                "shutoffs": int(rsum["shutoffs"]),
-                "power_cycles": int(rsum.get("power_cycles", 0)),
+            r["id"]: {
+                "warnings": int(r.get("warnings", 0)),
+                "shutoffs": int(r.get("shutoffs", 0)),
+                "power_cycles": int(r.get("power_cycles", 0)),
             }
-            for rid, rsum in room_sums.items()
+            for r in result["rooms"]
+            if r.get("id")
         }
         monthly = await hass.async_add_executor_job(
             partial(
