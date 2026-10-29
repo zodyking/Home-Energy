@@ -9101,7 +9101,7 @@ class EnergyPanel extends HTMLElement {
                 return `
                 <li class="event-log-entry">
                   <div class="event-log-entry-row">
-                    <span class="event-log-ts">${e.ts ? e.ts.replace('T', ' ').slice(0, 19) : '—'}</span>
+                    <span class="event-log-ts">${this._formatEventTimestamp(e.ts) || '—'}</span>
                     <span class="event-log-who">${this._eventLogEscape(who)}</span>
                     <span class="event-log-badge tts-badge" style="${badgeStyle}">${badgeText}</span>
                   </div>
@@ -9997,6 +9997,21 @@ class EnergyPanel extends HTMLElement {
     return `${m.padStart(2, '0')}/${d.padStart(2, '0')}/${y}`;
   }
 
+  _formatEventTimestamp(ts) {
+    const raw = String(ts || '').trim();
+    if (!raw) return '';
+    const parsed = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'));
+    if (Number.isNaN(parsed.getTime())) return raw.replace('T', ' ').slice(0, 19);
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    let hour = parsed.getHours();
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    hour %= 12;
+    if (hour === 0) hour = 12;
+    const minute = String(parsed.getMinutes()).padStart(2, '0');
+    return `${month}/${day}/${parsed.getFullYear()} ${hour}:${minute} ${ampm}`;
+  }
+
   /** Local calendar date from YYYY-MM-DD for chart titles: cap at today (data only exists through today). */
   _statisticsChartTitleEndDate(dateEndIso) {
     const s = String(dateEndIso || '').trim();
@@ -10154,7 +10169,7 @@ class EnergyPanel extends HTMLElement {
           : event.type === 'phase_change'
             ? 'Phase change'
             : 'Warning';
-      const when = event.ts ? String(event.ts).replace('T', ' ').slice(0, 19) : '';
+      const when = this._formatEventTimestamp(event.ts);
       const room = event.room_name || 'Home';
       const who = event.outlet_name ? `${room} – ${event.outlet_name}` : room;
       const badgeStyle = event.type === 'power_cycle'

@@ -8,5 +8,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/your-repo/smart-dashboards/issues",
   "requirements": ["num2words>=0.5.13", "fpdf2==2.8.9"],
-  "version": "1.0.110"
+  "version": "1.0.111"
 }
