@@ -1294,6 +1294,65 @@ def _analysis_hbar(doc: _ReportPdf, x: float, y: float, width: float, label: str
     p.cell(width - (track_x - x) - track_w - 1, 4.4, doc.fit(caption, 20, 6.4, True), align="R")
 
 
+def _home_hour_rates(
+    roll: dict[str, Any],
+    rooms: dict[str, Any],
+    room_persons: dict[str, str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """kWh per home hour for people, then for rooms.
+
+    A room with a person uses that person's hours. A room with nobody attached
+    uses the longest any one person was home each day, so overlapping people
+    are not added and a day still counts when anyone was home.
+    """
+    persons = roll.get("persons") or {}
+    occupied = 0.0
+    for people in (roll.get("daily_home") or {}).values():
+        if not isinstance(people, dict) or not people:
+            continue
+        longest = max(float(seconds or 0) for seconds in people.values())
+        if longest > 0:
+            occupied += min(86400.0, longest)
+    household_hours = occupied / 3600.0
+    person_hours = {
+        str(pid): float(person.get("seconds_home") or 0.0) / 3600.0
+        for pid, person in persons.items()
+        if isinstance(person, dict)
+    }
+    person_kwh = {pid: 0.0 for pid in person_hours}
+    room_rows: list[dict[str, Any]] = []
+    for rid, room in rooms.items():
+        if not isinstance(room, dict):
+            continue
+        kwh = float(room.get("wh") or 0.0) / 1000.0
+        person_id = str(room_persons.get(str(rid)) or "")
+        if person_id:
+            hours = person_hours.get(person_id, 0.0)
+            if hours <= 0:
+                continue
+            person_kwh[person_id] = person_kwh.get(person_id, 0.0) + kwh
+        elif household_hours > 0:
+            hours = household_hours
+        else:
+            continue
+        room_rows.append({
+            "rid": str(rid),
+            "name": str(room.get("name") or rid),
+            "rate": kwh / hours,
+        })
+    person_rows: list[dict[str, Any]] = []
+    for pid, hours in person_hours.items():
+        if hours <= 0:
+            continue
+        person_rows.append({
+            "name": str((persons.get(pid) or {}).get("name") or pid),
+            "rate": person_kwh.get(pid, 0.0) / hours,
+        })
+    person_rows.sort(key=lambda row: float(row["rate"]), reverse=True)
+    room_rows.sort(key=lambda row: float(row["rate"]), reverse=True)
+    return person_rows, room_rows
+
+
 def _draw_bill_analysis(
     doc: _ReportPdf,
     roll: dict[str, Any],
@@ -1305,12 +1364,14 @@ def _draw_bill_analysis(
     rooms: dict[str, Any],
     ordered_rids: list[str],
     devices: list[dict[str, Any]],
+    room_persons: dict[str, str] | None = None,
+    room_stars: dict[str, float] | None = None,
 ) -> None:
     """One page of charts. Stops rather than opening a second analysis page."""
     doc.section(
         " ",
         "Bill Analysis",
-        "What is uneven, what created the spike, and whether presence changes the mix. Totals already shown on other pages are not repeated.",
+        "What is uneven, which room swings, and how much energy each home hour carries.",
         reserve=18,
     )
     daily = roll["daily_total"]
@@ -1398,6 +1459,10 @@ def _draw_bill_analysis(
             if dominant is None or share > dominant[0]:
                 dominant = (share, device, room_id)
 
+        person_rates, room_rates = _home_hour_rates(roll, rooms, room_persons or {})
+        rated = person_rates + room_rates
+        steepest = max(rated, key=lambda row: float(row["rate"])) if rated else None
+
         y = p.get_y() + 1.0
         tile_w = 44.5
         gap = 1.3
@@ -1409,12 +1474,12 @@ def _draw_bill_analysis(
             elif swings:
                 swing_value = f"{swings[0][1]:.1f}x"
                 swing_label = f"{rooms.get(swings[0][0], {}).get('name', 'Room')} vs its own average"
-            if home_days and away_days:
-                mix_value = f"{presence_gap:+.0f} pts"
-                mix_label = "Home energy share minus day share"
+            if steepest is not None:
+                mix_value = f"{float(steepest['rate']):.2f}"
+                mix_label = f"{steepest['name']}, kWh per home hour"
             else:
-                mix_value = "No split"
-                mix_label = "Every recorded day had the same presence"
+                mix_value = "-"
+                mix_label = "No home hours to compare"
             tiles = [
                 (f"{heavy_share:.0f}%", f"Energy in the highest {heavy_count} of {n_recorded} days"),
                 (f"{above_share:.0f}%", "Energy above the quiet-day floor"),
@@ -1425,7 +1490,7 @@ def _draw_bill_analysis(
                 _analysis_tile(doc, 14 + index * (tile_w + gap), y, tile_w, 16, value, label)
             y += 19
 
-        panel_h = 62
+        panel_h = 50
         if positive and y + panel_h <= floor:
             p.set_draw_color(*doc.LINE)
             p.set_line_width(0.25)
@@ -1443,7 +1508,7 @@ def _draw_bill_analysis(
             p.cell(84, 3.4, "Highest days first. Line is an even day.")
             top_extra = positive[0][1] or 1.0
             bar_y = y + 12
-            for index, (rid, extra) in enumerate(positive[:6]):
+            for index, (rid, extra) in enumerate(positive[:5]):
                 _analysis_hbar(
                     doc, 17, bar_y, 83,
                     str(rooms.get(rid, {}).get("name") or rid),
@@ -1451,7 +1516,7 @@ def _draw_bill_analysis(
                     f"+{_kwh(extra, 1)}",
                     doc.ROOM_COLORS[index % len(doc.ROOM_COLORS)],
                 )
-                bar_y += 7.2
+                bar_y += 6.6
             shown = ranked_days[:8]
             hottest = shown[0][0] if shown else 1.0
             even_wh = total_wh / n_recorded if n_recorded else 0.0
@@ -1475,107 +1540,68 @@ def _draw_bill_analysis(
                 p.cell(10, 3.2, str(parsed.day) if parsed else "", align="C")
             y += panel_h + 3
 
-        if home_days and away_days and y + 40 <= floor:
+        available = floor - y - 1
+        rate_count = len(person_rates) + len(room_rates)
+        row_count = max(len(swings), rate_count, 1)
+        row_h = 6.4
+        if 14 + row_count * row_h > available:
+            row_h = max(4.8, (available - 14) / row_count)
+        pair_h = min(available, 14 + row_count * row_h)
+        if pair_h >= 22 and (swings or rated):
             p.set_draw_color(*doc.LINE)
             p.set_line_width(0.25)
-            p.rect(14, y, 182, 38, "D")
-            doc.font(8, True, doc.DARK)
-            p.set_xy(17, y + 2.2)
-            p.cell(120, 4.2, "Presence changes the mix")
-            doc.font(6.2, False, doc.MUTED)
-            p.set_xy(110, y + 2.2)
-            p.cell(82, 4.2, "Share of days beside share of energy", align="R")
-            rows = (
-                (doc.ACCENT, "Home, share of days", home_day_pct),
-                (doc.ACCENT, "Home, share of energy", home_energy_pct),
-                (doc.AMBER, "Away, share of days", away_day_pct),
-                (doc.AMBER, "Away, share of energy", away_energy_pct),
-            )
-            bar_y = y + 8
-            for color, label, pct in rows:
-                _analysis_hbar(doc, 17, bar_y, 176, label, pct / 100, f"{pct:.0f}%", color, label_w=62)
-                bar_y += 7.0
-            y += 41
-        elif y + 12 <= floor:
-            doc.font(7.2, False, doc.MUTED)
-            p.set_xy(14, y)
-            p.cell(182, 4.2, "Presence cannot be separated: every recorded day had the same at-home result.")
-            y += 8
-
-        swing_h = 8 + min(5, len(swings)) * 7.2
-        if swing_spread >= 0.2 and y + swing_h <= floor:
-            p.set_draw_color(*doc.LINE)
-            p.set_line_width(0.25)
-            p.rect(14, y, 182, swing_h, "D")
+            p.rect(14, y, 89, pair_h, "D")
+            p.rect(105, y, 91, pair_h, "D")
             doc.font(8, True, doc.DARK)
             p.set_xy(17, y + 2.0)
-            p.cell(120, 4.2, "How far each room swings")
+            p.cell(82, 4.2, "How far each room swings")
+            p.set_xy(108, y + 2.0)
+            p.cell(84, 4.2, "kWh per home hour")
             doc.font(6.2, False, doc.MUTED)
-            p.set_xy(110, y + 2.0)
-            p.cell(82, 4.2, "Busiest day divided by that room's own average", align="R")
-            top_swing = swings[0][1] or 1.0
-            bar_y = y + 8
-            for index, (rid, ratio) in enumerate(swings[:5]):
+            p.set_xy(17, y + 6.2)
+            p.cell(82, 3.2, "Busiest day divided by its own average")
+            p.set_xy(108, y + 6.2)
+            p.cell(84, 3.2, "Usage divided by hours at home")
+            slots = max(1, int((pair_h - 12) / row_h))
+            top_swing = swings[0][1] if swings else 1.0
+            bar_y = y + 11
+            for rid, ratio in swings[:slots]:
                 _analysis_hbar(
-                    doc, 17, bar_y, 176,
+                    doc, 17, bar_y, 83,
                     str(rooms.get(rid, {}).get("name") or rid),
-                    ratio / top_swing,
+                    ratio / (top_swing or 1.0),
                     f"{ratio:.1f}x",
                     doc.ACCENT if ratio >= 1.5 else doc.TEAL,
-                    label_w=62,
+                    label_w=32,
                 )
-                bar_y += 7.2
-            y += swing_h + 3
-
-        findings: list[str] = []
-        if positive and spike_wh > 0:
-            lead_rid, lead_extra = positive[0]
-            lead_name = str(rooms.get(lead_rid, {}).get("name") or lead_rid)
-            findings.append(
-                f"{lead_name} accounts for {lead_extra / spike_wh * 100:.0f}% of the rise on the busiest day, "
-                f"{_kwh(lead_extra, 1)} kWh above its own average."
-            )
-        if len(swings) >= 2 and swing_spread < 0.2:
-            findings.append(
-                f"That rise is house-wide. Every room's busiest day is about {swings[0][1]:.1f}x its own average, "
-                "so no room is swinging on its own."
-            )
-        elif len(swings) >= 2:
-            calm_rid, calm_ratio = swings[-1]
-            hot_rid, hot_ratio = swings[0]
-            findings.append(
-                f"{rooms.get(hot_rid, {}).get('name', 'One room')} swings to {hot_ratio:.1f}x its own average, "
-                f"while {rooms.get(calm_rid, {}).get('name', 'another')} stays near {calm_ratio:.1f}x."
-            )
-        if weekend_gap_wh > 50:
-            findings.append(
-                f"Holding weekend days to the weekday pace would remove {_kwh(weekend_gap_wh, 1)} kWh, "
-                f"{weekend_gap_wh / total_wh * 100:.0f}% of recorded energy."
-            )
-        if above_floor > 0 and low_day and low_day != peak_day:
-            findings.append(
-                f"Matching every recorded day to the quietest day would remove {_kwh(above_floor, 1)} kWh."
-            )
-        if dominant is not None:
-            share, device, room_id = dominant
-            device_name = smart_device_name(device.get("name"), device.get("type"))
-            room_name = str(rooms.get(room_id, {}).get("name") or room_id)
-            findings.append(f"{device_name} is {share:.0f}% of {room_name}, so that room follows one device.")
-        if home_days and away_days and abs(presence_gap) >= 5:
-            direction = "more" if presence_gap > 0 else "less"
-            findings.append(
-                f"Home days carry {abs(presence_gap):.0f} points {direction} energy than their share of days."
-            )
-        if findings and y + 14 <= floor:
-            shown = findings[:4]
-            p.set_fill_color(*doc.PALE)
-            p.rect(14, y, 182, 3.2 + len(shown) * 4.5, "F")
-            doc.font(7.1, False, doc.INK)
-            text_y = y + 1.8
-            for line in shown:
-                p.set_xy(17, text_y)
-                p.cell(176, 4.2, doc.fit(line, 174, 7.1))
-                text_y += 4.5
+                bar_y += row_h
+            top_rate = max((float(row["rate"]) for row in rated), default=1.0) or 1.0
+            shown_people = person_rates[:slots]
+            shown_rooms = room_rates[: max(0, slots - len(shown_people))]
+            bar_y = y + 11
+            stars = room_stars or {}
+            for row in shown_people:
+                _analysis_hbar(
+                    doc, 108, bar_y, 85,
+                    str(row["name"]),
+                    float(row["rate"]) / top_rate,
+                    f"{float(row['rate']):.2f}",
+                    doc.TEAL,
+                    label_w=36,
+                )
+                bar_y += row_h
+            for row in shown_rooms:
+                score = stars.get(str(row["rid"]))
+                label = str(row["name"]) if score is None else f"{row['name']} {float(score):.1f}"
+                _analysis_hbar(
+                    doc, 108, bar_y, 85,
+                    label,
+                    float(row["rate"]) / top_rate,
+                    f"{float(row['rate']):.2f}",
+                    doc.ACCENT,
+                    label_w=36,
+                )
+                bar_y += row_h
     finally:
         p.set_auto_page_break(auto=True, margin=34)
 
@@ -1586,6 +1612,8 @@ def render_period_pdf(
     generated_label: str,
     events: list[dict[str, Any]] | None = None,
     alerts: list[dict[str, Any]] | None = None,
+    room_persons: dict[str, str] | None = None,
+    room_stars: dict[str, float] | None = None,
 ) -> bytes:
     """Generate an editorial statement using the unmodified energy rollup."""
     from .durable_records import collapse_connectivity_events
@@ -1643,6 +1671,8 @@ def render_period_pdf(
     _draw_bill_analysis(
         doc, roll, as_of, avg_wh, total_wh, n_recorded, missing,
         rooms, ordered_rids, devices,
+        room_persons=room_persons,
+        room_stars=room_stars,
     )
 
     # All appliances remain in the report; large device lists get continued pages.
@@ -1771,6 +1801,87 @@ def render_period_pdf(
 # --------------------------------------------------------------------------- files
 
 
+def analysis_context(
+    hass: Any,
+    config_manager: Any,
+    start: str,
+    end: str,
+    days: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, float]]:
+    """Room-to-person links and the same efficiency scores the statistics page uses."""
+    from homeassistant.util import dt as dt_util
+
+    from .config_manager import _normalize_presence_person_entity
+    from .room_ratings import canonical_room_id, compute_monthly_ratings
+
+    room_persons: dict[str, str] = {}
+    rooms_cfg = list(config_manager.energy_config.get("rooms", []) or [])
+    for room in rooms_cfg:
+        if not isinstance(room, dict):
+            continue
+        person = _normalize_presence_person_entity(room.get("presence_person_entity"))
+        if person:
+            room_persons[canonical_room_id(room)] = person
+
+    start_day = _parse_day(start)
+    end_day = _parse_day(end)
+    today = dt_util.now().date()
+    stat_days: list[str] = []
+    if start_day is not None and end_day is not None:
+        cur = start_day
+        last = min(end_day, today)
+        while cur <= last and len(stat_days) < 400:
+            stat_days.append(cur.isoformat())
+            cur += timedelta(days=1)
+
+    room_wh: dict[str, float] = {}
+    room_day: dict[str, dict[str, float]] = {}
+    for day in stat_days:
+        bucket = days.get(day) if isinstance(days.get(day), dict) else {}
+        rooms_day = bucket.get("rooms") if isinstance(bucket, dict) and isinstance(bucket.get("rooms"), dict) else {}
+        for rid, room in rooms_day.items():
+            if not isinstance(room, dict):
+                continue
+            wh = float(room.get("wh") or 0.0)
+            room_wh[str(rid)] = room_wh.get(str(rid), 0.0) + wh
+            room_day.setdefault(str(rid), {})[day] = wh
+
+    spoken_rooms: dict[str, Any] = {}
+    try:
+        spoken_rooms = (config_manager.count_spoken_events_in_range(start, end).get("rooms") or {})
+    except Exception as err:
+        _LOGGER.warning("Statement event counts failed: %s", err)
+    room_events: dict[str, dict[str, int]] = {}
+    room_ids = set(room_wh)
+    room_ids.update(canonical_room_id(room) for room in rooms_cfg if isinstance(room, dict))
+    for rid in room_ids:
+        counts = spoken_rooms.get(rid) or {}
+        room_events[rid] = {
+            "warnings": int(counts.get("warnings", 0) or 0),
+            "shutoffs": int(counts.get("shutoffs", 0) or 0),
+            "power_cycles": int(counts.get("power_cycles", 0) or 0),
+        }
+        room_wh.setdefault(rid, 0.0)
+        room_day.setdefault(rid, {})
+
+    stars: dict[str, float] = {}
+    try:
+        ratings = compute_monthly_ratings(
+            hass,
+            config_manager,
+            stat_day_keys=stat_days,
+            room_wh_totals=room_wh,
+            room_day_wh=room_day,
+            room_event_totals=room_events,
+        )
+        for rid, rating in ratings.items():
+            if isinstance(rating, dict) and rating.get("stars") is not None:
+                stars[str(rid)] = float(rating["stars"])
+    except Exception as err:
+        _LOGGER.warning("Statement efficiency scores failed: %s", err)
+    return room_persons, stars
+
+
 def write_period_pdf(
     data_dir: str,
     key: str,
@@ -1778,13 +1889,23 @@ def write_period_pdf(
     generated_label: str,
     events: list[dict[str, Any]] | None = None,
     alerts: list[dict[str, Any]] | None = None,
+    hass: Any = None,
+    config_manager: Any = None,
 ) -> Path | None:
     """Write or replace one billing period. Other files are left in place."""
     path = report_path(data_dir, key)
     if path is None:
         return None
+    room_persons: dict[str, str] = {}
+    room_stars: dict[str, float] = {}
+    rng = key_range(key)
+    if hass is not None and config_manager is not None and rng:
+        room_persons, room_stars = analysis_context(hass, config_manager, rng[0], rng[1], days)
     try:
-        data = render_period_pdf(path.stem, days, generated_label, events or [], alerts or [])
+        data = render_period_pdf(
+            path.stem, days, generated_label, events or [], alerts or [],
+            room_persons, room_stars,
+        )
     except Exception as err:  # noqa: BLE001 - never let a report crash the monitor
         _LOGGER.warning("Report render failed for %s: %s", key, err)
         return None
