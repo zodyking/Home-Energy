@@ -217,7 +217,7 @@ class EnergyPanel extends HTMLElement {
     this._entities = null;
     this._powerData = null;
     this._showSettings = false;
-    this._settingsTab = 'rooms'; // 'rooms' | 'tts' | 'notifications' | 'statistics' | 'efficiency' | 'enforcement' | 'zone-health'
+    this._settingsTab = 'rooms'; // 'rooms' | 'tts' | 'notifications' | 'statistics' | 'efficiency' | 'enforcement' | 'zone-health' | 'integrations'
     this._settingsDirty = false; // Phase 5 UX: unsaved-changes guard for settings
     this._dashboardView = 'rooms'; // 'rooms' | 'statistics' | 'stove'
     this._stoveData = null;
@@ -4546,6 +4546,17 @@ class EnergyPanel extends HTMLElement {
         border-radius: 0 0 10px 10px;
       }
 
+      .room-coned-note {
+        margin: 0 0 8px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: rgba(245, 185, 66, 0.14);
+        color: var(--primary-text-color);
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.35;
+      }
+
       .room-threshold-pill {
         display: inline-flex;
         align-items: center;
@@ -5585,6 +5596,134 @@ class EnergyPanel extends HTMLElement {
       .device-card.window-card .outlet-name-top {
         font-size: 12px;
         color: var(--primary-text-color);
+      }
+
+      /* Smoke / CO alarm card — round detector face, same size family as the other device cards */
+      .smoke-card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 6px 4px;
+        cursor: pointer;
+      }
+      .smoke-card-name {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        text-align: center;
+        max-width: 96px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .smoke-body {
+        position: relative;
+        width: 92px;
+        height: 92px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 50% 42%, #f7f7f8 0%, #e6e7ea 62%, #d5d6db 100%);
+        box-shadow: 0 6px 14px rgba(0, 0, 0, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+      }
+      .smoke-vents {
+        position: absolute;
+        top: 28px;
+        width: 14px;
+        height: 36px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .smoke-vents.left { left: 6px; }
+      .smoke-vents.right { right: 6px; }
+      .smoke-vents span {
+        display: block;
+        height: 4px;
+        border-radius: 2px;
+        background: #c5c7cd;
+        box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.18);
+      }
+      .smoke-face {
+        position: absolute;
+        left: 18px;
+        top: 10px;
+        width: 56px;
+        height: 72px;
+        border-radius: 28px;
+        background: linear-gradient(180deg, #ffffff 0%, #f3f4f6 100%);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: space-between;
+        padding: 7px 4px 6px;
+        box-sizing: border-box;
+      }
+      .smoke-mark {
+        font-size: 7px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: #4b5160;
+        text-align: center;
+        line-height: 1.15;
+      }
+      .smoke-word {
+        font-size: 6px;
+        letter-spacing: 0.06em;
+        color: #6b7280;
+        text-align: center;
+        line-height: 1.2;
+      }
+      .smoke-led {
+        width: 8px;
+        height: 14px;
+        border-radius: 4px;
+        background: #9aa0ab;
+        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+      }
+      .smoke-card.led-ok .smoke-led {
+        background: #3ddc6a;
+        box-shadow: 0 0 6px rgba(61, 220, 106, 0.85);
+      }
+      .smoke-card.led-fault .smoke-led {
+        background: #f5b942;
+        box-shadow: 0 0 6px rgba(245, 185, 66, 0.85);
+      }
+      .smoke-card.led-alarm .smoke-led {
+        background: #e23b3b;
+        box-shadow: 0 0 8px rgba(226, 59, 59, 0.95);
+      }
+      .smoke-readout {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        font-size: 10px;
+        line-height: 1.25;
+        color: var(--primary-text-color);
+        text-align: center;
+      }
+      .smoke-readout span { white-space: nowrap; }
+      .smoke-cut-list {
+        max-height: 220px;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 4px;
+      }
+      .smoke-cut-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        min-height: 32px;
+      }
+      .smoke-found {
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        line-height: 1.4;
+        margin-top: 4px;
       }
 
       /* Door Card Styles - clean door graphic without faceplate */
@@ -11425,6 +11564,7 @@ class EnergyPanel extends HTMLElement {
         </div>
 
         <div class="room-content">
+          ${roomData.coned_notice ? `<div class="room-coned-note">${escHtmlText(roomData.coned_notice)}</div>` : ''}
           <div class="outlets-grid">
             ${(room.outlets || []).map((device, oi) => this._renderDeviceCard(device, oi, (roomData.outlets || [])[oi])).join('')}
           </div>
@@ -11458,6 +11598,7 @@ class EnergyPanel extends HTMLElement {
     if (type === 'fridge') return this._renderFridgeCard(device, index, deviceData);
     if (isVentLikeType(type)) return this._renderVentLikeCard(device, index, deviceData);
     if (type === 'light') return this._renderLightCard(device, index, deviceData);
+    if (type === 'smoke_alarm') return this._renderSmokeAlarmCard(device, index);
     if (type === 'door') return this._renderDoorCard(device, index);
     if (type === 'window') return this._renderWindowCard(device, index);
     if (type === 'oil_diffuser') return this._renderDiffuserCard(device, index, deviceData);
@@ -11611,6 +11752,86 @@ class EnergyPanel extends HTMLElement {
           <div class="outlet-meta light-outlet-meta">
             <div class="outlet-total light-watts-display">${totalWatts.toFixed(1)} W</div>
           </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _smokeMapFor(device) {
+    const saved = (device && device.smoke_map) || {};
+    if (device?.smoke_brand === 'generic') return saved;
+    const key = String(device?.smoke_device_id || device?.smoke_anchor || '').trim();
+    const live = key && this._kiddeMaps ? this._kiddeMaps[key] : null;
+    if (live?.entities) return { ...saved, ...live.entities };
+    if (key && device?.smoke_brand !== 'generic' && this._hass?.callWS && !this._kiddeMapLoads?.[key]) {
+      if (!this._kiddeMapLoads) this._kiddeMapLoads = {};
+      if (!this._kiddeMaps) this._kiddeMaps = {};
+      this._kiddeMapLoads[key] = this._hass.callWS({
+        type: 'smart_dashboards/resolve_smoke_device',
+        entity_id: device.smoke_anchor || '',
+        device_id: device.smoke_device_id || '',
+      }).then((res) => {
+        this._kiddeMaps[key] = res || { entities: {} };
+        this._render();
+      }).catch(() => {
+        this._kiddeMaps[key] = { entities: {} };
+      });
+    }
+    return saved;
+  }
+
+  _smokeReading(entityId) {
+    const st = entityId ? this._hass?.states?.[entityId] : null;
+    if (!st) return '—';
+    const raw = String(st.state || '').trim();
+    if (!raw || raw === 'unknown' || raw === 'unavailable') return '—';
+    const unit = st.attributes?.unit_of_measurement;
+    return unit ? `${raw} ${unit}` : raw;
+  }
+
+  _smokeStatusAlarming(entityId) {
+    const raw = String(this._hass?.states?.[entityId]?.state || '').trim().toLowerCase().replace(/\s+/g, '_');
+    if (!raw || ['clear', 'off', 'ok', 'none', 'normal', 'no_smoke', 'no_co', 'idle', 'standby', 'not_detected', 'safe', 'good', 'unknown', 'unavailable', 'connected', 'false'].includes(raw)) {
+      return false;
+    }
+    return ['on', 'smoke', 'alarm', 'detected', 'fire', 'co', 'carbon_monoxide', 'emergency', 'test'].includes(raw)
+      || raw.includes('alarm') || raw.includes('smoke') || raw === 'co';
+  }
+
+  _smokeLedClass(mapped) {
+    const alarming = ['smoke_alarm', 'co_alarm', 'hardwire_smoke'].some((role) => this._smokeStatusAlarming(mapped[role]));
+    if (alarming) return 'led-alarm';
+    const online = mapped.online ? this._hass?.states?.[mapped.online] : null;
+    const onlineRaw = String(online?.state || '').trim().toLowerCase();
+    if (mapped.online && (!online || !onlineRaw || onlineRaw === 'unknown' || onlineRaw === 'unavailable' || onlineRaw === 'off' || onlineRaw === 'lost')) {
+      return 'led-fault';
+    }
+    return 'led-ok';
+  }
+
+  _renderSmokeAlarmCard(device, index) {
+    const mapped = this._smokeMapFor(device);
+    const name = escapeHtml(device.name || 'Smoke alarm');
+    const co = escapeHtml(this._smokeReading(mapped.co_ppm));
+    const smoke = escapeHtml(this._smokeReading(mapped.smoke_level));
+    const led = this._smokeLedClass(mapped);
+    const offline = this._deviceIsOffline(device) ? 'is-offline' : '';
+    return `
+      <div class="smoke-card ${led} ${offline}" data-outlet-index="${index}" data-device-type="smoke_alarm">
+        ${this._deviceOfflineBadge(device)}
+        <div class="smoke-card-name">${name}</div>
+        <div class="smoke-body" aria-hidden="true">
+          <div class="smoke-vents left"><span></span><span></span><span></span><span></span></div>
+          <div class="smoke-vents right"><span></span><span></span><span></span><span></span></div>
+          <div class="smoke-face">
+            <div class="smoke-mark">SMOKE<br>+ CO</div>
+            <div class="smoke-word">TEST WEEKLY<br>HUSH</div>
+            <div class="smoke-led"></div>
+          </div>
+        </div>
+        <div class="smoke-readout">
+          <span>CO ${co}</span>
+          <span>Smoke ${smoke}</span>
         </div>
       </div>
     `;
@@ -12167,6 +12388,184 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  _conedPayeesFromSensor(sensorId) {
+    const state = sensorId ? this._hass?.states?.[sensorId] : null;
+    const attrs = state?.attributes || {};
+    const lists = [];
+    const take = (value) => {
+      if (Array.isArray(value)) lists.push(...value);
+      else if (typeof value === 'string' && value.trim().startsWith('[')) {
+        try {
+          const parsed = JSON.parse(value);
+          if (Array.isArray(parsed)) lists.push(...parsed);
+        } catch (err) { /* ignore unreadable sensor text */ }
+      }
+    };
+    ['payees', 'payee_summaries', 'payee_summary', 'summary'].forEach((key) => take(attrs[key]));
+    ['latest', 'bill', 'data'].forEach((key) => {
+      const block = attrs[key];
+      if (block && typeof block === 'object') {
+        take(block.payees);
+        take(block.payee_summaries);
+      }
+    });
+    if (!lists.length) take(state?.state);
+    const seen = new Set();
+    const rows = [];
+    lists.forEach((row) => {
+      if (!row || typeof row !== 'object') return;
+      const name = String(row.name || row.payee_name || row.payee || '').trim();
+      const raw = row.current_balance ?? row.balance ?? row.amount_owed ?? row.remaining_balance ?? row.remaining;
+      const balance = Number(String(raw ?? '').replace(/[$,]/g, ''));
+      const key = name.toLowerCase();
+      if (!name || !Number.isFinite(balance) || seen.has(key)) return;
+      seen.add(key);
+      rows.push({ name, balance });
+    });
+    return rows;
+  }
+
+  _conedPersonOptions(selected) {
+    const persons = Array.isArray(this._entities?.persons) ? this._entities.persons : [];
+    const ids = persons
+      .map((person) => person.entity_id)
+      .filter((id) => String(id || '').startsWith('person.'));
+    if (selected && !ids.includes(selected)) ids.unshift(selected);
+    return [`<option value="">Select a person</option>`].concat(ids.map((id) => {
+      const person = persons.find((row) => row.entity_id === id);
+      const label = person?.friendly_name || id;
+      return `<option value="${escapeAttr(id)}" ${id === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    })).join('');
+  }
+
+  _conedPayeeRow(row = {}) {
+    const name = row.payee_name || '';
+    const person = row.person_entity || '';
+    const amount = row.amount ?? 50;
+    const hours = row.hours ?? 24;
+    const watts = row.watt_limit ?? 300;
+    return `
+      <div class="coned-payee-row" style="display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; margin-bottom:12px;">
+        <div class="form-group" style="margin:0; flex:1 1 140px;">
+          <label class="form-label">Payee name</label>
+          <input type="text" class="form-input coned-payee-name" value="${escapeAttr(name)}" placeholder="Tom">
+        </div>
+        <div class="form-group" style="margin:0; flex:1 1 160px;">
+          <label class="form-label">Person</label>
+          <select class="form-input coned-person">${this._conedPersonOptions(person)}</select>
+        </div>
+        <div class="form-group" style="margin:0; flex:1 1 90px;">
+          <label class="form-label">Amount ($)</label>
+          <input type="number" class="form-input coned-amount" min="0" step="0.01" value="${escapeAttr(amount)}">
+        </div>
+        <div class="form-group" style="margin:0; flex:1 1 80px;">
+          <label class="form-label">Hours</label>
+          <input type="number" class="form-input coned-hours" min="1" max="720" step="1" value="${escapeAttr(hours)}">
+        </div>
+        <div class="form-group" style="margin:0; flex:1 1 90px;">
+          <label class="form-label">Watt limit</label>
+          <input type="number" class="form-input coned-watts" min="50" max="5000" step="10" value="${escapeAttr(watts)}">
+        </div>
+        <button type="button" class="icon-btn danger coned-remove-payee" title="Remove payee" style="margin-bottom: 2px;">
+          <svg viewBox="0 0 24 24">${icons.delete}</svg>
+        </button>
+      </div>
+    `;
+  }
+
+  _renderIntegrationsSettings() {
+    const cfg = this._config?.coned_integration || {};
+    const sensor = cfg.payee_sensor || 'sensor.coned_payee_summary';
+    const payees = Array.isArray(cfg.payees) ? cfg.payees : [];
+    const found = this._conedPayeesFromSensor(sensor);
+    const foundText = found.length
+      ? found.map((row) => `${row.name} $${row.balance.toFixed(2)}`).join(', ')
+      : 'No payee balances on that sensor yet.';
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Con Edison</h2>
+        </div>
+        <p style="color: var(--secondary-text-color); font-size: 12px; margin-bottom: 14px;">
+          Uses the Con Edison add-on's payee summary. When a payee's balance stays at or above the amount for the set hours, their room is held to the watt limit. If they are the only person home, rooms with no person attached use that same limit. There is no spoken alert and no phone notification. Their room card says to check the Con Edison app. Outlets that were on come back when the balance drops below the amount.
+        </p>
+        <label class="smoke-cut-row" style="margin-bottom: 12px;">
+          <input type="checkbox" id="coned-enabled" ${cfg.enabled ? 'checked' : ''}>
+          <span>Enable Con Edison balance limits</span>
+        </label>
+        <div class="form-group">
+          <label class="form-label">Payee summary sensor</label>
+          ${this._renderEntityAutocomplete(sensor, 'sensor', 'coned', 'coned-payee-sensor', 'sensor.coned_payee_summary')}
+          <div class="smoke-found" id="coned-sensor-preview">${escapeHtml(foundText)}</div>
+        </div>
+        <div id="coned-payee-list">
+          ${payees.map((row) => this._conedPayeeRow(row)).join('')}
+        </div>
+        <button type="button" class="btn btn-secondary" id="coned-add-payee">Add payee</button>
+      </div>
+    `;
+  }
+
+  _collectConedIntegration() {
+    const tab = this.shadowRoot?.querySelector('#tab-integrations');
+    if (!tab) {
+      return this._config?.coned_integration || {
+        enabled: false,
+        payee_sensor: 'sensor.coned_payee_summary',
+        payees: [],
+      };
+    }
+    const sensor = (tab.querySelector('.entity-datalist-input.coned-payee-sensor') || tab.querySelector('.coned-payee-sensor'))?.value?.trim() || '';
+    const payees = [];
+    tab.querySelectorAll('.coned-payee-row').forEach((row) => {
+      const name = row.querySelector('.coned-payee-name')?.value?.trim() || '';
+      const person = row.querySelector('.coned-person')?.value?.trim() || '';
+      if (!name || !person.startsWith('person.')) return;
+      const amount = Number(row.querySelector('.coned-amount')?.value);
+      const hours = parseInt(row.querySelector('.coned-hours')?.value, 10);
+      const watts = parseInt(row.querySelector('.coned-watts')?.value, 10);
+      payees.push({
+        payee_name: name,
+        person_entity: person,
+        amount: Number.isFinite(amount) ? Math.max(0, amount) : 0,
+        hours: Number.isFinite(hours) ? Math.max(1, Math.min(720, hours)) : 24,
+        watt_limit: Number.isFinite(watts) ? Math.max(50, Math.min(5000, watts)) : 300,
+      });
+    });
+    return {
+      enabled: tab.querySelector('#coned-enabled')?.checked === true,
+      payee_sensor: sensor.startsWith('sensor.') ? sensor : 'sensor.coned_payee_summary',
+      payees,
+    };
+  }
+
+  _bindConedIntegrationSettings() {
+    const tab = this.shadowRoot.querySelector('#tab-integrations');
+    if (!tab || tab.dataset.conedBound === '1') return;
+    tab.dataset.conedBound = '1';
+    const list = tab.querySelector('#coned-payee-list');
+    tab.querySelector('#coned-add-payee')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      list?.insertAdjacentHTML('beforeend', this._conedPayeeRow());
+    });
+    tab.addEventListener('click', (event) => {
+      const button = event.target.closest('.coned-remove-payee');
+      if (!button || !tab.contains(button)) return;
+      event.preventDefault();
+      button.closest('.coned-payee-row')?.remove();
+    });
+    const sensorInput = tab.querySelector('.coned-payee-sensor');
+    sensorInput?.addEventListener('change', () => {
+      const preview = tab.querySelector('#coned-sensor-preview');
+      const found = this._conedPayeesFromSensor(sensorInput.value.trim());
+      if (preview) {
+        preview.textContent = found.length
+          ? found.map((row) => `${row.name} $${row.balance.toFixed(2)}`).join(', ')
+          : 'No payee balances on that sensor yet.';
+      }
+    });
+  }
+
   _renderSettings(styles) {
     const rooms = this._config?.rooms || [];
     const mediaPlayers = this._entities?.media_players || [];
@@ -12393,6 +12792,13 @@ class EnergyPanel extends HTMLElement {
             <button class="settings-tab ${this._settingsTab === 'enforcement' ? 'active' : ''}" data-tab="enforcement">
               Power Enforcement
             </button>
+            <button class="settings-tab ${this._settingsTab === 'integrations' ? 'active' : ''}" data-tab="integrations">
+              Integrations
+            </button>
+          </div>
+
+          <div class="settings-tab-content ${this._settingsTab === 'integrations' ? 'active' : ''}" id="tab-integrations">
+            ${this._renderIntegrationsSettings()}
           </div>
           
           <div class="settings-tab-content ${this._settingsTab === 'rooms' ? 'active' : ''}" id="tab-rooms">
@@ -16263,6 +16669,11 @@ class EnergyPanel extends HTMLElement {
     } else if (otype === 'vent' || otype === 'wall_heater') {
       add(device.switch_entity);
       addPower(device.power_sensor_entity);
+    } else if (otype === 'smoke_alarm') {
+      const mapped = this._smokeMapFor(device);
+      add(mapped.online);
+      add(mapped.smoke_alarm);
+      add(mapped.co_alarm);
     } else if (otype === 'door' || otype === 'window') {
       add(device.contact_sensor);
     } else if (['single_outlet', 'minisplit', 'stove', 'microwave', 'fridge'].includes(otype)) {
@@ -16346,6 +16757,10 @@ class EnergyPanel extends HTMLElement {
           await this._setLightPresenceMode(roomId, outletIndex, action === 'presence_auto');
         } else if (action === 'diffuser_schedule') {
           await this._openDiffuserScheduleModal(roomId, outletIndex, outlet);
+        } else if (action === 'smoke_hush' || action === 'smoke_test') {
+          await this._pressSmokeButton(outlet, action);
+        } else if (action === 'smoke_identify') {
+          await this._toggleSmokeIdentifying(outlet);
         } else {
           void this._executeApplianceToggle({ roomId, outletIndex, plugSlot: slot });
         }
@@ -16384,6 +16799,23 @@ class EnergyPanel extends HTMLElement {
         }
       } else {
         addItem('Open usage graph', 'graph', 1);
+      }
+    } else if (otype === 'smoke_alarm') {
+      const mapped = this._smokeMapFor(outlet);
+      const smokeState = this._smokeReading(mapped.smoke_alarm);
+      const coState = this._smokeReading(mapped.co_alarm);
+      addStatic(`Smoke ${smokeState}`);
+      addStatic(`CO ${coState}`);
+      if (mapped.battery) addStatic(`Battery ${this._smokeReading(mapped.battery)}`);
+      if (mapped.online) addStatic(`Online ${this._smokeReading(mapped.online)}`);
+      if (mapped.hush) addItem('Hush', 'smoke_hush', null);
+      if (mapped.test) addItem('Test', 'smoke_test', null);
+      if (mapped.identifying) {
+        const on = String(this._hass?.states?.[mapped.identifying]?.state || '').toLowerCase() === 'on';
+        addItem(on ? 'Stop identifying' : 'Start identifying', 'smoke_identify', null);
+      }
+      if (!mapped.hush && !mapped.test && !mapped.identifying) {
+        addStatic('Load the Kidde device in settings to enable Hush and Test');
       }
     } else if (otype === 'door') {
       for (const line of this._doorBatteryMenuLines(outlet)) {
@@ -16807,6 +17239,96 @@ class EnergyPanel extends HTMLElement {
     }
   }
 
+  async _pressSmokeButton(outlet, action) {
+    const mapped = this._smokeMapFor(outlet);
+    const entityId = action === 'smoke_test' ? mapped.test : mapped.hush;
+    if (!entityId) {
+      showToast(this.shadowRoot, 'That control is not loaded for this alarm.', 'error');
+      return;
+    }
+    try {
+      await this._hass.callService('button', 'press', { entity_id: entityId });
+    } catch (err) {
+      showToast(this.shadowRoot, `Failed: ${err.message || err}`, 'error');
+    }
+  }
+
+  async _toggleSmokeIdentifying(outlet) {
+    const entityId = this._smokeMapFor(outlet).identifying;
+    if (!entityId) return;
+    const on = String(this._hass?.states?.[entityId]?.state || '').toLowerCase() === 'on';
+    try {
+      await this._hass.callService('switch', on ? 'turn_off' : 'turn_on', { entity_id: entityId });
+    } catch (err) {
+      showToast(this.shadowRoot, `Failed: ${err.message || err}`, 'error');
+    }
+  }
+
+  async _loadKiddeSensors(item) {
+    const anchor = item.querySelector('.smoke-anchor')?.value?.trim() || '';
+    const deviceId = item.querySelector('.smoke-device-id')?.value?.trim() || '';
+    if (!anchor.includes('.') && !deviceId) {
+      showToast(this.shadowRoot, 'Enter one entity from the Kidde device first.', 'error');
+      return;
+    }
+    try {
+      const result = await this._hass.callWS({
+        type: 'smart_dashboards/resolve_smoke_device',
+        entity_id: anchor,
+        device_id: deviceId,
+      });
+      const entities = result?.entities || {};
+      const hidden = item.querySelector('.smoke-map-json');
+      const deviceInput = item.querySelector('.smoke-device-id');
+      if (hidden) hidden.value = JSON.stringify(entities);
+      if (deviceInput && result?.device_id) deviceInput.value = result.device_id;
+      const labels = {
+        smoke_alarm: 'Smoke alarm',
+        co_alarm: 'CO alarm',
+        hardwire_smoke: 'Hardwire smoke',
+        co_ppm: 'CO ppm',
+        smoke_level: 'Smoke level',
+        hush: 'Hush',
+        test: 'Test',
+        identifying: 'Identifying',
+        online: 'Online',
+        battery: 'Battery',
+      };
+      const lines = Object.entries(labels)
+        .filter(([role]) => entities[role])
+        .map(([role, label]) => `${label}: ${entities[role]}`);
+      const found = item.querySelector('.smoke-found');
+      if (found) found.innerHTML = lines.length ? lines.map((line) => escapeHtml(line)).join('<br>') : 'No matching sensors on that device.';
+      const key = result?.device_id || anchor;
+      if (key) {
+        if (!this._kiddeMaps) this._kiddeMaps = {};
+        this._kiddeMaps[key] = result;
+      }
+      showToast(this.shadowRoot, lines.length ? `Loaded ${lines.length} Kidde sensors. Save the room to keep them.` : 'No Kidde sensors matched that device.', lines.length ? 'success' : 'error');
+    } catch (err) {
+      showToast(this.shadowRoot, `Could not load Kidde sensors: ${err.message || err}`, 'error');
+    }
+  }
+
+  _bindSmokeAlarmSettings() {
+    this.shadowRoot.querySelectorAll('.outlet-settings-item[data-device-type="smoke_alarm"]').forEach((item) => {
+      if (item.dataset.smokeBound === '1') return;
+      item.dataset.smokeBound = '1';
+      item.querySelector('.smoke-brand')?.addEventListener('change', (e) => {
+        const kidde = e.target.value !== 'generic';
+        const kiddeBlock = item.querySelector('.smoke-kidde-block');
+        const genericBlock = item.querySelector('.smoke-generic-block');
+        if (kiddeBlock) kiddeBlock.style.display = kidde ? 'block' : 'none';
+        if (genericBlock) genericBlock.style.display = kidde ? 'none' : 'block';
+      });
+      item.querySelector('.smoke-kidde-load')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void this._loadKiddeSensors(item);
+      });
+    });
+  }
+
   async _toggleDoorLock(outlet, action) {
     const lockEntity = outlet.lock_entity;
     if (!lockEntity) {
@@ -16973,7 +17495,7 @@ class EnergyPanel extends HTMLElement {
       return;
     }
 
-    const deviceCard = e.target.closest('.device-card, .outlet-card, .door-card, .window-card');
+    const deviceCard = e.target.closest('.device-card, .outlet-card, .door-card, .window-card, .smoke-card');
     if (!deviceCard) return;
 
     if (e.target.closest('.graph-clickable')) return;
@@ -17005,7 +17527,8 @@ class EnergyPanel extends HTMLElement {
         otype === 'wall_heater' ||
         otype === 'door' ||
         otype === 'window' ||
-        otype === 'oil_diffuser'
+        otype === 'oil_diffuser' ||
+        otype === 'smoke_alarm'
       )
     ) {
       return;
@@ -18209,6 +18732,7 @@ class EnergyPanel extends HTMLElement {
                 <button class="add-device-option" data-type="door">Door</button>
                 <button class="add-device-option" data-type="window">Window</button>
                 <button class="add-device-option" data-type="oil_diffuser">Oil Diffuser</button>
+                <button class="add-device-option" data-type="smoke_alarm">Smoke alarm</button>
               </div>
             </div>
           </div>
@@ -18303,6 +18827,9 @@ class EnergyPanel extends HTMLElement {
     }
     if (type === 'light') {
       return this._renderLightSettings(device, deviceIndex, roomIndex, isCollapsed);
+    }
+    if (type === 'smoke_alarm') {
+      return this._renderSmokeAlarmSettings(device, deviceIndex, roomIndex, isCollapsed);
     }
     if (type === 'door') {
       return this._renderDoorSettings(device, deviceIndex, roomIndex, isCollapsed);
@@ -18547,6 +19074,128 @@ class EnergyPanel extends HTMLElement {
                 this._keepOnHelpText(),
               )}
             </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _smokeCutChoices() {
+    const rooms = this._config?.rooms || [];
+    const seen = new Set();
+    const rows = [];
+    for (const room of rooms) {
+      for (const outlet of room.outlets || []) {
+        if (!outlet || outlet.type === 'smoke_alarm') continue;
+        const options = [
+          [outlet.plug1_switch, 'Plug 1'],
+          [outlet.plug2_switch, 'Plug 2'],
+          [outlet.switch_entity, 'Switch'],
+          [outlet.diffuser_switch, 'Diffuser'],
+        ];
+        for (const [entity, part] of options) {
+          const eid = String(entity || '').trim();
+          if (!eid.startsWith('switch.') && !eid.startsWith('fan.')) continue;
+          if (seen.has(eid)) continue;
+          seen.add(eid);
+          const name = outlet.name || 'Device';
+          rows.push({ entity: eid, label: `${room.name || 'Room'} — ${name} — ${part}` });
+        }
+      }
+    }
+    return rows;
+  }
+
+  _renderSmokeAlarmSettings(device, deviceIndex, roomIndex, isCollapsed = true) {
+    const displayName = device.name || 'Unnamed smoke alarm';
+    const collapsedClass = isCollapsed ? 'collapsed' : '';
+    const brand = device.smoke_brand === 'generic' ? 'generic' : 'kidde';
+    const mapped = device.smoke_map || {};
+    const mapJson = escapeAttr(JSON.stringify(mapped));
+    const selected = new Set(Array.isArray(device.alarm_cut_switches) ? device.alarm_cut_switches : []);
+    const choices = this._smokeCutChoices();
+    const choiceHtml = choices.length
+      ? choices.map((row) => `
+          <label class="smoke-cut-row">
+            <input type="checkbox" class="smoke-cut-switch" data-entity="${escapeAttr(row.entity)}" ${selected.has(row.entity) ? 'checked' : ''}>
+            <span>${escapeHtml(row.label)}</span>
+          </label>
+        `).join('')
+      : '<div class="smoke-found">No outlets or appliances with a switch are set up yet.</div>';
+    const roleLabels = [
+      ['smoke_alarm', 'Smoke alarm'],
+      ['co_alarm', 'CO alarm'],
+      ['hardwire_smoke', 'Hardwire smoke'],
+      ['co_ppm', 'CO ppm'],
+      ['smoke_level', 'Smoke level'],
+      ['hush', 'Hush'],
+      ['test', 'Test'],
+      ['identifying', 'Identifying'],
+      ['online', 'Online'],
+      ['battery', 'Battery'],
+    ];
+    const found = roleLabels
+      .filter(([role]) => mapped[role])
+      .map(([role, label]) => `${label}: ${mapped[role]}`)
+      .join('<br>');
+    const field = (role, label, placeholder) => `
+      <div class="form-group">
+        <label class="form-label">${label}</label>
+        <input type="text" class="form-input smoke-generic-${role}" value="${escapeAttr(mapped[role] || '')}" placeholder="${escapeAttr(placeholder)}">
+      </div>
+    `;
+    return `
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="smoke_alarm" draggable="true">
+        <div class="outlet-settings-bar">
+          <div class="outlet-drag-handle" title="Drag to reorder">
+            <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0 4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
+          </div>
+          <span class="outlet-name-display ${device.name ? '' : 'empty'}">${escapeHtml(displayName)}</span>
+          <button class="icon-btn danger remove-outlet-btn" data-outlet-index="${deviceIndex}" title="Delete">
+            <svg viewBox="0 0 24 24">${icons.delete}</svg>
+          </button>
+          <div class="outlet-expand-icon">
+            <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+          </div>
+        </div>
+        <div class="outlet-settings-body">
+          <div class="outlet-settings-header">
+            <div class="form-group" style="flex: 1;">
+              <label class="form-label">Alarm name</label>
+              <input type="text" class="form-input outlet-name" value="${escapeAttr(device.name || '')}" placeholder="Hall smoke alarm">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Brand</label>
+              <select class="form-input smoke-brand" style="width: 180px;">
+                <option value="kidde" ${brand === 'kidde' ? 'selected' : ''}>Kidde HomeSafe</option>
+                <option value="generic" ${brand === 'generic' ? 'selected' : ''}>Other alarm</option>
+              </select>
+            </div>
+          </div>
+          <div class="smoke-kidde-block" style="display: ${brand === 'kidde' ? 'block' : 'none'};">
+            <div class="form-group">
+              <label class="form-label">Any entity on the Kidde device</label>
+              <input type="text" class="form-input smoke-anchor" value="${escapeAttr(device.smoke_anchor || '')}" placeholder="sensor.hallway_smoke_alarm">
+              <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Pick one sensor from the Kidde HomeSafe device. Load sensors fills in smoke, CO, hush, and test from that same device.</div>
+            </div>
+            <button type="button" class="btn smoke-kidde-load">Load Kidde sensors</button>
+            <input type="hidden" class="smoke-device-id" value="${escapeAttr(device.smoke_device_id || '')}">
+            <input type="hidden" class="smoke-map-json" value="${mapJson}">
+            <div class="smoke-found">${found || 'No sensors loaded yet.'}</div>
+          </div>
+          <div class="smoke-generic-block" style="display: ${brand === 'generic' ? 'block' : 'none'};">
+            ${field('smoke_alarm', 'Smoke alarm', 'binary_sensor.smoke')}
+            ${field('co_alarm', 'CO alarm', 'binary_sensor.co')}
+            ${field('co_ppm', 'CO ppm', 'sensor.co_ppm')}
+            ${field('smoke_level', 'Smoke level', 'sensor.smoke_level')}
+            ${field('hush', 'Hush button', 'button.hush')}
+            ${field('test', 'Test button', 'button.test')}
+            ${field('identifying', 'Identifying switch', 'switch.identifying')}
+          </div>
+          <div class="form-group" style="margin-top: 12px;">
+            <label class="form-label">Turn these off while the alarm is sounding</label>
+            <div style="font-size: 10px; color: var(--secondary-text-color); margin-top: 4px;">Any outlet or appliance already set up, including ones in other rooms. They turn back on when smoke and CO are both clear, and only if they were on when the alarm started.</div>
+            <div class="smoke-cut-list">${choiceHtml}</div>
           </div>
         </div>
       </div>
@@ -19974,6 +20623,8 @@ class EnergyPanel extends HTMLElement {
       this._attachOutletEventListeners(outletItem, roomIndex);
     });
     this._initEntityAutocompletes(this.shadowRoot);
+    this._bindSmokeAlarmSettings();
+    this._bindConedIntegrationSettings();
 
     // Test switch buttons (compact icon on outlets; full-width .light-test-switch-btn on light/vent)
     this.shadowRoot.querySelectorAll('.test-switch-btn, .light-test-switch-btn').forEach(btn => {
@@ -20371,6 +21022,17 @@ class EnergyPanel extends HTMLElement {
       newOutlet.minisplit_enforcement_off_seconds = 60;
       newOutlet.minisplit_enforcement_min_watts = 0;
     }
+    if (deviceType === 'smoke_alarm') {
+      newOutlet.smoke_brand = 'kidde';
+      newOutlet.smoke_anchor = '';
+      newOutlet.smoke_device_id = '';
+      newOutlet.smoke_map = {};
+      newOutlet.alarm_cut_switches = [];
+      newOutlet.plug1_entity = null;
+      newOutlet.plug2_entity = null;
+      newOutlet.plug1_switch = null;
+      newOutlet.plug2_switch = null;
+    }
     if (deviceType === 'oil_diffuser') {
       newOutlet.diffuser_mode = 'airversa';
       newOutlet.diffuser_switch = '';
@@ -20397,6 +21059,7 @@ class EnergyPanel extends HTMLElement {
     // Attach event listeners to new item
     this._attachOutletEventListeners(newItem, roomIndex);
     this._initEntityAutocompletes(newItem);
+    this._bindSmokeAlarmSettings();
     
     // Focus on name input
     const nameInput = newItem.querySelector('.outlet-name');
@@ -21059,6 +21722,36 @@ class EnergyPanel extends HTMLElement {
             }
           } else if (deviceTypeFromItem === 'oil_diffuser') {
             this._applyOilDiffuserFromItem(item, device, originalRoom?.outlets?.[parseInt(item.dataset.outletIndex, 10)]);
+          } else if (deviceTypeFromItem === 'smoke_alarm') {
+            device.type = 'smoke_alarm';
+            device.plug1_entity = null;
+            device.plug2_entity = null;
+            device.plug1_switch = null;
+            device.plug2_switch = null;
+            device.plug1_shutoff = 0;
+            device.plug2_shutoff = 0;
+            device.smoke_brand = item.querySelector('.smoke-brand')?.value === 'generic' ? 'generic' : 'kidde';
+            const anchor = item.querySelector('.smoke-anchor')?.value?.trim() || '';
+            device.smoke_anchor = anchor.includes('.') ? anchor : null;
+            device.smoke_device_id = item.querySelector('.smoke-device-id')?.value?.trim() || null;
+            let smokeMap = {};
+            if (device.smoke_brand === 'generic') {
+              const read = (role) => item.querySelector(`.smoke-generic-${role}`)?.value?.trim() || '';
+              for (const role of ['smoke_alarm', 'co_alarm', 'co_ppm', 'smoke_level', 'hush', 'test', 'identifying']) {
+                const eid = read(role);
+                if (eid.includes('.')) smokeMap[role] = eid;
+              }
+            } else {
+              try {
+                smokeMap = JSON.parse(item.querySelector('.smoke-map-json')?.value || '{}') || {};
+              } catch (err) {
+                smokeMap = {};
+              }
+            }
+            device.smoke_map = smokeMap;
+            device.alarm_cut_switches = Array.from(item.querySelectorAll('.smoke-cut-switch:checked'))
+              .map((el) => el.dataset.entity)
+              .filter((eid) => eid && (eid.startsWith('switch.') || eid.startsWith('fan.')));
           } else if (deviceTypeFromItem === 'door') {
             device.type = 'door';
             device.plug1_entity = null;
@@ -21446,6 +22139,7 @@ class EnergyPanel extends HTMLElement {
         phase1_warn_msg_boost_day: ttsPhase1BoostDay,
       },
       power_enforcement,
+      coned_integration: this._collectConedIntegration(),
     };
 
     try {

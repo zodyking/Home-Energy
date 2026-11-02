@@ -817,6 +817,7 @@ class ConfigManager:
             "power_enforcement",
             "statistics_settings",
             "efficiency_settings",
+            "coned_integration",
             "breaker_lines",
             "breaker_panel_size",
         ):
@@ -932,7 +933,7 @@ class ConfigManager:
                         if outlet_type not in (
                             "outlet", "single_outlet", "stove", "microwave",
                             "minisplit", "light", "fridge", "vent", "wall_heater",
-                            "door", "window", "oil_diffuser",
+                            "door", "window", "oil_diffuser", "smoke_alarm",
                         ):
                             outlet_type = "outlet"
                         item = {
@@ -1207,6 +1208,26 @@ class ConfigManager:
                             )
                             item["diffuser_schedule"] = normalize_schedule(
                                 {**outlet, "diffuser_mode": item["diffuser_mode"]}
+                            )
+                        elif outlet_type == "smoke_alarm":
+                            from .smoke_alarm import normalize_smoke_map
+
+                            item["plug1_entity"] = None
+                            item["plug2_entity"] = None
+                            item["plug1_switch"] = None
+                            item["plug2_switch"] = None
+                            item["plug1_shutoff"] = 0
+                            item["plug2_shutoff"] = 0
+                            brand = str(outlet.get("smoke_brand") or "kidde").strip().lower()
+                            item["smoke_brand"] = "generic" if brand == "generic" else "kidde"
+                            anchor = str(outlet.get("smoke_anchor") or "").strip()
+                            item["smoke_anchor"] = anchor if "." in anchor else None
+                            device_id = str(outlet.get("smoke_device_id") or "").strip()
+                            item["smoke_device_id"] = device_id or None
+                            item["smoke_map"] = normalize_smoke_map(outlet.get("smoke_map"))
+                            item["alarm_cut_switches"] = _validate_entity_list(
+                                outlet.get("alarm_cut_switches"),
+                                ("switch.", "fan."),
                             )
                         elif outlet_type == "door":
                             item["plug1_entity"] = None
@@ -1912,6 +1933,10 @@ class ConfigManager:
             # mutate) DEFAULT_CONFIG's shared list.
             "rooms_enabled": list(pe.get("rooms_enabled") or default_pe["rooms_enabled"]),
         }
+
+        from .coned_enforcement import normalize_coned_config
+
+        validated["coned_integration"] = normalize_coned_config(config.get("coned_integration"))
 
         # Validate statistics settings
         stats = config.get("statistics_settings", {})
