@@ -325,6 +325,21 @@ class EnergyMonitor:
         self._heater_smart_state: dict[str, dict] = {}
         self._diffuser_runtime: dict[str, dict] = {}
         self._diffuser_status: dict[str, str] = {}
+        # Switches a smoke/CO alarm turned off, keyed by room|alarm name, plus restores still pending
+        self._smoke_held: dict[str, set[str]] = {}
+        self._smoke_restore: set[str] = set()
+        self._coned_held: dict[str, set[str]] = {}
+        self._coned_notices: dict[str, str] = {}
+        self._coned_limits: dict[str, int] = {}
+        self._coned_since: dict[str, float] = {}
+        try:
+            from .coned_enforcement import load_since
+
+            self._coned_since = load_since(
+                self.config_manager._data_path("coned_balance_since.json")
+            )
+        except Exception:
+            self._coned_since = {}
         # Entities skipped while unavailable (debug log once until usable again)
         self._light_auto_unavail_logged: set[str] = set()
         # Light automation enforcement pause (for testing scenes)
@@ -1900,6 +1915,120 @@ class EnergyMonitor:
                 "on" if turn_on else "off",
                 e,
             )
+
+    async def _async_enforce_smoke_alarms(self, rooms: list) -> None:
+        """Shut selected outlets off while a smoke or CO alarm is active, and restore them after."""
+        from .smoke_alarm import async_enforce_smoke_alarms
+
+        async def _turn_smoke(entity_id: str, turn_on: bool) -> None:
+            if turn_on and self._coned_is_holding(entity_id):
+                return
+            await self._async_appliance_power_set(entity_id, turn_on)
+
+        await async_enforce_smoke_alarms(
+            self.hass,
+            rooms,
+            self._smoke_held,
+            self._smoke_restore,
+            _turn_smoke,
+        )
+
+    async def _async_enforce_coned_balances(self, rooms: list) -> None:
+        """Cap rooms while a payee's Con Edison balance stays at or above the set amount."""
+        import time
+
+        from .coned_enforcement import (
+            CONED_NOTICE,
+            controllable_switches,
+            parse_payees,
+            persons_home,
+            room_caps,
+            save_since,
+            update_balance_timers,
+        )
+
+        settings = self.config_manager.energy_config.get("coned_integration") or {}
+        path = self.config_manager._data_path("coned_balance_since.json")
+        notices: dict[str, str] = {}
+        limits: dict[str, int] = {}
+        if not settings.get("enabled"):
+            await self._coned_release_all()
+            self._coned_notices = {}
+            self._coned_limits = {}
+            return
+
+        sensor_id = str(settings.get("payee_sensor") or "").strip()
+        state = self.hass.states.get(sensor_id) if sensor_id else None
+        payees = parse_payees(state.attributes if state else {}, state.state if state else None)
+        person_states = {}
+        for room in rooms or []:
+            person = str(room.get("presence_person_entity") or "").strip()
+            if person.startswith("person.") and person not in person_states:
+                st = self.hass.states.get(person)
+                person_states[person] = st.state if st else ""
+        active, since = update_balance_timers(
+            list(settings.get("payees") or []),
+            payees,
+            time.time(),
+            self._coned_since,
+        )
+        if since != self._coned_since:
+            self._coned_since = since
+            try:
+                await self.hass.async_add_executor_job(save_since, path, dict(since))
+            except Exception:
+                _LOGGER.debug("Could not store Con Edison balance timers", exc_info=True)
+        caps = room_caps(rooms or [], active, persons_home(rooms or [], person_states))
+        rooms_by_id = {}
+        for room in rooms or []:
+            rid = room.get("id", str(room.get("name") or "").lower().replace(" ", "_"))
+            rooms_by_id[rid] = room
+
+        for room_id in list(self._coned_held):
+            if room_id not in caps:
+                await self._coned_restore_room(room_id)
+        for room_id, cap in caps.items():
+            limits[room_id] = int(cap["watt_limit"])
+            if cap.get("notice"):
+                notices[room_id] = CONED_NOTICE
+            room = rooms_by_id.get(room_id)
+            if room is None:
+                continue
+            held = set(self._coned_held.get(room_id) or ())
+            watts = self._sum_room_total_watts_only(room)
+            switches = controllable_switches(room)
+            if watts > float(cap["watt_limit"]):
+                for eid in switches:
+                    if not self._coned_switch_on(eid):
+                        continue
+                    if self._smoke_is_holding(eid):
+                        held.add(eid)
+                        continue
+                    await self._async_appliance_power_set(eid, False)
+                    held.add(eid)
+            else:
+                held = {eid for eid in held if not self._coned_switch_on(eid)}
+            if held:
+                self._coned_held[room_id] = held
+            else:
+                self._coned_held.pop(room_id, None)
+        self._coned_notices = notices
+        self._coned_limits = limits
+
+    def _coned_switch_on(self, entity_id: str) -> bool:
+        state = self.hass.states.get(entity_id)
+        return bool(state and str(state.state or "").lower() == "on")
+
+    async def _coned_restore_room(self, room_id: str) -> None:
+        held = list(self._coned_held.pop(room_id, ()) or ())
+        for eid in held:
+            if self._smoke_is_holding(eid) or self._coned_switch_on(eid):
+                continue
+            await self._async_appliance_power_set(eid, True)
+
+    async def _coned_release_all(self) -> None:
+        for room_id in list(self._coned_held):
+            await self._coned_restore_room(room_id)
 
     async def _async_appliance_power_set(self, entity_id: str, turn_on: bool) -> None:
         """Turn vent/heater load on or off (switch or fan domain)."""
@@ -4010,8 +4139,20 @@ class EnergyMonitor:
                         return True
         return False
 
+    def _smoke_is_holding(self, switch_id: str) -> bool:
+        """True while a smoke or CO alarm still wants this switch to stay off."""
+        eid = str(switch_id or "").strip()
+        return any(eid in group for group in self._smoke_held.values())
+
+    def _coned_is_holding(self, switch_id: str) -> bool:
+        """True while a Con Edison balance limit still wants this switch to stay off."""
+        eid = str(switch_id or "").strip()
+        return any(eid in group for group in self._coned_held.values())
+
     async def _maybe_keep_on_switch(self, room: dict, switch_id: str) -> None:
         room_id = room.get("id", room["name"].lower().replace(" ", "_"))
+        if self._smoke_is_holding(switch_id) or self._coned_is_holding(switch_id):
+            return
         if self._keep_on_suppressed(room, room_id, switch_id):
             return
         if self._switch_entity_is_on(switch_id):
@@ -4036,6 +4177,8 @@ class EnergyMonitor:
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
         if not entity_id or not new_state or new_state.state != "off":
+            return
+        if self._smoke_is_holding(entity_id) or self._coned_is_holding(entity_id):
             return
         if old_state and old_state.state == "off":
             return
@@ -4097,6 +4240,8 @@ class EnergyMonitor:
             return
         restored_switch_ids: list[str] = []
         for sw in list(pending):
+            if self._smoke_is_holding(sw) or self._coned_is_holding(sw):
+                continue
             if self._switch_entity_is_on(sw):
                 pending.discard(sw)
                 continue
@@ -4936,6 +5081,15 @@ class EnergyMonitor:
         # Keep-on switches (runs every tick)
         await self._tick_keep_on_switches()
 
+        try:
+            await self._async_enforce_smoke_alarms(rooms)
+        except Exception:
+            _LOGGER.exception("Smoke alarm outlet cutoff failed")
+        try:
+            await self._async_enforce_coned_balances(rooms)
+        except Exception:
+            _LOGGER.exception("Con Edison balance limit failed")
+
         self._sample_person_presence(now)
 
         # Periodically save energy tracking data (every 15 seconds, survives restarts)
@@ -4996,6 +5150,8 @@ class EnergyMonitor:
         )
         room_total_watts = 0.0
         for outlet in room.get("outlets", []):
+            if outlet.get("type") == "smoke_alarm":
+                continue
             if diffuser_power_already_counted(outlet, claimed):
                 continue
             outlet_total_watts = 0.0

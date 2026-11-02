@@ -282,6 +282,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_entities_by_area)
     websocket_api.async_register_command(hass, websocket_get_areas)
     websocket_api.async_register_command(hass, websocket_get_switches)
+    websocket_api.async_register_command(hass, websocket_resolve_smoke_device)
     websocket_api.async_register_command(hass, websocket_verify_passcode)
     websocket_api.async_register_command(hass, websocket_verify_room_auth)
     websocket_api.async_register_command(hass, websocket_check_toggle_auth)
@@ -696,6 +697,13 @@ def build_rooms_payload_for_power_and_ratings(
                 config_manager.get_enforcement_state(room_id).get("phase", 0) or 0
             )
             room_data["enforcement_phase"] = max(0, min(2, phase))
+        if energy_monitor is not None:
+            notice = str(getattr(energy_monitor, "_coned_notices", {}).get(room_id) or "").strip()
+            if notice:
+                room_data["coned_notice"] = notice
+            limit = getattr(energy_monitor, "_coned_limits", {}).get(room_id)
+            if limit:
+                room_data["coned_watt_limit"] = int(limit)
         rooms_out.append(room_data)
 
     return rooms_out
@@ -3378,6 +3386,37 @@ async def websocket_toggle_switch(
     except Exception as e:
         _LOGGER.error("Failed to toggle switch %s: %s", entity_id, e)
         connection.send_error(msg["id"], "toggle_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/resolve_smoke_device",
+        vol.Optional("entity_id"): str,
+        vol.Optional("device_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_resolve_smoke_device(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Map every entity on a Kidde (or other) device to smoke-alarm roles."""
+    from .smoke_alarm import resolve_smoke_device
+
+    try:
+        result = resolve_smoke_device(hass, msg.get("entity_id"), msg.get("device_id"))
+    except Exception as err:
+        connection.send_error(msg["id"], "resolve_failed", str(err))
+        return
+    if not result.get("device_id"):
+        connection.send_error(
+            msg["id"],
+            "not_found",
+            "That entity is not on a Home Assistant device, so its sensors cannot be loaded together.",
+        )
+        return
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command(

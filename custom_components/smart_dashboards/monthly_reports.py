@@ -1156,6 +1156,7 @@ _TYPE_WORD = {
     "fridge": "fridge",
     "door": "door",
     "window": "window",
+    "smoke_alarm": "alarm",
 }
 
 

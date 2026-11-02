@@ -324,5 +324,10 @@ DEFAULT_CONFIG = {
                 "{room_name}: {stars} stars ({average}/100). {worst_pillar_tip}"
             ),
         },
+        "coned_integration": {
+            "enabled": False,
+            "payee_sensor": "sensor.coned_payee_summary",
+            "payees": [],
+        },
     },
 }
