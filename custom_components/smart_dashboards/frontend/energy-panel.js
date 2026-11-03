@@ -5205,7 +5205,8 @@ class EnergyPanel extends HTMLElement {
       .ms-unit,
       .ceiling-vent-body,
       .door-frame,
-      .window-frame {
+      .window-frame,
+      .oil-diffuser-body {
         position: relative;
       }
       .device-offline-badge {
@@ -5596,6 +5597,13 @@ class EnergyPanel extends HTMLElement {
       .device-card.window-card .outlet-name-top {
         font-size: 12px;
         color: var(--primary-text-color);
+      }
+      .device-card.oil-diffuser-card .outlet-name-top {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+        text-align: center;
       }
 
       /* Smoke / CO alarm card — round detector face, same size family as the other device cards */
@@ -6620,63 +6628,136 @@ class EnergyPanel extends HTMLElement {
         box-sizing: border-box;
       }
       .oil-diffuser-body {
-        width: 69px;
-        height: 78px;
-        margin: 4px 0 2px;
+        width: 70px;
+        height: 86px;
+        margin: 8px 0 6px;
         display: flex;
-        align-items: flex-end;
+        align-items: center;
         justify-content: center;
         position: relative;
       }
-      .oil-bottle {
+      .airversa-unit {
         position: relative;
-        width: 36px;
-        height: 62px;
+        width: 70px;
+        height: 80px;
+        border-radius: 22px;
+        background:
+          radial-gradient(ellipse 90% 55% at 50% 6%, rgba(255, 255, 255, 0.26), transparent 52%),
+          radial-gradient(ellipse 70% 40% at 50% 100%, rgba(255, 255, 255, 0.05), transparent 60%),
+          linear-gradient(180deg, #323236 0%, #141416 36%, #050506 70%, #161618 100%);
+        box-shadow:
+          0 8px 16px rgba(0, 0, 0, 0.45),
+          0 1px 0 rgba(255, 255, 255, 0.04),
+          inset 0 1px 0 rgba(255, 255, 255, 0.28),
+          inset 0 -2px 4px rgba(0, 0, 0, 0.55);
       }
-      .oil-neck {
-        width: 10px;
-        height: 8px;
-        margin: 0 auto;
-        border: 2px solid rgba(186, 214, 214, 0.9);
-        border-bottom: none;
-        border-radius: 3px 3px 0 0;
-        background: rgba(255, 255, 255, 0.06);
+      .device-card.oil-diffuser-card.diffuser-on .airversa-unit {
+        box-shadow:
+          0 8px 16px rgba(0, 0, 0, 0.45),
+          0 0 10px rgba(3, 169, 244, 0.18),
+          inset 0 1px 0 rgba(255, 255, 255, 0.22),
+          inset 0 -2px 4px rgba(0, 0, 0, 0.55);
       }
-      .oil-glass {
-        width: 34px;
-        height: 44px;
-        margin: 0 auto;
-        border: 2px solid rgba(186, 214, 214, 0.9);
-        border-radius: 7px 7px 14px 14px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(90, 170, 160, 0.16));
-        position: relative;
-        overflow: hidden;
-      }
-      .oil-liquid {
+      .airversa-pin {
         position: absolute;
-        left: 3px;
-        right: 3px;
-        bottom: 3px;
-        height: 42%;
-        border-radius: 3px 3px 10px 10px;
-        background: linear-gradient(180deg, #8fd0b0, #1d6d58);
+        top: 12px;
+        left: 12px;
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 30%, #ececf0, #7a7a80 70%, #2a2a2c);
+        box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.45);
       }
-      .device-card.oil-diffuser-card.diffuser-on .oil-liquid {
-        background: linear-gradient(180deg, #d4ffe4, #14a37a);
-        box-shadow: 0 0 8px rgba(20, 163, 122, 0.45);
+      .airversa-led {
+        position: absolute;
+        top: 19px;
+        left: 12.5px;
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: #243038;
+        box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.5);
+      }
+      .device-card.oil-diffuser-card.diffuser-on .airversa-led {
+        background: #4cc2ff;
+        box-shadow: 0 0 6px #4cc2ff, 0 0 10px rgba(76, 194, 255, 0.8);
+      }
+      .airversa-port {
+        position: absolute;
+        top: 9px;
+        right: 9px;
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 50% 50%,
+            #050506 0 20%,
+            #3a3a3e 21% 30%,
+            #0a0a0c 31% 46%,
+            #5a5a60 47% 56%,
+            #111114 57% 72%,
+            #3a3a40 73% 100%);
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.1),
+          inset 0 1px 2px rgba(0, 0, 0, 0.75);
+      }
+      .airversa-disc {
+        position: absolute;
+        left: 50%;
+        top: 54%;
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        background:
+          radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.22) 0 8%, transparent 10%),
+          radial-gradient(circle at 50% 50%, #5a5a62 0 18%, #2c2c32 55%, #1a1a1e 78%, #4a4a52 100%),
+          repeating-conic-gradient(
+            from 0deg,
+            #8a8a92 0deg 2deg,
+            #3a3a40 2deg 5deg,
+            #b0b0b6 5deg 6deg,
+            #242428 6deg 10deg
+          );
+        box-shadow:
+          0 2px 5px rgba(0, 0, 0, 0.6),
+          0 0 0 1px rgba(180, 180, 188, 0.28),
+          inset 0 1px 1px rgba(255, 255, 255, 0.35),
+          inset 0 0 0 1.5px rgba(0, 0, 0, 0.4);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .airversa-disc::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: radial-gradient(circle at 50% 36%, transparent 46%, rgba(0, 0, 0, 0.32) 100%);
+        pointer-events: none;
+      }
+      .airversa-brand {
+        position: relative;
+        z-index: 1;
+        font-size: 5.5px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: #f0f0f4;
+        line-height: 1;
+        text-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.35);
       }
       .oil-mist {
         position: absolute;
-        left: 0;
-        right: 0;
-        top: 0;
+        top: -10px;
+        right: 4px;
+        width: 20px;
         height: 22px;
         pointer-events: none;
       }
       .oil-puff {
         position: absolute;
-        width: 6px;
-        height: 6px;
+        width: 5px;
+        height: 5px;
         border-radius: 50%;
         background: rgba(210, 255, 236, 0.75);
         opacity: 0;
@@ -6684,9 +6765,9 @@ class EnergyPanel extends HTMLElement {
       .device-card.oil-diffuser-card.diffuser-on .oil-puff {
         animation: oil-rise 1.8s ease-in infinite;
       }
-      .oil-puff:nth-child(1) { left: 8px; animation-delay: 0s; }
-      .oil-puff:nth-child(2) { left: 16px; animation-delay: 0.45s; }
-      .oil-puff:nth-child(3) { left: 24px; animation-delay: 0.9s; }
+      .oil-puff:nth-child(1) { left: 2px; animation-delay: 0s; }
+      .oil-puff:nth-child(2) { left: 8px; animation-delay: 0.45s; }
+      .oil-puff:nth-child(3) { left: 13px; animation-delay: 0.9s; }
       @keyframes oil-rise {
         0% { transform: translateY(10px); opacity: 0; }
         25% { opacity: 0.85; }
@@ -7571,9 +7652,23 @@ class EnergyPanel extends HTMLElement {
           min-width: 216px;
         }
         .device-card.fridge-card,
-        .device-card.ceiling-vent-card {
+        .device-card.ceiling-vent-card,
+        .device-card.oil-diffuser-card {
           width: 72px;
           min-width: 72px;
+        }
+        .device-card.oil-diffuser-card .oil-diffuser-body {
+          width: 62px;
+          height: 76px;
+        }
+        .device-card.oil-diffuser-card .airversa-unit {
+          width: 62px;
+          height: 72px;
+          border-radius: 20px;
+        }
+        .device-card.oil-diffuser-card .airversa-disc {
+          width: 34px;
+          height: 34px;
         }
       }
 
@@ -12121,14 +12216,17 @@ class EnergyPanel extends HTMLElement {
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name || 'Oil diffuser')}">${escapeHtml(device.name || 'Oil diffuser')}</div>
           <div class="oil-diffuser-body">
             ${this._deviceOfflineBadge(device)}
-            <div class="oil-bottle" aria-hidden="true">
-              <div class="oil-mist">
-                <span class="oil-puff"></span>
-                <span class="oil-puff"></span>
-                <span class="oil-puff"></span>
+            <div class="airversa-unit" aria-hidden="true">
+              <div class="airversa-pin"></div>
+              <div class="airversa-led"></div>
+              <div class="airversa-port">
+                <div class="oil-mist">
+                  <span class="oil-puff"></span>
+                  <span class="oil-puff"></span>
+                  <span class="oil-puff"></span>
+                </div>
               </div>
-              <div class="oil-neck"></div>
-              <div class="oil-glass"><div class="oil-liquid"></div></div>
+              <div class="airversa-disc"><span class="airversa-brand">AIRVERSA</span></div>
             </div>
           </div>
           <div class="oil-diffuser-status">${escapeHtml(status)}</div>
