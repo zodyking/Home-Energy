@@ -1539,6 +1539,12 @@ class EnergyPanel extends HTMLElement {
 
         if (plug1Watts) plug1Watts.textContent = `${p1W.toFixed(1)}W`;
         if (plug2Watts) plug2Watts.textContent = `${p2W.toFixed(1)}W`;
+        if (deviceType === 'outlet' || isSingleOutlet) {
+          const rec1 = deviceCard.querySelector('.receptacle[data-plug-index="1"]');
+          const rec2 = deviceCard.querySelector('.receptacle[data-plug-index="2"]');
+          if (rec1) rec1.classList.toggle('active', p1W > 0.1);
+          if (rec2) rec2.classList.toggle('active', p2W > 0.1);
+        }
         if (mwLcdWatts) {
           mwLcdWatts.textContent = `${p1W.toFixed(1)} W`;
           mwLcdWatts.classList.toggle('over-threshold', deviceThreshold > 0 && outletTotal > deviceThreshold);
@@ -5246,6 +5252,13 @@ class EnergyPanel extends HTMLElement {
           width: 72px;
           min-width: 72px;
         }
+        .outlet-card.outlet-face.single-outlet .single-receptacle {
+          padding-left: 4px;
+          padding-right: 4px;
+        }
+        .outlet-card.outlet-face.single-outlet .plug-readout {
+          gap: 2px;
+        }
       }
 
       .outlet-card.outlet-face .faceplate {
@@ -5440,11 +5453,21 @@ class EnergyPanel extends HTMLElement {
 
       .outlet-card.outlet-face.single-outlet .single-receptacle {
         flex: 0 0 auto;
+        align-self: stretch;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
         margin-top: auto;
         margin-bottom: auto;
-        max-width: calc(100% - 4px);
-        margin-left: auto;
-        margin-right: auto;
+      }
+
+      .outlet-card.outlet-face.single-outlet .plug-readout {
+        min-width: 0;
+      }
+
+      .outlet-card.outlet-face.single-outlet .plug-label {
+        flex-shrink: 0;
+        white-space: nowrap;
       }
 
       .outlet-card.outlet-face.single-outlet .plate-screw:first-of-type {
@@ -12260,14 +12283,14 @@ class EnergyPanel extends HTMLElement {
           ${this._deviceOfflineBadge(outlet)}
           <div class="outlet-name outlet-name-top" title="${escapeAttr(outlet.name)}">${escapeHtml(outlet.name)}</div>
           <div class="center-screw plate-screw" aria-hidden="true"></div>
-          <div class="receptacle single-receptacle ${plug1Active ? 'active' : ''}">
+          <div class="receptacle single-receptacle plug-receptacle ${plug1Active ? 'active' : ''}" data-plug-index="1" title="Tap for usage graph and power">
             <div class="holes" aria-hidden="true">
               <span class="slot left"></span>
               <span class="slot right"></span>
               <span class="ground"></span>
             </div>
             <div class="plug-readout">
-              <span class="plug-label">Plug</span>
+              <span class="plug-label">P1</span>
               <span class="plug-watts plug1-watts">${(data.plug1?.watts || 0).toFixed(1)}W</span>
             </div>
           </div>
@@ -16873,10 +16896,10 @@ class EnergyPanel extends HTMLElement {
     };
 
     if (
-      otype === 'outlet' &&
+      (otype === 'outlet' || otype === 'single_outlet') &&
       (forcedPlugSlot === 1 || forcedPlugSlot === 2)
     ) {
-      const n = forcedPlugSlot;
+      const n = otype === 'single_outlet' ? 1 : forcedPlugSlot;
       addItem(`Open usage graph (Plug ${n})`, 'graph', n);
       if (this._resolveApplianceToggleTarget(outlet, n)) {
         addItem(this._applianceToggleMenuLabel(outlet, n), 'toggle', n);
@@ -16953,6 +16976,11 @@ class EnergyPanel extends HTMLElement {
         addItem('Open usage graph', 'graph', 1);
       }
       addItem('Spray schedule', 'diffuser_schedule', null);
+    } else if (otype === 'single_outlet') {
+      addItem('Open usage graph (Plug 1)', 'graph', 1);
+      if (this._resolveApplianceToggleTarget(outlet, 1)) {
+        addItem(this._applianceToggleMenuLabel(outlet, 1), 'toggle', 1);
+      }
     } else {
       if (otype === 'light' && String(outlet.light_presence_entity || '').trim().startsWith('binary_sensor.')) {
         const presenceAuto = outlet.light_presence_auto !== false;
@@ -17236,8 +17264,14 @@ class EnergyPanel extends HTMLElement {
         ? { switchEntity: s, plugName: '' }
         : null;
     }
+    if (otype === 'single_outlet') {
+      if (plugSlot != null && plugSlot !== 1) return null;
+      const s = outlet.plug1_switch;
+      return s && String(s).startsWith('switch.')
+        ? { switchEntity: s, plugName: 'Plug 1' }
+        : null;
+    }
     if (
-      otype === 'single_outlet' ||
       otype === 'minisplit' ||
       otype === 'stove' ||
       otype === 'microwave' ||
@@ -17654,6 +17688,18 @@ class EnergyPanel extends HTMLElement {
         outletIndex,
         outlet,
         forcedPlugSlot: plugIdx,
+      });
+      return;
+    }
+
+    if (otype === 'single_outlet') {
+      e.preventDefault();
+      e.stopPropagation();
+      this._openApplianceContextMenu(e, {
+        roomId,
+        outletIndex,
+        outlet,
+        forcedPlugSlot: 1,
       });
       return;
     }
