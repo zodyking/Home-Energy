@@ -6616,21 +6616,27 @@ class EnergyPanel extends HTMLElement {
         width: 81px;
         min-width: 81px;
         flex-shrink: 0;
+        align-self: stretch;
+        display: flex;
+        flex-direction: column;
         background: transparent;
         cursor: pointer;
       }
       .device-card.oil-diffuser-card .oil-diffuser-face {
+        flex: 1;
         min-height: 200px;
+        height: 100%;
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding: 6px 4px 5px;
+        padding: 6px 6px 5px;
         box-sizing: border-box;
       }
       .oil-diffuser-body {
+        flex: 1 1 auto;
         width: 70px;
-        height: 86px;
-        margin: 8px 0 6px;
+        min-height: 86px;
+        margin: 4px 0;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -6792,6 +6798,7 @@ class EnergyPanel extends HTMLElement {
         white-space: nowrap;
       }
       .oil-diffuser-status {
+        margin-top: auto;
         font-weight: 700;
         color: var(--primary-text-color, #e8e8e8);
         min-height: 12px;
@@ -7659,7 +7666,6 @@ class EnergyPanel extends HTMLElement {
         }
         .device-card.oil-diffuser-card .oil-diffuser-body {
           width: 62px;
-          height: 76px;
         }
         .device-card.oil-diffuser-card .airversa-unit {
           width: 62px;
