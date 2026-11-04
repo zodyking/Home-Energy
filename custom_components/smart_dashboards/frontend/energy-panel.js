@@ -5785,8 +5785,7 @@ class EnergyPanel extends HTMLElement {
         font-size: 12px;
         min-height: 32px;
       }
-      .smoke-found,
-      .tplink-found {
+      .smoke-found {
         font-size: 11px;
         color: var(--secondary-text-color);
         line-height: 1.4;
@@ -17821,29 +17820,21 @@ class EnergyPanel extends HTMLElement {
       const deviceInput = item.querySelector('.smoke-device-id');
       if (hidden) hidden.value = JSON.stringify(entities);
       if (deviceInput && result?.device_id) deviceInput.value = result.device_id;
-      const labels = {
-        smoke_alarm: 'Smoke alarm',
-        co_alarm: 'CO alarm',
-        hardwire_smoke: 'Hardwire smoke',
-        co_ppm: 'CO ppm',
-        smoke_level: 'Smoke level',
-        hush: 'Hush',
-        test: 'Test',
-        identifying: 'Identifying',
-        online: 'Online',
-        battery: 'Battery',
-      };
-      const lines = Object.entries(labels)
-        .filter(([role]) => entities[role])
-        .map(([role, label]) => `${label}: ${entities[role]}`);
-      const found = item.querySelector('.smoke-found');
-      if (found) found.innerHTML = lines.length ? lines.map((line) => escapeHtml(line)).join('<br>') : 'No matching sensors on that device.';
+      const roles = ['smoke_alarm', 'co_alarm', 'hardwire_smoke', 'co_ppm', 'smoke_level', 'hush', 'test', 'identifying', 'online', 'battery'];
+      let filled = 0;
+      for (const role of roles) {
+        const el = item.querySelector(`.smoke-generic-${role}`);
+        if (el && entities[role]) {
+          el.value = entities[role];
+          filled += 1;
+        }
+      }
       const key = result?.device_id || anchor;
       if (key) {
         if (!this._kiddeMaps) this._kiddeMaps = {};
         this._kiddeMaps[key] = result;
       }
-      showToast(this.shadowRoot, lines.length ? `Loaded ${lines.length} Kidde sensors. Save the room to keep them.` : 'No Kidde sensors matched that device.', lines.length ? 'success' : 'error');
+      showToast(this.shadowRoot, filled ? `Loaded ${filled} Kidde sensors. Save the room to keep them.` : 'No Kidde sensors matched that device.', filled ? 'success' : 'error');
     } catch (err) {
       showToast(this.shadowRoot, `Could not load Kidde sensors: ${err.message || err}`, 'error');
     }
@@ -17856,9 +17847,7 @@ class EnergyPanel extends HTMLElement {
       item.querySelector('.smoke-brand')?.addEventListener('change', (e) => {
         const kidde = e.target.value !== 'generic';
         const kiddeBlock = item.querySelector('.smoke-kidde-block');
-        const genericBlock = item.querySelector('.smoke-generic-block');
         if (kiddeBlock) kiddeBlock.style.display = kidde ? 'block' : 'none';
-        if (genericBlock) genericBlock.style.display = kidde ? 'none' : 'block';
       });
       item.querySelector('.smoke-kidde-load')?.addEventListener('click', (e) => {
         e.preventDefault();
@@ -17866,32 +17855,6 @@ class EnergyPanel extends HTMLElement {
         void this._loadKiddeSensors(item);
       });
     });
-  }
-
-  _tplinkRoleLabels() {
-    return [
-      ['plug1_switch', 'Plug 1 switch'],
-      ['plug2_switch', 'Plug 2 switch'],
-      ['plug1_power', 'Plug 1 power'],
-      ['plug2_power', 'Plug 2 power'],
-      ['plug1_current', 'Plug 1 current'],
-      ['plug2_current', 'Plug 2 current'],
-      ['plug1_voltage', 'Plug 1 voltage'],
-      ['plug2_voltage', 'Plug 2 voltage'],
-      ['plug1_power_protection', 'Plug 1 power protection'],
-      ['plug2_power_protection', 'Plug 2 power protection'],
-      ['plug1_auto_off', 'Plug 1 auto-off'],
-      ['plug2_auto_off', 'Plug 2 auto-off'],
-      ['led', 'LED'],
-    ];
-  }
-
-  _tplinkFoundHtml(mapped) {
-    const entities = mapped || {};
-    const lines = this._tplinkRoleLabels()
-      .filter(([role]) => entities[role])
-      .map(([role, label]) => `${label}: ${entities[role]}`);
-    return lines.length ? lines.map((line) => escapeHtml(line)).join('<br>') : 'No sensors loaded yet.';
   }
 
   _syncTplinkShutoffUi(item, isTplink) {
@@ -17916,21 +17879,26 @@ class EnergyPanel extends HTMLElement {
     const hidden = item.querySelector('.tplink-map-json');
     const deviceInput = item.querySelector('.tplink-device-id');
     const brandInput = item.querySelector('.outlet-brand');
-    const found = item.querySelector('.tplink-found');
     if (hidden) hidden.value = JSON.stringify(entities);
     if (deviceInput && result?.device_id) deviceInput.value = result.device_id;
     if (brandInput) brandInput.value = result?.is_tplink ? 'tplink' : '';
-    if (found) {
-      found.innerHTML = result?.is_tplink
-        ? this._tplinkFoundHtml(entities)
-        : 'Not a TP-Link smart outlet. Internal shutoff is unchanged.';
-    }
     this._syncTplinkShutoffUi(item, !!result?.is_tplink);
     if (!result?.is_tplink) return false;
     this._setOutletEntityInput(item, 'outlet-plug1', entities.plug1_power);
     this._setOutletEntityInput(item, 'outlet-plug1-switch', entities.plug1_switch);
+    this._setOutletEntityInput(item, 'outlet-plug1-current', entities.plug1_current);
+    this._setOutletEntityInput(item, 'outlet-plug1-voltage', entities.plug1_voltage);
+    this._setOutletEntityInput(item, 'outlet-plug1-auto-off', entities.plug1_auto_off);
     this._setOutletEntityInput(item, 'outlet-plug2', entities.plug2_power);
     this._setOutletEntityInput(item, 'outlet-plug2-switch', entities.plug2_switch);
+    this._setOutletEntityInput(item, 'outlet-plug2-current', entities.plug2_current);
+    this._setOutletEntityInput(item, 'outlet-plug2-voltage', entities.plug2_voltage);
+    this._setOutletEntityInput(item, 'outlet-plug2-auto-off', entities.plug2_auto_off);
+    this._setOutletEntityInput(item, 'outlet-led', entities.led);
+    const prot1 = item.querySelector('.outlet-plug1-protection-entity');
+    if (prot1 && entities.plug1_power_protection) prot1.value = entities.plug1_power_protection;
+    const prot2 = item.querySelector('.outlet-plug2-protection-entity');
+    if (prot2 && entities.plug2_power_protection) prot2.value = entities.plug2_power_protection;
     const nameInput = item.querySelector('.outlet-name');
     if (nameInput && !nameInput.value.trim() && result.device_name) {
       nameInput.value = result.device_name;
@@ -18022,16 +17990,41 @@ class EnergyPanel extends HTMLElement {
     });
   }
 
+  _readOutletEntityInput(item, className) {
+    return (item.querySelector(`.entity-datalist-input.${className}`) || item.querySelector(`input.${className}`))?.value?.trim() || '';
+  }
+
+  _collectTplinkMapFromItem(item) {
+    const map = {};
+    const set = (role, className) => {
+      const val = this._readOutletEntityInput(item, className);
+      if (val.includes('.')) map[role] = val;
+    };
+    set('plug1_power', 'outlet-plug1');
+    set('plug1_switch', 'outlet-plug1-switch');
+    set('plug1_current', 'outlet-plug1-current');
+    set('plug1_voltage', 'outlet-plug1-voltage');
+    set('plug1_auto_off', 'outlet-plug1-auto-off');
+    set('plug2_power', 'outlet-plug2');
+    set('plug2_switch', 'outlet-plug2-switch');
+    set('plug2_current', 'outlet-plug2-current');
+    set('plug2_voltage', 'outlet-plug2-voltage');
+    set('plug2_auto_off', 'outlet-plug2-auto-off');
+    set('led', 'outlet-led');
+    const prot1 = item.querySelector('.outlet-plug1-protection-entity')?.value?.trim() || '';
+    if (prot1.includes('.')) map.plug1_power_protection = prot1;
+    const prot2 = item.querySelector('.outlet-plug2-protection-entity')?.value?.trim() || '';
+    if (prot2.includes('.')) map.plug2_power_protection = prot2;
+    return map;
+  }
+
   _applyTplinkOutletFromItem(item, device) {
     const brand = item.querySelector('.outlet-brand')?.value === 'tplink' ? 'tplink' : null;
     const anchor = item.querySelector('.tplink-anchor')?.value?.trim() || '';
     const deviceId = item.querySelector('.tplink-device-id')?.value?.trim() || '';
-    let map = {};
-    try {
-      map = JSON.parse(item.querySelector('.tplink-map-json')?.value || '{}') || {};
-    } catch (err) {
-      map = {};
-    }
+    const map = this._collectTplinkMapFromItem(item);
+    const jsonEl = item.querySelector('.tplink-map-json');
+    if (jsonEl) jsonEl.value = JSON.stringify(map);
     if (brand === 'tplink') {
       device.outlet_brand = 'tplink';
       device.tplink_anchor = anchor.includes('.') ? anchor : null;
@@ -18041,7 +18034,7 @@ class EnergyPanel extends HTMLElement {
       device.outlet_brand = null;
       device.tplink_anchor = null;
       device.tplink_device_id = null;
-      device.tplink_map = {};
+      device.tplink_map = map;
     }
   }
 
@@ -19849,22 +19842,6 @@ class EnergyPanel extends HTMLElement {
           </label>
         `).join('')
       : '<div class="smoke-found">No outlets or appliances with a switch are set up yet.</div>';
-    const roleLabels = [
-      ['smoke_alarm', 'Smoke alarm'],
-      ['co_alarm', 'CO alarm'],
-      ['hardwire_smoke', 'Hardwire smoke'],
-      ['co_ppm', 'CO ppm'],
-      ['smoke_level', 'Smoke level'],
-      ['hush', 'Hush'],
-      ['test', 'Test'],
-      ['identifying', 'Identifying'],
-      ['online', 'Online'],
-      ['battery', 'Battery'],
-    ];
-    const found = roleLabels
-      .filter(([role]) => mapped[role])
-      .map(([role, label]) => `${label}: ${mapped[role]}`)
-      .join('<br>');
     const field = (role, label, placeholder) => `
       <div class="form-group">
         <label class="form-label">${label}</label>
@@ -19908,16 +19885,18 @@ class EnergyPanel extends HTMLElement {
             <button type="button" class="btn smoke-kidde-load">Load Kidde sensors</button>
             <input type="hidden" class="smoke-device-id" value="${escapeAttr(device.smoke_device_id || '')}">
             <input type="hidden" class="smoke-map-json" value="${mapJson}">
-            <div class="smoke-found">${found || 'No sensors loaded yet.'}</div>
           </div>
-          <div class="smoke-generic-block" style="display: ${brand === 'generic' ? 'block' : 'none'};">
+          <div class="smoke-generic-block">
             ${field('smoke_alarm', 'Smoke alarm', 'binary_sensor.smoke')}
             ${field('co_alarm', 'CO alarm', 'binary_sensor.co')}
+            ${field('hardwire_smoke', 'Hardwire smoke', 'binary_sensor.hardwire_smoke')}
             ${field('co_ppm', 'CO ppm', 'sensor.co_ppm')}
             ${field('smoke_level', 'Smoke level', 'sensor.smoke_level')}
             ${field('hush', 'Hush button', 'button.hush')}
             ${field('test', 'Test button', 'button.test')}
             ${field('identifying', 'Identifying switch', 'switch.identifying')}
+            ${field('online', 'Online', 'sensor.smoke_online')}
+            ${field('battery', 'Battery', 'sensor.smoke_battery')}
           </div>
           <div class="form-group" style="margin-top: 12px;">
             <label class="form-label">Turn these off while the alarm is sounding</label>
@@ -20790,6 +20769,25 @@ class EnergyPanel extends HTMLElement {
     `;
   }
 
+  _htmlOutletPlugExtraFields(mapped, plug, roomIndex) {
+    const n = plug === 2 ? '2' : '1';
+    return `
+              <div class="form-group">
+                <label class="form-label">Current</label>
+                ${this._renderEntityAutocomplete(mapped[`plug${n}_current`] || '', 'sensor', roomIndex, `outlet-plug${n}-current`, 'sensor.kitchen_current')}
+              </div>
+              <div class="form-group">
+                <label class="form-label">Voltage</label>
+                ${this._renderEntityAutocomplete(mapped[`plug${n}_voltage`] || '', 'sensor', roomIndex, `outlet-plug${n}-voltage`, 'sensor.kitchen_voltage')}
+              </div>
+              <div class="form-group">
+                <label class="form-label">Auto-off</label>
+                ${this._renderEntityAutocomplete(mapped[`plug${n}_auto_off`] || '', 'switch', roomIndex, `outlet-plug${n}-auto-off`, 'switch.kitchen_auto_off')}
+              </div>
+              <input type="hidden" class="outlet-plug${n}-protection-entity" value="${escapeAttr(mapped[`plug${n}_power_protection`] || '')}">
+    `;
+  }
+
   _renderOutletSettings(outlet, outletIndex, powerSensors, roomIndex, isCollapsed = true) {
     const isSingleOutlet = (outlet.type || 'outlet') === 'single_outlet';
     const displayName = outlet.name || 'Unnamed Outlet';
@@ -20841,7 +20839,10 @@ class EnergyPanel extends HTMLElement {
             <input type="hidden" class="outlet-brand" value="${isTplink ? 'tplink' : ''}">
             <input type="hidden" class="tplink-device-id" value="${escapeAttr(outlet.tplink_device_id || '')}">
             <input type="hidden" class="tplink-map-json" value="${mapJson}">
-            <div class="tplink-found">${isTplink ? this._tplinkFoundHtml(mapped) : 'No sensors loaded yet.'}</div>
+            <div class="form-group" style="margin-top: 8px;">
+              <label class="form-label">LED</label>
+              ${this._renderEntityAutocomplete(mapped.led || '', 'switch', roomIndex, 'outlet-led', 'switch.kitchen_outlet_led')}
+            </div>
           </div>
           
           <div class="plugs-settings-grid ${isSingleOutlet ? 'single-plug' : ''}">
@@ -20855,6 +20856,7 @@ class EnergyPanel extends HTMLElement {
                 <label class="form-label">Switch</label>
                 ${this._renderEntityAutocomplete(outlet.plug1_switch || '', 'switch', roomIndex, 'outlet-plug1-switch', 'switch.kitchen_outlet')}
               </div>
+              ${this._htmlOutletPlugExtraFields(mapped, 1, roomIndex)}
               <div class="shutoff-row">
                 <div class="form-group">
                   <label class="form-label outlet-shutoff-label">${shutoffLabel}</label>
@@ -20889,6 +20891,7 @@ class EnergyPanel extends HTMLElement {
                 <label class="form-label">Switch</label>
                 ${this._renderEntityAutocomplete(outlet.plug2_switch || '', 'switch', roomIndex, 'outlet-plug2-switch', 'switch.kitchen_outlet')}
               </div>
+              ${this._htmlOutletPlugExtraFields(mapped, 2, roomIndex)}
               <div class="shutoff-row">
                 <div class="form-group">
                   <label class="form-label outlet-shutoff-label">${shutoffLabel}</label>
@@ -22513,19 +22516,11 @@ class EnergyPanel extends HTMLElement {
             const anchor = item.querySelector('.smoke-anchor')?.value?.trim() || '';
             device.smoke_anchor = anchor.includes('.') ? anchor : null;
             device.smoke_device_id = item.querySelector('.smoke-device-id')?.value?.trim() || null;
-            let smokeMap = {};
-            if (device.smoke_brand === 'generic') {
-              const read = (role) => item.querySelector(`.smoke-generic-${role}`)?.value?.trim() || '';
-              for (const role of ['smoke_alarm', 'co_alarm', 'co_ppm', 'smoke_level', 'hush', 'test', 'identifying']) {
-                const eid = read(role);
-                if (eid.includes('.')) smokeMap[role] = eid;
-              }
-            } else {
-              try {
-                smokeMap = JSON.parse(item.querySelector('.smoke-map-json')?.value || '{}') || {};
-              } catch (err) {
-                smokeMap = {};
-              }
+            const smokeMap = {};
+            const readSmoke = (role) => item.querySelector(`.smoke-generic-${role}`)?.value?.trim() || '';
+            for (const role of ['smoke_alarm', 'co_alarm', 'hardwire_smoke', 'co_ppm', 'smoke_level', 'hush', 'test', 'identifying', 'online', 'battery']) {
+              const eid = readSmoke(role);
+              if (eid.includes('.')) smokeMap[role] = eid;
             }
             device.smoke_map = smokeMap;
             device.alarm_cut_switches = Array.from(item.querySelectorAll('.smoke-cut-switch:checked'))
@@ -23151,6 +23146,28 @@ class EnergyPanel extends HTMLElement {
           }
         } else if (deviceTypeFromItem === 'oil_diffuser') {
           this._applyOilDiffuserFromItem(item, device, originalRoom?.outlets?.[parseInt(item.dataset.outletIndex, 10)]);
+        } else if (deviceTypeFromItem === 'smoke_alarm') {
+          device.type = 'smoke_alarm';
+          device.plug1_entity = null;
+          device.plug2_entity = null;
+          device.plug1_switch = null;
+          device.plug2_switch = null;
+          device.plug1_shutoff = 0;
+          device.plug2_shutoff = 0;
+          device.smoke_brand = item.querySelector('.smoke-brand')?.value === 'generic' ? 'generic' : 'kidde';
+          const smokeAnchor = item.querySelector('.smoke-anchor')?.value?.trim() || '';
+          device.smoke_anchor = smokeAnchor.includes('.') ? smokeAnchor : null;
+          device.smoke_device_id = item.querySelector('.smoke-device-id')?.value?.trim() || null;
+          const smokeMap = {};
+          const readSmoke = (role) => item.querySelector(`.smoke-generic-${role}`)?.value?.trim() || '';
+          for (const role of ['smoke_alarm', 'co_alarm', 'hardwire_smoke', 'co_ppm', 'smoke_level', 'hush', 'test', 'identifying', 'online', 'battery']) {
+            const eid = readSmoke(role);
+            if (eid.includes('.')) smokeMap[role] = eid;
+          }
+          device.smoke_map = smokeMap;
+          device.alarm_cut_switches = Array.from(item.querySelectorAll('.smoke-cut-switch:checked'))
+            .map((el) => el.dataset.entity)
+            .filter((eid) => eid && (eid.startsWith('switch.') || eid.startsWith('fan.')));
         } else {
           device.type = isSingleOutlet ? 'single_outlet' : 'outlet';
           device.plug2_entity = isSingleOutlet ? null : (plug2 || null);
