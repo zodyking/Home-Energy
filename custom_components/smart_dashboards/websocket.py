@@ -304,6 +304,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_light_automations)
     websocket_api.async_register_command(hass, websocket_save_light_automations)
     websocket_api.async_register_command(hass, websocket_save_diffuser_schedule)
+    websocket_api.async_register_command(hass, websocket_diffuser_manual_spray)
     websocket_api.async_register_command(hass, websocket_test_tuya_scene)
     websocket_api.async_register_command(hass, websocket_encode_tuya_scene)
     _LOGGER.info("Smart Dashboards WebSocket API registered")
@@ -656,11 +657,14 @@ def build_rooms_payload_for_power_and_ratings(
                 state = hass.states.get(control) if control else None
                 is_on = bool(state and str(state.state or "").lower() == "on")
                 phase = None
+                runtime = None
                 if energy_monitor is not None:
-                    phase = getattr(energy_monitor, "_diffuser_status", {}).get(
-                        diffuser_runtime_key(room_id, outlet_index)
-                    )
-                outlet_data.update(public_diffuser_state(is_on, phase, outlet))
+                    runtime_key = diffuser_runtime_key(room_id, outlet_index)
+                    phase = getattr(energy_monitor, "_diffuser_status", {}).get(runtime_key)
+                    runtime = getattr(energy_monitor, "_diffuser_runtime", {}).get(runtime_key)
+                outlet_data.update(
+                    public_diffuser_state(is_on, phase, outlet, runtime, dt_util.now())
+                )
             else:
                 # Get plug 1 data
                 if outlet.get("plug1_entity"):
@@ -4568,6 +4572,67 @@ async def websocket_save_diffuser_schedule(
     except Exception as e:
         _LOGGER.error("Failed to save diffuser schedule: %s", e)
         connection.send_error(msg["id"], "save_failed", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/diffuser_manual_spray",
+        vol.Required("room_id"): str,
+        vol.Required("outlet_index"): int,
+    }
+)
+@websocket_api.async_response
+async def websocket_diffuser_manual_spray(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Spray once for the configured Airversa duration, or 5 seconds."""
+    from .diffuser_automation import (
+        async_start_manual_spray,
+        diffuser_runtime_key,
+        normalize_mode,
+    )
+
+    config_manager = hass.data[DOMAIN].get("config_manager")
+    energy_monitor = hass.data.get(DOMAIN, {}).get("energy_monitor")
+    if not config_manager or energy_monitor is None:
+        connection.send_error(msg["id"], "not_ready", "Energy monitor is not ready")
+        return
+
+    room_id = str(msg["room_id"])
+    outlet_index = int(msg["outlet_index"])
+    target = None
+    for room in config_manager.energy_config.get("rooms") or []:
+        rid = room.get("id", str(room.get("name") or "").lower().replace(" ", "_"))
+        if rid != room_id:
+            continue
+        outlets = room.get("outlets") or []
+        if 0 <= outlet_index < len(outlets) and outlets[outlet_index].get("type") == "oil_diffuser":
+            target = outlets[outlet_index]
+        break
+    if target is None:
+        connection.send_error(msg["id"], "not_found", "Oil diffuser was not found")
+        return
+    if normalize_mode(target.get("diffuser_mode")) != "airversa":
+        connection.send_error(msg["id"], "not_supported", "Manual spray is only for Airversa")
+        return
+
+    key = diffuser_runtime_key(room_id, outlet_index)
+    try:
+        duration = await async_start_manual_spray(
+            runtime_map=getattr(energy_monitor, "_diffuser_runtime"),
+            status_map=getattr(energy_monitor, "_diffuser_status"),
+            key=key,
+            outlet=target,
+            set_switch=energy_monitor._async_switch_set,
+        )
+        connection.send_result(msg["id"], {"success": True, "duration": duration})
+    except ValueError:
+        connection.send_error(msg["id"], "unconfigured", "Choose a control switch in settings")
+    except Exception as e:
+        _LOGGER.error("Manual diffuser spray failed: %s", e)
+        connection.send_error(msg["id"], "spray_failed", str(e))
 
 
 @websocket_api.websocket_command(

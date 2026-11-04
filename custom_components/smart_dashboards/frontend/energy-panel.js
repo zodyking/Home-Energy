@@ -124,31 +124,40 @@ function isContactOpen(state) {
   return state === 'on' || state === 'open';
 }
 
+const AIRVERSA_INTENSITY_STEPS = [
+  { spray: 15, rest: 300 },
+  { spray: 72, rest: 360 },
+  { spray: 129, rest: 420 },
+  { spray: 186, rest: 480 },
+  { spray: 243, rest: 540 },
+  { spray: 300, rest: 600 },
+];
+
 const DIFFUSER_MODES = {
   airversa: {
     patterns: [
-      { id: 'continuous', label: 'Continuous while scheduled' },
       { id: 'intermittent', label: 'Intermittent spray' },
     ],
     defaultPattern: 'intermittent',
+    usesIntensity: true,
     onLabel: 'Spray',
-    offLabel: 'Pause',
+    offLabel: 'Rest',
     onUnit: 'seconds',
     offUnit: 'seconds',
-    onMin: 1,
-    onMax: 180,
-    onDefault: 10,
-    offMin: 5,
+    onMin: 15,
+    onMax: 300,
+    onDefault: 15,
+    offMin: 300,
     offMax: 600,
-    offDefault: 20,
-    help: 'Uses the on/off switch from the Airversa Scenta integration. That integration only turns the diffuser on and off, so intermittent mode pulses the switch to set the spray interval.',
+    offDefault: 300,
+    help: 'Uses the on/off switch from the Airversa Scenta integration. Intensity sets how long it sprays and how long it rests.',
   },
-  generic: {
+  regular: {
     patterns: [
-      { id: 'continuous', label: 'On while scheduled' },
-      { id: 'cycle', label: 'Cycle the plug' },
+      { id: 'continuous', label: 'Continuous while scheduled' },
     ],
-    defaultPattern: 'cycle',
+    defaultPattern: 'continuous',
+    usesIntensity: false,
     onLabel: 'On',
     offLabel: 'Off',
     onUnit: 'minutes',
@@ -159,25 +168,7 @@ const DIFFUSER_MODES = {
     offMin: 1,
     offMax: 240,
     offDefault: 30,
-    help: 'The diffuser runs whenever its plug has power. Cycling uses minutes so the unit is not power-cycled every few seconds.',
-  },
-  water: {
-    patterns: [
-      { id: 'continuous', label: 'Continuous while scheduled' },
-      { id: 'burst', label: 'Short bursts' },
-    ],
-    defaultPattern: 'burst',
-    onLabel: 'Spray',
-    offLabel: 'Pause',
-    onUnit: 'seconds',
-    offUnit: 'minutes',
-    onMin: 1,
-    onMax: 120,
-    onDefault: 8,
-    offMin: 1,
-    offMax: 180,
-    offDefault: 10,
-    help: 'A short spray followed by a longer pause, so a water diffuser does not soak the room.',
+    help: 'A regular oil diffuser stays on during the schedule window and turns off outside it.',
   },
 };
 
@@ -191,6 +182,48 @@ const DIFFUSER_PHASE_LABELS = {
   on: 'On',
   off: 'Off',
 };
+
+function normalizeDiffuserMode(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'regular' || raw === 'generic' || raw === 'water') return 'regular';
+  return raw === 'airversa' ? 'airversa' : 'airversa';
+}
+
+function airversaIntensityStep(index) {
+  const max = AIRVERSA_INTENSITY_STEPS.length - 1;
+  const idx = Math.max(0, Math.min(max, Number.parseInt(index, 10) || 0));
+  return { index: idx, ...AIRVERSA_INTENSITY_STEPS[idx] };
+}
+
+function nearestAirversaIntensity(onAmount, offAmount) {
+  const onSec = Number(onAmount);
+  const offSec = Number(offAmount);
+  if (!Number.isFinite(onSec) || !Number.isFinite(offSec)) return 0;
+  let best = 0;
+  let bestDistance = Infinity;
+  AIRVERSA_INTENSITY_STEPS.forEach((step, idx) => {
+    const distance = Math.abs(step.spray - onSec) + Math.abs(step.rest - offSec);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = idx;
+    }
+  });
+  return best;
+}
+
+function formatDiffuserDuration(sec) {
+  const t = Math.max(0, Math.floor(Number(sec) || 0));
+  if (t < 60) return `${t}s`;
+  const m = Math.floor(t / 60);
+  const s = t % 60;
+  if (s === 0) return `${m} min`;
+  return `${m} min ${s}s`;
+}
+
+function formatAirversaIntensityTimes(index) {
+  const step = airversaIntensityStep(index);
+  return `Spray ${formatDiffuserDuration(step.spray)} · Rest ${formatDiffuserDuration(step.rest)}`;
+}
 
 /** Escape a string for safe interpolation into an HTML text node. */
 function escapeHtml(s) {
@@ -1664,13 +1697,15 @@ class EnergyPanel extends HTMLElement {
           const isOn = Object.prototype.hasOwnProperty.call(outlet, 'switch_state')
             ? outlet.switch_state === true
             : !!hassOn;
-          const phase = outlet.diffuser_phase;
-          const status = DIFFUSER_PHASE_LABELS[phase] || (isOn ? 'On' : 'Off');
           deviceCard.classList.toggle('diffuser-on', isOn);
-          const statusEl = deviceCard.querySelector('.oil-diffuser-status');
-          if (statusEl) statusEl.textContent = status;
-          const cadenceEl = deviceCard.querySelector('.oil-diffuser-cadence');
-          if (cadenceEl && deviceConfig) cadenceEl.textContent = this._diffuserCadenceLabel(deviceConfig);
+          const mode = normalizeDiffuserMode(deviceConfig?.diffuser_mode || outlet.diffuser_mode);
+          deviceCard.classList.toggle('diffuser-airversa', mode === 'airversa');
+          deviceCard.classList.toggle('diffuser-regular', mode === 'regular');
+          const nextEl = deviceCard.querySelector('.oil-diffuser-next');
+          const nextVal = deviceCard.querySelector('.oil-diffuser-next-val');
+          const nextSec = this._diffuserNextSpraySec(deviceConfig, outlet);
+          if (nextEl) nextEl.hidden = nextSec == null;
+          if (nextVal && nextSec != null) nextVal.textContent = this._formatDiffuserCountdown(nextSec);
           const wattsEl = deviceCard.querySelector('.oil-diffuser-watts');
           if (wattsEl) {
             const hasPlug = Boolean(String(deviceConfig?.plug1_entity || '').trim());
@@ -6654,6 +6689,7 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
         padding: 6px 6px 5px;
         box-sizing: border-box;
+        overflow: visible;
       }
       .oil-diffuser-body {
         flex: 1 1 auto;
@@ -6664,6 +6700,12 @@ class EnergyPanel extends HTMLElement {
         align-items: center;
         justify-content: center;
         position: relative;
+        overflow: visible;
+      }
+      .airversa-unit,
+      .tanamera-unit,
+      .airversa-port {
+        overflow: visible;
       }
       .airversa-unit {
         position: relative;
@@ -6704,12 +6746,32 @@ class EnergyPanel extends HTMLElement {
         width: 3px;
         height: 3px;
         border-radius: 50%;
-        background: #243038;
+        background: #1c2428;
         box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.5);
+        animation: airversa-led-blink 2s ease-in-out infinite;
       }
       .device-card.oil-diffuser-card.diffuser-on .airversa-led {
-        background: #4cc2ff;
-        box-shadow: 0 0 6px #4cc2ff, 0 0 10px rgba(76, 194, 255, 0.8);
+        animation-name: airversa-led-blink-on;
+      }
+      @keyframes airversa-led-blink {
+        0%, 88%, 100% {
+          background: #1c2428;
+          box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.5);
+        }
+        92%, 96% {
+          background: #5ad0ff;
+          box-shadow: 0 0 5px #5ad0ff, 0 0 8px rgba(90, 208, 255, 0.65);
+        }
+      }
+      @keyframes airversa-led-blink-on {
+        0%, 88%, 100% {
+          background: #1e3a48;
+          box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.4);
+        }
+        92%, 96% {
+          background: #7de0ff;
+          box-shadow: 0 0 6px #7de0ff, 0 0 10px rgba(125, 224, 255, 0.8);
+        }
       }
       .airversa-port {
         position: absolute;
@@ -6775,42 +6837,226 @@ class EnergyPanel extends HTMLElement {
         line-height: 1;
         text-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.35);
       }
-      .oil-mist {
+      .oil-mist,
+      .tanamera-mist {
         position: absolute;
-        top: -10px;
-        right: 4px;
-        width: 20px;
-        height: 22px;
         pointer-events: none;
+        overflow: visible;
+        z-index: 4;
+      }
+      .oil-mist {
+        top: -14px;
+        right: 1px;
+        left: auto;
+        width: 24px;
+        height: 30px;
+        transform: none;
       }
       .oil-puff {
         position: absolute;
-        width: 5px;
-        height: 5px;
+        bottom: 2px;
+        width: 8px;
+        height: 9px;
         border-radius: 50%;
-        background: rgba(210, 255, 236, 0.75);
+        background: rgba(232, 246, 255, 0.42);
+        box-shadow: 0 0 5px 2px rgba(220, 240, 255, 0.22);
         opacity: 0;
+        transform-origin: 50% 100%;
+      }
+      .device-card.oil-diffuser-card.diffuser-on .oil-mist::before,
+      .device-card.oil-diffuser-card.diffuser-on .tanamera-mist::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        bottom: 0;
+        width: 8px;
+        height: 13px;
+        margin-left: -4px;
+        border-radius: 45%;
+        background: radial-gradient(ellipse at 50% 85%, rgba(255, 255, 255, 0.5) 0%, rgba(230, 244, 255, 0.18) 58%, transparent 78%);
+        box-shadow: 0 -4px 6px rgba(230, 244, 255, 0.16);
       }
       .device-card.oil-diffuser-card.diffuser-on .oil-puff {
-        animation: oil-rise 1.8s ease-in infinite;
+        animation: oil-mist-rise 2.6s ease-out infinite;
       }
-      .oil-puff:nth-child(1) { left: 2px; animation-delay: 0s; }
-      .oil-puff:nth-child(2) { left: 8px; animation-delay: 0.45s; }
-      .oil-puff:nth-child(3) { left: 13px; animation-delay: 0.9s; }
-      @keyframes oil-rise {
-        0% { transform: translateY(10px); opacity: 0; }
-        25% { opacity: 0.85; }
-        100% { transform: translateY(-16px); opacity: 0; }
+      .oil-puff:nth-child(1) { left: 2px; animation-delay: -0.35s; }
+      .oil-puff:nth-child(2) { left: 7px; width: 9px; height: 10px; animation-delay: -1.0s; }
+      .oil-puff:nth-child(3) { left: 11px; animation-delay: -1.65s; }
+      .oil-puff:nth-child(4) { left: 5px; width: 7px; height: 8px; animation-delay: -2.2s; }
+      @keyframes oil-mist-rise {
+        0% { transform: translate3d(0, 2px, 0) scale(0.7); opacity: 0.2; }
+        18% { opacity: 0.7; }
+        55% { opacity: 0.3; }
+        100% { transform: translate3d(2px, -16px, 0) scale(1.35); opacity: 0; }
+      }
+      .device-card.oil-diffuser-card.diffuser-regular .oil-diffuser-next {
+        display: none;
       }
       @media (prefers-reduced-motion: reduce) {
-        .device-card.oil-diffuser-card.diffuser-on .oil-puff {
+        .device-card.oil-diffuser-card.diffuser-on .oil-puff,
+        .device-card.oil-diffuser-card.diffuser-on .tanamera-mist .oil-puff {
           animation: none;
-          opacity: 0.55;
-          transform: translateY(-6px);
+          opacity: 0.35;
+          transform: translateY(-7px) scale(1.05);
+        }
+        .airversa-led,
+        .device-card.oil-diffuser-card.diffuser-on .airversa-led {
+          animation: none;
+        }
+        .device-card.oil-diffuser-card.diffuser-on .airversa-led {
+          background: #4cc2ff;
+          box-shadow: 0 0 6px #4cc2ff;
         }
       }
-      .oil-diffuser-status,
-      .oil-diffuser-cadence,
+      .tanamera-unit {
+        position: relative;
+        width: 54px;
+        height: 80px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.4));
+      }
+      .tanamera-top {
+        width: 36px;
+        height: 8px;
+        border-radius: 10px 10px 4px 4px;
+        background:
+          radial-gradient(ellipse 70% 80% at 50% 20%, rgba(255, 232, 200, 0.28), transparent 55%),
+          linear-gradient(180deg, #6b4630 0%, #3d2618 55%, #2a1a10 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 230, 200, 0.28),
+          inset 0 -1px 1px rgba(0, 0, 0, 0.45);
+        z-index: 2;
+      }
+      .tanamera-nozzle {
+        position: absolute;
+        top: 2px;
+        left: 50%;
+        width: 10px;
+        height: 3px;
+        border-radius: 2px;
+        transform: translateX(-50%);
+        background: #1a100c;
+        box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.7);
+        z-index: 3;
+      }
+      .tanamera-body {
+        width: 50px;
+        height: 50px;
+        margin-top: -2px;
+        border-radius: 6px 6px 8px 8px;
+        background:
+          radial-gradient(ellipse 80% 40% at 50% 8%, rgba(255, 255, 255, 0.95), transparent 50%),
+          linear-gradient(180deg, #ffffff 0%, #f4f1ea 55%, #e6e0d4 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.95),
+          inset 0 -2px 3px rgba(80, 60, 40, 0.08);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 1;
+      }
+      .device-card.oil-diffuser-card.diffuser-on .tanamera-body {
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.95),
+          0 0 10px rgba(255, 248, 230, 0.25);
+      }
+      .tanamera-brand {
+        font-size: 4.4px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        color: #8a7b6a;
+        line-height: 1;
+      }
+      .tanamera-sub {
+        margin-top: 2px;
+        font-size: 3.2px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        color: #b0a394;
+        line-height: 1;
+      }
+      .tanamera-base {
+        width: 50px;
+        height: 16px;
+        margin-top: -1px;
+        border-radius: 0 0 10px 10px;
+        background:
+          radial-gradient(ellipse 70% 50% at 50% 0%, rgba(255, 220, 180, 0.16), transparent 60%),
+          linear-gradient(180deg, #5a3a26 0%, #3a2418 60%, #24160e 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 220, 180, 0.16),
+          inset 0 -1px 2px rgba(0, 0, 0, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        z-index: 2;
+      }
+      .tanamera-btn {
+        width: 7px;
+        height: 2px;
+        border-radius: 1px;
+        background: #1a100c;
+        box-shadow: 0 0.5px 0 rgba(255, 220, 180, 0.18);
+      }
+      .tanamera-mist {
+        top: -14px;
+        left: 50%;
+        width: 22px;
+        height: 26px;
+        transform: translateX(-50%);
+      }
+      .tanamera-mist .oil-puff {
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.58) 0%, rgba(255, 248, 236, 0.18) 54%, transparent 74%);
+      }
+      .oil-diffuser-meta {
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+        gap: 2px;
+      }
+      .oil-diffuser-next[hidden] {
+        display: none !important;
+      }
+      .oil-diffuser-next {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: baseline;
+        justify-content: center;
+        gap: 4px;
+        width: calc(100% - 2px);
+        max-width: 74px;
+        padding: 3px 5px;
+        border-radius: 6px;
+        background: var(--input-bg, #282828);
+        border: 1px solid var(--input-border, rgba(255, 255, 255, 0.12));
+        box-sizing: border-box;
+        font-variant-numeric: tabular-nums;
+      }
+      .oil-diffuser-next .heater-dash-lbl {
+        font-size: 8px;
+        font-weight: 600;
+        color: var(--secondary-text-color, rgba(255, 255, 255, 0.52));
+        opacity: 0.72;
+        flex-shrink: 0;
+      }
+      .oil-diffuser-next .heater-dash-val,
+      .oil-diffuser-next-val {
+        font-size: 9px;
+        font-weight: 800;
+        color: var(--primary-text-color, rgba(255, 255, 255, 0.9));
+        flex-shrink: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .oil-diffuser-watts {
         font-size: 9px;
         line-height: 1.2;
@@ -6819,20 +7065,66 @@ class EnergyPanel extends HTMLElement {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-      }
-      .oil-diffuser-status {
-        margin-top: auto;
-        font-weight: 700;
-        color: var(--primary-text-color, #e8e8e8);
-        min-height: 12px;
-      }
-      .device-card.oil-diffuser-card.diffuser-on .oil-diffuser-status {
-        color: #7dcea0;
-      }
-      .oil-diffuser-cadence,
-      .oil-diffuser-watts {
         color: var(--secondary-text-color, #9aa0a6);
         margin-top: 2px;
+      }
+      .diffuser-intensity-scale {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--secondary-text-color, #9aa0a6);
+        margin-bottom: 6px;
+      }
+      .diffuser-intensity {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.12);
+        outline: none;
+        margin: 0;
+      }
+      .diffuser-intensity::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--panel-accent, #03a9f4);
+        border: 2px solid #fff;
+        cursor: pointer;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+      }
+      .diffuser-intensity::-moz-range-track {
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.12);
+      }
+      .diffuser-intensity::-moz-range-thumb {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--panel-accent, #03a9f4);
+        border: 2px solid #fff;
+        cursor: pointer;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+      }
+      .diffuser-intensity:focus-visible {
+        outline: 2px solid var(--panel-accent, #03a9f4);
+        outline-offset: 2px;
+      }
+      .diffuser-intensity-times {
+        margin: 8px 0 0;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: var(--input-bg, #282828);
+        border: 1px solid var(--input-border, rgba(255, 255, 255, 0.12));
+        color: var(--primary-text-color, #e0e0e0);
+        font-size: 13px;
+        font-weight: 600;
+        text-align: center;
       }
 
       /* Ceiling vent fan card - single width, square, detailed vent grill */
@@ -7698,6 +7990,20 @@ class EnergyPanel extends HTMLElement {
         .device-card.oil-diffuser-card .airversa-disc {
           width: 34px;
           height: 34px;
+        }
+        .device-card.oil-diffuser-card .tanamera-unit {
+          width: 48px;
+          height: 72px;
+        }
+        .device-card.oil-diffuser-card .tanamera-body,
+        .device-card.oil-diffuser-card .tanamera-base {
+          width: 44px;
+        }
+        .device-card.oil-diffuser-card .tanamera-body {
+          height: 44px;
+        }
+        .device-card.oil-diffuser-card .tanamera-top {
+          width: 32px;
         }
       }
 
@@ -12173,11 +12479,10 @@ class EnergyPanel extends HTMLElement {
   }
 
   _diffuserControlSwitch(outlet) {
-    const mode = outlet?.diffuser_mode || 'airversa';
+    const mode = normalizeDiffuserMode(outlet?.diffuser_mode);
     const dedicated = String(outlet?.diffuser_switch || '');
     const plug = String(outlet?.plug1_switch || '');
-    if (mode === 'generic') return plug.startsWith('switch.') ? plug : '';
-    if (mode === 'water') {
+    if (mode === 'regular') {
       if (dedicated.startsWith('switch.')) return dedicated;
       return plug.startsWith('switch.') ? plug : '';
     }
@@ -12195,37 +12500,89 @@ class EnergyPanel extends HTMLElement {
         `.outlet-settings-item[data-room-index="${roomIndex}"][data-outlet-index="${outletIndex}"][data-device-type="oil_diffuser"]`,
       );
       const selected = item?.querySelector('.diffuser-mode')?.value;
-      if (selected && DIFFUSER_MODES[selected]) return selected;
+      if (selected) return normalizeDiffuserMode(selected);
     }
-    const saved = outlet?.diffuser_mode;
-    return DIFFUSER_MODES[saved] ? saved : 'airversa';
+    return normalizeDiffuserMode(outlet?.diffuser_mode);
   }
 
   _diffuserScheduleDraft(outlet, mode) {
-    const spec = DIFFUSER_MODES[mode] || DIFFUSER_MODES.airversa;
+    const resolved = normalizeDiffuserMode(mode);
+    const spec = DIFFUSER_MODES[resolved] || DIFFUSER_MODES.airversa;
     const raw = outlet?.diffuser_schedule || {};
     const patternOk = spec.patterns.some((pattern) => pattern.id === raw.pattern);
-    const onAmount = Number(raw.on_amount);
-    const offAmount = Number(raw.off_amount);
+    const storedIntensity = raw.intensity;
+    const intensity = storedIntensity == null
+      ? nearestAirversaIntensity(raw.on_amount, raw.off_amount)
+      : airversaIntensityStep(storedIntensity).index;
+    const step = airversaIntensityStep(intensity);
     return {
       enabled: raw.enabled === true,
       start: /^\d{2}:\d{2}$/.test(String(raw.start || '')) ? raw.start : '08:00',
       end: /^\d{2}:\d{2}$/.test(String(raw.end || '')) ? raw.end : '22:00',
       pattern: patternOk ? raw.pattern : spec.defaultPattern,
-      on_amount: Number.isFinite(onAmount) ? onAmount : spec.onDefault,
-      off_amount: Number.isFinite(offAmount) ? offAmount : spec.offDefault,
+      intensity,
+      on_amount: resolved === 'airversa' ? step.spray : spec.onDefault,
+      off_amount: resolved === 'airversa' ? step.rest : spec.offDefault,
     };
   }
 
-  _diffuserCadenceLabel(device) {
-    const mode = DIFFUSER_MODES[device?.diffuser_mode] ? device.diffuser_mode : 'airversa';
-    const spec = DIFFUSER_MODES[mode];
-    const draft = this._diffuserScheduleDraft(device, mode);
-    if (!draft.enabled) return 'Manual';
-    if (draft.pattern === 'continuous') return `${draft.start}–${draft.end}`;
-    const onUnit = spec.onUnit === 'minutes' ? 'm' : 's';
-    const offUnit = spec.offUnit === 'minutes' ? 'm' : 's';
-    return `${draft.on_amount}${onUnit} / ${draft.off_amount}${offUnit}`;
+  _diffuserNextSpraySec(device, deviceData) {
+    if (normalizeDiffuserMode(device?.diffuser_mode || deviceData?.diffuser_mode) !== 'airversa') {
+      return null;
+    }
+    if (deviceData && Object.prototype.hasOwnProperty.call(deviceData, 'diffuser_next_spray_sec')) {
+      const live = deviceData.diffuser_next_spray_sec;
+      return live == null ? null : Math.max(0, Math.floor(Number(live) || 0));
+    }
+    const draft = this._diffuserScheduleDraft(device, 'airversa');
+    return draft.enabled ? 0 : null;
+  }
+
+  _formatDiffuserCountdown(totalSec) {
+    const t = Math.max(0, Math.floor(Number(totalSec) || 0));
+    if (t <= 0) return 'Now';
+    const m = Math.floor(t / 60);
+    const s = t % 60;
+    if (m > 0) return `${m}:${String(s).padStart(2, '0')}`;
+    return `${s}s`;
+  }
+
+  _renderAirversaUnit() {
+    return `
+            <div class="airversa-unit" aria-hidden="true">
+              <div class="oil-mist">
+                <span class="oil-puff"></span>
+                <span class="oil-puff"></span>
+                <span class="oil-puff"></span>
+                <span class="oil-puff"></span>
+              </div>
+              <div class="airversa-pin"></div>
+              <div class="airversa-led"></div>
+              <div class="airversa-port"></div>
+              <div class="airversa-disc"><span class="airversa-brand">AIRVERSA</span></div>
+            </div>`;
+  }
+
+  _renderRegularDiffuserUnit() {
+    return `
+            <div class="tanamera-unit" aria-hidden="true">
+              <div class="tanamera-mist">
+                <span class="oil-puff"></span>
+                <span class="oil-puff"></span>
+                <span class="oil-puff"></span>
+                <span class="oil-puff"></span>
+              </div>
+              <div class="tanamera-top"></div>
+              <div class="tanamera-nozzle"></div>
+              <div class="tanamera-body">
+                <span class="tanamera-brand">TANAMERA</span>
+                <span class="tanamera-sub">AROMA DIFFUSER</span>
+              </div>
+              <div class="tanamera-base">
+                <span class="tanamera-btn"></span>
+                <span class="tanamera-btn"></span>
+              </div>
+            </div>`;
   }
 
   _renderDiffuserCard(device, index, deviceData) {
@@ -12234,33 +12591,28 @@ class EnergyPanel extends HTMLElement {
     const isOn = deviceData && Object.prototype.hasOwnProperty.call(deviceData, 'switch_state')
       ? deviceData.switch_state === true
       : !!hassOn;
-    const phase = deviceData?.diffuser_phase;
-    const status = DIFFUSER_PHASE_LABELS[phase] || (isOn ? 'On' : 'Off');
+    const mode = normalizeDiffuserMode(device?.diffuser_mode);
     const hasPlug = Boolean(String(device.plug1_entity || '').trim());
     const watts = Number(deviceData?.plug1?.watts) || 0;
-    const cadence = this._diffuserCadenceLabel(device);
+    const nextSec = this._diffuserNextSpraySec(device, deviceData);
+    const nextHidden = nextSec == null ? ' hidden' : '';
+    const nextText = nextSec == null ? '' : this._formatDiffuserCountdown(nextSec);
+    const unit = mode === 'regular' ? this._renderRegularDiffuserUnit() : this._renderAirversaUnit();
     return `
-      <div class="device-card oil-diffuser-card ${isOn ? 'diffuser-on' : ''} ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
+      <div class="device-card oil-diffuser-card ${isOn ? 'diffuser-on' : ''} ${mode === 'regular' ? 'diffuser-regular' : 'diffuser-airversa'} ${this._deviceIsOffline(device) ? 'is-offline' : ''}" data-outlet-index="${index}">
         <div class="oil-diffuser-face">
           <div class="outlet-name outlet-name-top" title="${escapeAttr(device.name || 'Oil diffuser')}">${escapeHtml(device.name || 'Oil diffuser')}</div>
           <div class="oil-diffuser-body">
             ${this._deviceOfflineBadge(device)}
-            <div class="airversa-unit" aria-hidden="true">
-              <div class="airversa-pin"></div>
-              <div class="airversa-led"></div>
-              <div class="airversa-port">
-                <div class="oil-mist">
-                  <span class="oil-puff"></span>
-                  <span class="oil-puff"></span>
-                  <span class="oil-puff"></span>
-                </div>
-              </div>
-              <div class="airversa-disc"><span class="airversa-brand">AIRVERSA</span></div>
-            </div>
+            ${unit}
           </div>
-          <div class="oil-diffuser-status">${escapeHtml(status)}</div>
-          <div class="oil-diffuser-cadence">${escapeHtml(cadence)}</div>
-          <div class="oil-diffuser-watts"${hasPlug ? '' : ' hidden'}>${watts.toFixed(1)} W</div>
+          <div class="oil-diffuser-meta">
+            <div class="oil-diffuser-next"${nextHidden}>
+              <span class="heater-dash-lbl">Next</span>
+              <span class="heater-dash-val oil-diffuser-next-val">${escapeHtml(nextText)}</span>
+            </div>
+            <div class="oil-diffuser-watts"${hasPlug ? '' : ' hidden'}>${watts.toFixed(1)} W</div>
+          </div>
         </div>
       </div>
     `;
@@ -16632,10 +16984,14 @@ class EnergyPanel extends HTMLElement {
     const mode = this._diffuserModeFor(roomId, outletIndex, outlet);
     const spec = DIFFUSER_MODES[mode] || DIFFUSER_MODES.airversa;
     const draft = this._diffuserScheduleDraft(outlet, mode);
-    const modeName = mode === 'generic' ? 'Generic plug' : mode === 'water' ? 'Water diffuser' : 'Airversa oil diffuser';
-    const patternOptions = spec.patterns
-      .map((pattern) => `<option value="${pattern.id}" ${draft.pattern === pattern.id ? 'selected' : ''}>${escapeHtml(pattern.label)}</option>`)
-      .join('');
+    const modeName = mode === 'regular' ? 'Regular oil diffuser' : 'Airversa oil diffuser';
+    const intensityBlock = mode === 'airversa' ? `
+          <div class="form-group diffuser-intensity-block">
+            <label class="form-label" for="diffuser-intensity">Intensity</label>
+            <div class="diffuser-intensity-scale"><span>Low</span><span>High</span></div>
+            <input id="diffuser-intensity" type="range" class="diffuser-intensity" min="0" max="${AIRVERSA_INTENSITY_STEPS.length - 1}" step="1" value="${draft.intensity}" aria-valuemin="0" aria-valuemax="${AIRVERSA_INTENSITY_STEPS.length - 1}" aria-valuenow="${draft.intensity}" aria-valuetext="${escapeAttr(formatAirversaIntensityTimes(draft.intensity))}">
+            <p class="diffuser-intensity-times">${escapeHtml(formatAirversaIntensityTimes(draft.intensity))}</p>
+          </div>` : '';
     const overlay = document.createElement('div');
     overlay.className = 'load-rate-popup-overlay diffuser-schedule-overlay';
     overlay.innerHTML = `
@@ -16661,20 +17017,7 @@ class EnergyPanel extends HTMLElement {
               <input id="diffuser-schedule-end" type="time" class="form-input diffuser-schedule-end" value="${draft.end}">
             </div>
           </div>
-          <div class="form-group">
-            <label class="form-label" for="diffuser-schedule-pattern">Pattern</label>
-            <select id="diffuser-schedule-pattern" class="form-input diffuser-pattern">${patternOptions}</select>
-          </div>
-          <div class="grid-2 diffuser-duration-fields" style="gap: 10px;">
-            <div class="form-group">
-              <label class="form-label" for="diffuser-schedule-on">${escapeHtml(spec.onLabel)} (${spec.onUnit})</label>
-              <input id="diffuser-schedule-on" type="number" class="form-input diffuser-schedule-on" min="${spec.onMin}" max="${spec.onMax}" step="1" value="${draft.on_amount}">
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="diffuser-schedule-off">${escapeHtml(spec.offLabel)} (${spec.offUnit})</label>
-              <input id="diffuser-schedule-off" type="number" class="form-input diffuser-schedule-off" min="${spec.offMin}" max="${spec.offMax}" step="1" value="${draft.off_amount}">
-            </div>
-          </div>
+          ${intensityBlock}
           <p class="tts-msg-desc">Outside these hours the diffuser turns off. The same start and end time runs all day. Turning it on or off from the card holds until the schedule window ends.</p>
           <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
             <button type="button" class="btn btn-secondary diffuser-schedule-cancel">Cancel</button>
@@ -16684,30 +17027,32 @@ class EnergyPanel extends HTMLElement {
       </div>
     `;
     const close = () => this._closeDiffuserScheduleModal();
-    const syncPattern = () => {
-      const continuous = overlay.querySelector('.diffuser-pattern')?.value === 'continuous';
-      const fields = overlay.querySelector('.diffuser-duration-fields');
-      if (fields) fields.hidden = continuous;
+    const intensityInput = overlay.querySelector('.diffuser-intensity');
+    const intensityTimes = overlay.querySelector('.diffuser-intensity-times');
+    const syncIntensity = () => {
+      if (!intensityInput || !intensityTimes) return;
+      const step = airversaIntensityStep(intensityInput.value);
+      intensityInput.setAttribute('aria-valuenow', String(step.index));
+      const label = formatAirversaIntensityTimes(step.index);
+      intensityInput.setAttribute('aria-valuetext', label);
+      intensityTimes.textContent = label;
     };
     overlay.querySelector('.diffuser-schedule-close')?.addEventListener('click', close);
     overlay.querySelector('.diffuser-schedule-cancel')?.addEventListener('click', close);
-    overlay.querySelector('.diffuser-pattern')?.addEventListener('change', syncPattern);
+    intensityInput?.addEventListener('input', syncIntensity);
     overlay.addEventListener('click', (event) => {
       if (event.target === overlay) close();
     });
     overlay.querySelector('.diffuser-schedule-save')?.addEventListener('click', async () => {
-      const clamp = (input, min, max, fallback) => {
-        const value = parseInt(input?.value, 10);
-        if (!Number.isFinite(value)) return fallback;
-        return Math.max(min, Math.min(max, value));
-      };
+      const step = airversaIntensityStep(intensityInput?.value);
       const schedule = {
         enabled: overlay.querySelector('.diffuser-schedule-enabled')?.checked === true,
         start: overlay.querySelector('.diffuser-schedule-start')?.value || '08:00',
         end: overlay.querySelector('.diffuser-schedule-end')?.value || '22:00',
-        pattern: overlay.querySelector('.diffuser-pattern')?.value || spec.defaultPattern,
-        on_amount: clamp(overlay.querySelector('.diffuser-schedule-on'), spec.onMin, spec.onMax, spec.onDefault),
-        off_amount: clamp(overlay.querySelector('.diffuser-schedule-off'), spec.offMin, spec.offMax, spec.offDefault),
+        pattern: spec.defaultPattern,
+        intensity: mode === 'airversa' ? step.index : 0,
+        on_amount: mode === 'airversa' ? step.spray : spec.onDefault,
+        off_amount: mode === 'airversa' ? step.rest : spec.offDefault,
       };
       const saveBtn = overlay.querySelector('.diffuser-schedule-save');
       if (saveBtn) saveBtn.disabled = true;
@@ -16721,10 +17066,14 @@ class EnergyPanel extends HTMLElement {
         });
         outlet.diffuser_mode = mode;
         outlet.diffuser_schedule = result?.schedule || schedule;
-        const cadence = this.shadowRoot.querySelector(
-          `.room-card[data-room-id="${roomId}"] [data-outlet-index="${outletIndex}"] .oil-diffuser-cadence`,
+        const card = this.shadowRoot.querySelector(
+          `.room-card[data-room-id="${roomId}"] [data-outlet-index="${outletIndex}"]`,
         );
-        if (cadence) cadence.textContent = this._diffuserCadenceLabel(outlet);
+        const nextEl = card?.querySelector('.oil-diffuser-next');
+        const nextVal = card?.querySelector('.oil-diffuser-next-val');
+        const nextSec = this._diffuserNextSpraySec(outlet, { diffuser_next_spray_sec: schedule.enabled && mode === 'airversa' ? 0 : null });
+        if (nextEl) nextEl.hidden = nextSec == null;
+        if (nextVal && nextSec != null) nextVal.textContent = this._formatDiffuserCountdown(nextSec);
         showToast(this.shadowRoot, 'Spray schedule saved', 'success');
         close();
       } catch (err) {
@@ -16733,7 +17082,7 @@ class EnergyPanel extends HTMLElement {
       }
     });
     this.shadowRoot.appendChild(overlay);
-    syncPattern();
+    syncIntensity();
     this._diffuserScheduleEsc = (event) => {
       if (event.key === 'Escape') close();
     };
@@ -16884,6 +17233,8 @@ class EnergyPanel extends HTMLElement {
           await this._setLightPresenceMode(roomId, outletIndex, action === 'presence_auto');
         } else if (action === 'diffuser_schedule') {
           await this._openDiffuserScheduleModal(roomId, outletIndex, outlet);
+        } else if (action === 'diffuser_manual_spray') {
+          await this._manualDiffuserSpray(roomId, outletIndex, outlet);
         } else if (action === 'smoke_hush' || action === 'smoke_test') {
           await this._pressSmokeButton(outlet, action);
         } else if (action === 'smoke_identify') {
@@ -16962,12 +17313,19 @@ class EnergyPanel extends HTMLElement {
       }
       addItem('View sensor history', 'sensor_history', null);
     } else if (otype === 'oil_diffuser') {
+      const mode = this._diffuserModeFor(roomId, outletIndex, outlet);
       const phase = this._powerData?.rooms
         ?.find((room) => room.id === roomId)
         ?.outlets?.[outletIndex]?.diffuser_phase;
       const phaseLabel = DIFFUSER_PHASE_LABELS[phase];
-      if (phaseLabel) addStatic(phaseLabel);
-      if (this._resolveApplianceToggleTarget(outlet, null)) {
+      if (phaseLabel && phaseLabel !== 'Set switch' && phaseLabel !== 'Manual') addStatic(phaseLabel);
+      if (mode === 'airversa') {
+        if (this._resolveApplianceToggleTarget(outlet, null)) {
+          addItem('Manual spray', 'diffuser_manual_spray', null);
+        } else {
+          addStatic('Choose a control switch in settings');
+        }
+      } else if (this._resolveApplianceToggleTarget(outlet, null)) {
         addItem(this._applianceToggleMenuLabel(outlet, null), 'toggle', null);
       } else {
         addStatic('Choose a control switch in settings');
@@ -17293,6 +17651,40 @@ class EnergyPanel extends HTMLElement {
       return s ? { switchEntity: s, plugName: '' } : null;
     }
     return null;
+  }
+
+  async _manualDiffuserSpray(roomId, outletIndex, outlet) {
+    if (normalizeDiffuserMode(outlet?.diffuser_mode) !== 'airversa') {
+      showToast(this.shadowRoot, 'Manual spray is only for Airversa.', 'error');
+      return;
+    }
+    if (!this._resolveApplianceToggleTarget(outlet, null)) {
+      showToast(this.shadowRoot, 'Choose a control switch in settings.', 'error');
+      return;
+    }
+    try {
+      const authResult = await this._hass.callWS({
+        type: 'smart_dashboards/check_toggle_auth',
+        room_id: roomId,
+      });
+      if (!this._roomAuthAllowed(authResult)) {
+        showToast(
+          this.shadowRoot,
+          `Not authorized. Only ${authResult.room_person || 'the assigned person'} can control devices in this room.`,
+          'error',
+        );
+        return;
+      }
+      const result = await this._hass.callWS({
+        type: 'smart_dashboards/diffuser_manual_spray',
+        room_id: roomId,
+        outlet_index: outletIndex,
+      });
+      const seconds = Number(result?.duration) || 5;
+      showToast(this.shadowRoot, `Spraying for ${formatDiffuserDuration(seconds)}`, 'success');
+    } catch (err) {
+      showToast(this.shadowRoot, `Could not spray: ${err.message || err}`, 'error');
+    }
   }
 
   async _executeApplianceToggle({ roomId, outletIndex, plugSlot }) {
@@ -19046,14 +19438,13 @@ class EnergyPanel extends HTMLElement {
   }
 
   _renderOilDiffuserSettings(device, deviceIndex, roomIndex, isCollapsed = true) {
-    const mode = DIFFUSER_MODES[device.diffuser_mode] ? device.diffuser_mode : 'airversa';
+    const mode = normalizeDiffuserMode(device.diffuser_mode);
     const spec = DIFFUSER_MODES[mode];
     const collapsedClass = isCollapsed ? 'collapsed' : '';
     const displayName = device.name || 'Unnamed diffuser';
     const modeOptions = [
       ['airversa', 'Airversa oil diffuser'],
-      ['generic', 'Generic (power plug)'],
-      ['water', 'Water diffuser'],
+      ['regular', 'Regular oil diffuser'],
     ].map(([value, label]) => `<option value="${value}" ${mode === value ? 'selected' : ''}>${label}</option>`).join('');
     return `
       <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${deviceIndex}" data-room-index="${roomIndex}" data-device-type="oil_diffuser" draggable="true">
@@ -19079,10 +19470,10 @@ class EnergyPanel extends HTMLElement {
             <select id="diffuser-mode-${roomIndex}-${deviceIndex}" class="form-input diffuser-mode">${modeOptions}</select>
             <p class="tts-msg-desc diffuser-mode-help" style="margin-top: 6px;">${escapeHtml(spec.help)}</p>
           </div>
-          <div class="form-group diffuser-switch-block" style="display: ${mode === 'generic' ? 'none' : 'block'};">
+          <div class="form-group diffuser-switch-block">
             <label class="form-label">Control switch</label>
             ${this._renderEntityAutocomplete(device.diffuser_switch || '', 'switch', roomIndex, 'diffuser-switch', 'switch.airversa_diffuser')}
-            <p class="tts-msg-desc" style="margin-top: 4px;">Airversa: the switch created by the Airversa Scenta integration. Water: its own switch, if it has one. Leave this empty on a water diffuser to use the plug below.</p>
+            <p class="tts-msg-desc diffuser-switch-help" style="margin-top: 4px;">${mode === 'regular' ? 'Optional. Use this if the diffuser has its own switch. Otherwise the plug switch below is used.' : 'The switch created by the Airversa Scenta integration.'}</p>
           </div>
           <div class="form-group">
             <label class="form-label">Power plug sensor (optional)</label>
@@ -19092,7 +19483,7 @@ class EnergyPanel extends HTMLElement {
           <div class="form-group">
             <label class="form-label">Power plug switch (optional)</label>
             ${this._renderEntityAutocomplete(device.plug1_switch || '', 'switch', roomIndex, 'diffuser-plug-switch', 'switch.diffuser_plug')}
-            <p class="tts-msg-desc diffuser-plug-help" style="margin-top: 4px;">${mode === 'generic' ? 'Generic mode turns this plug on and off.' : 'Used for watts display, and as the water diffuser control when no switch is set above.'}</p>
+            <p class="tts-msg-desc diffuser-plug-help" style="margin-top: 4px;">${mode === 'regular' ? 'Used to turn a regular diffuser on and off when no control switch is set above.' : 'Optional. Used for watts display only.'}</p>
           </div>
           <p class="tts-msg-desc">Spray timing is set from the device card menu, and follows the type saved here.</p>
         </div>
@@ -19102,7 +19493,7 @@ class EnergyPanel extends HTMLElement {
 
   _applyOilDiffuserFromItem(item, device, originalOutlet) {
     const modeRaw = item.querySelector('.diffuser-mode')?.value || 'airversa';
-    const mode = DIFFUSER_MODES[modeRaw] ? modeRaw : 'airversa';
+    const mode = normalizeDiffuserMode(modeRaw);
     const readEntity = (className, prefixes) => {
       const input = item.querySelector(`.entity-datalist-input.${className}`) || item.querySelector(`input.${className}`);
       const value = (input?.value || '').trim();
@@ -21313,20 +21704,46 @@ class EnergyPanel extends HTMLElement {
     const diffuserModeSel = outletItem.querySelector('.diffuser-mode');
     if (diffuserModeSel) {
       const syncDiffuserModeUi = () => {
-        const mode = DIFFUSER_MODES[diffuserModeSel.value] ? diffuserModeSel.value : 'airversa';
+        const mode = normalizeDiffuserMode(diffuserModeSel.value);
         const spec = DIFFUSER_MODES[mode];
         const help = outletItem.querySelector('.diffuser-mode-help');
         const plugHelp = outletItem.querySelector('.diffuser-plug-help');
-        const switchBlock = outletItem.querySelector('.diffuser-switch-block');
+        const switchHelp = outletItem.querySelector('.diffuser-switch-help');
         if (help) help.textContent = spec.help;
-        if (plugHelp) {
-          plugHelp.textContent = mode === 'generic'
-            ? 'Generic mode turns this plug on and off.'
-            : 'Used for watts display, and as the water diffuser control when no switch is set above.';
+        if (switchHelp) {
+          switchHelp.textContent = mode === 'regular'
+            ? 'Optional. Use this if the diffuser has its own switch. Otherwise the plug switch below is used.'
+            : 'The switch created by the Airversa Scenta integration.';
         }
-        if (switchBlock) switchBlock.style.display = mode === 'generic' ? 'none' : 'block';
+        if (plugHelp) {
+          plugHelp.textContent = mode === 'regular'
+            ? 'Used to turn a regular diffuser on and off when no control switch is set above.'
+            : 'Optional. Used for watts display only.';
+        }
       };
-      diffuserModeSel.addEventListener('change', syncDiffuserModeUi);
+      const previewDiffuserCard = () => {
+        const roomIndex = parseInt(outletItem.dataset.roomIndex, 10);
+        const outletIndex = parseInt(outletItem.dataset.outletIndex, 10);
+        const rooms = this._config?.rooms || [];
+        const room = rooms[roomIndex];
+        const outlet = room?.outlets?.[outletIndex];
+        if (!room || !outlet || outlet.type !== 'oil_diffuser') return;
+        const roomId = room.id || String(room.name || '').toLowerCase().replace(/\s+/g, '_');
+        const card = this.shadowRoot.querySelector(
+          `.room-card[data-room-id="${roomId}"] [data-outlet-index="${outletIndex}"]`,
+        );
+        if (!card || !card.classList.contains('oil-diffuser-card')) return;
+        const preview = { ...outlet, diffuser_mode: normalizeDiffuserMode(diffuserModeSel.value) };
+        const deviceData = this._powerData?.rooms?.find((row) => row.id === roomId)?.outlets?.[outletIndex];
+        const wrap = document.createElement('div');
+        wrap.innerHTML = this._renderDiffuserCard(preview, outletIndex, deviceData).trim();
+        const next = wrap.firstElementChild;
+        if (next) card.replaceWith(next);
+      };
+      diffuserModeSel.addEventListener('change', () => {
+        syncDiffuserModeUi();
+        previewDiffuserCard();
+      });
       syncDiffuserModeUi();
     }
 
