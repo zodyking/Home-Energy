@@ -5785,10 +5785,19 @@ class EnergyPanel extends HTMLElement {
         font-size: 12px;
         min-height: 32px;
       }
-      .smoke-found {
+      .smoke-found,
+      .tplink-found {
         font-size: 11px;
         color: var(--secondary-text-color);
         line-height: 1.4;
+        margin-top: 4px;
+      }
+      .tplink-load-block {
+        margin-bottom: 12px;
+      }
+      .tplink-protection-help {
+        font-size: 10px;
+        color: var(--secondary-text-color);
         margin-top: 4px;
       }
 
@@ -17859,6 +17868,183 @@ class EnergyPanel extends HTMLElement {
     });
   }
 
+  _tplinkRoleLabels() {
+    return [
+      ['plug1_switch', 'Plug 1 switch'],
+      ['plug2_switch', 'Plug 2 switch'],
+      ['plug1_power', 'Plug 1 power'],
+      ['plug2_power', 'Plug 2 power'],
+      ['plug1_current', 'Plug 1 current'],
+      ['plug2_current', 'Plug 2 current'],
+      ['plug1_voltage', 'Plug 1 voltage'],
+      ['plug2_voltage', 'Plug 2 voltage'],
+      ['plug1_power_protection', 'Plug 1 power protection'],
+      ['plug2_power_protection', 'Plug 2 power protection'],
+      ['plug1_auto_off', 'Plug 1 auto-off'],
+      ['plug2_auto_off', 'Plug 2 auto-off'],
+      ['led', 'LED'],
+    ];
+  }
+
+  _tplinkFoundHtml(mapped) {
+    const entities = mapped || {};
+    const lines = this._tplinkRoleLabels()
+      .filter(([role]) => entities[role])
+      .map(([role, label]) => `${label}: ${entities[role]}`);
+    return lines.length ? lines.map((line) => escapeHtml(line)).join('<br>') : 'No sensors loaded yet.';
+  }
+
+  _syncTplinkShutoffUi(item, isTplink) {
+    item.querySelectorAll('.outlet-shutoff-label').forEach((label) => {
+      label.textContent = isTplink ? 'Power protection (W)' : 'Shutoff (W)';
+    });
+    item.querySelectorAll('.tplink-protection-help').forEach((help) => {
+      help.style.display = isTplink ? 'block' : 'none';
+    });
+    const brand = item.querySelector('.outlet-brand');
+    if (brand) brand.value = isTplink ? 'tplink' : '';
+  }
+
+  _setOutletEntityInput(item, className, value) {
+    if (!value) return;
+    const el = item.querySelector(`.entity-datalist-input.${className}`) || item.querySelector(`input.${className}`);
+    if (el) el.value = value;
+  }
+
+  _applyTplinkMapToItem(item, result) {
+    const entities = result?.entities || {};
+    const hidden = item.querySelector('.tplink-map-json');
+    const deviceInput = item.querySelector('.tplink-device-id');
+    const brandInput = item.querySelector('.outlet-brand');
+    const found = item.querySelector('.tplink-found');
+    if (hidden) hidden.value = JSON.stringify(entities);
+    if (deviceInput && result?.device_id) deviceInput.value = result.device_id;
+    if (brandInput) brandInput.value = result?.is_tplink ? 'tplink' : '';
+    if (found) {
+      found.innerHTML = result?.is_tplink
+        ? this._tplinkFoundHtml(entities)
+        : 'Not a TP-Link smart outlet. Internal shutoff is unchanged.';
+    }
+    this._syncTplinkShutoffUi(item, !!result?.is_tplink);
+    if (!result?.is_tplink) return false;
+    this._setOutletEntityInput(item, 'outlet-plug1', entities.plug1_power);
+    this._setOutletEntityInput(item, 'outlet-plug1-switch', entities.plug1_switch);
+    this._setOutletEntityInput(item, 'outlet-plug2', entities.plug2_power);
+    this._setOutletEntityInput(item, 'outlet-plug2-switch', entities.plug2_switch);
+    const nameInput = item.querySelector('.outlet-name');
+    if (nameInput && !nameInput.value.trim() && result.device_name) {
+      nameInput.value = result.device_name;
+      const display = item.querySelector('.outlet-name-display');
+      if (display) {
+        display.textContent = result.device_name;
+        display.classList.remove('empty');
+      }
+    }
+    const values = result.protection_values || {};
+    const p1 = item.querySelector('.outlet-plug1-shutoff');
+    if (p1 && !p1.value && values.plug1 != null) p1.value = values.plug1;
+    const p2 = item.querySelector('.outlet-plug2-shutoff');
+    if (p2 && !p2.value && values.plug2 != null) p2.value = values.plug2;
+    const sw1 = item.querySelector('.test-switch-btn[data-plug="1"]');
+    if (sw1 && entities.plug1_switch) sw1.dataset.switch = entities.plug1_switch;
+    const sw2 = item.querySelector('.test-switch-btn[data-plug="2"]');
+    if (sw2 && entities.plug2_switch) sw2.dataset.switch = entities.plug2_switch;
+    return true;
+  }
+
+  _tplinkAnchorFromItem(item) {
+    const explicit = item.querySelector('.tplink-anchor')?.value?.trim() || '';
+    if (explicit.includes('.')) return explicit;
+    const fields = ['outlet-plug1-switch', 'outlet-plug1', 'outlet-plug2-switch', 'outlet-plug2'];
+    for (const cls of fields) {
+      const val = (item.querySelector(`.entity-datalist-input.${cls}`) || item.querySelector(`input.${cls}`))?.value?.trim() || '';
+      if (val.includes('.')) return val;
+    }
+    return '';
+  }
+
+  async _loadTplinkOutletSensors(item, { silent = false } = {}) {
+    const anchor = this._tplinkAnchorFromItem(item);
+    const deviceId = item.querySelector('.tplink-device-id')?.value?.trim() || '';
+    if (!anchor.includes('.') && !deviceId) {
+      if (!silent) showToast(this.shadowRoot, 'Enter one entity from the TP-Link outlet first.', 'error');
+      return;
+    }
+    const key = `${deviceId}|${anchor}`;
+    if (item.dataset.tplinkResolved === key && silent) return;
+    if (item._tplinkApplying) return;
+    item._tplinkApplying = true;
+    try {
+      const result = await this._hass.callWS({
+        type: 'smart_dashboards/resolve_tplink_outlet',
+        entity_id: anchor,
+        device_id: deviceId,
+      });
+      const applied = this._applyTplinkMapToItem(item, result);
+      item.dataset.tplinkResolved = key;
+      const count = result?.found?.length || Object.keys(result?.entities || {}).length;
+      if (!silent) {
+        if (applied) {
+          showToast(this.shadowRoot, `Loaded ${count} TP-Link sensors. Save the room to keep them.`, 'success');
+        } else {
+          showToast(this.shadowRoot, 'That device is not a TP-Link smart outlet.', 'error');
+        }
+      }
+    } catch (err) {
+      if (!silent) showToast(this.shadowRoot, `Could not load TP-Link sensors: ${err.message || err}`, 'error');
+    } finally {
+      item._tplinkApplying = false;
+    }
+  }
+
+  _bindTplinkOutletSettings() {
+    this.shadowRoot.querySelectorAll('.outlet-settings-item[data-device-type="outlet"], .outlet-settings-item[data-device-type="single_outlet"]').forEach((item) => {
+      if (item.dataset.tplinkBound === '1') return;
+      item.dataset.tplinkBound = '1';
+      item.querySelector('.tplink-load')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void this._loadTplinkOutletSensors(item);
+      });
+      const trigger = () => {
+        window.clearTimeout(item._tplinkLoadTimer);
+        item._tplinkLoadTimer = window.setTimeout(() => {
+          void this._loadTplinkOutletSensors(item, { silent: true });
+        }, 400);
+      };
+      ['outlet-plug1', 'outlet-plug1-switch', 'outlet-plug2', 'outlet-plug2-switch'].forEach((cls) => {
+        const input = item.querySelector(`.entity-datalist-input.${cls}`) || item.querySelector(`input.${cls}`);
+        if (!input) return;
+        input.addEventListener('change', trigger);
+        input.addEventListener('blur', trigger);
+      });
+      item.querySelector('.tplink-anchor')?.addEventListener('change', trigger);
+    });
+  }
+
+  _applyTplinkOutletFromItem(item, device) {
+    const brand = item.querySelector('.outlet-brand')?.value === 'tplink' ? 'tplink' : null;
+    const anchor = item.querySelector('.tplink-anchor')?.value?.trim() || '';
+    const deviceId = item.querySelector('.tplink-device-id')?.value?.trim() || '';
+    let map = {};
+    try {
+      map = JSON.parse(item.querySelector('.tplink-map-json')?.value || '{}') || {};
+    } catch (err) {
+      map = {};
+    }
+    if (brand === 'tplink') {
+      device.outlet_brand = 'tplink';
+      device.tplink_anchor = anchor.includes('.') ? anchor : null;
+      device.tplink_device_id = deviceId || null;
+      device.tplink_map = map;
+    } else {
+      device.outlet_brand = null;
+      device.tplink_anchor = null;
+      device.tplink_device_id = null;
+      device.tplink_map = {};
+    }
+  }
+
   async _toggleDoorLock(outlet, action) {
     const lockEntity = outlet.lock_entity;
     if (!lockEntity) {
@@ -20612,9 +20798,15 @@ class EnergyPanel extends HTMLElement {
     const presencePlug1Checked = isSingleOutlet ? !!outlet.presence_auto_off : !!outlet.presence_auto_off_plug1;
     const keepOnPlug1Class = isSingleOutlet ? 'keep-on-appliance' : 'keep-on-plug1';
     const keepOnPlug1Checked = isSingleOutlet ? !!outlet.keep_on : !!outlet.keep_on_plug1;
+    const isTplink = outlet.outlet_brand === 'tplink';
+    const mapped = outlet.tplink_map || {};
+    const mapJson = escapeAttr(JSON.stringify(mapped));
+    const shutoffLabel = isTplink ? 'Power protection (W)' : 'Shutoff (W)';
+    const protectionHelp = `<div class="tplink-protection-help" style="display: ${isTplink ? 'block' : 'none'};">Written to the TP-Link outlet. Protection still works if Home Assistant is offline.</div>`;
+    const deviceType = isSingleOutlet ? 'single_outlet' : 'outlet';
 
     return `
-      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${outletIndex}" data-room-index="${roomIndex}" draggable="true">
+      <div class="outlet-settings-item ${collapsedClass}" data-outlet-index="${outletIndex}" data-room-index="${roomIndex}" data-device-type="${deviceType}" draggable="true">
         <div class="outlet-settings-bar">
           <div class="outlet-drag-handle" title="Drag to reorder">
             <svg viewBox="0 0 24 24"><path d="M9 20h6v-2H9v2zm0-18v2h6V2H9zm0 8h6V8H9v2zm0 4h6v-2H9v2zM3 8h2v2H3V8zm0 4h2v2H3v-2zm0-8h2v2H3V4zm0 12h2v2H3v-2zm16-4h2v2h-2v-2zm0-4h2v2h-2V8zm0 8h2v2h-2v-2zm0-12h2v2h-2V4z"/></svg>
@@ -20639,6 +20831,18 @@ class EnergyPanel extends HTMLElement {
               <input type="number" class="form-input outlet-threshold" value="${outlet.threshold || ''}" placeholder="W" min="0" style="width: 70px;">
             </div>
           </div>
+          <div class="tplink-load-block">
+            <div class="form-group">
+              <label class="form-label">Any entity on the TP-Link outlet</label>
+              <input type="text" class="form-input tplink-anchor" value="${escapeAttr(outlet.tplink_anchor || '')}" placeholder="switch.kitchen_outlet_4_p1">
+              <div class="tts-msg-desc" style="margin-top: 4px;">Pick one switch or sensor from the TP-Link device. Load sensors fills in P1/P2, power, current, voltage, LED, and power protection from that same device.</div>
+            </div>
+            <button type="button" class="btn tplink-load">Load TP-Link sensors</button>
+            <input type="hidden" class="outlet-brand" value="${isTplink ? 'tplink' : ''}">
+            <input type="hidden" class="tplink-device-id" value="${escapeAttr(outlet.tplink_device_id || '')}">
+            <input type="hidden" class="tplink-map-json" value="${mapJson}">
+            <div class="tplink-found">${isTplink ? this._tplinkFoundHtml(mapped) : 'No sensors loaded yet.'}</div>
+          </div>
           
           <div class="plugs-settings-grid ${isSingleOutlet ? 'single-plug' : ''}">
             <div class="plug-settings-card" data-plug="1">
@@ -20653,10 +20857,11 @@ class EnergyPanel extends HTMLElement {
               </div>
               <div class="shutoff-row">
                 <div class="form-group">
-                  <label class="form-label">Shutoff (W)</label>
+                  <label class="form-label outlet-shutoff-label">${shutoffLabel}</label>
                   <input type="number" class="form-input outlet-plug1-shutoff" value="${outlet.plug1_shutoff || ''}" placeholder="Off" min="0">
+                  ${protectionHelp}
                 </div>
-                <button class="test-switch-btn" data-switch="${outlet.plug1_switch || ''}" title="Test switch">
+                <button class="test-switch-btn" data-plug="1" data-switch="${outlet.plug1_switch || ''}" title="Test switch">
                   <svg viewBox="0 0 24 24">${icons.power}</svg>
                 </button>
               </div>
@@ -20686,10 +20891,11 @@ class EnergyPanel extends HTMLElement {
               </div>
               <div class="shutoff-row">
                 <div class="form-group">
-                  <label class="form-label">Shutoff (W)</label>
+                  <label class="form-label outlet-shutoff-label">${shutoffLabel}</label>
                   <input type="number" class="form-input outlet-plug2-shutoff" value="${outlet.plug2_shutoff || ''}" placeholder="Off" min="0">
+                  ${protectionHelp}
                 </div>
-                <button class="test-switch-btn" data-switch="${outlet.plug2_switch || ''}" title="Test switch">
+                <button class="test-switch-btn" data-plug="2" data-switch="${outlet.plug2_switch || ''}" title="Test switch">
                   <svg viewBox="0 0 24 24">${icons.power}</svg>
                 </button>
               </div>
@@ -21165,6 +21371,7 @@ class EnergyPanel extends HTMLElement {
     });
     this._initEntityAutocompletes(this.shadowRoot);
     this._bindSmokeAlarmSettings();
+    this._bindTplinkOutletSettings();
     this._bindConedIntegrationSettings();
 
     // Test switch buttons (compact icon on outlets; full-width .light-test-switch-btn on light/vent)
@@ -21535,6 +21742,10 @@ class EnergyPanel extends HTMLElement {
       threshold: 0,
       plug1_shutoff: isAppliance || isLight || isVentLike ? 0 : 0,
       plug2_shutoff: deviceType === 'outlet' ? 0 : null,
+      outlet_brand: null,
+      tplink_anchor: '',
+      tplink_device_id: '',
+      tplink_map: {},
     };
     if (isLight) {
       newOutlet.switch_entity = '';
@@ -21601,6 +21812,7 @@ class EnergyPanel extends HTMLElement {
     this._attachOutletEventListeners(newItem, roomIndex);
     this._initEntityAutocompletes(newItem);
     this._bindSmokeAlarmSettings();
+    this._bindTplinkOutletSettings();
     
     // Focus on name input
     const nameInput = newItem.querySelector('.outlet-name');
@@ -22388,6 +22600,7 @@ class EnergyPanel extends HTMLElement {
             device.plug2_switch = isSingleOutlet ? null : (plug2Switch || null);
             device.plug1_shutoff = plug1Shutoff;
             device.plug2_shutoff = isSingleOutlet ? 0 : plug2Shutoff;
+            this._applyTplinkOutletFromItem(item, device);
           }
           this._applyPresenceAutoOffFromItemToDevice(item, device);
           this._applyKeepOnFromItemToDevice(item, device);
@@ -22945,6 +23158,7 @@ class EnergyPanel extends HTMLElement {
           device.plug2_switch = isSingleOutlet ? null : (plug2Switch || null);
           device.plug1_shutoff = plug1Shutoff;
           device.plug2_shutoff = isSingleOutlet ? 0 : plug2Shutoff;
+          this._applyTplinkOutletFromItem(item, device);
         }
         this._applyPresenceAutoOffFromItemToDevice(item, device);
         this._applyKeepOnFromItemToDevice(item, device);

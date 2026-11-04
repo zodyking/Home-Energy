@@ -4956,6 +4956,9 @@ class EnergyMonitor:
                     continue
 
                 # Generic outlets: power_sensor_entity (matches statistics sources) + plug1/plug2, dedupe entity ids
+                from .tplink_outlet import uses_device_power_protection
+
+                _tplink_protection = uses_device_power_protection(outlet)
                 seen_oe: set[str] = set()
                 pe = (outlet.get("power_sensor_entity") or "").strip()
                 if pe:
@@ -4979,7 +4982,13 @@ class EnergyMonitor:
 
                     plug1_shutoff = outlet.get("plug1_shutoff", 0)
                     plug1_switch = outlet.get("plug1_switch")
-                    if budget_exceeded and plug1_shutoff > 0 and plug1_watts > plug1_shutoff and plug1_switch:
+                    if (
+                        not _tplink_protection
+                        and budget_exceeded
+                        and plug1_shutoff > 0
+                        and plug1_watts > plug1_shutoff
+                        and plug1_switch
+                    ):
                         await self._handle_plug_shutoff(
                             room_id=room_id,
                             room_name=room_name,
@@ -5008,7 +5017,13 @@ class EnergyMonitor:
 
                     plug2_shutoff = outlet.get("plug2_shutoff", 0)
                     plug2_switch = outlet.get("plug2_switch")
-                    if budget_exceeded and plug2_shutoff > 0 and plug2_watts > plug2_shutoff and plug2_switch:
+                    if (
+                        not _tplink_protection
+                        and budget_exceeded
+                        and plug2_shutoff > 0
+                        and plug2_watts > plug2_shutoff
+                        and plug2_switch
+                    ):
                         await self._handle_plug_shutoff(
                             room_id=room_id,
                             room_name=room_name,

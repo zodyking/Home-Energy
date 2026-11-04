@@ -943,11 +943,14 @@ class ConfigManager:
                             "threshold": int(outlet.get("threshold", 0)),
                         }
                         if outlet_type == "outlet":
+                            from .tplink_outlet import config_fields as _tplink_fields
+
                             item["plug2_entity"] = outlet.get("plug2_entity")
                             item["plug1_switch"] = outlet.get("plug1_switch")
                             item["plug2_switch"] = outlet.get("plug2_switch")
                             item["plug1_shutoff"] = int(outlet.get("plug1_shutoff", 0))
                             item["plug2_shutoff"] = int(outlet.get("plug2_shutoff", 0))
+                            item.update(_tplink_fields(outlet))
                         elif outlet_type == "stove":
                             item["plug2_entity"] = None
                             item["plug1_switch"] = outlet.get("plug1_switch")
@@ -1039,6 +1042,10 @@ class ConfigManager:
                             item["plug2_switch"] = None
                             item["plug1_shutoff"] = int(outlet.get("plug1_shutoff", 0))
                             item["plug2_shutoff"] = 0
+                            if outlet_type == "single_outlet":
+                                from .tplink_outlet import config_fields as _tplink_fields
+
+                                item.update(_tplink_fields(outlet))
                         elif outlet_type in ("vent", "wall_heater"):
                             item["plug1_entity"] = None
                             item["plug2_entity"] = None

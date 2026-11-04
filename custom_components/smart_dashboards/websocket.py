@@ -283,6 +283,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_get_areas)
     websocket_api.async_register_command(hass, websocket_get_switches)
     websocket_api.async_register_command(hass, websocket_resolve_smoke_device)
+    websocket_api.async_register_command(hass, websocket_resolve_tplink_outlet)
     websocket_api.async_register_command(hass, websocket_verify_passcode)
     websocket_api.async_register_command(hass, websocket_verify_room_auth)
     websocket_api.async_register_command(hass, websocket_check_toggle_auth)
@@ -348,6 +349,9 @@ async def websocket_save_energy(
         return
     try:
         await config_manager.async_update_energy(msg["config"])
+        from .tplink_outlet import async_sync_power_protection
+
+        await async_sync_power_protection(hass, config_manager.energy_config)
         _reset_statistics_prime_clock()
         _clear_recorder_derived_caches()
         connection.send_result(msg["id"], {"success": True})
@@ -3410,6 +3414,37 @@ async def websocket_resolve_smoke_device(
 
     try:
         result = resolve_smoke_device(hass, msg.get("entity_id"), msg.get("device_id"))
+    except Exception as err:
+        connection.send_error(msg["id"], "resolve_failed", str(err))
+        return
+    if not result.get("device_id"):
+        connection.send_error(
+            msg["id"],
+            "not_found",
+            "That entity is not on a Home Assistant device, so its sensors cannot be loaded together.",
+        )
+        return
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smart_dashboards/resolve_tplink_outlet",
+        vol.Optional("entity_id"): str,
+        vol.Optional("device_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_resolve_tplink_outlet(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Map every entity on a TP-Link outlet (parent + P1/P2 children) to roles."""
+    from .tplink_outlet import resolve_tplink_outlet
+
+    try:
+        result = resolve_tplink_outlet(hass, msg.get("entity_id"), msg.get("device_id"))
     except Exception as err:
         connection.send_error(msg["id"], "resolve_failed", str(err))
         return
